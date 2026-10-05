@@ -480,7 +480,7 @@ examples:
     )
     coverage_parser.add_argument(
         "--fail-under",
-        type=float,
+        type=_coverage_percent,
         default=None,
         metavar="N",
         help="Exit 1 if any machine's state or transition coverage is < N%%.",
@@ -1002,3 +1002,24 @@ def resolve_async_mode(
     if template.startswith("pythonic"):
         return False
     return True
+
+
+def _coverage_percent(text: str) -> float:
+    """``xsm coverage --fail-under``: finite, in ``[0, 100]``.
+
+    🛡️ #270 battle B: ``type=float`` took ``nan`` (every comparison
+    False -- the gate always passed) and ``101`` (never passes).
+    """
+    import math
+
+    try:
+        value = float(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"expected a percentage, got {text!r}"
+        ) from exc
+    if not math.isfinite(value) or not 0 <= value <= 100:
+        raise argparse.ArgumentTypeError(
+            f"expected a percentage in [0, 100], got {text!r}"
+        )
+    return value

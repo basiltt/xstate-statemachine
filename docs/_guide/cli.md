@@ -429,9 +429,10 @@ xsm [-h] [-v] [--plain] [--no-color] [--no-anim] [--verbose]
 | `setup` | — | Windows: swap pip's blocked `xsm.exe` launcher for a batch shim (`--check`, `--undo`) |
 | `new` | — | Scaffold a project from an example app ([`--template fastapi`](#new-project), `--list`) |
 | `snapshots` | — | Ops view of a persistence store: keys, labels, status, age; [`--stale`](#snapshots) is the drain list for a deploy, `--fail-if-stale` the gate |
+| `coverage` | — | Render a statechart coverage report written by `pytest --xsm-coverage` and gate on it ([`--fail-under`](#coverage)) |
 | `dlq` | — | List / show / replay / purge dead-lettered messages (see [Event-driven architecture](../integration-eda/#dead-letters)) |
 
-Every command that reports facts also has a `--json` switch (`validate`, `inspect`, `paths`, `simulate`, `list-templates`, `info`, `snapshots`, `dlq`) so the same information can be consumed by scripts.
+Every command that reports facts also has a `--json` switch (`validate`, `inspect`, `paths`, `simulate`, `list-templates`, `info`, `snapshots`, `dlq`, `coverage`) so the same information can be consumed by scripts.
 
 ## 🧭 Interactive Launcher
 
@@ -545,6 +546,21 @@ xsm paths checkout.json --weight time         # least simulated clock time, not 
 The **Events** column is the `xsm simulate --events` grammar — paste it back into `xsm sim` to reproduce the path interactively. **Assumes** lists what the path relies on when `--guards both` explores alternatives: a guard forced `False`, a service forced to fail, or a named delay with no implementation. Every step was executed by the real engine (stub logic, simulated clock), never inferred from the JSON — see [Path generation](../testing-and-pure-api/#path-generation) for the Python API.
 
 `--max-depth` (default 50) and `--max-paths` (default 1000, `--simple` only) must be `>= 0`. Exit codes: `0` success, `1` the chart does not build or cannot be explored (one line, no traceback), `2` bad arguments. `xsm simulate --events` rejects a clock advance that is not a finite, non-negative number (`+-5`, `+nan`, `+1e309`) with exit code `2`.
+
+## 📊 Coverage
+
+`xsm coverage FILE [--fail-under N] [--plain] [--json]` renders the version-1 JSON report that `pytest --xsm-coverage --xsm-coverage-report=json:FILE` writes (see [State & transition coverage](../integration-testing/#state-transition-coverage)): one row per machine with visited/total states and hit/total transitions, then each machine's unvisited states and unhit transitions. `--json` re-emits the document. `--fail-under N` applies to **both** state and transition coverage; `N` must be a finite number in `[0, 100]`.
+
+```bash
+pytest --xsm-coverage --xsm-coverage-report=json:cov.json
+xsm coverage cov.json --plain --fail-under 90
+```
+
+| Exit | Meaning |
+|:--|:--|
+| `0` | rendered; every machine at or above `--fail-under` (or no threshold) |
+| `1` | a machine is under `--fail-under`; the report has no machines and a threshold was given; or the file is missing / not JSON / not `version: 1` (one line, no traceback) |
+| `2` | bad arguments (`--fail-under nan`, `101`, `-1`, `abc`) |
 
 ## 🎮 Simulate
 

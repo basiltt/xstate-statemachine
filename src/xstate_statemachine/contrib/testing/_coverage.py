@@ -96,6 +96,22 @@ def _percent(text: str) -> float:
     return value
 
 
+_ORPHANS = (
+    "--xsm-coverage-report",
+    "--xsm-fail-under-state-coverage",
+    "--xsm-fail-under-transition-coverage",
+)
+
+
+def _refuse_orphan_options(config: Any) -> None:
+    """🛡️ #270 battle B: a fail-under gate without ``--xsm-coverage`` was
+    silently ignored -- CI believed it was gated."""
+    for name in _ORPHANS:
+        value = config.getoption(name, default=None)
+        if value not in (None, []):
+            raise pytest.UsageError(f"{name} requires --xsm-coverage")
+
+
 def _parse_report(spec: str) -> Tuple[str, Optional[pathlib.Path]]:
     kind, _, dest = spec.partition(":")
     kind = kind.strip().lower()
@@ -118,7 +134,13 @@ class CoverageSession:
         self.config = config
         self.collector = CoverageCollector()
         specs = config.getoption("--xsm-coverage-report") or ["term"]
-        self.reports = [_parse_report(s) for s in specs]
+        # 📝 #270 battle B: the same report twice is one report (it was
+        #    written -- and announced -- twice).
+        self.reports: List[Tuple[str, Optional[pathlib.Path]]] = []
+        for spec in specs:
+            parsed = _parse_report(spec)
+            if parsed not in self.reports:
+                self.reports.append(parsed)
         self.fail_state = config.getoption("--xsm-fail-under-state-coverage")
         self.fail_transition = config.getoption(
             "--xsm-fail-under-transition-coverage"
@@ -129,11 +151,13 @@ class CoverageSession:
         #    into the controller's own at `finish` (battle #268).
         self.worker_reports: List[CoverageReport] = []
         self.is_worker = hasattr(config, "workerinput")
+        self.notes: List[str] = []
 
     # ------------------------------------------------------------ lifecycle
     @classmethod
     def configure(cls, config: Any) -> None:
         if not config.getoption("--xsm-coverage", default=False):
+            _refuse_orphan_options(config)
             return
         session = cls(config)
         setattr(config, _KEY, session)
@@ -200,20 +224,48 @@ class CoverageSession:
                 self.collector.reports()
             )
             return
+        if self.config.getoption("collectonly", default=False):
+            # 📝 #270 battle B: nothing ran, so there is nothing to
+            #    report or gate (`--collect-only` must not fail).
+            return
         reports = self.merged_reports()
-        for kind, dest in self.reports:
-            if dest is None:
-                continue
-            target = self._resolve(dest)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            render = reports_to_json if kind == "json" else reports_to_html
-            target.write_text(render(reports), encoding="utf-8")
-            self.written.append(target)
         self.failures = below(
             reports, state=self.fail_state, transition=self.fail_transition
         )
+        for kind, dest in self.reports:
+            if dest is not None:
+                self._write(kind, dest, reports)
+        gated = self.fail_state is not None or self.fail_transition is not None
+        if gated and not reports:
+            # 🛡️ #270 battle B: a typo'd marker / `-k` that matched nothing
+            #    built no machine; "0 machines below N%" must not PASS.
+            self.failures.append(
+                "no machines were observed, so the fail-under gate has "
+                "nothing to judge (did any test build an interpreter?)"
+            )
+        if session.shouldstop or session.shouldfail:
+            self.notes.append("(session interrupted -- coverage partial)")
         if self.failures and session.exitstatus == 0:
             session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+    def _write(
+        self, kind: str, dest: pathlib.Path, reports: List[CoverageReport]
+    ) -> None:
+        target = self._resolve(dest)
+        render = reports_to_json if kind == "json" else reports_to_html
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(render(reports), encoding="utf-8")
+        except OSError as exc:
+            # 🔥 #270 battle B: a directory / unwritable path was an
+            #    INTERNALERROR traceback at session end. One line, and
+            #    the session fails (the CI artefact is missing).
+            self.failures.append(
+                f"cannot write {kind} report to {target}: "
+                f"{exc.strerror or exc}"
+            )
+            return
+        self.written.append(target)
 
     def summary(self, terminalreporter: Any) -> None:
         if self.is_worker:
@@ -226,6 +278,8 @@ class CoverageSession:
             terminalreporter.write_line("")
             for line in text.splitlines():
                 terminalreporter.write_line(line)
+        for note in self.notes:
+            terminalreporter.write_line(f"xstate coverage {note}")
         for path in self.written:
             terminalreporter.write_line(f"xstate coverage written to {path}")
         for failure in self.failures:
