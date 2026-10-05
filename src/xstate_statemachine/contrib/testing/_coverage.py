@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+import argparse
+import math
 import pathlib
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -58,19 +60,40 @@ def add_coverage_options(group: Any) -> None:
     )
     group.addoption(
         "--xsm-fail-under-state-coverage",
-        type=float,
+        type=_percent,
         default=None,
         metavar="N",
         help="fail the session if any machine's state coverage is < N%%",
     )
     group.addoption(
         "--xsm-fail-under-transition-coverage",
-        type=float,
+        type=_percent,
         default=None,
         metavar="N",
         help="fail the session if any machine's transition coverage is "
         "< N%%",
     )
+
+
+def _percent(text: str) -> float:
+    """A fail-under threshold: a finite number in ``[0, 100]``.
+
+    🛡️ #270 battle: ``type=float`` accepted ``nan`` (every ``percent < nan``
+    is False -- the gate silently PASSED at 0 % coverage), ``inf`` and
+    ``-1`` / ``101`` (always fail / never fail). Refuse them at the
+    command line like `coverage report --fail-under` does.
+    """
+    try:
+        value = float(text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            f"expected a percentage, got {text!r}"
+        ) from exc
+    if math.isnan(value) or math.isinf(value) or not 0 <= value <= 100:
+        raise argparse.ArgumentTypeError(
+            f"expected a percentage in [0, 100], got {text!r}"
+        )
+    return value
 
 
 def _parse_report(spec: str) -> Tuple[str, Optional[pathlib.Path]]:
