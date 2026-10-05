@@ -234,7 +234,14 @@ class TestSendAll:
             def test_it(xsm_interp, xsm_send_all):
                 xsm_send_all(xsm_interp, {bad!r})
             """))
-        r = run(xsm_pytester, "--timeout=30")
+        # 📝 pytest-timeout is not in every venv (3.9 lacks it): pass the
+        #    flag only when the plugin exists; the inner test is sub-second.
+        extra = (
+            ("--timeout=30",)
+            if importlib.util.find_spec("pytest_timeout")
+            else ()
+        )
+        r = run(xsm_pytester, *extra)
         r.assert_outcomes(failed=1)
         assert (
             "Traceback"
