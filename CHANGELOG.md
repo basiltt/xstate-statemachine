@@ -412,6 +412,19 @@ _No unreleased changes yet._
   `--xsm-fail-under-transition-coverage=N`. The new
   `xsm coverage report.json [--fail-under N] [--plain] [--json]` renders the
   report in CI.
+  Hardened in the #270 battle: the report options and thresholds without
+  `--xsm-coverage` are a usage error (they were silently ignored); a set
+  threshold FAILS when no machine was observed (`-k` matched nothing)
+  instead of passing on nothing; `nan` / `inf` / out-of-range thresholds
+  are refused by both the pytest options and `xsm coverage --fail-under`
+  (exit 2; `nan` used to disable the gate); `xsm coverage --fail-under`
+  on a report with no machines exits 1; an unwritable report path is one
+  `FAIL xstate coverage: cannot write ...` line instead of an
+  INTERNALERROR; a repeated report spec is produced once;
+  `--collect-only` writes and gates nothing; a run stopped early (`-x`)
+  is labelled `(session interrupted -- coverage partial)`. New benchmark
+  row `coverage_collector_overhead` (send() with the session collector vs
+  bare, unbudgeted).
 - **Hypothesis model-based testing (#271).**
   `xstate_statemachine.contrib.testing.model_test(chart, *, logic=,
   invariants=, state_assertions=, payloads=, clock=True, max_steps=50,

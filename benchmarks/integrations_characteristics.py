@@ -79,6 +79,7 @@ ROWS = (
     "shortest_paths",
     "shortest_paths_payment",
     "pytest_plugin_per_test",
+    "coverage_collector_overhead",
     "fastapi_router",
     "timer_scan_sqlite_100k",
     "circuit_breaker_call_closed",
@@ -691,6 +692,52 @@ def benchmark_pytest_plugin_per_test(
     return _metric(samples, chart=chart.name, tests=tests)
 
 
+def benchmark_coverage_collector_overhead(
+    events: int = 2_000,
+) -> Optional[Dict[str, Any]]:
+    """`send()` cost with the ``--xsm-coverage`` collector on (#270 battle).
+
+    📝 The orders chart on stub logic, ADD_ITEM self-transitions (a chart transition every event),
+    with a `CoverageCollector` in `plugins.register_global` (exactly what
+    `--xsm-coverage` does). Each sample is µs per event; ``bare_p50_us``
+    and ``ratio`` compare against the same loop with no collector.
+    """
+    chart = ROOT / "examples" / "integrations" / "fastapi_orders"
+    chart = chart / "machine.json"
+    if not chart.is_file():
+        return None
+    from xstate_statemachine import SimulatedClock, SyncInterpreter
+    from xstate_statemachine import plugins as core_plugins
+    from xstate_statemachine.coverage import CoverageCollector
+    from xstate_statemachine.testing_utils import stub_logic
+
+    config = json.loads(chart.read_text(encoding="utf-8"))
+    machine = create_machine(config, logic=stub_logic(config))
+
+    def loop() -> float:
+        interp = SyncInterpreter(machine, clock=SimulatedClock()).start()
+        start = time.perf_counter_ns()
+        for _ in range(events):
+            interp.send("ADD_ITEM", sku="tea", qty=1)
+        elapsed = (time.perf_counter_ns() - start) / 1000 / events
+        interp.stop()
+        return elapsed
+
+    loop()  # warm
+    bare = sorted(loop() for _ in range(REPETITIONS))[REPETITIONS // 2]
+    collector = CoverageCollector()
+    core_plugins.register_global(collector)
+    try:
+        loop()
+        samples = [loop() for _ in range(REPETITIONS)]
+    finally:
+        core_plugins.unregister_global(collector)
+    metric = _metric(samples, chart=chart.name, events=events)
+    metric["bare_p50_us"] = round(bare, 3)
+    metric["ratio"] = round(metric["p50_us"] / bare, 3) if bare else None
+    return metric
+
+
 def benchmark_fastapi_router() -> None:
     """Reserved for the later phase that ships the FastAPI router."""
     return None
@@ -772,6 +819,7 @@ def run(quick: bool = False) -> Dict[str, Any]:
         "shortest_paths": "savage.json (largest loadable corpus chart); no budget until a nightly records one",
         "shortest_paths_payment": "#269 battle: AdvancePayment.json (3 configurations); no budget until a nightly records one",
         "pytest_plugin_per_test": "#268 battle: xsm_machine + xsm_interp + one xsm_snapshot compare on the orders chart; no budget until the reference runner records one",
+        "coverage_collector_overhead": "#270 battle: send() on the orders chart with the --xsm-coverage global collector; ratio vs bare; no budget until the reference runner records one",
         "fastapi_router": "FastAPI router is not shipped yet",
         "circuit_breaker_call_closed": "#265 battle: per-call cb.call(f) on a closed breaker; no budget until the reference runner records one",
     }
@@ -839,6 +887,9 @@ def run(quick: bool = False) -> Dict[str, Any]:
         results["pytest_plugin_per_test"] = _clean(
             benchmark_pytest_plugin_per_test
         )
+        results["coverage_collector_overhead"] = _clean(
+            benchmark_coverage_collector_overhead
+        )
         results["fastapi_router"] = benchmark_fastapi_router()
         results["circuit_breaker_call_closed"] = _clean(
             benchmark_circuit_breaker_call_closed
@@ -897,6 +948,10 @@ def measure_row(row: str, quick: bool = False) -> Dict[str, Any]:
         "shortest_paths": (benchmark_shortest_paths, ()),
         "shortest_paths_payment": (benchmark_shortest_paths_payment, ()),
         "pytest_plugin_per_test": (benchmark_pytest_plugin_per_test, ()),
+        "coverage_collector_overhead": (
+            benchmark_coverage_collector_overhead,
+            (),
+        ),
         "timer_scan_sqlite_100k": (benchmark_timer_scan_sqlite_100k, ()),
     }
     if row not in dispatch:
