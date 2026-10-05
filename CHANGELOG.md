@@ -1447,6 +1447,21 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **Coverage gates, as battle-tested (#270).** The orders team gates CI
+  on state & transition coverage: `--xsm-fail-under-state-coverage=nan`
+  was accepted (`type=float`) and every `percent < nan` is False -- the
+  gate silently PASSED at any coverage; `inf`, `-1` and `101` were
+  accepted too. Thresholds are now a finite percentage in `[0, 100]`
+  (`argparse` error otherwise). Pinned on the shipped chart: a suite
+  that only pays names `paymentFailed` and the `awaitingPayment --CANCEL`
+  / `retryDelay` edges and fails the gate; `term` / `json:` / `html:`
+  agree; the JSON is `version: 1` and byte-identical across runs; the
+  HTML is one self-contained file; `xsm coverage` renders it and
+  `--fail-under` exits 1; restored, directly-built and rebuilt
+  interpreters all count (one row per structure key); parallel
+  configurations mark leaves and ancestors; history pseudo-states are
+  not in the denominator; nothing is registered without the flag; `-n 2`
+  matches serial.
 - **The pytest plugin, as battle-tested (#268).** A team adopting
   `[testing]` for the orders chart (real logic through the dotted
   factory, snapshot files in git, `pytest -n 4`): `xsm gt -t pytest
