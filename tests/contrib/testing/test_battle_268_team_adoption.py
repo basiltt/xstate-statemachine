@@ -97,6 +97,9 @@ class TestRealLogic:
             import threading
             CFG = {"id": "t", "initial": "a", "states": {"a": {"after": {"100": "b"}}, "b": {}}}
             seen = {}
+            # 📝 relative, not absolute: an in-process pytester inherits the
+            #    OUTER session's threads (35 under the coverage job).
+            baseline = threading.active_count()
 
             @pytest.mark.xstate_machine(CFG)
             def test_fails(xsm_interp):
@@ -105,7 +108,7 @@ class TestRealLogic:
 
             def test_after():
                 assert seen["i"].status == "stopped"
-                assert threading.active_count() <= 2
+                assert threading.active_count() <= baseline + 1
             """))
         run(xsm_pytester).assert_outcomes(passed=1, failed=1)
 
