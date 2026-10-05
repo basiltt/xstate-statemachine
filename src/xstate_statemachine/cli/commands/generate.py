@@ -19,6 +19,7 @@ import dataclasses
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from ...exceptions import XStateMachineError
 from ..postprocess import build_provenance_header, polish
 from ..strategies import GenerationContext, get_strategy
 from ..validation import verify_generated
@@ -62,7 +63,17 @@ def render_companion(
     version: str,
 ) -> str:
     """Generate + polish one companion file."""
-    code = get_strategy(template).generate_logic(ctx)
+    try:
+        code = get_strategy(template).generate_logic(ctx)
+    except XStateMachineError as exc:
+        # 🛑 #268 battle: a chart the engine refuses (e.g. a compound
+        #    state with no `initial`) escaped `xsm gt -t pytest` as a full
+        #    traceback. The strategy keeps raising the library error (its
+        #    API contract); the CLI says it in one line and exits 1.
+        raise SystemExit(
+            f"xsm: cannot generate the {template} companion for "
+            f"{ctx.machine_name!r}: the engine rejects the chart: {exc}"
+        ) from exc
     sources = [Path(p).name for p in json_paths]
     command = (
         "xsm generate-template "

@@ -1453,6 +1453,60 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **The pytest plugin, as battle-tested (#268).** A team adopting
+  `[testing]` for the orders chart (real logic through the dotted
+  factory, snapshot files in git, `pytest -n 4`): `xsm gt -t pytest
+  --fixtures` emitted a `CONFIG_PATH` with a bare `with_name()` while the
+  plain variant already fell back to the parent directory -- the
+  generated module could never find its chart from the documented
+  `-o generated/` layout; a misspelt name in `xstate_guards_false` was
+  silently accepted (the test exercised the True branch while claiming to
+  force False) -- unknown guard names are a usage error naming the known
+  ones; `--xsm-update-snapshots` wrote wherever a relative path with
+  enough `..` pointed -- snapshot paths outside the rootdir are refused
+  (X0.10). Pinned: snapshot files are byte-identical across update runs
+  and under `-n 4`, a `Decimal` / tz-aware `datetime` context renders
+  deterministically, `"+nan"` / `"+-5"` / `"+inf"` in `xsm_send_all` are
+  errors not hangs, `-p no:xstate_statemachine` leaves a marker-less
+  module untouched.
+  **The adversary suites then found:** `--xsm-coverage` under
+  pytest-xdist always PASSED -- workers collected, the controller printed
+  "(no machines observed)" and gated nothing; workers now ship reports to
+  the controller, which merges, prints, writes and gates once (same JSON
+  as a serial run). `model_test` failed falsely on a chart whose root
+  reaches a final state (event rules stayed enabled after `done` →
+  `InterpreterStoppedError`) and on an `always` that returns to the same
+  configuration ("generated a denied event" after `can()` accepted it).
+  `FakeBrokerAdapter.deliver()` accepted a non-`Envelope` and failed later
+  inside the consumer (`TypeError` at the call now); `SyncFakeBrokerAdapter`
+  / `BrokerPublishError` are exported from `contrib.testing`. In the
+  plugin: a logic module raising anything but `ImportError` escaped as a
+  traceback (one usage error naming file:line); `logic=` now also takes a
+  `MachineLogic` instance or a zero-arg callable; context **sets** rendered
+  in hash order so a snapshot recorded under one `PYTHONHASHSEED` failed
+  under another (sorted lists); two tests writing different content to
+  one snapshot path silently last-won (refused); Windows `\?\` resolved
+  paths were intermittently refused as "outside the project"; snapshot
+  writes are atomic (temp + `os.replace`, LF). `xsm_send_all` /
+  `xsm_asend_all` gain a payload form (`Event`, `{"type": ...}` dict,
+  `("TYPE", {...})` tuple) and refuse `""`, `"A,B"` and `"++5"` (the empty
+  string sent nothing, the comma sent two events, `++5` advanced 5 ms).
+  `xsm gt -t pytest` on a chart the engine rejects exits 1 with one line
+  instead of a traceback. `pytest_plugin.py` split into `_marker.py` /
+  `_snapshots.py` (public import path unchanged). Perf row
+  `pytest_plugin_per_test` (p50 ≈ 1.1 ms); testing guide gains a Fake
+  broker section, coverage-under-xdist, `model_test` invariants/deadline
+  notes, `--xsm-failing-dir`, threat-model notes (a marker's `logic=` is
+  code; diffs print context unredacted) and six Troubleshooting rows.
+  **Independent review then found:** the same-path-different-content
+  snapshot refusal lived in a per-process stash, so under `-n 4` two
+  WORKERS writing one file still last-won silently -- a file written
+  this session that already differs on disk is now the same refusal; a
+  crashed xdist worker's coverage vanished without a word (one
+  `RuntimeWarning` names the worker); the marker help and the guide still
+  said `logic=` must be a dotted string; the guide now lists what a
+  snapshot deliberately does NOT record (history, actors, pending /
+  scheduled events, deadlines).
 - **Path generation, as battle-tested (#269).** The explorer replayed
   the WHOLE prefix for every candidate edge -- O(depth) engine runs per
   edge: the 35-state parallel `addressFields` chart (3 456

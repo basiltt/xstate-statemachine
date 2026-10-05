@@ -59,13 +59,17 @@ def xsm_pytester(pytester: pytest.Pytester) -> pytest.Pytester:
     have the plugin loaded, whatever the install state."""
     pytester.syspathinsert(str(SRC))
     # 📝 A minimal ini keeps the repo's own `addopts` / `testpaths` out of
-    #    the throw-away session; `asyncio_mode` matters only when
-    #    pytest-asyncio is installed (the CI cell installs it).
-    pytester.makeini(
-        "[pytest]\n"
-        "asyncio_mode = strict\n"
-        "asyncio_default_fixture_loop_scope = function\n"
-    )
+    #    the throw-away session. #268 battle (CI): the asyncio keys are
+    #    UNKNOWN ini options when pytest-asyncio is absent (the core Test
+    #    cells install no extras) -- an inner session run with `-W error`
+    #    died with `PytestConfigWarning`. Emit them only when readable.
+    ini = "[pytest]\n"
+    if importlib.util.find_spec("pytest_asyncio") is not None:
+        ini += (
+            "asyncio_mode = strict\n"
+            "asyncio_default_fixture_loop_scope = function\n"
+        )
+    pytester.makeini(ini)
     return pytester
 
 

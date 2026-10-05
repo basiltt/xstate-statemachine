@@ -67,7 +67,7 @@ with tempfile.TemporaryDirectory() as tmp:
     print(pathlib.Path(tmp, "snapshots", "paying.json").read_text(encoding="utf-8"))
 ```
 
-The recorded snapshot holds only what describes behaviour — `state_ids`, `value`, `context`, `status` — with sorted keys and a trailing newline, so it is byte-identical across runs and machines:
+The recorded snapshot holds only what describes behaviour — `state_ids`, `value`, `context`, `status` — with sorted keys and a trailing newline, so it is byte-identical across runs and machines (sets render as sorted lists). Deliberately **not** recorded: `history`, `actors`, pending or scheduled events and `after` deadlines — a regression in history restoration or timer scheduling is invisible to `xsm_snapshot`; cover those with `xsm_path` or an explicit assertion:
 
 ```json
 {
@@ -88,7 +88,7 @@ The recorded snapshot holds only what describes behaviour — `state_ids`, `valu
 
 | Marker | What it does |
 |:--|:--|
-| `@pytest.mark.xstate_machine(source, *, logic=None, strict_config=None, strict=None)` | Declares the machine the `xsm_*` fixtures serve. `source` is a **JSON path** (relative to the test file, then to pytest's rootdir), a **config dict**, or an already-built **`MachineNode`**. `logic` is a dotted `"package.module:callable"` whose call returns a `MachineLogic`; without it the machine runs on [`stub_logic`](../testing-and-pure-api/) — actions record their name, guards return `True`, services return `None` synchronously. `strict_config` and `strict` are passed to `create_machine` and must be `True`, `False` or `None`. A `MachineNode` source is used as-is: `logic=`, `strict_config=` and `strict=` are refused for it (the node is never mutated). A malformed marker, an unreadable file, an unloadable or raising `logic=` factory, or a config `create_machine` refuses is a `pytest.UsageError` naming the test. |
+| `@pytest.mark.xstate_machine(source, *, logic=None, strict_config=None, strict=None)` | Declares the machine the `xsm_*` fixtures serve. `source` is a **JSON path** (relative to the test file, then to pytest's rootdir), a **config dict**, or an already-built **`MachineNode`**. `logic` is a dotted `"package.module:callable"` string, a `MachineLogic` **instance**, or a zero-argument **callable** returning a `MachineLogic` (a factory returning anything else is refused); without it the machine runs on [`stub_logic`](../testing-and-pure-api/) — actions record their name, guards return `True`, services return `None` synchronously. `strict_config` and `strict` are passed to `create_machine` and must be `True`, `False` or `None`. A `MachineNode` source is used as-is: `logic=`, `strict_config=` and `strict=` are refused for it (the node is never mutated). A malformed marker, an unreadable file, an unloadable or raising `logic=` factory, or a config `create_machine` refuses is a `pytest.UsageError` naming the test. |
 | `@pytest.mark.xstate_guards_false("g1", "g2")` | With stub logic, the named guards return `False`; unlisted guards stay `True`. The table is held **by reference** — mutate `xsm_guards` between sends to flip a guard. Combining it with `logic=` (or a `MachineNode` source) is a `pytest.UsageError`: real logic owns its guards and the plugin will not pretend otherwise. |
 
 Both markers are registered, so `--strict-markers` projects need nothing extra.
@@ -116,7 +116,10 @@ All fixtures are prefixed `xsm_` so they cannot shadow your own `machine`, `cloc
 |:--|:--|
 | `--xsm-version` | Print `xstate-statemachine <version>` and exit 0. |
 | `--xsm-update-snapshots` | Every `xsm_snapshot` call writes its file instead of comparing. |
+| `--xsm-failing-dir=DIR` | Where `model_test()` writes its minimal failing sequence (see [Model-based testing](#model-based-testing)). |
 | `-p no:xstate_statemachine` | Disable the plugin for a session (pytest's own opt-out). |
+
+The `--xsm-*path*` options are listed under [Path generation](#path-generation), the `--xsm-*coverage*` options under [State & transition coverage](#state-transition-coverage).
 
 ### Helpers (importable from `xstate_statemachine.contrib.testing`)
 
@@ -188,6 +191,8 @@ The session registers one `CoverageCollector` with core's [`plugins.register_glo
 | `--xsm-coverage-report=term\|json[:PATH]\|html[:PATH]` | Repeatable; default `term`. `json` defaults to `xsm-coverage.json`, `html` to `xsm-coverage.html` (one self-contained file: inline CSS, no scripts, no external links). |
 | `--xsm-fail-under-state-coverage=N` | Session exits 1 if any machine's state coverage is below N %. |
 | `--xsm-fail-under-transition-coverage=N` | Same for transitions. |
+
+**With pytest-xdist (`-n N`).** Every worker records its own share and ships it to the controller at the end of the session. The controller merges them by machine (a state or transition counts as covered if any worker covered it), then prints the report, writes the files and applies the thresholds once, over the whole suite. Workers print no coverage section of their own.
 
 The same collector works outside pytest:
 
@@ -280,11 +285,45 @@ replay: xsm simulate tests/refund.json --script tests/failing.json
 | `snapshot_roundtrip` (default on) | Saves the interpreter mid-sequence, restores it (`restart_timers="resume"`) and continues on the copy. It fails when the context is not JSON-serialisable, or when the configuration or context does not survive the round trip. |
 | `flip_guard` (`guard_flip=True`, stub logic only) | Sets a stub guard to `True` or `False`. The script records it as `{"guard": name, "value": …}`, which `xsm simulate` replays. |
 
-`invariants` (`name → check(interp)`) run after start and after every step. `state_assertions` (`state → check(interp)`) run whenever `interp.matches(state)`, which includes every region of a parallel configuration. A check fails if it raises `AssertionError` or returns a falsy value; for `state_assertions`, only an explicit `False` counts. Payload strategies are chosen in this order: your `payloads={"ADD": strategy}`; otherwise strategies inferred from `event_schemas` / pydantic [`EventModel`](../integration-pydantic/) fields (`bool`, `int`, `float`, `str`, `None`, `Literal`, `Optional`/`Union`, `List`); otherwise an empty payload. If a required field has a type outside that mapping, you get a `ValueError` that tells you to pass `payloads=`. `events_strategy(chart, length=10)` is a plain strategy of legal event-name lists, for your own `@given` tests. The failing script is written next to the calling module by default. `--xsm-failing-dir=DIR` or `model_test(failing_path=…)` moves it.
+`invariants` (`name → check(interp)`) run after start and after every step. `state_assertions` (`state → check(interp)`) run whenever `interp.matches(state)`, which includes every region of a parallel configuration. A check fails if it raises `AssertionError` or returns a falsy value; for `state_assertions`, only an explicit `False` counts. There are no built-in invariants: a refused event is not a failure, and once the machine reaches a top-level final state (`status == "done"`) no further event rule is enabled, so the run settles. Every model test runs with Hypothesis `deadline=None` (pinned, whatever `settings=` you pass), so a slow step on a large chart never causes a flaky `DeadlineExceeded`. Hypothesis's own health checks still apply. Payload strategies are chosen in this order: your `payloads={"ADD": strategy}`; otherwise strategies inferred from `event_schemas` / pydantic [`EventModel`](../integration-pydantic/) fields (`bool`, `int`, `float`, `str`, `None`, `Literal`, `Optional`/`Union`, `List`); otherwise an empty payload. If a required field has a type outside that mapping, you get a `ValueError` that tells you to pass `payloads=`. `events_strategy(chart, length=10)` is a plain strategy of legal event-name lists, for your own `@given` tests. The failing script is written next to the calling module by default. `--xsm-failing-dir=DIR` or `model_test(failing_path=…)` moves it.
 
 ⚠️ **With real `logic=`, `can()` runs your real guards.** That is how the generated sequences stay legal, and it is safe as long as your guards are pure (no side effects), which they should be. A guard with side effects will run more often than your sends do.
 
 **Compared to `@xstate/test`.** `@xstate/test` builds a test model from the chart, walks the shortest or simple **paths** it generates, and runs per-state assertions at each state. Its coverage is systematic, but it only follows the paths it enumerates, and when something fails it reports the path it was on. In this library, that systematic walk is the [`xsm_path`](#path-generation) fixture. `model_test` works the other way round. It samples random legal sequences, which reach combinations of loops, payloads, timer races and snapshot restores that path enumeration never builds, and it shrinks each failure to a minimal sequence you can replay. The trade-off: it is probabilistic. A rare path can go unseen at a low `max_examples`, and a green run is evidence, not proof. Use both. `xsm_path` shows that every state is reachable, `model_test` looks for sequences that break your invariants, and `--xsm-coverage` shows what either one actually exercised.
+
+## Fake broker
+
+`FakeBrokerAdapter` (async) and `SyncFakeBrokerAdapter` (blocking) are in-memory brokers that satisfy the same `BrokerAdapter` contract suite as the real Kafka / RabbitMQ / NATS / SQS / Redis adapters: FIFO per subject, explicit ack / nack, a requeued nack goes back to the **head**, and a failed publish raises. Both are thread-safe.
+
+```python
+from xstate_statemachine.contrib.testing import SyncFakeBrokerAdapter
+from xstate_statemachine.eda import Envelope
+
+broker = SyncFakeBrokerAdapter()
+broker.deliver("orders", Envelope.new(type="xsm.o.PAY", subject="o-1"))
+d = next(broker.subscribe("orders", timeout=0))
+broker.nack(d, requeue=True)                   # back to the head
+d = next(broker.subscribe("orders", timeout=0))
+broker.ack(d)
+assert (len(broker.acked), len(broker.nacked), broker.in_flight) == (1, 1, 0)
+
+broker.fail_next_publish()                     # next publish raises
+try:
+    broker.publish("out", Envelope.new(type="xsm.o.DONE", subject="o-1"))
+except ConnectionError:                        # BrokerPublishError
+    pass
+assert broker.published_on("out") == []
+```
+
+| Affordance | Effect |
+|:--|:--|
+| `deliver(topic, env)` | Inbound traffic; **not** recorded in `published`. Anything but an `Envelope` is a `TypeError` (same as `publish`). |
+| `publish(topic, env)` | Recorded in `published` / `published_on(topic)` and queued. |
+| `fail_next_publish(error=None, *, times=1)` | The next *times* publishes raise *error* (default `BrokerPublishError`, a `ConnectionError`). |
+| `acked`, `nacked`, `in_flight`, `pending(topic)`, `topics()` | Counters for assertions. Settling a delivery twice is a no-op. |
+| `on(topic, handler)` + `drain()` | Run handlers until their topics are empty; a raising handler nacks without requeue and re-raises. |
+
+`replay(machine, records)` / `assert_replay_consistent(machine, log, key=…)` replay a transition log and fail with `AssertionError` at the first divergent `seq`.
 
 ## Guarantees
 
@@ -298,7 +337,7 @@ replay: xsm simulate tests/refund.json --script tests/failing.json
 
 > **Who can call this:** whoever runs your test suite. The plugin is active in every pytest session of a project that installed the library; it reads nothing and writes nothing until a test carries the marker.
 >
-> **What it exposes:** `logic=` imports and **calls** a dotted callable from your test — trusted code, the same trust as a `conftest.py` or `LogicLoader`; do not point it at untrusted modules. `--xsm-update-snapshots` writes files at the paths your tests name, resolved under the test tree. A snapshot file contains the machine's `context` **in clear text** — do not put secrets in a context you snapshot, or redact before asserting.
+> **What it exposes:** `logic=` imports and **calls** a dotted callable from your test — trusted code, the same trust as a `conftest.py` or `LogicLoader`; do not point it at untrusted modules. A marker is code: `logic="os:system"` would be imported and called like any other dotted name, so review markers as you review the test body. Snapshot diffs print the context values that differ, unredacted — it is your own context in your own test run. `--xsm-update-snapshots` writes files at the paths your tests name, resolved under the test tree. A snapshot file contains the machine's `context` **in clear text** — do not put secrets in a context you snapshot, or redact before asserting.
 >
 > **You must configure:** nothing for the sync engine. For the async engine, install `pytest-asyncio` and mark tests `@pytest.mark.asyncio`. Keep snapshot files under version control and review their diffs like code — a changed snapshot is a changed behaviour.
 
@@ -319,4 +358,10 @@ replay: xsm simulate tests/refund.json --script tests/failing.json
 | `UsageError: … xstate_guards_false only applies to stub logic` | `logic=` and `xstate_guards_false` on the same test | make the real guard return `False`, or drop `logic=` |
 | `SKIPPED … xsm_ainterp needs pytest-asyncio` | async fixture without a runner | `pip install pytest-asyncio`, mark the test `@pytest.mark.asyncio` |
 | `SnapshotMismatchError: no snapshot file at …` | first run of a new snapshot | run once with `--xsm-update-snapshots`, commit the file |
+| `UsageError: … the chart declares no guard named […]` | a name in `xstate_guards_false` that the chart does not use (typo, or a renamed guard) | fix the name; the message lists the known guards |
+| `UsageError: … logic='pkg.mod:make': cannot import 'pkg.mod'` | the dotted `logic=` module is not importable from the test session | fix the dotted path or put the package on `sys.path` (e.g. `pythonpath` in pytest config) |
+| `UsageError: … snapshot path … resolves outside the project` | an `xsm_snapshot` path that escapes the rootdir (`../`, absolute) | keep snapshot files under the rootdir |
+| `fixture 'xsm_ainterp' not found` / unawaited coroutine | async fixture used without `pytest-asyncio` | `pip install pytest-asyncio` and mark the test `@pytest.mark.asyncio` |
+| `--xsm-coverage` gate passes under `-n N` with "(no machines observed)" | a release before the xdist merge | upgrade; workers' reports are now merged on the controller |
+| `TypeError: deliver() needs an Envelope` | `FakeBrokerAdapter.deliver()` was given a dict or a string | wrap it: `Envelope.new(type=…, subject=…, data=…)` |
 | `RuntimeWarning: SimulatedClock.increment() … never awaited` | `xsm_clock.increment()` called without `await` under the async engine | `await xsm_clock.increment(ms)` or use `xsm_asend_all` |

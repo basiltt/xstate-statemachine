@@ -156,10 +156,17 @@ def _active_nodes(interp: SyncInterpreter) -> List[StateNode]:
 
 
 def _declares(interp: SyncInterpreter, event: str) -> bool:
+    # 📝 Battle #268: a machine whose root reached a final state is `done`
+    #    but keeps its last configuration; an event declared there is NOT
+    #    sendable (InterpreterStoppedError) -- the run has settled.
+    if interp.status != "running":
+        return False
     return any(event in n.on for n in _active_nodes(interp))
 
 
 def _timer_armed(interp: SyncInterpreter) -> bool:
+    if interp.status != "running":
+        return False
     return any(n.after for n in _active_nodes(interp))
 
 
@@ -308,8 +315,8 @@ def model_test(
         max_steps: Hypothesis ``stateful_step_count``.
         settings: A ``hypothesis.settings`` to start from.
         allow_denied: Also send events ``can()`` refuses (the precondition
-            becomes "some active state declares the event") and do not
-            fail on ``Receipt.denied``.
+            becomes "some active state declares the event"). A refused
+            event is never a failure either way.
         snapshot_roundtrip: A rule persisting the interpreter mid-sequence
             and continuing on the restored copy; a context that is not
             JSON-serialisable (or does not survive the trip) fails.
@@ -386,8 +393,11 @@ def model_test(
                 f"sending {event} raised {type(receipt.error).__name__}: "
                 f"{receipt.error}"
             )
-        if receipt.denied and not allow_denied:
-            self._fail(f"generated a denied event {event}")  # pragma: no cover
+        # 📝 No `receipt.denied` check (battle #268): `can()` already
+        #    gated the send, and a transition that round-trips through
+        #    `always` back to the same configuration reports
+        #    `changed=False, denied=True` when a sibling guard was refused
+        #    on the way -- a false "denied event" failure.
 
     def teardown(self: Any) -> None:
         if self.interp.status == "running":
