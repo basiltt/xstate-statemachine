@@ -30,6 +30,7 @@ import sys
 import tempfile
 import threading
 import time
+import re
 import unittest
 from typing import Any, Dict, List
 from unittest import mock
@@ -170,7 +171,11 @@ class TestX06Prometheus(unittest.TestCase):
         self.assertEqual(len(series), 1, series)
         self.assertIn('event="unknown"', series[0])
         self.assertNotIn("FUZZ_", out)
-        self.assertNotIn("12345", out)
+        # 📝 Check LABEL VALUES, not the whole scrape: a timing sample such
+        #    as `..._seconds_sum 0.0123456` can legitimately contain the
+        #    digits "12345" (seen once on the Coverage runner).
+        labels = re.findall(r'="([^"]*)"', out)
+        self.assertFalse([v for v in labels if "12345" in v], labels)
 
     def test_1000_declared_event_types_are_capped_to_other(self) -> None:
         from prometheus_client import CollectorRegistry
