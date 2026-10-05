@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import threading
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -38,6 +39,7 @@ __all__ = ["OpenTelemetryPlugin", "agent_span_exporter", "TRACER_NAME"]
 TRACER_NAME = "xstate_statemachine"
 
 _TRACEPARENT = re.compile(r"^00-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$")
+logger = logging.getLogger("xstate_statemachine.contrib.observability")
 
 
 def _parse_traceparent(value: Any) -> Optional[trace.SpanContext]:
@@ -73,6 +75,15 @@ def _incoming_traceparent(event: Any) -> Optional[str]:
 
 def _leaf_ids(states: Any) -> List[str]:
     return sorted(str(getattr(s, "id", s)) for s in states or ())
+
+
+def _active_with_ancestors(interpreter: Any) -> set:
+    out: set = set()
+    for sid in interpreter.current_state_ids:
+        parts = str(sid).split(".")
+        for n in range(1, len(parts) + 1):
+            out.add(".".join(parts[:n]))
+    return out
 
 
 class OpenTelemetryPlugin(PluginBase[Any]):
@@ -111,8 +122,26 @@ class OpenTelemetryPlugin(PluginBase[Any]):
         self._lock = threading.Lock()
         #: id(interp) -> stack of (event, span, actions)
         self._events: Dict[int, List[Tuple[Any, Any, List[str]]]] = {}
-        #: (id(interp), invoke id) -> span
-        self._services: Dict[Tuple[int, str], Any] = {}
+        #: (id(interp), invoke id) -> (span, owning state id)
+        self._services: Dict[Tuple[int, str], Tuple[Any, str]] = {}
+        #: battle #273: a tracer whose `start_span` raises (SDK
+        #: misconfiguration) is permanent -- the plugin goes inert
+        #: after ONE warning instead of one contained error per event.
+        self._disabled = False
+
+    def _start_span(self, name: str, **kw: Any) -> Any:
+        if self._disabled:
+            return None
+        try:
+            return self.tracer.start_span(name, **kw)
+        except Exception as exc:  # noqa: BLE001 -- observability never
+            self._disabled = True  # breaks the thing it observes
+            logger.warning(
+                "OpenTelemetryPlugin: tracer.start_span raised %r; tracing "
+                "disabled for this plugin instance (reported once)",
+                exc,
+            )
+            return None
 
     # -- helpers ----------------------------------------------------------
     def _current(self, interp: Any) -> Optional[Tuple[Any, Any, List[str]]]:
@@ -134,7 +163,7 @@ class OpenTelemetryPlugin(PluginBase[Any]):
         ctx = _parse_traceparent(_incoming_traceparent(event))
         if ctx is not None:
             links.append(Link(ctx, {"statechart.link": "traceparent"}))
-        span = self.tracer.start_span(
+        span = self._start_span(
             "statechart.transition",
             links=links,
             attributes={
@@ -145,6 +174,8 @@ class OpenTelemetryPlugin(PluginBase[Any]):
                 "statechart.from": _leaf_ids(interpreter.current_state_ids),
             },
         )
+        if span is None:
+            return
         with self._lock:
             self._events.setdefault(id(interpreter), []).append(
                 (event, span, [])
@@ -174,7 +205,7 @@ class OpenTelemetryPlugin(PluginBase[Any]):
         parent = cur[1] if cur is not None else None
         ctx = trace.set_span_in_context(parent) if parent else None
         target = getattr(transition, "resolved_target", None)
-        span = self.tracer.start_span(
+        span = self._start_span(
             "statechart.microstep",
             context=ctx,
             attributes={
@@ -185,11 +216,13 @@ class OpenTelemetryPlugin(PluginBase[Any]):
                 ),
             },
         )
-        span.end()
+        if span is not None:
+            span.end()
 
     def on_event_processed(
         self, interpreter: Any, event: Any, receipt: Any
     ) -> None:
+        self._end_cancelled_services(interpreter)
         with self._lock:
             stack = self._events.get(id(interpreter))
             if not stack:
@@ -250,9 +283,14 @@ class OpenTelemetryPlugin(PluginBase[Any]):
 
     # -- services ---------------------------------------------------------
     def on_service_start(self, interpreter: Any, invocation: Any) -> None:
+        key = (id(interpreter), str(invocation.id))
+        # battle #273: a re-entered state restarts its invoke under the
+        # SAME id; the previous span was overwritten and never ended
+        # (leaked until process exit). End it as cancelled first.
+        self._end_service(interpreter, invocation, cancelled=True)
         cur = self._current(interpreter)
         ctx = trace.set_span_in_context(cur[1]) if cur is not None else None
-        span = self.tracer.start_span(
+        span = self._start_span(
             "statechart.service",
             context=ctx,
             attributes={
@@ -260,20 +298,60 @@ class OpenTelemetryPlugin(PluginBase[Any]):
                 "service.src": str(getattr(invocation, "src", "")),
             },
         )
-        with self._lock:
-            self._services[(id(interpreter), str(invocation.id))] = span
-
-    def _end_service(self, interpreter: Any, invocation: Any, error=None):
-        with self._lock:
-            span = self._services.pop(
-                (id(interpreter), str(invocation.id)), None
-            )
         if span is None:
             return
+        owner = str(getattr(getattr(invocation, "source", None), "id", ""))
+        with self._lock:
+            self._services[key] = (span, owner)
+
+    def _end_service(
+        self,
+        interpreter: Any,
+        invocation: Any,
+        error: Any = None,
+        *,
+        cancelled: bool = False,
+    ) -> None:
+        with self._lock:
+            entry = self._services.pop(
+                (id(interpreter), str(invocation.id)), None
+            )
+        if entry is None:
+            return
+        self._close_service_span(entry[0], error, cancelled)
+
+    @staticmethod
+    def _close_service_span(span: Any, error: Any, cancelled: bool) -> None:
+        if cancelled:
+            span.set_attribute("statechart.cancelled", True)
         if error is not None:
             span.record_exception(error)
             span.set_status(Status(StatusCode.ERROR, type(error).__name__))
         span.end()
+
+    def _end_cancelled_services(self, interpreter: Any) -> None:
+        """battle #273: exiting a state cancels its invoke and NO hook fires
+        for that (there is no `on_service_cancelled`). After each event,
+        any tracked service whose owning state is no longer active was
+        cancelled: end its span, marked, so it is exported instead of
+        leaking until the interpreter stops."""
+        with self._lock:
+            mine = [
+                (k, v)
+                for k, v in self._services.items()
+                if k[0] == id(interpreter)
+            ]
+        if not mine:
+            return
+        active = _active_with_ancestors(interpreter)
+        gone = [(k, v) for k, v in mine if v[1] and v[1] not in active]
+        if not gone:
+            return
+        with self._lock:
+            for k, _v in gone:
+                self._services.pop(k, None)
+        for _k, (span, _owner) in gone:
+            self._close_service_span(span, None, True)
 
     def on_service_done(
         self, interpreter: Any, invocation: Any, result: Any
@@ -287,14 +365,25 @@ class OpenTelemetryPlugin(PluginBase[Any]):
 
     def on_interpreter_stop(self, interpreter: Any) -> None:
         """End anything still open so no span leaks past the actor."""
+        self._end_all(interpreter)
+
+    def on_done(self, interpreter: Any, output: Any) -> None:
+        # battle #273: a top-level final / `_fail` reaps the machine without
+        # `on_interpreter_stop`; open spans must still close.
+        self._end_all(interpreter)
+
+    def on_error(self, interpreter: Any, error: BaseException) -> None:
+        self._end_all(interpreter)
+
+    def _end_all(self, interpreter: Any) -> None:
         with self._lock:
             stack = self._events.pop(id(interpreter), [])
             services = [k for k in self._services if k[0] == id(interpreter)]
-            spans = [self._services.pop(k) for k in services]
+            entries = [self._services.pop(k) for k in services]
         for _, span, _a in stack:
             span.end()
-        for span in spans:
-            span.end()
+        for span, _owner in entries:
+            self._close_service_span(span, None, True)
 
 
 def agent_span_exporter(
