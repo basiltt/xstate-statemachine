@@ -13,6 +13,21 @@
 #    matched on the `TransitionDefinition` object the engine executed, so
 #    the numerator and the denominator can never disagree on labels.
 #
+# ⚠️ The transition denominator is STATICALLY DECLARED, not
+#    engine-reachable: 100 % may be unattainable. Battle #270 replayed
+#    every edge `graph` finds (guards="both", depth 8) on 30 corpus
+#    charts: 0 hits outside the denominator, 105 of 731 targets never
+#    hit. Categories: a targetless/self-target `on` (31 -- the engine
+#    takes and counts it, but `graph` drops steps that leave the
+#    configuration unchanged, so generated paths never include it); an
+#    `always` whose guard alternatives shadow it (20);
+#    a source state the exploration never reaches (35: depth bound,
+#    unreachable region, a `*` handler on the root); an `invoke`
+#    onDone/onError of an inline actor the stubs cannot drive (16); a
+#    named `after` delay with no implementation (1). No cheap static
+#    rule separates these from "the suite missed it", so no
+#    `unreachable` field is offered.
+#
 # 🧵 One collector may observe interpreters on many threads (the sync
 #    engine's daemon threads, a pytest session with xdist-free threads):
 #    every mutation happens under one lock.
@@ -41,6 +56,7 @@ from __future__ import annotations
 import html
 import json
 import threading
+import weakref
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
@@ -70,9 +86,10 @@ __all__ = [
 COVERAGE_SCHEMA_VERSION = 1
 
 Triple = Tuple[str, str, str]
+Machine = MachineNode[Any]
 
 
-def machine_key(machine: MachineNode) -> str:
+def machine_key(machine: Machine) -> str:
     """``"<machine id>@<structure_hash>"`` -- two builds of the same chart
     share a key; an edited chart gets a new one."""
     return f"{machine.id}@{machine.structure_hash}"
@@ -184,19 +201,47 @@ class CoverageReport:
 # -----------------------------------------------------------------------------
 # 🔌 Collector
 # -----------------------------------------------------------------------------
-class _MachineData:
-    __slots__ = ("machine", "index", "states", "hits")
+def _index_of(machine: Machine) -> Dict[int, Triple]:
+    """``id(TransitionDefinition)`` → coverage triple for one build."""
+    index: Dict[int, Triple] = {}
+    for node in walk(machine):
+        for label, t in transitions_of(node):
+            target = t.resolved_target
+            index[id(t)] = (node.id, label, (target or node).id)
+    return index
 
-    def __init__(self, machine: MachineNode) -> None:
-        #: 📝 Held so `id()` keys in `index` cannot be recycled.
+
+class _MachineData:
+    """Observations for one structure key (shared by every build)."""
+
+    __slots__ = ("machine", "states", "hits")
+
+    def __init__(self, machine: Machine) -> None:
+        #: 📝 The first build seen; used for `machines()` / `report()`.
         self.machine = machine
-        self.index: Dict[int, Triple] = {}
-        for node in walk(machine):
-            for label, t in transitions_of(node):
-                target = t.resolved_target
-                self.index[id(t)] = (node.id, label, (target or node).id)
         self.states: Set[str] = set()
         self.hits: Set[Triple] = set()
+
+
+class _Build:
+    """One machine OBJECT: its own transition index + the shared data.
+
+    📝 Held only weakly (battle #270): a rebuilt chart per test must not
+    keep every earlier build, and its index, alive for the session. The
+    index is per build, so a recycled ``id()`` can never be looked up in
+    an index that outlived its machine.
+    """
+
+    __slots__ = ("ref", "index", "data")
+
+    def __init__(
+        self, ref: "weakref.ref[Machine]", data: _MachineData
+    ) -> None:
+        machine = ref()
+        assert machine is not None
+        self.ref = ref
+        self.index = _index_of(machine)
+        self.data = data
 
 
 class CoverageCollector(PluginBase[Any]):
@@ -212,38 +257,71 @@ class CoverageCollector(PluginBase[Any]):
     """
 
     def __init__(self) -> None:
-        self._lock = threading.Lock()
+        # 📝 Re-entrant: a weakref callback (`_forget`) can fire on this
+        #    thread from a GC triggered while the lock is already held.
+        self._lock = threading.RLock()
         self._data: Dict[str, _MachineData] = {}
         #: 📝 Per machine OBJECT (a rebuilt chart has new transition
-        #:    objects) → the key its data is filed under.
-        self._by_obj: Dict[int, Tuple[MachineNode, _MachineData]] = {}
+        #:    objects), weakly held; entries vanish with their machine.
+        self._by_obj: Dict[int, _Build] = {}
 
     # -------------------------------------------------------------- recording
-    def _data_for(self, machine: MachineNode) -> _MachineData:
+    def _forget(self, ref: "weakref.ref[Machine]") -> None:
+        # 📝 Weakref callback: may run on any thread, at any GC point.
+        with self._lock:
+            for k, b in list(self._by_obj.items()):
+                if b.ref is ref:
+                    del self._by_obj[k]
+
+    def _build_for(self, machine: Machine) -> _Build:
         hit = self._by_obj.get(id(machine))
-        if hit is not None and hit[0] is machine:
-            return hit[1]
+        if hit is not None and hit.ref() is machine:
+            return hit
         key = machine_key(machine)
         data = self._data.get(key)
         if data is None:
             data = self._data[key] = _MachineData(machine)
-        elif data.machine is not machine:
-            # 🔁 Same structure, different build: add its transition
-            #    objects to the index so hits are recognised.
-            data.index.update(_MachineData(machine).index)
-        self._by_obj[id(machine)] = (machine, data)
-        return data
+        build = _Build(weakref.ref(machine, self._forget_cb()), data)
+        self._by_obj[id(machine)] = build
+        return build
+
+    def _forget_cb(self) -> Any:
+        # 📝 A weak reference to self: the callback must not keep the
+        #    collector alive through every machine it has seen.
+        me = weakref.ref(self)
+
+        def cb(ref: "weakref.ref[Machine]") -> None:
+            col = me()
+            if col is not None:
+                col._forget(ref)
+
+        return cb
+
+    def _data_for(self, machine: Machine) -> _MachineData:
+        return self._build_for(machine).data
+
+    @staticmethod
+    def _add_config(
+        data: _MachineData, machine: Machine, nodes: Iterable[Any]
+    ) -> None:
+        states = data.states
+        for node in nodes:
+            # 📝 States are always recorded with their whole ancestor
+            #    chain, so a known state means a known chain: stop.
+            while (
+                node is not None
+                and node is not machine
+                and node.id not in states
+            ):
+                states.add(node.id)
+                node = node.parent
 
     def _record_config(self, interpreter: Any, nodes: Iterable[Any]) -> None:
         machine = getattr(interpreter, "machine", None)
         if not isinstance(machine, MachineNode):
             return
         with self._lock:
-            data = self._data_for(machine)
-            for node in nodes:
-                while node is not None and node is not machine:
-                    data.states.add(node.id)
-                    node = node.parent
+            self._add_config(self._data_for(machine), machine, nodes)
 
     def on_interpreter_start(self, interpreter: Any) -> None:
         # 📝 Fresh interpreters have an empty configuration here (the init
@@ -260,15 +338,15 @@ class CoverageCollector(PluginBase[Any]):
         to_states: Any,
         transition: Any,
     ) -> None:
-        self._record_config(interpreter, list(to_states))
         machine = getattr(interpreter, "machine", None)
         if not isinstance(machine, MachineNode):
             return
         with self._lock:
-            data = self._data_for(machine)
-            triple = data.index.get(id(transition))
+            build = self._build_for(machine)
+            self._add_config(build.data, machine, to_states)
+            triple = build.index.get(id(transition))
             if triple is not None:
-                data.hits.add(triple)
+                build.data.hits.add(triple)
 
     # -------------------------------------------------------------- merging
     def merge(self, other: "CoverageCollector") -> None:
@@ -285,7 +363,7 @@ class CoverageCollector(PluginBase[Any]):
                 data.hits |= hits
 
     # -------------------------------------------------------------- reports
-    def report(self, machine: MachineNode) -> CoverageReport:
+    def report(self, machine: Machine) -> CoverageReport:
         """Coverage of *machine* (all zeros if never observed)."""
         key = machine_key(machine)
         with self._lock:
@@ -311,7 +389,7 @@ class CoverageCollector(PluginBase[Any]):
             unhit=tuple(sorted(targets - hits)),
         )
 
-    def machines(self) -> List[MachineNode]:
+    def machines(self) -> List[Machine]:
         """Every machine observed so far (one per structure key)."""
         with self._lock:
             return [d.machine for _, d in sorted(self._data.items())]
@@ -375,6 +453,18 @@ def format_edge(triple: Triple, machine_id: str) -> str:
     )
 
 
+#: The terminal summary lists at most this many names per line; the
+#: JSON / HTML reports always carry the complete lists.
+TEXT_LIST_LIMIT = 20
+
+
+def _capped(items: List[str]) -> str:
+    if len(items) <= TEXT_LIST_LIMIT:
+        return ", ".join(items)
+    rest = len(items) - TEXT_LIST_LIMIT
+    return ", ".join(items[:TEXT_LIST_LIMIT]) + f", ... and {rest} more"
+
+
 def reports_to_text(
     reports: Iterable[CoverageReport], *, header: bool = True
 ) -> str:
@@ -397,10 +487,10 @@ def reports_to_text(
             f"({_fmt_pct(r.transition_percent)})"
         )
         if r.unvisited:
-            names = ", ".join(_short(s, r.machine_id) for s in r.unvisited)
+            names = _capped([_short(s, r.machine_id) for s in r.unvisited])
             lines.append(f"  unvisited: {names}")
         if r.unhit:
-            edges = ", ".join(format_edge(u, r.machine_id) for u in r.unhit)
+            edges = _capped([format_edge(u, r.machine_id) for u in r.unhit])
             lines.append(f"  unhit:     {edges}")
     if not reports:
         lines.append("(no machines observed)")
@@ -465,7 +555,15 @@ def below(
     state: Optional[float] = None,
     transition: Optional[float] = None,
 ) -> List[str]:
-    """Human-readable failures of the ``fail-under`` thresholds."""
+    """Human-readable failures of the ``fail-under`` thresholds.
+
+    Raises:
+        ValueError: A threshold is NaN or outside ``0..100`` (a NaN
+            compares false with everything and would disable the gate).
+    """
+    for name, v in (("state", state), ("transition", transition)):
+        if v is not None and not 0.0 <= v <= 100.0:
+            raise ValueError(f"{name} threshold must be 0..100, got {v!r}")
     out: List[str] = []
     for r in reports:
         if state is not None and r.state_percent < state:
