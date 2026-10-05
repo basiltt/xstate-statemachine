@@ -609,7 +609,7 @@ xsm sim checkout.json -e SUBMIT --guards-false isFormValid --json
 xsm sim checkout.json --script steps.json --json
 ```
 
-`--events` / `--clock` / `--script` / `--json` — or simply not having a terminal — put the command in scripted mode. It replays the commands, prints each step and the final state, and exits 0 (or 1 if the file does not build). The script file is a JSON list of `{"send": "GO"}`, `{"send": "GO", "payload": {...}}`, `{"clock": 500}`, `{"guard": "g", "value": false}`, `{"undo": true}`, `{"reset": true}`.
+`--events` / `--clock` / `--script` / `--json` — or simply not having a terminal — put the command in scripted mode. It replays the commands, prints each step and the final state, and exits 0 (or 1 if the file does not build). The script file is a JSON list of `{"send": "GO"}`, `{"send": "GO", "payload": {...}}`, `{"clock": 500}`, `{"guard": "g", "value": false}`, `{"undo": true}`, `{"reset": true}`. A malformed script — not a list, a step without `send` / `clock` / `guard` / `undo` / `reset`, a non-object `payload`, a negative or non-numeric `clock`, a non-boolean `value` — is one error line naming the step, exit 2. The file is parsed as JSON only; nothing in it is evaluated. `--script` cannot be combined with `--events` / `--clock` (exit 2): a replay runs exactly the recorded steps. `--guards-false` sets the starting value of those guards; a script's `{"guard": …}` step overrides it from that step on. A [`model_test`](../integration-testing/#model-based-testing) failure writes exactly this format, so its artefact replays with `xsm sim chart.json --script failing.json`. (`--record` is different: it writes an Inspector JSON Lines file for `xsm replay`, not a script.)
 
 ```
   → SUBMIT  challenge

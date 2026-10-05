@@ -236,6 +236,58 @@ def run_script(session: Session, commands: List[Dict[str, Any]]) -> None:
             raise ValueError(f"unknown script command {cmd!r}")
 
 
+def load_script(path: str) -> List[Dict[str, Any]]:
+    """Read and validate a ``--script`` file, or raise ``ValueError``.
+
+    🔥 #271 battle: a malformed script (bad JSON, an object instead of a
+    list, a command without ``send``, a ``payload`` list, ``"clock": -5``,
+    ``"value": "false"``) escaped as a traceback. Every defect is now one
+    line naming the step. 📝 Pure ``json.loads`` -- nothing is evaluated.
+    """
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise ValueError(f"--script {path}: {exc.strerror or exc}") from None
+    except ValueError as exc:
+        raise ValueError(f"--script {path}: not valid JSON: {exc}") from None
+    if not isinstance(data, list):
+        raise ValueError(
+            f"--script {path}: expected a JSON list of commands, "
+            f"got {type(data).__name__}"
+        )
+    for n, cmd in enumerate(data, 1):
+        _check_command(cmd, f"--script {path}: step {n}")
+    return data
+
+
+def _check_command(cmd: Any, where: str) -> None:
+    if not isinstance(cmd, dict):
+        raise ValueError(f"{where}: expected an object, got {cmd!r}")
+    if "send" in cmd:
+        if not isinstance(cmd["send"], str) or not cmd["send"]:
+            raise ValueError(f"{where}: 'send' must be an event name")
+        payload = cmd.get("payload")
+        if payload is not None and not isinstance(payload, dict):
+            raise ValueError(f"{where}: 'payload' must be an object")
+        if payload and any(not isinstance(k, str) for k in payload):
+            raise ValueError(f"{where}: payload keys must be strings")
+    elif "clock" in cmd:
+        ms = cmd["clock"]
+        if isinstance(ms, bool) or not isinstance(ms, (int, float)):
+            raise ValueError(f"{where}: 'clock' must be a number of ms")
+        _advance_ms(str(ms), f"{where}: clock {ms}")
+    elif "guard" in cmd:
+        if not isinstance(cmd["guard"], str):
+            raise ValueError(f"{where}: 'guard' must be a guard name")
+        if not isinstance(cmd.get("value", True), bool):
+            raise ValueError(f"{where}: 'value' must be true or false")
+    elif not (cmd.get("undo") or cmd.get("reset")):
+        raise ValueError(
+            f"{where}: unknown command {cmd!r} (expected send / clock / "
+            f"guard / undo / reset)"
+        )
+
+
 def parse_events_arg(
     events: Optional[str], clock: Optional[str]
 ) -> List[Dict[str, Any]]:
@@ -553,7 +605,16 @@ def run_simulate(
         raise SystemExit(1)
 
     try:
+        if script and (events or clock):
+            # 📝 #271 battle: the two used to concatenate (events FIRST),
+            #    so a replayed artefact silently ran after extra steps.
+            raise ValueError(
+                "--script cannot be combined with --events / --clock; "
+                "put every step in the script"
+            )
         commands = parse_events_arg(events, clock)
+        if script:
+            commands += load_script(script)
     except ValueError as exc:
         session.stop()
         if recorder is not None:
@@ -562,8 +623,6 @@ def run_simulate(
         logging.disable(logging.NOTSET)
         c.error(str(exc))
         raise SystemExit(2)
-    if script:
-        commands += json.loads(Path(script).read_text(encoding="utf-8"))
     scripted = bool(commands) or as_json or not (c.interactive or source)
 
     try:
