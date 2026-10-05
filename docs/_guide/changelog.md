@@ -15,38 +15,7 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ## [Unreleased]
 
-### Fixed
-
-- **`--xsm-coverage` under pytest-xdist** (#268 battle): with `-n N` the
-  controller printed "(no machines observed)" and the
-  `--xsm-fail-under-*` gate passed whatever the suite covered. Workers now
-  ship their reports to the controller, which merges them by machine and
-  prints, writes and gates once.
-- **`model_test` false failures** (#268 battle): on a chart whose root
-  reaches a top-level final state, event rules stayed enabled after the
-  machine was `done` and the run failed with `InterpreterStoppedError`.
-  A transition that comes back to the same configuration through
-  `always` failed as "generated a denied event" even though `can()` had
-  accepted it. Both now pass; a refused event is never a model failure.
-- **`FakeBrokerAdapter.deliver()` / `SyncFakeBrokerAdapter.deliver()`**
-  raise `TypeError` for a non-`Envelope`, like `publish()`, instead of
-  failing later inside the consumer.
-
-### Added
-
-- `contrib.testing` now exports `SyncFakeBrokerAdapter` and
-  `BrokerPublishError` (both were documented but importable only from
-  `contrib.testing.broker`).
-- Perf row `pytest_plugin_per_test` (`null` budget until the reference
-  runner records one).
-
-### Documentation
-
-- Testing guide: a "Fake broker" section; coverage under xdist;
-  `model_test` has no built-in invariants and pins `deadline=None`;
-  `--xsm-failing-dir` in the options table; the threat model notes that
-  a marker's `logic=` is code and that snapshot diffs print context
-  unredacted; six new Troubleshooting rows.
+_No unreleased changes yet._
 
 ## [0.11.0] - 2026-10-01
 
@@ -1500,6 +1469,35 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
   deterministically, `"+nan"` / `"+-5"` / `"+inf"` in `xsm_send_all` are
   errors not hangs, `-p no:xstate_statemachine` leaves a marker-less
   module untouched.
+  **The adversary suites then found:** `--xsm-coverage` under
+  pytest-xdist always PASSED -- workers collected, the controller printed
+  "(no machines observed)" and gated nothing; workers now ship reports to
+  the controller, which merges, prints, writes and gates once (same JSON
+  as a serial run). `model_test` failed falsely on a chart whose root
+  reaches a final state (event rules stayed enabled after `done` →
+  `InterpreterStoppedError`) and on an `always` that returns to the same
+  configuration ("generated a denied event" after `can()` accepted it).
+  `FakeBrokerAdapter.deliver()` accepted a non-`Envelope` and failed later
+  inside the consumer (`TypeError` at the call now); `SyncFakeBrokerAdapter`
+  / `BrokerPublishError` are exported from `contrib.testing`. In the
+  plugin: a logic module raising anything but `ImportError` escaped as a
+  traceback (one usage error naming file:line); `logic=` now also takes a
+  `MachineLogic` instance or a zero-arg callable; context **sets** rendered
+  in hash order so a snapshot recorded under one `PYTHONHASHSEED` failed
+  under another (sorted lists); two tests writing different content to
+  one snapshot path silently last-won (refused); Windows `\?\` resolved
+  paths were intermittently refused as "outside the project"; snapshot
+  writes are atomic (temp + `os.replace`, LF). `xsm_send_all` /
+  `xsm_asend_all` gain a payload form (`Event`, `{"type": ...}` dict,
+  `("TYPE", {...})` tuple) and refuse `""`, `"A,B"` and `"++5"` (the empty
+  string sent nothing, the comma sent two events, `++5` advanced 5 ms).
+  `xsm gt -t pytest` on a chart the engine rejects exits 1 with one line
+  instead of a traceback. `pytest_plugin.py` split into `_marker.py` /
+  `_snapshots.py` (public import path unchanged). Perf row
+  `pytest_plugin_per_test` (p50 ≈ 1.1 ms); testing guide gains a Fake
+  broker section, coverage-under-xdist, `model_test` invariants/deadline
+  notes, `--xsm-failing-dir`, threat-model notes (a marker's `logic=` is
+  code; diffs print context unredacted) and six Troubleshooting rows.
 - **Path generation, as battle-tested (#269).** The explorer replayed
   the WHOLE prefix for every candidate edge -- O(depth) engine runs per
   edge: the 35-state parallel `addressFields` chart (3 456
