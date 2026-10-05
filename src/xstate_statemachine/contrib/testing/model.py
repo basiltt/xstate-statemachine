@@ -29,7 +29,6 @@ from __future__ import annotations
 import json
 import pathlib
 import sys
-import typing
 from typing import (
     Any,
     Callable,
@@ -37,7 +36,6 @@ from typing import (
     List,
     Mapping,
     Optional,
-    Sequence,
     Set,
     Tuple,
     Union,
@@ -45,14 +43,18 @@ from typing import (
 
 from ...clock import SimulatedClock
 from ...events import Event
-from ...exceptions import MissingExtraError
 from ...factory import create_machine
-from ...graph import UNKNOWN_DELAY_MS
+from ...graph import UNKNOWN_DELAY_MS  # type: ignore[attr-defined]
 from ...machine_logic import MachineLogic
 from ...models import MachineNode, StateNode
 from ...sync_interpreter import SyncInterpreter
 from ...testing_utils import logic_names, stub_logic
 from ...validation import walk
+from ._model_payloads import (
+    _hypothesis,
+    _payload_strategies,
+    payload_strategy,
+)
 
 __all__ = ["model_test", "events_strategy", "payload_strategy"]
 
@@ -64,24 +66,14 @@ FAILING_NAME = "failing.json"
 _JITTER_MS = (-1, 0, 1)
 
 
-def _hypothesis() -> Any:
-    try:
-        import hypothesis  # noqa: F401
-    except ImportError as exc:
-        raise MissingExtraError(
-            "testing", "hypothesis", hint=f"(import failed: {exc})"
-        ) from exc
-    return hypothesis
-
-
 # -----------------------------------------------------------------------------
 # 🏗️ Machine + chart facts
 # -----------------------------------------------------------------------------
 def _load(
-    source: Union[str, pathlib.Path, Mapping[str, Any], MachineNode],
+    source: Union[str, pathlib.Path, Mapping[str, Any], MachineNode[Any]],
     logic: Any,
     guards: Dict[str, bool],
-) -> Tuple[MachineNode, bool, Optional[pathlib.Path]]:
+) -> Tuple[MachineNode[Any], bool, Optional[pathlib.Path]]:
     """``(machine, stubbed, json_path)``."""
     if isinstance(source, MachineNode):
         if logic is not None:
@@ -109,7 +101,7 @@ def _load(
         )
     if callable(logic) and not isinstance(logic, MachineLogic):
         logic = logic()
-    if not isinstance(logic, MachineLogic):
+    if not _is_machine_logic(logic):
         raise TypeError(
             f"model_test: logic= must be a MachineLogic or a factory "
             f"returning one, got {type(logic).__name__}"
@@ -117,7 +109,19 @@ def _load(
     return create_machine(config, logic=logic), False, path
 
 
-def _declared_events(machine: MachineNode) -> List[str]:
+def _is_machine_logic(obj: Any) -> bool:
+    """`isinstance` that also accepts a `MachineLogic` from a SECOND copy
+    of the package (an example app importing the installed library while
+    the test imports `src.`) -- duck-typed on the three tables."""
+    if isinstance(obj, MachineLogic):
+        return True
+    return type(obj).__name__ == "MachineLogic" and all(
+        isinstance(getattr(obj, k, None), dict)
+        for k in ("actions", "guards", "services")
+    )
+
+
+def _declared_events(machine: MachineNode[Any]) -> List[str]:
     """Every concrete event a state declares in ``on`` (no wildcards, no
     ``always``, no engine-minted ``done.*`` / ``error.*`` / ``after``)."""
     found: Set[str] = set()
@@ -132,7 +136,7 @@ def _declared_events(machine: MachineNode) -> List[str]:
     return sorted(found)
 
 
-def _delays(machine: MachineNode) -> List[float]:
+def _delays(machine: MachineNode[Any]) -> List[float]:
     out: Set[float] = set()
     for node in walk(machine):
         for key in node.after:
@@ -151,11 +155,11 @@ def _delays(machine: MachineNode) -> List[float]:
     return sorted(out)
 
 
-def _active_nodes(interp: SyncInterpreter) -> List[StateNode]:
+def _active_nodes(interp: SyncInterpreter[Any]) -> List[StateNode[Any]]:
     return list(interp._active_state_nodes)
 
 
-def _declares(interp: SyncInterpreter, event: str) -> bool:
+def _declares(interp: SyncInterpreter[Any], event: str) -> bool:
     # 📝 Battle #268: a machine whose root reached a final state is `done`
     #    but keeps its last configuration; an event declared there is NOT
     #    sendable (InterpreterStoppedError) -- the run has settled.
@@ -164,94 +168,13 @@ def _declares(interp: SyncInterpreter, event: str) -> bool:
     return any(event in n.on for n in _active_nodes(interp))
 
 
-def _timer_armed(interp: SyncInterpreter) -> bool:
+def _timer_armed(interp: SyncInterpreter[Any], clock: SimulatedClock) -> bool:
+    """A live timer on the model's clock (battle #271: ``after`` only
+    missed ``raise``/``sendTo`` ``delay`` and spawned children's timers,
+    which share the clock)."""
     if interp.status != "running":
         return False
-    return any(n.after for n in _active_nodes(interp))
-
-
-# -----------------------------------------------------------------------------
-# 📦 Payload strategies
-# -----------------------------------------------------------------------------
-def _annotation_strategy(st: Any, ann: Any) -> Any:
-    origin = typing.get_origin(ann)
-    args = typing.get_args(ann)
-    if ann is Any:
-        return st.none()
-    if origin is typing.Literal:
-        return st.sampled_from(args)
-    if origin is Union:
-        inner = [_annotation_strategy(st, a) for a in args]
-        if any(s is None for s in inner):
-            return None
-        return st.one_of(*inner)
-    if origin in (list, List, Sequence) and args:
-        item = _annotation_strategy(st, args[0])
-        return None if item is None else st.lists(item, max_size=5)
-    table = {
-        type(None): st.none(),
-        bool: st.booleans(),
-        int: st.integers(-1000, 1000),
-        float: st.floats(-1e6, 1e6, allow_nan=False, allow_infinity=False),
-        str: st.text(max_size=20),
-    }
-    return table.get(ann)
-
-
-def payload_strategy(schema: Any) -> Any:
-    """A Hypothesis strategy of payload dicts inferred from a pydantic model
-    (an `EventModel`, or a validator built by `events_union`).
-
-    Minimal type mapping: ``bool``, ``int``, ``float``, ``str``, ``None``,
-    ``Literal[...]``, ``Optional`` / ``Union`` of those and ``List[...]``.
-
-    Raises:
-        ValueError: A required field whose type is outside that mapping --
-            pass ``payloads={EVENT: strategy}`` for it instead.
-    """
-    hyp = _hypothesis()
-    st = hyp.strategies
-    model = getattr(schema, "__xsm_event_model__", schema)
-    fields = getattr(model, "model_fields", None)
-    if not isinstance(fields, dict):
-        return st.just({})
-    required: Dict[str, Any] = {}
-    optional: Dict[str, Any] = {}
-    for name, info in fields.items():
-        if name == "type":
-            continue
-        strat = _annotation_strategy(st, info.annotation)
-        if strat is None:
-            if info.is_required():
-                raise ValueError(
-                    f"model_test: cannot infer a strategy for "
-                    f"{getattr(model, '__name__', model)}.{name}: "
-                    f"{info.annotation!r}; pass payloads={{...: strategy}}"
-                )
-            continue
-        (required if info.is_required() else optional)[name] = strat
-    return st.fixed_dictionaries(required, optional=optional)
-
-
-def _payload_strategies(
-    machine: MachineNode, events: List[str], payloads: Mapping[str, Any]
-) -> Dict[str, Any]:
-    st = _hypothesis().strategies
-    out: Dict[str, Any] = {}
-    unknown = sorted(set(payloads) - set(events))
-    if unknown:
-        raise ValueError(
-            f"model_test: payloads= names events the chart does not "
-            f"declare: {unknown}"
-        )
-    for ev in events:
-        if ev in payloads:
-            out[ev] = payloads[ev]
-        elif ev in machine.event_schemas:
-            out[ev] = payload_strategy(machine.event_schemas[ev])
-        else:
-            out[ev] = st.just({})
-    return out
+    return clock.pending > 0 or any(n.after for n in _active_nodes(interp))
 
 
 # -----------------------------------------------------------------------------
@@ -276,7 +199,9 @@ def _write_failing(
 # 🎲 model_test
 # -----------------------------------------------------------------------------
 def model_test(
-    machine_or_path: Union[str, pathlib.Path, Mapping[str, Any], MachineNode],
+    machine_or_path: Union[
+        str, pathlib.Path, Mapping[str, Any], MachineNode[Any]
+    ],
     *,
     logic: Any = None,
     invariants: Optional[Mapping[str, Check]] = None,
@@ -310,8 +235,10 @@ def model_test(
         payloads: ``EVENT -> strategy`` of payload dicts. Unlisted events
             are inferred from ``event_schemas`` (pydantic `EventModel`
             fields), else sent without a payload.
-        clock: Generate a rule advancing the `SimulatedClock` by a declared
-            ``after`` delay (±1 ms jitter) while a timer is armed.
+        clock: Generate a rule advancing the `SimulatedClock` while any
+            timer is pending (``after``, ``raise``/``sendTo`` ``delay``, a
+            child's timer): either to the next pending timer, or by a
+            declared ``after`` delay, each ±1 ms jitter.
         max_steps: Hypothesis ``stateful_step_count``.
         settings: A ``hypothesis.settings`` to start from.
         allow_denied: Also send events ``can()`` refuses (the precondition
@@ -319,7 +246,10 @@ def model_test(
             event is never a failure either way.
         snapshot_roundtrip: A rule persisting the interpreter mid-sequence
             and continuing on the restored copy; a context that is not
-            JSON-serialisable (or does not survive the trip) fails.
+            JSON-serialisable (or does not survive the trip) fails -- a
+            `Decimal` in context fails on purpose: `get_snapshot()` would
+            restore it as a ``str``. Dormant invokes are restarted on the
+            restored copy (``restart_services=True``).
         guard_flip: With stub logic, a rule flipping stub guards (recorded
             in the script as ``{"guard": name, "value": bool}``).
         failing_path: Where to write the minimal failing sequence
@@ -339,6 +269,24 @@ def model_test(
 
     guards: Dict[str, bool] = {}
     machine, stubbed, json_path = _load(machine_or_path, logic, guards)
+    # 🏛️ #271 battle: a logic FACTORY is called once per example, not once
+    #    per class. Real logic is stateful (a gateway stub counting calls,
+    #    a retry counter, a breaker); shared across examples it made
+    #    generation depend on earlier examples -- Hypothesis reported
+    #    `FlakyStrategyDefinition` and the planted bug reproduced only on
+    #    the first run. `None` (stubs) and a bare instance keep one build.
+    rebuild = (
+        callable(logic)
+        and not isinstance(logic, MachineLogic)
+        and not isinstance(machine_or_path, MachineNode)
+    )
+
+    def _fresh_machine() -> MachineNode[Any]:
+        if not rebuild:
+            return machine
+        built, _, _ = _load(machine_or_path, logic, guards)
+        return built
+
     if guard_flip and not stubbed:
         raise ValueError(
             "model_test: guard_flip=True needs stub logic (logic=None and a "
@@ -350,6 +298,7 @@ def model_test(
     guard_names = sorted(logic_names(machine)[1]) if guard_flip else []
     invariants = dict(invariants or {})
     state_assertions = dict(state_assertions or {})
+    _check_state_keys(machine, state_assertions)
     if failing_path is not None:
         explicit: Optional[pathlib.Path] = pathlib.Path(failing_path)
         caller_dir = None
@@ -366,7 +315,8 @@ def model_test(
         hs.RuleBasedStateMachine.__init__(self)
         guards.clear()
         self.clock = SimulatedClock()
-        self.interp = SyncInterpreter(machine, clock=self.clock).start()
+        self.machine = _fresh_machine()
+        self.interp = SyncInterpreter(self.machine, clock=self.clock).start()
         self.trace = []
 
     def _fail(self: Any, message: str) -> None:
@@ -405,21 +355,10 @@ def model_test(
 
     def check(self: Any) -> None:
         for name, fn in invariants.items():
-            try:
-                ok = fn(self.interp)
-            except AssertionError as exc:
-                self._fail(f"invariant {name!r} failed: {exc}")
-            if not ok:
-                self._fail(f"invariant {name!r} violated")
+            _run_check(self, f"invariant {name!r}", fn)
         for state, fn in state_assertions.items():
-            if not self.interp.matches(state):
-                continue
-            try:
-                ok = fn(self.interp)
-            except AssertionError as exc:
-                self._fail(f"state assertion {state!r} failed: {exc}")
-            if ok is False:
-                self._fail(f"state assertion {state!r} violated")
+            if self.interp.matches(state):
+                _run_check(self, f"state assertion {state!r}", fn)
 
     body.update(
         __init__=__init__,
@@ -428,11 +367,11 @@ def model_test(
         teardown=teardown,
         xsm_check=hs.invariant()(check),
     )
-    for event in events:
-        body[f"send_{_ident(event)}"] = _event_rule(
-            hs, hyp, event, strategies[event], allow_denied
+    for event, rule_name in _rule_names(events).items():
+        body[rule_name] = _event_rule(
+            hs, hyp, event, strategies[event], allow_denied, rule_name
         )
-    if delays:
+    if clock:
         body["advance_clock"] = _clock_rule(hs, hyp, delays)
     if snapshot_roundtrip:
         body["snapshot_roundtrip"] = _roundtrip_rule(hs, machine)
@@ -442,7 +381,7 @@ def model_test(
         # 📝 A final / event-less configuration leaves no rule enabled and
         #    Hypothesis refuses the run ("no progress can be made"). This
         #    no-op is enabled exactly then, so the run simply settles.
-        body["settled"] = _settled_rule(hs, events, bool(delays))
+        body["settled"] = _settled_rule(hs, events, clock)
 
     cls: Any = type(
         f"ModelTest_{_ident(machine.id)}", (hs.RuleBasedStateMachine,), body
@@ -456,32 +395,104 @@ def model_test(
     return cls
 
 
+def _run_check(self: Any, label: str, fn: Check) -> None:
+    """One invariant / state assertion (#271 battle).
+
+    ``None`` passes (an ``assert``-style check returns nothing); any other
+    falsy value fails. ANY exception fails through `_fail` so the
+    artefact is written -- a raw ``KeyError`` escaped with no script.
+    """
+    try:
+        ok = fn(self.interp)
+    except AssertionError as exc:
+        self._fail(f"{label} failed: {exc}")
+        return
+    except _hypothesis().errors.HypothesisException:
+        # 🛑 reviewer H1 (#271): `assume(...)` inside a check raises
+        #    `UnsatisfiedAssumption`, an `Exception` subclass -- treating
+        #    it as a failure wrote a script and shrank a non-bug. Hypothesis
+        #    control flow passes through untouched.
+        raise
+    except Exception as exc:  # noqa: BLE001 -- user check, reported
+        self._fail(f"{label} raised {type(exc).__name__}: {exc}")
+        return
+    if ok is not None and not ok:
+        self._fail(f"{label} violated (returned {ok!r})")
+
+
+def _rule_names(events: List[str]) -> Dict[str, str]:
+    """``event -> unique rule attribute`` (battle #271: ``"A.B"`` and
+    ``"A_B"`` both became ``send_A_B`` and one rule silently vanished)."""
+    out: Dict[str, str] = {}
+    used: Set[str] = set()
+    for ev in events:
+        base = name = f"send_{_ident(ev)}"
+        n = 2
+        while name in used:
+            name = f"{base}_{n}"
+            n += 1
+        used.add(name)
+        out[ev] = name
+    return out
+
+
+def _check_state_keys(
+    machine: MachineNode[Any], state_assertions: Mapping[str, Check]
+) -> None:
+    """A key that names no state never runs -- a typo must fail loudly."""
+    ids = [n.id for n in walk(machine)]
+    bad = sorted(
+        k
+        for k in state_assertions
+        if not any(
+            i == k.lstrip("#") or i.endswith("." + k.lstrip("#")) for i in ids
+        )
+    )
+    if bad:
+        raise ValueError(
+            f"model_test: state_assertions name states the chart does not "
+            f"have: {bad}"
+        )
+
+
 def _ident(text: str) -> str:
     out = "".join(c if c.isalnum() else "_" for c in text)
     return out or "_"
 
 
 def _event_rule(
-    hs: Any, hyp: Any, event: str, strategy: Any, allow_denied: bool
+    hs: Any,
+    hyp: Any,
+    event: str,
+    strategy: Any,
+    allow_denied: bool,
+    rule_name: str,
 ) -> Any:
     def _pre(self: Any) -> bool:
         return _declares(self.interp, event)
 
     def _rule(self: Any, payload: Dict[str, Any]) -> None:
-        payload = dict(payload or {})
+        if payload is None:
+            payload = {}
+        if not isinstance(payload, Mapping) or "type" in payload:
+            raise TypeError(
+                f"model_test: the payload strategy for {event!r} must "
+                f"produce dicts without a 'type' key, got {payload!r}"
+            )
+        payload = dict(payload)
         # ✅ Payload first, then `can()` on THAT payload (#271 amendment):
         #    a payload-dependent guard is judged on what will be sent.
         if not allow_denied and not self.interp.can(Event(event, payload)):
             return
         self._send(event, payload)
 
-    _rule.__name__ = f"send_{_ident(event)}"
+    _rule.__name__ = rule_name
     return hs.precondition(_pre)(hs.rule(payload=strategy)(_rule))
 
 
 def _settled_rule(hs: Any, events: List[str], clock: bool) -> Any:
     def _pre(self: Any) -> bool:
-        if clock and _timer_armed(self.interp):
+        if clock and _timer_armed(self.interp, self.clock):
             return False
         return not any(_declares(self.interp, e) for e in events)
 
@@ -494,26 +505,35 @@ def _settled_rule(hs: Any, events: List[str], clock: bool) -> Any:
 def _clock_rule(hs: Any, hyp: Any, delays: List[float]) -> Any:
     st = hyp.strategies
 
-    def _rule(self: Any, delay: float, jitter: int) -> None:
+    def _rule(self: Any, delay: Optional[float], jitter: int) -> None:
+        if delay is None:
+            # 📝 "to the next live timer": reaches `raise`/`sendTo` delays
+            #    and computed delays no `after` key names.
+            nxt = self.clock.next_due()
+            delay = 0.0 if nxt is None else (nxt - self.clock.now()) * 1000
         ms = max(0.0, delay + jitter)
         self.trace.append({"clock": ms})
         self.clock.increment(ms)
 
-    return hs.precondition(lambda self: _timer_armed(self.interp))(
+    return hs.precondition(lambda self: _timer_armed(self.interp, self.clock))(
         hs.rule(
-            delay=st.sampled_from(delays), jitter=st.sampled_from(_JITTER_MS)
+            delay=st.sampled_from([None, *delays]),
+            jitter=st.sampled_from(_JITTER_MS),
         )(_rule)
     )
 
 
-def _roundtrip_rule(hs: Any, machine: MachineNode) -> Any:
+def _roundtrip_rule(hs: Any, machine: MachineNode[Any]) -> Any:
     def _rule(self: Any) -> None:
         interp = self.interp
         try:
             json.dumps(interp.context)
         except (TypeError, ValueError) as exc:
             self._fail(
-                f"snapshot round-trip: context is not JSON-serialisable: {exc}"
+                f"snapshot round-trip: context is not JSON-serialisable: "
+                f"{exc} -- store money as integer cents or a str, or keep "
+                f"such values out of context (a persisted snapshot would "
+                f"restore them as str)"
             )
         blob = interp.get_snapshot()
         before = (
@@ -522,7 +542,14 @@ def _roundtrip_rule(hs: Any, machine: MachineNode) -> Any:
         )
         interp.stop()
         restored: SyncInterpreter[Any] = SyncInterpreter.from_snapshot(
-            blob, machine, clock=self.clock, restart_timers="resume"
+            blob,
+            self.machine,
+            clock=self.clock,
+            restart_timers="resume",
+            # 📝 battle #271: an invoke dormant at the snapshot is re-driven
+            #    on the copy, so an `onDone`-reaching invariant cannot fail
+            #    only because the model hopped onto a restored interpreter.
+            restart_services=True,
         )
         restored.start()
         self.interp = restored
@@ -552,7 +579,9 @@ def _guard_rule(
 # 🔀 events_strategy
 # -----------------------------------------------------------------------------
 def events_strategy(
-    machine_or_path: Union[str, pathlib.Path, Mapping[str, Any], MachineNode],
+    machine_or_path: Union[
+        str, pathlib.Path, Mapping[str, Any], MachineNode[Any]
+    ],
     *,
     length: int = 10,
 ) -> Any:
@@ -567,7 +596,7 @@ def events_strategy(
     machine, _, _ = _load(machine_or_path, None, {})
     events = _declared_events(machine)
 
-    @st.composite
+    @st.composite  # type: ignore[untyped-decorator]
     def _seq(draw: Any) -> List[str]:
         n = draw(st.integers(0, length))
         interp = SyncInterpreter(machine, clock=SimulatedClock()).start()

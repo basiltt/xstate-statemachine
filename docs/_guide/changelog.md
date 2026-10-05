@@ -1456,6 +1456,61 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **Model-based testing, as battle-tested (#271).** The orders team's
+  path tests (#269) and coverage gate (#270) were green and a refund still
+  drove `total_cents` negative after a specific interleaving. `model_test`
+  on the orders chart with the real `logic.build_logic` finds the planted
+  bug, shrinks it to ≤ 6 steps, writes a `failing.json` that `xsm
+  simulate --script` replays, and writes the same bytes twice under a
+  fixed seed. The bug it found in itself: a logic **factory** was called
+  once per class, so real logic with state (a gateway stub counting
+  calls, a retry counter, a breaker) was shared across examples --
+  Hypothesis reported `FlakyStrategyDefinition` and the planted bug
+  reproduced only on the first run. The factory is now called once per
+  example (`None` / a bare `MachineLogic` instance keep one build); the
+  `MachineLogic` check is duck-typed so an example app importing the
+  installed package pairs with a `src.` test. Pinned: 500 examples with
+  `allow_denied=False` generate no engine-refused send; a payload-
+  dependent guard is gated on the generated payload; `state_assertions`
+  run per active parallel region; `snapshot_roundtrip` names a `set` in
+  context; `clock=True` reaches the 15-minute `expired` state (coverage
+  sees the `after`); 200 examples on `addressFields` and the orders chart
+  finish within budget; a 12-chart corpus smoke raises no false failure
+  (an `always`-looping export is the engine's `RunawayChainError`, not the
+  model's).
+  **The adversary suites then found:** two events whose names differ
+  only in punctuation (`A.B` / `A_B`) became ONE rule name -- one event
+  was silently never generated; a `raise` / `sendTo` with `delay` or a
+  child's timer never enabled the clock rule (it looked only at active
+  `after` keys), and with no `after` at all the rule did not exist -- it
+  now advances to the next pending timer of any kind; a
+  `state_assertions` key naming no state was silently ignored
+  (`ValueError`); an assert-style check returning `None` failed as
+  "violated" while a check raising `KeyError` escaped with no script
+  written -- `None` passes, any other falsy value fails, any exception
+  fails through the artefact writer; payload inference raised "cannot
+  infer" for `Decimal` / `datetime` / `date` / nested models and ignored
+  field constraints (`Field(ge=1)` → every send refused); a `payloads=`
+  strategy producing non-dicts or a `type` key failed obscurely
+  (`TypeError`). `xsm simulate --script`: a malformed script (a step
+  without `send` / `clock` / `guard`, a list payload, a negative /
+  infinite / non-numeric `clock`, a missing file) printed a traceback, a
+  non-boolean guard `value` (`"false"`) silently INVERTED the flip, and
+  `--script` with `--events` ran both so the replayed artefact was not
+  the recorded run -- one-line errors, exit 2. Pinned: the file left
+  after shrinking is the minimal sequence; three planted bugs
+  (sequence-, payload-, time-dependent) shrink to minimal sequences
+  (≤ 5 / 1 / 2 steps; exact lengths vary by Hypothesis version); 200
+  examples on the orders chart with real logic take a few seconds; a
+  `Decimal` in context fails `snapshot_roundtrip` on purpose, with a
+  hint. **Independent review then found:** `assume()` inside an
+  invariant raised `UnsatisfiedAssumption` -- an `Exception` -- and was
+  reported as a failure with a script written and a non-bug shrunk;
+  Hypothesis control exceptions now pass through. Field bounds
+  (`Field(ge=1000, le=1001)`, `min_length`) are read into the integer /
+  text strategies instead of filtering a default range that could never
+  pass (`Unsatisfiable`). New benchmark row `model_test_200_examples`;
+  `failing.json` is gitignored.
 - **Coverage gates, as battle-tested (#270).** The orders team gates CI
   on state & transition coverage: `--xsm-fail-under-state-coverage=nan`
   was accepted (`type=float`) and every `percent < nan` is False -- the
