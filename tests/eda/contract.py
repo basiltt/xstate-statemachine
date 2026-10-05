@@ -5,7 +5,8 @@ Every broker adapter -- the in-memory fakes here, and the real Kafka /
 RabbitMQ / NATS / SQS / Redis Streams adapters of #294 -- subclasses
 `AsyncBrokerContract` (or `SyncBrokerContract`) and implements
 ``make_broker()``. The contract is deliberately small: per-subject FIFO,
-explicit ack / nack, requeue to the head, a failed publish raises.
+explicit ack / nack, requeue to the head stamped ``attempt + 1``,
+settling twice is a no-op, a failed publish raises.
 
 Not collected on its own (no ``test_`` prefix): import the mixins.
 """
@@ -125,3 +126,80 @@ class AsyncBrokerContract:
             raise AssertionError("nothing delivered")
 
         self.assertEqual(asyncio.run(go()), env)  # type: ignore[attr-defined]
+
+    def test_requeue_stamps_the_attempt(self) -> None:
+        """X0.8: the ADAPTER counts redeliveries (``xsmattempt``); the
+        dispatcher's poison threshold reads it."""
+        broker = self.make_broker()
+
+        async def go() -> List[int]:
+            await self.inject(broker, _env("k", 1))
+            seen = []
+            for _ in range(3):
+                async for d in broker.subscribe(self.topic, timeout=0.05):
+                    seen.append(d.envelope.attempt)
+                    await broker.nack(d, requeue=True)
+                    break
+            return seen
+
+        self.assertEqual(asyncio.run(go()), [0, 1, 2])  # type: ignore[attr-defined]
+
+
+class SyncBrokerContract:
+    """The same contract for a blocking `SyncBrokerAdapter`."""
+
+    topic = "contract"
+
+    def make_broker(self) -> Any:  # pragma: no cover - abstract
+        raise NotImplementedError
+
+    def inject(self, broker: Any, env: Envelope) -> None:
+        broker.publish(self.topic, env)
+
+    def _take(self, broker: Any) -> List[Any]:
+        return list(broker.subscribe(self.topic, timeout=0.05))
+
+    def test_per_subject_order_is_preserved(self) -> None:
+        broker = self.make_broker()
+        for n in range(20):
+            self.inject(broker, _env(f"s{n % 3}", n))
+        got = self._take(broker)
+        for s in ("s0", "s1", "s2"):
+            ns = [d.envelope.data["n"] for d in got if d.envelope.subject == s]
+            self.assertEqual(ns, sorted(ns))  # type: ignore[attr-defined]
+        self.assertEqual(len(got), 20)  # type: ignore[attr-defined]
+
+    def test_nack_requeue_redelivers_first_with_attempt(self) -> None:
+        broker = self.make_broker()
+        self.inject(broker, _env("k", 1))
+        self.inject(broker, _env("k", 2))
+        first = next(iter(broker.subscribe(self.topic, timeout=0.05)))
+        broker.nack(first, requeue=True)
+        got = []
+        for d in broker.subscribe(self.topic, timeout=0.05):
+            got.append((d.envelope.data["n"], d.envelope.attempt))
+            broker.ack(d)
+        self.assertEqual(got, [(1, 1), (2, 0)])  # type: ignore[attr-defined]
+
+    def test_nack_without_requeue_drops_and_double_settle_noop(self) -> None:
+        broker = self.make_broker()
+        self.inject(broker, _env("k", 1))
+        for d in self._take(broker):
+            broker.nack(d, requeue=False)
+            broker.nack(d, requeue=True)  # ignored
+            broker.ack(d)  # ignored
+        self.assertEqual(self._take(broker), [])  # type: ignore[attr-defined]
+
+    def test_envelope_round_trips_unchanged(self) -> None:
+        broker = self.make_broker()
+        env = Envelope.new(
+            type="order.paid",
+            subject="o-1",
+            data={"total": 5},
+            correlationid="c-1",
+            causationid="x-1",
+        )
+        self.inject(broker, env)
+        (d,) = self._take(broker)
+        broker.ack(d)
+        self.assertEqual(d.envelope, env)  # type: ignore[attr-defined]

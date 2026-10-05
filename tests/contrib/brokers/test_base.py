@@ -23,7 +23,7 @@ from src.xstate_statemachine.eda import (
     SyncBrokerAdapter,
 )
 
-from ...eda.contract import AsyncBrokerContract
+from ...eda.contract import AsyncBrokerContract, SyncBrokerContract
 
 
 class MemTransport:
@@ -67,6 +67,14 @@ def env(subject: str = "k", n: int = 1) -> Envelope:
 class TestAsyncBaseContract(AsyncBrokerContract, unittest.TestCase):
     def make_broker(self) -> Any:
         return AsyncBroker(ThreadedTransport(MemTransport()))
+
+
+class TestSyncBaseContract(SyncBrokerContract, unittest.TestCase):
+    """Battle #272: the blocking base runs the same sync contract as the
+    `SyncFakeBrokerAdapter`."""
+
+    def make_broker(self) -> Any:
+        return SyncBroker(MemTransport())
 
 
 class TestSyncBase(unittest.TestCase):
