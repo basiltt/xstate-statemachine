@@ -109,12 +109,24 @@ def _load(
         )
     if callable(logic) and not isinstance(logic, MachineLogic):
         logic = logic()
-    if not isinstance(logic, MachineLogic):
+    if not _is_machine_logic(logic):
         raise TypeError(
             f"model_test: logic= must be a MachineLogic or a factory "
             f"returning one, got {type(logic).__name__}"
         )
     return create_machine(config, logic=logic), False, path
+
+
+def _is_machine_logic(obj: Any) -> bool:
+    """`isinstance` that also accepts a `MachineLogic` from a SECOND copy
+    of the package (an example app importing the installed library while
+    the test imports `src.`) -- duck-typed on the three tables."""
+    if isinstance(obj, MachineLogic):
+        return True
+    return type(obj).__name__ == "MachineLogic" and all(
+        isinstance(getattr(obj, k, None), dict)
+        for k in ("actions", "guards", "services")
+    )
 
 
 def _declared_events(machine: MachineNode) -> List[str]:
@@ -339,6 +351,24 @@ def model_test(
 
     guards: Dict[str, bool] = {}
     machine, stubbed, json_path = _load(machine_or_path, logic, guards)
+    # 🏛️ #271 battle: a logic FACTORY is called once per example, not once
+    #    per class. Real logic is stateful (a gateway stub counting calls,
+    #    a retry counter, a breaker); shared across examples it made
+    #    generation depend on earlier examples -- Hypothesis reported
+    #    `FlakyStrategyDefinition` and the planted bug reproduced only on
+    #    the first run. `None` (stubs) and a bare instance keep one build.
+    rebuild = (
+        callable(logic)
+        and not isinstance(logic, MachineLogic)
+        and not isinstance(machine_or_path, MachineNode)
+    )
+
+    def _fresh_machine() -> MachineNode:
+        if not rebuild:
+            return machine
+        built, _, _ = _load(machine_or_path, logic, guards)
+        return built
+
     if guard_flip and not stubbed:
         raise ValueError(
             "model_test: guard_flip=True needs stub logic (logic=None and a "
@@ -366,7 +396,8 @@ def model_test(
         hs.RuleBasedStateMachine.__init__(self)
         guards.clear()
         self.clock = SimulatedClock()
-        self.interp = SyncInterpreter(machine, clock=self.clock).start()
+        self.machine = _fresh_machine()
+        self.interp = SyncInterpreter(self.machine, clock=self.clock).start()
         self.trace = []
 
     def _fail(self: Any, message: str) -> None:
@@ -522,7 +553,7 @@ def _roundtrip_rule(hs: Any, machine: MachineNode) -> Any:
         )
         interp.stop()
         restored: SyncInterpreter[Any] = SyncInterpreter.from_snapshot(
-            blob, machine, clock=self.clock, restart_timers="resume"
+            blob, self.machine, clock=self.clock, restart_timers="resume"
         )
         restored.start()
         self.interp = restored
