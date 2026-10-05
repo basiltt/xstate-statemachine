@@ -33,7 +33,7 @@ from typing import Any, Dict, FrozenSet, List, Tuple
 
 import pytest
 
-import src.xstate_statemachine.graph as graph
+import src.xstate_statemachine._graph_explorer as graph
 from src.xstate_statemachine import (
     SimulatedClock,
     SyncInterpreter,

@@ -15,37 +15,7 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ## [Unreleased]
 
-### Fixed (#269 battle -- path generation, `xsm paths`)
-
-- **`xsm_path`: a chart that cannot start no longer aborts collection.**
-  The engine error used to escape `pytest_generate_tests` and interrupt
-  the whole session with a traceback; each test requesting `xsm_path` on
-  that chart now gets one `path[error]` case that errors with a one-line
-  message, and the rest of the session runs.
-- **`xsm_path`: one exploration per chart and options per session.** Two
-  test functions on the same chart used to explore it twice.
-- **`--xsm-max-depth` / `--xsm-max-paths` and `xsm paths --max-depth` /
-  `--max-paths` reject negative values** as usage errors.
-- **`xsm paths`: a chart that builds but cannot be explored** exits 1 with
-  one line instead of an engine traceback.
-- **`xsm paths --weight steps|time`**: the CLI now exposes
-  `shortest_paths(weight=)`; `--json` reports `weight`.
-- **`xsm simulate --events` / `--clock`: a clock advance must be a finite,
-  non-negative number of ms.** `+-5` and `+abc` used to crash with a
-  traceback; `+inf`, `+nan` and `+1e309` were accepted and printed
-  `Infinity` / `NaN` (invalid JSON) under `--json`. All now exit 2 with
-  one message.
-- **`xsm inspect` / `xsm validate` no longer call an entered state
-  "unreachable".** The static pass marked only a transition's target; a
-  deep `#id` or history target also enters every ancestor (and every
-  sibling region of a parallel ancestor). On the corpus this removes 16
-  false warnings (`product.unavailable`, `Token.With Artists`, the
-  thermostat's `online`, ...) and adds none; no remaining static warning
-  names a state `reachable_states(guards="both")` reaches.
-- **Docs:** the API index said an undefined named `after` delay produces a
-  `delay:<name>=unknown` step; only a delay defined in `logic.delays` does
-  (with the `UNKNOWN_DELAY_MS` sentinel), an undefined one is skipped. The
-  path-generation sample output used ids from a different test name.
+_No unreleased changes yet._
 
 ## [0.11.0] - 2026-10-01
 
@@ -1498,6 +1468,32 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
   charts in every mode; the two charts run in 34 s and 39 s. A forced
   `service:<name>=error` step no longer logs an ERROR traceback per
   generated test under `xsm_path`.
+  **The adversary suites then found:** the cache stored a snapshot per
+  EDGE (19 000 on `addressFields`), overflowed its cap and fell back to
+  replay -- 77 % hit rate; BFS now caches the first path into each
+  configuration (≈100 %, 35 s → 19 s). Wildcard handlers (`"*"`,
+  `"mouse.*"`) were skipped, so a state reachable only through one was
+  "unreachable". No bound on configurations: `max_configs=100_000`
+  (`ExplorationLimitError`, partial result on `.found`); negative
+  `max_depth` / `max_paths` / `max_configs` are `ValueError`. `stubbed()`
+  swapped `machine.logic` on the CALLER's machine -- a live interpreter on
+  it took a transition its real guard forbids while a traversal ran; the
+  explorer now works on a private copy, and the logger-level guard is
+  re-entrant (two overlapping traversals could leave the library logger
+  muted). `xsm_path`: a chart that cannot start aborted the whole
+  collection with a traceback (now one `path[error]` case per test);
+  two functions on one chart explored it twice (cached per session);
+  negative `--xsm-max-*` are usage errors. `xsm paths`: a chart that
+  cannot be explored exits 1 with one line; `--weight steps|time` added;
+  negative bounds exit 2; every printed path's `event_string()` fed to
+  `xsm simulate --events` lands on the same states (102 corpus charts).
+  `xsm simulate --events`/`--clock`: `+-5`, `+abc` crashed, `+inf` /
+  `+nan` / `+1e309` printed invalid JSON -- all exit 2. `xsm inspect` /
+  `validate` called entered states "unreachable": the static pass marked
+  only a transition's target, not the ancestors (and parallel siblings) a
+  deep `#id` / history target enters -- 16 false warnings removed, none
+  added. Docs: an UNDEFINED named delay is skipped (only one in
+  `logic.delays` yields `delay:<name>=unknown`).
 - **Typed boundary, as battle-tested (#266).** A chart whose static
   `context` the `context_model` refuses **built and started** -- the
   `TypedContextPlugin` raise is contained by the plugin system -- and then
