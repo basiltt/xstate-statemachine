@@ -754,7 +754,11 @@ _No unreleased changes yet._
   the static reachability pass cannot produce -- "state is never entered
   by the engine (reachable statically only)" -- and never removes a
   static one (corpus output unchanged). Guide: Testing &sect; "Path
-  generation"; CLI &sect; "Paths".
+  generation"; CLI &sect; "Paths". The traversal never modifies the
+  caller's machine (it explores a private copy, so concurrent calls and
+  live interpreters are unaffected); `max_configs=100_000` bounds a
+  combinatorial chart with `ExplorationLimitError` (partial result on
+  `.found`); wildcard (`"*"`, `"mouse.*"`) handlers are explored.
 - **`[testing]` extra: a pytest plugin** (#268; both engines). Registered
   through a `pytest11` entry point, so `pip install
   "xstate-statemachine[testing]"` is the whole setup; the plugin imports
