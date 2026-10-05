@@ -1494,6 +1494,17 @@ _No unreleased changes yet._
   deep `#id` / history target enters -- 16 false warnings removed, none
   added. Docs: an UNDEFINED named delay is skipped (only one in
   `logic.delays` yields `delay:<name>=unknown`).
+  **Independent review then found:** the cache-parity tests patched a
+  re-exported copy of the cache cap, not the one the explorer reads --
+  every "cache ≡ replay" assertion compared the cache with itself (the
+  parity claim above was re-established after the fix); a named `after`
+  delay advanced the clock a fixed 10⁹ ms and fired every later timer in
+  the same step, so `a --after slow--> b --after 300--> c` reported only
+  `{a, c}` -- it now advances to the earliest pending deadline; a step the
+  engine refused or contained (`maxIterations`) vanished silently -- one
+  `RuntimeWarning` per traversal names it; `reachable_states` gains
+  `max_configs`; `graph.py` split into `graph` / `_graph_model` /
+  `_graph_explorer`.
 - **Typed boundary, as battle-tested (#266).** A chart whose static
   `context` the `context_model` refuses **built and started** -- the
   `TypedContextPlugin` raise is contained by the plugin system -- and then

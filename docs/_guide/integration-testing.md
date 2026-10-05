@@ -134,6 +134,8 @@ All fixtures are prefixed `xsm_` so they cannot shadow your own `machine`, `cloc
 
 ## Path generation
 
+> **What a traversal does to your process.** It explores a *private copy* of the machine (your `machine.logic` is never swapped, so a live interpreter beside the traversal is unaffected), but it mutes the `xstate_statemachine` logger to `CRITICAL` for its duration — process-wide. A step the engine refuses is dropped and a contained failure (an `always` loop at `maxIterations`) is kept; either raises **one** `RuntimeWarning` per traversal naming the error. `Path.replay()` on your *real* machine forces each step's assumptions onto `machine.logic` for that step only and restores them; do not replay the same machine from two threads at once.
+
 Request the `xsm_path` fixture under an `xstate_machine` marker and pytest parametrises the test over [`graph.shortest_paths(machine)`](../testing-and-pure-api/) — **one case per reachable configuration**, found by running the real engine on stub logic and a simulated clock (parallel regions, history and `after` timers included):
 
 ```python

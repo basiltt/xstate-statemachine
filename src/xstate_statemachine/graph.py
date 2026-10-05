@@ -204,12 +204,22 @@ def _dijkstra(explorer: _Explorer, max_depth: int) -> Dict[Config, Path]:
 
 
 def reachable_states(
-    machine: MachineNode[Any], *, guards: str = "true", max_depth: int = 50
+    machine: MachineNode[Any],
+    *,
+    guards: str = "true",
+    max_depth: int = 50,
+    max_configs: int = 100_000,
 ) -> Set[str]:
-    """Every state id (leaves AND their ancestors) the engine can reach."""
+    """Every state id (leaves AND their ancestors) the engine can reach.
+
+    Raises `ExplorationLimitError` past *max_configs* (reviewer M2: the
+    bound was inherited but not tunable here)."""
     explorer = _Explorer(machine, guards)
     out: Set[str] = set()
-    for config in shortest_paths(machine, guards=guards, max_depth=max_depth):
+    found = shortest_paths(
+        machine, guards=guards, max_depth=max_depth, max_configs=max_configs
+    )
+    for config in found:
         out.update(n.id for n in explorer._active_nodes(config))
     return out
 

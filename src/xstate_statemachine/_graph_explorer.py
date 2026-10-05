@@ -14,6 +14,7 @@ from __future__ import annotations
 import contextlib
 import copy
 import logging
+import warnings
 from typing import Any, Dict, Iterator, List, Optional, Set, Tuple, Union
 
 from .clock import SimulatedClock
@@ -68,6 +69,8 @@ class _Explorer:
         self.base: Tuple[str, ...] = (
             ("guard:*=False",) if guards == "false" else ()
         )
+        #: Steps the engine refused during this traversal (reviewer M1).
+        self.failed_steps = 0
         #: ⚡ prefix (step tuple) → (snapshot JSON, clock.now() s, wall_now()).
         self._snapshots: Dict[Tuple[Step, ...], Tuple[str, float, float]] = {}
         #: ⚡ #269 battle (A1): BFS keeps only the FIRST path into each
@@ -283,6 +286,19 @@ class _Explorer:
                 out.append((_with_target(step, to), done))
         return out
 
+    def _note_failed(self, exc: Any) -> None:
+        self.failed_steps += 1
+        if self.failed_steps == 1:
+            # `warnings`, not the (quieted) library logger.
+            warnings.warn(
+                "graph: the engine refused or contained a failure on a "
+                f"step ({type(exc).__name__}: {str(exc)[:160]}); a refused "
+                "edge is not in the result, a contained one is. Further "
+                "cases are counted on the explorer and logged at DEBUG.",
+                RuntimeWarning,
+                stacklevel=5,
+            )
+
     def _try(
         self, steps: Tuple[Step, ...], step: Step
     ) -> Optional[Tuple[Config, bool]]:
@@ -295,12 +311,25 @@ class _Explorer:
             _apply_step(interp, clock, step)
             to = frozenset(interp.current_state_ids)
             done = self._done(interp)
+            if getattr(interp, "last_error", None) is not None:
+                # 📝 reviewer M1: the engine CONTAINED a failure in this
+                #    step (an `always` loop hitting `maxIterations`, an
+                #    action error) and still moved. The configuration is
+                #    real, but the edge rests on a failure: count it and
+                #    say so once, like a refused step.
+                self._note_failed(interp.last_error)
             if not done and self._wanted(to):
                 self._remember(
                     steps + (_with_target(step, to),), interp, clock
                 )
             return to, done
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 -- the engine refused
+            # 📝 reviewer M1 (#269 battle): a step the engine refuses (an
+            #    `always` loop hitting `maxIterations`, an action error
+            #    under `actionErrorPolicy: fail`) used to vanish silently --
+            #    indistinguishable from "no transition". Count it and warn
+            #    ONCE per traversal so the caller can learn edges dropped.
+            self._note_failed(exc)
             logger.debug("graph: step %r failed", step, exc_info=True)
             return None
         finally:

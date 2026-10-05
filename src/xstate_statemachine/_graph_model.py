@@ -191,5 +191,22 @@ def _apply_step(
     with _forced(interp.machine.logic, step.assumptions):
         if step.event is not None:
             interp.send(step.event)
+        elif step.delay_ms is None:
+            # ⏰ reviewer H1 (#269 battle): a NAMED delay has no static
+            #    duration. Advancing a fixed 10^9 ms fired the WHOLE chain
+            #    of later timers in one step -- `a --after slow--> b
+            #    --after 300--> c` yielded only `{a, d}`; `b` and `c` were
+            #    "unreachable". Advance to the EARLIEST pending deadline
+            #    instead (the named one, by construction the only one
+            #    armed in the just-entered state), so later numeric
+            #    `after`s stay their own steps. No deadline at all (the
+            #    delay resolved to nothing): fall back to the sentinel.
+            nxt = clock._heap.next_due()
+            ms = (
+                UNKNOWN_DELAY_MS
+                if nxt is None
+                else max((nxt - clock.now()) * 1000.0, 0.0)
+            )
+            clock.increment(ms)
         else:
-            clock.increment(_advance_of(step))
+            clock.increment(step.delay_ms)

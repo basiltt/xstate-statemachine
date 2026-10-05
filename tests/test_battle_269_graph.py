@@ -274,3 +274,65 @@ def test_path_ids_are_stable_and_unique() -> None:
     ids = [path_id(p, start) for p in a.values()]
     assert len(ids) == len(set(ids))
     assert all(i.startswith("path[") for i in ids)
+
+
+# -----------------------------------------------------------------------------
+# 5. reviewer follow-ups
+# -----------------------------------------------------------------------------
+def test_named_delay_does_not_hide_later_timed_states() -> None:
+    """H1: a fixed 10^9 ms advance for a named delay fired the whole
+    chain of later `after`s in one step; `b` and `c` were unreachable."""
+    from src.xstate_statemachine import MachineLogic
+
+    cfg = {
+        "id": "t",
+        "initial": "a",
+        "states": {
+            "a": {"after": {"slow": "b"}},
+            "b": {"after": {"300": "c"}},
+            "c": {"after": {"200": "d"}},
+            "d": {},
+        },
+    }
+    m = create_machine(cfg, logic=MachineLogic(delays={"slow": 5000}))
+    found = shortest_paths(m)
+    leaves = {next(iter(c)).rsplit(".", 1)[-1]: p for c, p in found.items()}
+    assert set(leaves) == {"a", "b", "c", "d"}
+    assert [s.delay_ms for s in leaves["d"].steps] == [None, 300.0, 200.0]
+    assert leaves["b"].steps[0].assumptions == ("delay:slow=unknown",)
+    # and the time-weighted search agrees
+    timed = shortest_paths(m, weight="time")
+    assert len(timed) == 4
+
+
+def test_contained_engine_failure_on_a_step_is_warned_once() -> None:
+    """M1: an `always` loop hitting `maxIterations` used to be silent."""
+    import warnings
+
+    cfg = {
+        "id": "l",
+        "initial": "a",
+        "maxIterations": 5,
+        "states": {
+            "a": {"on": {"GO": "b"}},
+            "b": {"always": "c"},
+            "c": {"always": "b"},
+        },
+    }
+    m = _machine(cfg)
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        shortest_paths(m)
+    msgs = [str(x.message) for x in w if x.category is RuntimeWarning]
+    assert len(msgs) == 1 and "RunawayChainError" in msgs[0]
+
+
+def test_reachable_states_honours_max_configs() -> None:
+    """M2: the bound was inherited from shortest_paths but not tunable."""
+    from src.xstate_statemachine.graph import ExplorationLimitError
+
+    m = _machine(_grid(6))  # 64 configurations
+    with pytest.raises(ExplorationLimitError) as ei:
+        reachable_states(m, max_configs=10)
+    assert len(ei.value.found) >= 10
+    assert len(reachable_states(m, max_configs=64)) >= 12
