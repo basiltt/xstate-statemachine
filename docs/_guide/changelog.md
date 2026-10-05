@@ -1481,6 +1481,30 @@ _No unreleased changes yet._
   configurations mark leaves and ancestors; history pseudo-states are
   not in the denominator; nothing is registered without the flag; `-n 2`
   matches serial.
+  **The adversary suites then found:** the collector kept EVERY machine
+  build and its transition index alive for its lifetime -- a session that
+  rebuilds a chart per test grew without bound (3 000 builds → 3 000
+  entries); builds are held weakly and a recycled `id()` can never land
+  in a stale index. The terminal summary put every unvisited state /
+  unhit edge on one line (500 edges → a 20 kB line); lists are capped at
+  `TEXT_LIST_LIMIT` (20) with "... and N more" (JSON / HTML keep the full
+  lists). `below()` accepted NaN (the gate silently off) -- `ValueError`
+  outside `[0, 100]`. Report options / thresholds without
+  `--xsm-coverage` were silently ignored (usage error now); a set
+  threshold PASSED when no machine was observed (`-k` matched nothing) --
+  it fails; an unwritable report path was an INTERNALERROR traceback;
+  `--collect-only` wrote files and gated; a run stopped by `-x` gave no
+  sign the numbers were partial. Honest numbers: the denominator is
+  *statically declared* -- on 30 corpus charts 105 of 731 targets can
+  never be hit (shadowed `always` alternatives, inline-actor invoke
+  outcomes the stubs cannot drive, named `after` delays with no
+  implementation, states no event sequence reaches, self-target `on`
+  handlers that generated paths skip), so 100 % transition coverage may
+  be unattainable on a real chart -- gate on states, or on a transition
+  threshold below 100; and the session collector costs ≈1.4-1.7× on
+  `send()` throughput, about three quarters of it the engine's generic
+  plugin dispatch (a no-op plugin costs ≈34 %), the collector's own share
+  ≈10 %.
 - **The pytest plugin, as battle-tested (#268).** A team adopting
   `[testing]` for the orders chart (real logic through the dotted
   factory, snapshot files in git, `pytest -n 4`): `xsm gt -t pytest

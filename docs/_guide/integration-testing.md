@@ -173,6 +173,8 @@ Bounds must be `>= 0` (a negative value is a usage error). Tests on the same cha
 
 Line coverage cannot tell you whether any test ever reached `timeout` or took `paying --PAY_FAILED--> failed`. The chart knows every state and transition; `--xsm-coverage` records which ones ran:
 
+> **What 100 % means.** The transition denominator is every transition the chart *declares*. On real charts some can never be taken: an `always` alternative shadowed by an earlier guard, an invoke `onDone` / `onError` the stub actors cannot drive, a named `after` delay with no implementation, a state no event sequence reaches, and self-target `on` handlers that generated paths skip (a hand-written test still hits them). On 30 Stately-corpus charts 105 of 731 declared transitions were unreachable this way (#270 battle). Gate on **state** coverage, or on a transition threshold below 100, and read the `unhit` list as a review item rather than a defect count. The session collector costs roughly 1.4-1.7× on `send()` in a test run, most of it the engine's plugin dispatch -- it is a test-time tool, not a production plugin.
+
 ```text
 $ pytest --xsm-coverage --xsm-fail-under-transition-coverage=90
 ...
