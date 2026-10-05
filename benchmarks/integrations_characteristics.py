@@ -78,6 +78,7 @@ ROWS = (
     "snapshot_restore_migrated_sync",
     "shortest_paths",
     "shortest_paths_payment",
+    "pytest_plugin_per_test",
     "fastapi_router",
     "timer_scan_sqlite_100k",
     "circuit_breaker_call_closed",
@@ -641,6 +642,55 @@ def _shortest_paths_row(chart: Any) -> Optional[Dict[str, Any]]:
     return _metric(samples, chart=chart.name, configurations=configurations)
 
 
+def benchmark_pytest_plugin_per_test(
+    tests: int = 200,
+) -> Optional[Dict[str, Any]]:
+    """Per-test overhead of the ``[testing]`` plugin (#268 battle).
+
+    📝 Mirrors what one marked test costs on the orders chart:
+    ``create_machine`` on stub logic (`xsm_machine`), start on a
+    `SimulatedClock` (`xsm_interp`), one ``xsm_snapshot`` comparison
+    (normalise + render + string compare) and stop at teardown. pytest's
+    own per-test cost is excluded. Each sample is the mean of *tests*.
+    """
+    chart = ROOT / "examples" / "integrations" / "fastapi_orders"
+    chart = chart / "machine.json"
+    try:
+        import pytest  # noqa: F401
+    except ImportError:
+        return None
+    if not chart.is_file():
+        return None
+    from xstate_statemachine import SimulatedClock, SyncInterpreter
+    from xstate_statemachine.contrib.testing import (
+        normalize_snapshot,
+        render_snapshot,
+    )
+    from xstate_statemachine.testing_utils import stub_logic
+
+    config = json.loads(chart.read_text(encoding="utf-8"))
+
+    def one() -> str:
+        machine = create_machine(config, logic=stub_logic(config))
+        interp = SyncInterpreter(machine, clock=SimulatedClock()).start()
+        text = render_snapshot(normalize_snapshot(interp.get_snapshot()))
+        interp.stop()
+        return text
+
+    expected = one()
+
+    def loop() -> float:
+        start = time.perf_counter_ns()
+        for _ in range(tests):
+            if one() != expected:
+                raise AssertionError("snapshot is not deterministic")
+        return (time.perf_counter_ns() - start) / 1000 / tests
+
+    loop()  # warm
+    samples = [loop() for _ in range(REPETITIONS)]
+    return _metric(samples, chart=chart.name, tests=tests)
+
+
 def benchmark_fastapi_router() -> None:
     """Reserved for the later phase that ships the FastAPI router."""
     return None
@@ -721,6 +771,7 @@ def run(quick: bool = False) -> Dict[str, Any]:
         "snapshot_restore_migrated_sync": "#263 battle: 1-hop SnapshotMigrator; no budget until the reference runner records one",
         "shortest_paths": "savage.json (largest loadable corpus chart); no budget until a nightly records one",
         "shortest_paths_payment": "#269 battle: AdvancePayment.json (3 configurations); no budget until a nightly records one",
+        "pytest_plugin_per_test": "#268 battle: xsm_machine + xsm_interp + one xsm_snapshot compare on the orders chart; no budget until the reference runner records one",
         "fastapi_router": "FastAPI router is not shipped yet",
         "circuit_breaker_call_closed": "#265 battle: per-call cb.call(f) on a closed breaker; no budget until the reference runner records one",
     }
@@ -785,6 +836,9 @@ def run(quick: bool = False) -> Dict[str, Any]:
         results["timer_scan_sqlite_100k"] = _clean(
             benchmark_timer_scan_sqlite_100k
         )
+        results["pytest_plugin_per_test"] = _clean(
+            benchmark_pytest_plugin_per_test
+        )
         results["fastapi_router"] = benchmark_fastapi_router()
         results["circuit_breaker_call_closed"] = _clean(
             benchmark_circuit_breaker_call_closed
@@ -842,6 +896,7 @@ def measure_row(row: str, quick: bool = False) -> Dict[str, Any]:
         ),
         "shortest_paths": (benchmark_shortest_paths, ()),
         "shortest_paths_payment": (benchmark_shortest_paths_payment, ()),
+        "pytest_plugin_per_test": (benchmark_pytest_plugin_per_test, ()),
         "timer_scan_sqlite_100k": (benchmark_timer_scan_sqlite_100k, ()),
     }
     if row not in dispatch:

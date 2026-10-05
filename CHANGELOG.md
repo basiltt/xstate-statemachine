@@ -9,7 +9,38 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
 
 ## [Unreleased]
 
-_No unreleased changes yet._
+### Fixed
+
+- **`--xsm-coverage` under pytest-xdist** (#268 battle): with `-n N` the
+  controller printed "(no machines observed)" and the
+  `--xsm-fail-under-*` gate passed whatever the suite covered. Workers now
+  ship their reports to the controller, which merges them by machine and
+  prints, writes and gates once.
+- **`model_test` false failures** (#268 battle): on a chart whose root
+  reaches a top-level final state, event rules stayed enabled after the
+  machine was `done` and the run failed with `InterpreterStoppedError`.
+  A transition that comes back to the same configuration through
+  `always` failed as "generated a denied event" even though `can()` had
+  accepted it. Both now pass; a refused event is never a model failure.
+- **`FakeBrokerAdapter.deliver()` / `SyncFakeBrokerAdapter.deliver()`**
+  raise `TypeError` for a non-`Envelope`, like `publish()`, instead of
+  failing later inside the consumer.
+
+### Added
+
+- `contrib.testing` now exports `SyncFakeBrokerAdapter` and
+  `BrokerPublishError` (both were documented but importable only from
+  `contrib.testing.broker`).
+- Perf row `pytest_plugin_per_test` (`null` budget until the reference
+  runner records one).
+
+### Documentation
+
+- Testing guide: a "Fake broker" section; coverage under xdist;
+  `model_test` has no built-in invariants and pins `deadline=None`;
+  `--xsm-failing-dir` in the options table; the threat model notes that
+  a marker's `logic=` is code and that snapshot diffs print context
+  unredacted; six new Troubleshooting rows.
 
 ## [0.11.0] - 2026-10-01
 

@@ -17,7 +17,7 @@
 from __future__ import annotations
 
 import pathlib
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
 
@@ -26,14 +26,18 @@ from ...coverage import (
     CoverageCollector,
     CoverageReport,
     below,
+    reports_from_json,
     reports_to_html,
     reports_to_json,
     reports_to_text,
 )
 
-__all__ = ["add_coverage_options", "CoverageSession"]
+__all__ = ["add_coverage_options", "CoverageSession", "merge_reports"]
 
 _KEY = "_xsm_coverage_session"
+_PLUGIN = "xsm-coverage-session"
+#: ``workeroutput`` key a pytest-xdist worker ships its reports under.
+_WORKER_KEY = "xsm_coverage"
 _DEFAULT_FILES = {"json": "xsm-coverage.json", "html": "xsm-coverage.html"}
 
 
@@ -98,6 +102,10 @@ class CoverageSession:
         )
         self.failures: List[str] = []
         self.written: List[pathlib.Path] = []
+        # 📝 pytest-xdist: reports shipped back by each worker; folded
+        #    into the controller's own at `finish` (battle #268).
+        self.worker_reports: List[CoverageReport] = []
+        self.is_worker = hasattr(config, "workerinput")
 
     # ------------------------------------------------------------ lifecycle
     @classmethod
@@ -107,6 +115,7 @@ class CoverageSession:
         session = cls(config)
         setattr(config, _KEY, session)
         plugins.register_global(session.collector)
+        config.pluginmanager.register(session, _PLUGIN)
 
     @staticmethod
     def get(config: Any) -> Optional["CoverageSession"]:
@@ -117,7 +126,23 @@ class CoverageSession:
         session = cls.get(config)
         if session is not None:
             plugins.unregister_global(session.collector)
+            if config.pluginmanager.get_plugin(_PLUGIN) is session:
+                config.pluginmanager.unregister(session, _PLUGIN)
             delattr(config, _KEY)
+
+    # ------------------------------------------------------------ xdist
+    @pytest.hookimpl(optionalhook=True)
+    def pytest_testnodedown(self, node: Any, error: Any) -> None:
+        """Controller side of pytest-xdist: collect a worker's reports."""
+        text = getattr(node, "workeroutput", {}).get(_WORKER_KEY)
+        if text:
+            self.worker_reports.extend(reports_from_json(text))
+
+    def merged_reports(self) -> List[CoverageReport]:
+        """This process's reports merged with every worker's, by key."""
+        return merge_reports(
+            list(self.collector.reports()) + self.worker_reports
+        )
 
     # ------------------------------------------------------------ outputs
     def _resolve(self, path: pathlib.Path) -> pathlib.Path:
@@ -126,8 +151,18 @@ class CoverageSession:
         return pathlib.Path(str(self.config.invocation_params.dir)) / path
 
     def finish(self, session: Any) -> None:
-        """``pytest_sessionfinish``: write files, apply the thresholds."""
-        reports = self.collector.reports()
+        """``pytest_sessionfinish``: write files, apply the thresholds.
+
+        📝 On a pytest-xdist worker this only ships the raw reports to the
+        controller (``workeroutput``); files, summary and the gate are
+        the controller's, over the merged suite.
+        """
+        if self.is_worker:
+            self.config.workeroutput[_WORKER_KEY] = reports_to_json(
+                self.collector.reports()
+            )
+            return
+        reports = self.merged_reports()
         for kind, dest in self.reports:
             if dest is None:
                 continue
@@ -143,7 +178,9 @@ class CoverageSession:
             session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
     def summary(self, terminalreporter: Any) -> None:
-        reports: List[CoverageReport] = self.collector.reports()
+        if self.is_worker:
+            return
+        reports: List[CoverageReport] = self.merged_reports()
         if any(kind == "term" for kind, _ in self.reports):
             # 📝 The literal `---- xstate coverage ----` header (not a
             #    full-width `write_sep`) so CI log greps are stable.
@@ -157,3 +194,30 @@ class CoverageSession:
             terminalreporter.write_line(
                 f"FAIL xstate coverage: {failure}", red=True
             )
+
+
+def merge_reports(reports: List[CoverageReport]) -> List[CoverageReport]:
+    """Union several processes' reports of the same machines (by ``key``).
+
+    A state/transition is covered if ANY process covered it, so the merged
+    ``unvisited`` / ``unhit`` are the intersections. Sorted by key.
+    """
+    by_key: Dict[str, CoverageReport] = {}
+    for r in reports:
+        prev = by_key.get(r.key)
+        if prev is None:
+            by_key[r.key] = r
+            continue
+        unvisited = tuple(sorted(set(prev.unvisited) & set(r.unvisited)))
+        unhit = tuple(sorted(set(prev.unhit) & set(r.unhit)))
+        by_key[r.key] = CoverageReport(
+            machine_id=r.machine_id,
+            key=r.key,
+            states_visited=r.states_total - len(unvisited),
+            states_total=r.states_total,
+            unvisited=unvisited,
+            transitions_hit=r.transitions_total - len(unhit),
+            transitions_total=r.transitions_total,
+            unhit=unhit,
+        )
+    return [by_key[k] for k in sorted(by_key)]
