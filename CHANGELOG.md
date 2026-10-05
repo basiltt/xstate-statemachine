@@ -1447,6 +1447,22 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **The pytest plugin, as battle-tested (#268).** A team adopting
+  `[testing]` for the orders chart (real logic through the dotted
+  factory, snapshot files in git, `pytest -n 4`): `xsm gt -t pytest
+  --fixtures` emitted a `CONFIG_PATH` with a bare `with_name()` while the
+  plain variant already fell back to the parent directory -- the
+  generated module could never find its chart from the documented
+  `-o generated/` layout; a misspelt name in `xstate_guards_false` was
+  silently accepted (the test exercised the True branch while claiming to
+  force False) -- unknown guard names are a usage error naming the known
+  ones; `--xsm-update-snapshots` wrote wherever a relative path with
+  enough `..` pointed -- snapshot paths outside the rootdir are refused
+  (X0.10). Pinned: snapshot files are byte-identical across update runs
+  and under `-n 4`, a `Decimal` / tz-aware `datetime` context renders
+  deterministically, `"+nan"` / `"+-5"` / `"+inf"` in `xsm_send_all` are
+  errors not hangs, `-p no:xstate_statemachine` leaves a marker-less
+  module untouched.
 - **Path generation, as battle-tested (#269).** The explorer replayed
   the WHOLE prefix for every candidate edge -- O(depth) engine runs per
   edge: the 35-state parallel `addressFields` chart (3 456
