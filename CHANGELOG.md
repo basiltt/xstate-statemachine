@@ -9,16 +9,7 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
 
 ## [Unreleased]
 
-### Fixed
-
-- **`xsm simulate --script` (#271 battle).** A malformed script (not a
-  list, a step without `send` / `clock` / `guard`, a list `payload`, a
-  negative, infinite or non-numeric `clock`, a non-boolean guard `value`,
-  a missing file) printed a Python traceback; it is now one line naming
-  the step, exit 2. `--script` together with `--events` / `--clock` used
-  to run the events first and then the script, so a replayed `model_test`
-  artefact was not the recorded run; the combination is now refused
-  (exit 2). New benchmark row `model_test_200_examples` (no budget yet).
+_No unreleased changes yet._
 
 ## [0.11.0] - 2026-10-01
 
@@ -1481,6 +1472,31 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
   finish within budget; a 12-chart corpus smoke raises no false failure
   (an `always`-looping export is the engine's `RunawayChainError`, not the
   model's).
+  **The adversary suites then found:** two events whose names differ
+  only in punctuation (`A.B` / `A_B`) became ONE rule name -- one event
+  was silently never generated; a `raise` / `sendTo` with `delay` or a
+  child's timer never enabled the clock rule (it looked only at active
+  `after` keys), and with no `after` at all the rule did not exist -- it
+  now advances to the next pending timer of any kind; a
+  `state_assertions` key naming no state was silently ignored
+  (`ValueError`); an assert-style check returning `None` failed as
+  "violated" while a check raising `KeyError` escaped with no script
+  written -- `None` passes, any other falsy value fails, any exception
+  fails through the artefact writer; payload inference raised "cannot
+  infer" for `Decimal` / `datetime` / `date` / nested models and ignored
+  field constraints (`Field(ge=1)` → every send refused); a `payloads=`
+  strategy producing non-dicts or a `type` key failed obscurely
+  (`TypeError`). `xsm simulate --script`: a malformed script (a step
+  without `send` / `clock` / `guard`, a list payload, a negative /
+  infinite / non-numeric `clock`, a missing file) printed a traceback, a
+  non-boolean guard `value` (`"false"`) silently INVERTED the flip, and
+  `--script` with `--events` ran both so the replayed artefact was not
+  the recorded run -- one-line errors, exit 2. Pinned: the file left
+  after shrinking is the minimal sequence; three planted bugs
+  (sequence-, payload-, time-dependent) shrink to 3 / 1 / 2 steps; 200
+  examples on the orders chart with real logic take ≈3.4 s; a
+  `Decimal` in context fails `snapshot_roundtrip` on purpose. New
+  benchmark row `model_test_200_examples`; `failing.json` is gitignored.
 - **Coverage gates, as battle-tested (#270).** The orders team gates CI
   on state & transition coverage: `--xsm-fail-under-state-coverage=nan`
   was accepted (`type=float`) and every `percent < nan` is False -- the
