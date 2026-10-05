@@ -289,7 +289,19 @@ class PytestScaffoldStrategy(BaseStrategy):
             "from xstate_statemachine import SimulatedClock, SyncInterpreter",
             "",
             generate_section_header("Machine under test"),
-            f"CONFIG_PATH = Path(__file__).with_name({json.dumps(ctx.json_filenames[0])})",
+            # 📝 #268 battle: the fixtures variant used a bare `with_name()`
+            #    while the plain variant already fell back to the parent
+            #    directory -- so `xsm gt machine.json -t pytest --fixtures
+            #    -o generated/` produced a module that could never find its
+            #    chart ("machine file not found"). Same lookup, both
+            #    variants.
+            f"_CONFIG_NAME = {json.dumps(ctx.json_filenames[0])}",
+            "_HERE = Path(__file__).resolve().parent",
+            "CONFIG_PATH = (",
+            "    _HERE / _CONFIG_NAME",
+            "    if (_HERE / _CONFIG_NAME).exists()",
+            "    else _HERE.parent / _CONFIG_NAME",
+            ")",
             "",
             "pytestmark = pytest.mark.xstate_machine(str(CONFIG_PATH))",
             "",

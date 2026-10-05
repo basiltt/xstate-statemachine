@@ -53,7 +53,7 @@ from ...machine_logic import MachineLogic
 from ...models import MachineNode
 from ...persistence.store import MemoryStore
 from ...sync_interpreter import SyncInterpreter
-from ...testing_utils import stub_logic
+from ...testing_utils import logic_names, stub_logic
 from ._coverage import CoverageSession, add_coverage_options
 from ._paths import add_path_options, generate_path_tests, xsm_path
 
@@ -376,6 +376,20 @@ def _build(item: Any, spec: MachineSpec) -> _Built:
         #    invalid config now surfaces HERE, not in `create_machine`
         #    below -- both must become the same usage error.
         if spec.logic is None:
+            if spec.guards_false:
+                # 🛑 #268 battle: a misspelt guard name was silently
+                #    accepted (the stub table just gained a key nobody
+                #    read) and the test exercised the TRUE branch while
+                #    claiming to force False.
+                _, known, _ = logic_names(config)
+                unknown = sorted(set(spec.guards_false) - set(known))
+                if unknown:
+                    raise _usage_error(
+                        item,
+                        f"@pytest.mark.{GUARDS_MARKER}: the chart declares "
+                        f"no guard named {unknown}; known guards: "
+                        f"{sorted(known)}",
+                    )
             logic = stub_logic(config, ran=ran, guards=guards)
             stubbed = True
         else:
@@ -412,9 +426,22 @@ def render_snapshot(normalized: Mapping[str, Any]) -> str:
 
 def _snapshot_path(item: Any, path: Union[str, pathlib.Path]) -> pathlib.Path:
     p = pathlib.Path(path)
+    base = pathlib.Path(str(item.path)).parent
     if not p.is_absolute():
-        p = pathlib.Path(str(item.path)).parent / p
-    return p
+        p = base / p
+    resolved = p.resolve()
+    root = pathlib.Path(str(getattr(item.config, "rootpath", base))).resolve()
+    # 🛡️ #268 battle (X0.10): `--xsm-update-snapshots` WRITES this path.
+    #    A relative path with enough `..` escaped the project; refuse
+    #    anything outside the rootdir (and the test's own tree).
+    if root not in resolved.parents and resolved != root:
+        if base.resolve() not in resolved.parents:
+            raise _usage_error(
+                item,
+                f"snapshot path {str(path)!r} resolves outside the project "
+                f"({resolved}); keep snapshot files under the rootdir",
+            )
+    return resolved
 
 
 def _assert_snapshot(
