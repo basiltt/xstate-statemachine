@@ -235,8 +235,10 @@ def model_test(
         payloads: ``EVENT -> strategy`` of payload dicts. Unlisted events
             are inferred from ``event_schemas`` (pydantic `EventModel`
             fields), else sent without a payload.
-        clock: Generate a rule advancing the `SimulatedClock` by a declared
-            ``after`` delay (±1 ms jitter) while a timer is armed.
+        clock: Generate a rule advancing the `SimulatedClock` while any
+            timer is pending (``after``, ``raise``/``sendTo`` ``delay``, a
+            child's timer): either to the next pending timer, or by a
+            declared ``after`` delay, each ±1 ms jitter.
         max_steps: Hypothesis ``stateful_step_count``.
         settings: A ``hypothesis.settings`` to start from.
         allow_denied: Also send events ``can()`` refuses (the precondition
@@ -244,7 +246,10 @@ def model_test(
             event is never a failure either way.
         snapshot_roundtrip: A rule persisting the interpreter mid-sequence
             and continuing on the restored copy; a context that is not
-            JSON-serialisable (or does not survive the trip) fails.
+            JSON-serialisable (or does not survive the trip) fails -- a
+            `Decimal` in context fails on purpose: `get_snapshot()` would
+            restore it as a ``str``. Dormant invokes are restarted on the
+            restored copy (``restart_services=True``).
         guard_flip: With stub logic, a rule flipping stub guards (recorded
             in the script as ``{"guard": name, "value": bool}``).
         failing_path: Where to write the minimal failing sequence
@@ -528,7 +533,14 @@ def _roundtrip_rule(hs: Any, machine: MachineNode[Any]) -> Any:
         )
         interp.stop()
         restored: SyncInterpreter[Any] = SyncInterpreter.from_snapshot(
-            blob, self.machine, clock=self.clock, restart_timers="resume"
+            blob,
+            self.machine,
+            clock=self.clock,
+            restart_timers="resume",
+            # 📝 battle #271: an invoke dormant at the snapshot is re-driven
+            #    on the copy, so an `onDone`-reaching invariant cannot fail
+            #    only because the model hopped onto a restored interpreter.
+            restart_services=True,
         )
         restored.start()
         self.interp = restored
