@@ -1450,6 +1450,28 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **Model-based testing, as battle-tested (#271).** The orders team's
+  path tests (#269) and coverage gate (#270) were green and a refund still
+  drove `total_cents` negative after a specific interleaving. `model_test`
+  on the orders chart with the real `logic.build_logic` finds the planted
+  bug, shrinks it to ≤ 6 steps, writes a `failing.json` that `xsm
+  simulate --script` replays, and writes the same bytes twice under a
+  fixed seed. The bug it found in itself: a logic **factory** was called
+  once per class, so real logic with state (a gateway stub counting
+  calls, a retry counter, a breaker) was shared across examples --
+  Hypothesis reported `FlakyStrategyDefinition` and the planted bug
+  reproduced only on the first run. The factory is now called once per
+  example (`None` / a bare `MachineLogic` instance keep one build); the
+  `MachineLogic` check is duck-typed so an example app importing the
+  installed package pairs with a `src.` test. Pinned: 500 examples with
+  `allow_denied=False` generate no engine-refused send; a payload-
+  dependent guard is gated on the generated payload; `state_assertions`
+  run per active parallel region; `snapshot_roundtrip` names a `set` in
+  context; `clock=True` reaches the 15-minute `expired` state (coverage
+  sees the `after`); 200 examples on `addressFields` and the orders chart
+  finish within budget; a 12-chart corpus smoke raises no false failure
+  (an `always`-looping export is the engine's `RunawayChainError`, not the
+  model's).
 - **Coverage gates, as battle-tested (#270).** The orders team gates CI
   on state & transition coverage: `--xsm-fail-under-state-coverage=nan`
   was accepted (`type=float`) and every `percent < nan` is False -- the
