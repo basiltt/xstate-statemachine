@@ -234,7 +234,10 @@ class TestSendAll:
             def test_it(xsm_interp, xsm_send_all):
                 xsm_send_all(xsm_interp, {bad!r})
             """))
-        r = run(xsm_pytester, "--timeout=30")
+        # 📝 `--timeout` exists only with pytest-timeout (absent in the
+        #    3.9 venv); without it the outer marker bounds the session.
+        has_timeout = importlib.util.find_spec("pytest_timeout") is not None
+        r = run(xsm_pytester, *(["--timeout=30"] if has_timeout else []))
         r.assert_outcomes(failed=1)
         assert (
             "Traceback"
