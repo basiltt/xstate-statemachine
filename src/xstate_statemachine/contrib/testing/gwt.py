@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import math
 from typing import Any, Dict, Iterable, List, Optional, Union
 
 from ...clock import SimulatedClock
@@ -46,13 +47,27 @@ class Scenario:
     def in_state(self, *state_ids: str) -> "Scenario":
         """Start in this configuration (full ids or leaf names)."""
         self._require_not_started("in_state")
-        self._states = [self._full_id(s) for s in state_ids]
+        if not state_ids:
+            raise ValueError("given(...).in_state() needs at least one state")
+        full = [self._full_id(s) for s in state_ids]
+        for sid in full:
+            node = self.machine.get_state_by_id(sid)
+            if node is not None and node.type == "history":
+                # 🔥 battle #272: a history node is a pseudostate, never
+                #    active; from_state_ids' "conflict" message misled.
+                raise ValueError(
+                    f"given/then: {sid!r} is a history pseudostate and is "
+                    f"never active; name the state it would restore"
+                )
+        self._states = full
+        self._steps.append(f"in_state({', '.join(map(repr, state_ids))})")
         return self
 
     def with_context(self, **context: Any) -> "Scenario":
         """Start with these context keys (merged over the chart's)."""
         self._require_not_started("with_context")
         self._context = {**(self._context or {}), **context}
+        self._steps.append(f"with_context({', '.join(sorted(context))})")
         return self
 
     # -- when -----------------------------------------------------------------
@@ -60,7 +75,7 @@ class Scenario:
         self, event: Union[str, Event, Dict[str, Any]], **payload: Any
     ) -> "Scenario":
         """Send *event*; the `Receipt` is kept on ``self.receipt``."""
-        interp = self._ensure()
+        interp = self._ensure_live("when")
         label = (
             event if isinstance(event, str) else getattr(event, "type", event)
         )
@@ -70,7 +85,10 @@ class Scenario:
 
     def after(self, ms: float) -> "Scenario":
         """Advance the simulated clock by *ms* (fires due ``after``s)."""
-        self._ensure()
+        self._ensure_live("after")
+        if not isinstance(ms, (int, float)) or not math.isfinite(ms):
+            # 🔥 battle #272: nan advanced the clock to nan silently
+            raise ValueError(f"after() needs a finite number of ms: {ms!r}")
         self._steps.append(f"after({ms:g})")
         self.clock.increment(ms)
         return self
@@ -180,11 +198,37 @@ class Scenario:
                 interp.context.update(self._context)
             interp.start()
         else:
-            blob = from_state_ids(self.machine, self._states, self._context)
+            # 🔥 battle #272: a top-level final configuration is `done`,
+            #    not a running interpreter parked in a final state.
+            nodes = [self.machine.get_state_by_id(s) for s in self._states]
+            status = (
+                "done"
+                if any(
+                    n is not None
+                    and n.type == "final"
+                    and n.parent is self.machine
+                    for n in nodes
+                )
+                else "running"
+            )
+            blob = from_state_ids(
+                self.machine, self._states, self._context, status=status
+            )
             interp = SyncInterpreter.from_snapshot(
                 blob, self.machine, clock=self.clock, restart_timers="restart"
             ).start()
         self._interp = interp
+        return interp
+
+    def _ensure_live(self, step: str) -> SyncInterpreter[Any]:
+        interp = self._ensure()
+        if interp.status != "running":
+            # 🔥 battle #272: a send to a stopped/done interpreter was a
+            #    silent no-op, so the next then_* blamed the chart.
+            raise RuntimeError(
+                f"{step}(): the scenario's interpreter is "
+                f"{interp.status!r}, not running"
+            )
         return interp
 
     def _require_not_started(self, step: str) -> None:
@@ -222,7 +266,7 @@ class Scenario:
         )
 
     def _fail(self, message: str) -> None:
-        trail = " -> ".join(self._steps) or "(no when yet)"
+        trail = " -> ".join(self._steps) or "given()"
         raise AssertionError(f"{trail}: {message}")
 
 

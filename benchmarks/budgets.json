@@ -1,6 +1,8 @@
 {
   "budgets": {
     "circuit_breaker_call_closed": null,
+    "fake_broker_10k_envelopes": null,
+    "given_when_then_spec": null,
     "fastapi_router": null,
     "hooks_empty_async": {
       "baseline_p50_us": 26.418,
@@ -78,6 +80,8 @@
     "AMD EPYC 7763 64-Core Processor": {
       "p50_us": {
         "circuit_breaker_call_closed": null,
+        "fake_broker_10k_envelopes": null,
+        "given_when_then_spec": null,
         "fastapi_router": null,
         "hooks_empty_async": 56.967,
         "hooks_empty_sync": 32.369,
@@ -109,6 +113,8 @@
     "AMD EPYC 9V45 96-Core Processor": {
       "p50_us": {
         "circuit_breaker_call_closed": null,
+        "fake_broker_10k_envelopes": null,
+        "given_when_then_spec": null,
         "fastapi_router": null,
         "hooks_empty_async": 26.211,
         "hooks_empty_sync": 13.247,
@@ -140,6 +146,8 @@
     "AMD EPYC 9V74 80-Core Processor": {
       "p50_us": {
         "circuit_breaker_call_closed": null,
+        "fake_broker_10k_envelopes": null,
+        "given_when_then_spec": null,
         "fastapi_router": null,
         "hooks_empty_async": 26.418,
         "hooks_empty_sync": 15.873,
@@ -184,6 +192,8 @@
     "reference_cpu": "AMD EPYC 9V74 80-Core Processor",
     "reference_us": {
       "circuit_breaker_call_closed": null,
+      "fake_broker_10k_envelopes": null,
+      "given_when_then_spec": null,
       "fastapi_router": null,
       "hooks_empty_async": 30.731,
       "hooks_empty_sync": 17.109,
@@ -214,6 +224,8 @@
   "multiplier": 1.25,
   "notes": {
     "circuit_breaker_call_closed": "#265 battle: per-call cb.call(f) on a closed breaker; reference to be recorded from the first reference-runner nightly that includes it",
+    "fake_broker_10k_envelopes": "#272 battle: SyncFakeBrokerAdapter publish + drain of 10,000 envelopes across 20 subjects (per run); reference to be recorded from the first reference-runner nightly",
+    "given_when_then_spec": "#272 battle: one given().in_state().when().then_state() spec incl. build and stop; reference to be recorded from the first reference-runner nightly",
     "fastapi_router": "FastAPI router is not shipped yet",
     "hooks_empty_async": "no-plugin send path; no historical 0.10.x runtime in this run",
     "hooks_empty_sync": "no-plugin send path; no historical 0.10.x runtime in this run",
