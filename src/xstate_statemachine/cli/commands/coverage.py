@@ -35,6 +35,9 @@ def run_coverage(
         c.error(f"{report_file}: {exc}")
         raise SystemExit(1)
     failures = below(reports, state=fail_under, transition=fail_under)
+    if fail_under is not None and not reports:
+        # 🛡️ #270 battle B: an empty report must not pass a gate.
+        failures.append("no machines in the report to judge")
     if as_json:
         c.print(reports_to_json(reports).rstrip("\n"))
     else:

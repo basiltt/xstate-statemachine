@@ -173,6 +173,8 @@ Bounds must be `>= 0` (a negative value is a usage error). Tests on the same cha
 
 Line coverage cannot tell you whether any test ever reached `timeout` or took `paying --PAY_FAILED--> failed`. The chart knows every state and transition; `--xsm-coverage` records which ones ran:
 
+> **What 100 % means.** The transition denominator is every transition the chart *declares*. On real charts some can never be taken: an `always` alternative shadowed by an earlier guard, an invoke `onDone` / `onError` the stub actors cannot drive, a named `after` delay with no implementation, a state no event sequence reaches, and self-target `on` handlers that generated paths skip (a hand-written test still hits them). On 30 Stately-corpus charts 105 of 731 declared transitions were unreachable this way (#270 battle). Gate on **state** coverage, or on a transition threshold below 100, and read the `unhit` list as a review item rather than a defect count. A chart with no transitions counts as 100 %. Spawned and invoked **children** are different charts: with `--xsm-coverage` (a global collector) each gets its own row under its own key; a collector you `.use()` on the parent does not see them at all. The session collector costs roughly 1.4-1.7× on `send()` in a test run, most of it the engine's plugin dispatch -- it is a test-time tool, not a production plugin.
+
 ```text
 $ pytest --xsm-coverage --xsm-fail-under-transition-coverage=90
 ...
@@ -189,8 +191,10 @@ The session registers one `CoverageCollector` with core's [`plugins.register_glo
 |:--|:--|
 | `--xsm-coverage` | Enable. Without it nothing is registered and no section is printed. |
 | `--xsm-coverage-report=term\|json[:PATH]\|html[:PATH]` | Repeatable; default `term`. `json` defaults to `xsm-coverage.json`, `html` to `xsm-coverage.html` (one self-contained file: inline CSS, no scripts, no external links). |
-| `--xsm-fail-under-state-coverage=N` | Session exits 1 if any machine's state coverage is below N %. |
+| `--xsm-fail-under-state-coverage=N` | Session exits 1 if any machine's state coverage is below N %. `N` is a finite number in `[0, 100]`; anything else is a usage error. |
 | `--xsm-fail-under-transition-coverage=N` | Same for transitions. |
+
+The report options and thresholds need `--xsm-coverage`: on their own they are a usage error, not ignored. Repeating a report (`term` twice, the same `json:PATH` twice) produces it once. Files are written even when tests fail. `--collect-only` writes and gates nothing. If a threshold is set and **no machine was observed** (`-k` matched nothing, or no test built an interpreter), the gate fails rather than passing on nothing. When the run stopped early (`-x`, `--maxfail`), the summary says `(session interrupted -- coverage partial)`. A report path that cannot be written (a directory, a parent that is a file) fails the session with one `FAIL xstate coverage: cannot write ...` line.
 
 **With pytest-xdist (`-n N`).** Every worker records its own share and ships it to the controller at the end of the session. The controller merges them by machine (a state or transition counts as covered if any worker covered it), then prints the report, writes the files and applies the thresholds once, over the whole suite. Workers print no coverage section of their own.
 
@@ -362,6 +366,12 @@ assert broker.published_on("out") == []
 | `UsageError: … logic='pkg.mod:make': cannot import 'pkg.mod'` | the dotted `logic=` module is not importable from the test session | fix the dotted path or put the package on `sys.path` (e.g. `pythonpath` in pytest config) |
 | `UsageError: … snapshot path … resolves outside the project` | an `xsm_snapshot` path that escapes the rootdir (`../`, absolute) | keep snapshot files under the rootdir |
 | `fixture 'xsm_ainterp' not found` / unawaited coroutine | async fixture used without `pytest-asyncio` | `pip install pytest-asyncio` and mark the test `@pytest.mark.asyncio` |
+| `error: argument --xsm-fail-under-state-coverage: expected a percentage in [0, 100]` | `nan`, `inf`, `-1`, `101` | pass a number from 0 to 100 |
+| `UsageError: --xsm-coverage-report='xml': expected term, json[:PATH] or html[:PATH]` | unknown report kind, or `term:PATH` | use one of the three kinds |
+| `UsageError: --xsm-fail-under-state-coverage requires --xsm-coverage` | a threshold or report without the switch (it was silently ignored before) | add `--xsm-coverage` |
+| `FAIL xstate coverage: no machines were observed` | a threshold was set and no interpreter was built (`-k` matched nothing, wrong marker) | fix the selection; without a threshold the run just prints `(no machines observed)` |
+| `FAIL xstate coverage: cannot write json report to …` | the report path is a directory or its parent is a file | pick a writable file path |
+| `xsm coverage: … unsupported coverage report version` | the JSON was written by an incompatible release | regenerate it with the installed version |
 | `--xsm-coverage` gate passes under `-n N` with "(no machines observed)" | a release before the xdist merge | upgrade; workers' reports are now merged on the controller |
 | `TypeError: deliver() needs an Envelope` | `FakeBrokerAdapter.deliver()` was given a dict or a string | wrap it: `Envelope.new(type=…, subject=…, data=…)` |
 | `RuntimeWarning: SimulatedClock.increment() … never awaited` | `xsm_clock.increment()` called without `await` under the async engine | `await xsm_clock.increment(ms)` or use `xsm_asend_all` |
