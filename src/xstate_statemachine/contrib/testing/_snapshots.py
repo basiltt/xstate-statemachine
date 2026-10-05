@@ -1,8 +1,8 @@
 # src/xstate_statemachine/contrib/testing/_snapshots.py
 # -----------------------------------------------------------------------------
-# ðŸ“¸ Snapshot files for the `xsm_snapshot` fixture (#268)
+# 📸 Snapshot files for the `xsm_snapshot` fixture (#268)
 # -----------------------------------------------------------------------------
-# ðŸ›ï¸ Split out of `pytest_plugin.py` (#268 battle). A snapshot file records
+# 🏛️ Split out of `pytest_plugin.py` (#268 battle). A snapshot file records
 #    only `state_ids`, `value`, `context` and `status`, rendered with sorted
 #    keys, a fixed indent and a trailing newline: two runs, two machines,
 #    two hash seeds produce byte-identical files.
@@ -24,7 +24,7 @@ from ._marker import _usage_error
 
 UPDATE_OPTION = "--xsm-update-snapshots"
 
-#: ðŸ“¸ What a snapshot file records. Everything else in `get_snapshot()` --
+#: 📝 What a snapshot file records. Everything else in `get_snapshot()` --
 #: `taken_at`, `machine_hash`, `version`, `deadlines` wall times, pending
 #: events -- is either non-deterministic or an implementation detail of the
 #: persistence layout, and would make files churn without behaviour changing.
@@ -42,7 +42,7 @@ class SnapshotMismatchError(AssertionError):
 
     Attributes:
         path: The snapshot file compared against.
-        diff: The unified diff (expected â†’ actual) as one string.
+        diff: The unified diff (expected → actual) as one string.
     """
 
     def __init__(self, path: pathlib.Path, diff: str) -> None:
@@ -57,7 +57,7 @@ class SnapshotMismatchError(AssertionError):
 def _canonical(value: Any) -> Any:
     """JSON ``default=`` hook with a hash-seed-independent result.
 
-    ðŸ›‘ #268 battle: ``default=str`` rendered a ``set`` in hash order, so a
+    📝 #268 battle: ``default=str`` rendered a ``set`` in hash order, so a
     snapshot recorded under one ``PYTHONHASHSEED`` failed under the next.
     Sets become sorted lists; everything else ``str`` (as before).
     """
@@ -103,7 +103,7 @@ def _interp_snapshot(interp: Any) -> Dict[str, Any]:
 def _real(path: pathlib.Path) -> pathlib.Path:
     """``resolve()`` without Windows' extended-length prefix.
 
-    ðŸ›‘ #268 battle: under ``-n 4`` on Windows, ``resolve()`` of a path
+    📝 #268 battle: under ``-n 4`` on Windows, ``resolve()`` of a path
     another worker was creating came back with the ``\\\\?\\`` prefix, which
     is never "inside" the plain rootdir -- a correct snapshot path was
     refused as an escape, intermittently.
@@ -123,7 +123,7 @@ def _snapshot_path(item: Any, path: Union[str, pathlib.Path]) -> pathlib.Path:
         p = base / p
     resolved = _real(p)
     root = _real(pathlib.Path(str(getattr(item.config, "rootpath", base))))
-    # ðŸ›¡ï¸ #268 battle (X0.10): `--xsm-update-snapshots` WRITES this path.
+    # 🛡️ #268 battle (X0.10): `--xsm-update-snapshots` WRITES this path.
     #    `resolve()` follows symlinks, so a link pointing out is refused too.
     if root not in resolved.parents and resolved != root:
         if _real(base) not in resolved.parents:
@@ -145,7 +145,7 @@ def _atomic_write(target: pathlib.Path, text: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(text)
-        # ðŸ“ `mkstemp` creates 0o600; a recorded snapshot is a normal file.
+        # 📝 `mkstemp` creates 0o600; a recorded snapshot is a normal file.
         os.chmod(tmp, 0o644)
         os.replace(tmp, target)
     except BaseException:
@@ -184,7 +184,7 @@ def _assert_snapshot(
             f"no snapshot file at {target}; run pytest {UPDATE_OPTION} "
             f"to record it",
         )
-    # ðŸ“ `read_text` translates CRLF (git autocrlf) to LF.
+    # 📝 `read_text` translates CRLF (git autocrlf) to LF.
     expected_text = target.read_text(encoding="utf-8")
     try:
         expected = render_snapshot(normalize_snapshot(expected_text))
