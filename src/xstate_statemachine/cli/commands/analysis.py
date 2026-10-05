@@ -133,6 +133,27 @@ def _unreachable(machine: MachineNode) -> List[str]:
         elif node.type == "compound" and node.states and not node.initial:
             enter(next(iter(node.states.values())))
 
+    def enter_target(node: StateNode) -> None:
+        # 🔥 #269 battle: a target deep in the tree (`#m.a.b.leaf`, a
+        #    history node) enters every ancestor on the way down -- and
+        #    every sibling region of a parallel ancestor. Only the target
+        #    itself used to be marked, so `xsm inspect` / `validate` called
+        #    `m.a` "unreachable" while the engine sat in `m.a.b.leaf`.
+        enter(node)
+        if node.type == "history":
+            parent = node.parent
+            if parent is not None:
+                enter(parent)
+        child = node
+        anc = node.parent
+        while anc is not None:
+            if anc.type == "parallel":
+                for region in anc.states.values():
+                    if region is not child:
+                        enter(region)
+            reachable.add(anc.id)
+            child, anc = anc, anc.parent
+
     enter(machine)
     changed = True
     while changed:
@@ -146,7 +167,7 @@ def _unreachable(machine: MachineNode) -> List[str]:
             for _label, t in transitions_of(node):
                 target = t.resolved_target
                 if target is not None and target.id not in reachable:
-                    enter(target)
+                    enter_target(target)
                     changed = True
     return sorted(
         n.id

@@ -1151,6 +1151,7 @@ def _dispatch() -> None:
             max_depth=int(getattr(args, "max_depth", 50)),
             max_paths=int(getattr(args, "max_paths", 1000)),
             as_json=bool(getattr(args, "json", False)),
+            weight=getattr(args, "weight", "steps"),
         )
         return
 

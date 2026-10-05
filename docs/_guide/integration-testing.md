@@ -134,6 +134,8 @@ All fixtures are prefixed `xsm_` so they cannot shadow your own `machine`, `cloc
 
 ## Path generation
 
+> **What a traversal does to your process.** It explores a *private copy* of the machine (your `machine.logic` is never swapped, so a live interpreter beside the traversal is unaffected), but it mutes the `xstate_statemachine` logger to `CRITICAL` for its duration — process-wide. A step the engine refuses is dropped and a contained failure (an `always` loop at `maxIterations`) is kept; either raises **one** `RuntimeWarning` per traversal naming the error. `Path.replay()` on your *real* machine forces each step's assumptions onto `machine.logic` for that step only and restores them; do not replay the same machine from two threads at once.
+
 Request the `xsm_path` fixture under an `xstate_machine` marker and pytest parametrises the test over [`graph.shortest_paths(machine)`](../testing-and-pure-api/) — **one case per reachable configuration**, found by running the real engine on stub logic and a simulated clock (parallel regions, history and `after` timers included):
 
 ```python
@@ -146,9 +148,9 @@ def test_every_state_is_reachable(xsm_path, xsm_interp, xsm_clock):
 ```
 
 ```text
-test_reach[path[editing]] PASSED
-test_reach[path[editing->challenge]] PASSED
-test_reach[path[editing->challenge->success]] PASSED
+test_every_state_is_reachable[path[editing]] PASSED
+test_every_state_is_reachable[path[editing->challenge]] PASSED
+test_every_state_is_reachable[path[editing->challenge->success]] PASSED
 ```
 
 Ids name the leaf configurations the path walks through (parallel leaves joined with `+`). `xsm_path` is a `graph.Path`: `steps`, `final_states`, `event_string()` (the `xsm simulate --events` grammar) and `replay(interp, clock)`, which forces each step's recorded guard/service assumptions for that step only.
@@ -159,6 +161,8 @@ Ids name the leaf configurations the path walks through (parallel leaves joined 
 | `--xsm-max-paths=N` | Cap for `--xsm-full-paths` (default 1000). |
 | `--xsm-max-depth=N` | Longest path explored (default 50). |
 | `--xsm-path-guards=true\|false\|both` | What stub guards return during generation; `both` also reaches the configurations only a `False` guard (or a failing service) leads to. |
+
+Bounds must be `>= 0` (a negative value is a usage error). Tests on the same chart and options share one exploration per session. A chart that cannot start does not abort collection: each test requesting `xsm_path` on it gets a single `path[error]` case that errors with the engine's message. To run one case, select it by node id (`pytest "test_x.py::test_reach[path[editing->challenge]]"`); `-k` cannot match the ids because its expression grammar rejects `>`.
 
 📝 Named `after` delays (declared in `MachineLogic.delays`) have no static duration: their steps advance the clock by a large sentinel and carry a `delay:<name>=unknown` assumption. With real `logic=` the *generation* still uses stubs; `replay` then runs your real guards, so a path whose guard assumption your logic does not satisfy will (correctly) not reach its configuration.
 

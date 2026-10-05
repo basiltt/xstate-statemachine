@@ -39,6 +39,26 @@ def _path_json(p: GraphPath) -> Dict[str, Any]:
     }
 
 
+def _explore(
+    m: Any,
+    simple: bool,
+    guards: str,
+    max_depth: int,
+    max_paths: int,
+    weight: str,
+) -> List[GraphPath]:
+    if simple:
+        return simple_paths(
+            m, guards=guards, max_paths=max_paths, max_depth=max_depth
+        )
+    return sorted(
+        shortest_paths(
+            m, guards=guards, max_depth=max_depth, weight=weight
+        ).values(),
+        key=lambda p: (len(p.steps), sorted(p.final_states)),
+    )
+
+
 def run_paths(
     json_file: str,
     *,
@@ -47,6 +67,7 @@ def run_paths(
     max_depth: int = 50,
     max_paths: int = 1000,
     as_json: bool = False,
+    weight: str = "steps",
 ) -> None:
     """Print a path to every reachable configuration (or every simple path).
 
@@ -60,6 +81,8 @@ def run_paths(
         max_depth: Exploration depth bound.
         max_paths: Cap for ``--simple``.
         as_json: Emit JSON instead of the table.
+        weight: ``steps`` (fewest steps) or ``time`` (least simulated
+            clock time) for the shortest-path search.
     """
     c = get_console()
     facts = analyse(Path(json_file))
@@ -70,15 +93,19 @@ def run_paths(
                 c.print(f"    - {f.message}")
         raise SystemExit(1)
     m = facts.machine
-    if simple:
-        found: List[GraphPath] = simple_paths(
-            m, guards=guards, max_paths=max_paths, max_depth=max_depth
+    try:
+        found = _explore(m, simple, guards, max_depth, max_paths, weight)
+    except Exception as exc:  # noqa: BLE001 -- reported, exit 1
+        # 🔥 #269 battle: a chart that builds but cannot START (or whose
+        #    stub run raises) escaped as an engine traceback.
+        c.print(
+            c.style(
+                f"x {json_file} cannot be explored: "
+                f"{type(exc).__name__}: {exc}",
+                "err",
+            )
         )
-    else:
-        found = sorted(
-            shortest_paths(m, guards=guards, max_depth=max_depth).values(),
-            key=lambda p: (len(p.steps), sorted(p.final_states)),
-        )
+        raise SystemExit(1)
     if as_json:
         c.print(
             json.dumps(
@@ -86,6 +113,7 @@ def run_paths(
                     "machine": m.id,
                     "mode": "simple" if simple else "shortest",
                     "guards": guards,
+                    "weight": weight,
                     "paths": [_path_json(p) for p in found],
                 },
                 indent=2,

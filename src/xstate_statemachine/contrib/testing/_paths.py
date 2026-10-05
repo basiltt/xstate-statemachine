@@ -16,7 +16,9 @@
 
 from __future__ import annotations
 
-from typing import Any, List
+import json
+import pathlib
+from typing import Any, List, Mapping
 
 import pytest
 
@@ -25,6 +27,16 @@ from ...graph import Path, shortest_paths, simple_paths
 __all__ = ["PATH_FIXTURE", "add_path_options", "generate_path_tests"]
 
 PATH_FIXTURE = "xsm_path"
+
+
+def _non_negative_int(text: str) -> int:
+    """argparse type: ``0`` or more (a negative bound is a typo)."""
+    import argparse
+
+    value = int(text)
+    if value < 0:
+        raise argparse.ArgumentTypeError(f"must be >= 0, got {value}")
+    return value
 
 
 def add_path_options(group: Any) -> None:
@@ -37,13 +49,13 @@ def add_path_options(group: Any) -> None:
     )
     group.addoption(
         "--xsm-max-paths",
-        type=int,
+        type=_non_negative_int,
         default=1000,
         help="cap for --xsm-full-paths (default 1000)",
     )
     group.addoption(
         "--xsm-max-depth",
-        type=int,
+        type=_non_negative_int,
         default=50,
         help="maximum steps in a generated xsm_path (default 50)",
     )
@@ -87,10 +99,94 @@ def generate_path_tests(metafunc: Any) -> None:
     if spec is None:
         # The fixture itself fails with the marker message at run time.
         return
-    machine = _build(item, spec).machine
-    opt = metafunc.config.getoption
+    try:
+        found = _cached_explore(item, spec, metafunc.config, _build)
+    except pytest.UsageError:
+        raise
+    except Exception as exc:  # noqa: BLE001 -- reported per test, below
+        # 🔥 #269 battle: a chart that cannot start used to abort the WHOLE
+        #    collection with an engine traceback. Now it is one clear error
+        #    on this test only; the rest of the session still runs.
+        metafunc.parametrize(
+            PATH_FIXTURE,
+            [_PathError(f"{type(exc).__name__}: {exc}")],
+            ids=["path[error]"],
+            indirect=True,
+        )
+        return
+    initial = found[0].final_states if found else frozenset()
+    if found and found[0].steps:
+        initial = found[0].steps[0].from_states
+    metafunc.parametrize(
+        PATH_FIXTURE,
+        found,
+        ids=[path_id(p, initial) for p in found],
+        indirect=True,
+    )
+
+
+class _PathError:
+    """Stand-in parameter: path generation failed for this test."""
+
+    def __init__(self, message: str) -> None:
+        self.message = message
+
+
+#: ⚡ #269 battle: two test functions on one chart used to explore it twice
+#:    (seconds each on a wide parallel chart). Keyed on everything that can
+#:    change the result; a built `MachineNode` source keys on identity.
+_CACHE_ATTR = "_xsm_path_cache"
+
+
+def _cache_key(spec: Any, config: Any) -> Any:
+    src = spec.source
+    if isinstance(src, Mapping):
+        try:
+            src_key: Any = ("cfg", json.dumps(src, sort_keys=True))
+        except (TypeError, ValueError):
+            return None
+    elif isinstance(src, (str, pathlib.Path)):
+        src_key = ("file", str(src))
+    else:
+        src_key = ("node", id(src))
+    opt = config.getoption
+    return (
+        src_key,
+        spec.logic,
+        spec.strict,
+        spec.strict_config,
+        tuple(spec.guards_false),
+        opt("--xsm-path-guards"),
+        opt("--xsm-max-depth"),
+        opt("--xsm-full-paths"),
+        opt("--xsm-max-paths"),
+    )
+
+
+def _cached_explore(
+    item: Any, spec: Any, config: Any, build: Any
+) -> List[Path]:
+    cache = getattr(config, _CACHE_ATTR, None)
+    if cache is None:
+        cache = {}
+        setattr(config, _CACHE_ATTR, cache)
+    key = _cache_key(spec, config)
+    if key is not None and str(key[0][0]) == "file":
+        # 📝 Relative JSON paths resolve against the test file's dir.
+        key = (str(item.path.parent),) + key
+    if key is not None and key in cache:
+        return list(cache[key])
+    found = _explore(build(item, spec).machine, config)
+    if key is not None:
+        cache[key] = tuple(found)
+    return found
+
+
+def _explore(machine: Any, config: Any) -> List[Path]:
+    opt = config.getoption
     guards = opt("--xsm-path-guards")
     depth = opt("--xsm-max-depth")
+    found: List[Path]
     if opt("--xsm-full-paths"):
         found = simple_paths(
             machine,
@@ -103,15 +199,7 @@ def generate_path_tests(metafunc: Any) -> None:
             shortest_paths(machine, guards=guards, max_depth=depth).values(),
             key=lambda p: (len(p.steps), sorted(p.final_states)),
         )
-    initial = found[0].final_states if found else frozenset()
-    if found and found[0].steps:
-        initial = found[0].steps[0].from_states
-    metafunc.parametrize(
-        PATH_FIXTURE,
-        found,
-        ids=[path_id(p, initial) for p in found],
-        indirect=True,
-    )
+    return list(found)
 
 
 @pytest.fixture
@@ -122,6 +210,12 @@ def xsm_path(request: Any) -> Path:
     param = getattr(request, "param", None)
     if isinstance(param, Path):
         return param
+    if isinstance(param, _PathError):
+        pytest.fail(
+            f"{request.node.nodeid}: cannot generate {PATH_FIXTURE} cases "
+            f"-- the machine does not start: {param.message}",
+            pytrace=False,
+        )
     from .pytest_plugin import MARKER
 
     pytest.fail(

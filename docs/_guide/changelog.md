@@ -754,7 +754,11 @@ _No unreleased changes yet._
   the static reachability pass cannot produce -- "state is never entered
   by the engine (reachable statically only)" -- and never removes a
   static one (corpus output unchanged). Guide: Testing &sect; "Path
-  generation"; CLI &sect; "Paths".
+  generation"; CLI &sect; "Paths". The traversal never modifies the
+  caller's machine (it explores a private copy, so concurrent calls and
+  live interpreters are unaffected); `max_configs=100_000` bounds a
+  combinatorial chart with `ExplorationLimitError` (partial result on
+  `.found`); wildcard (`"*"`, `"mouse.*"`) handlers are explored.
 - **`[testing]` extra: a pytest plugin** (#268; both engines). Registered
   through a `pytest11` entry point, so `pip install
   "xstate-statemachine[testing]"` is the whole setup; the plugin imports
@@ -1449,6 +1453,58 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **Path generation, as battle-tested (#269).** The explorer replayed
+  the WHOLE prefix for every candidate edge -- O(depth) engine runs per
+  edge: the 35-state parallel `addressFields` chart (3 456
+  configurations) took 60 s and a 53-state / 78-guard chart under
+  `guards="both"` 137 s. Prefix end-states are now cached as snapshots
+  and restored per candidate (`restart_timers="resume"` on a clock that
+  shares the original's wall origin -- the default leaves `after`
+  deadlines dormant; restored under the last step's forced assumptions
+  -- `start()` re-runs `always`, so a configuration stable only while a
+  guard is forced False moved on under the all-True stubs), and guard
+  flips are scoped to the candidate's own event (a guard on `on 'X'`
+  cannot change `send('Y')`). Results are byte-identical on 100 corpus
+  charts in every mode; the two charts run in 34 s and 39 s. A forced
+  `service:<name>=error` step no longer logs an ERROR traceback per
+  generated test under `xsm_path`.
+  **The adversary suites then found:** the cache stored a snapshot per
+  EDGE (19 000 on `addressFields`), overflowed its cap and fell back to
+  replay -- 77 % hit rate; BFS now caches the first path into each
+  configuration (≈100 %, 35 s → 19 s). Wildcard handlers (`"*"`,
+  `"mouse.*"`) were skipped, so a state reachable only through one was
+  "unreachable". No bound on configurations: `max_configs=100_000`
+  (`ExplorationLimitError`, partial result on `.found`); negative
+  `max_depth` / `max_paths` / `max_configs` are `ValueError`. `stubbed()`
+  swapped `machine.logic` on the CALLER's machine -- a live interpreter on
+  it took a transition its real guard forbids while a traversal ran; the
+  explorer now works on a private copy, and the logger-level guard is
+  re-entrant (two overlapping traversals could leave the library logger
+  muted). `xsm_path`: a chart that cannot start aborted the whole
+  collection with a traceback (now one `path[error]` case per test);
+  two functions on one chart explored it twice (cached per session);
+  negative `--xsm-max-*` are usage errors. `xsm paths`: a chart that
+  cannot be explored exits 1 with one line; `--weight steps|time` added;
+  negative bounds exit 2; every printed path's `event_string()` fed to
+  `xsm simulate --events` lands on the same states (102 corpus charts).
+  `xsm simulate --events`/`--clock`: `+-5`, `+abc` crashed, `+inf` /
+  `+nan` / `+1e309` printed invalid JSON -- all exit 2. `xsm inspect` /
+  `validate` called entered states "unreachable": the static pass marked
+  only a transition's target, not the ancestors (and parallel siblings) a
+  deep `#id` / history target enters -- 16 false warnings removed, none
+  added. Docs: an UNDEFINED named delay is skipped (only one in
+  `logic.delays` yields `delay:<name>=unknown`).
+  **Independent review then found:** the cache-parity tests patched a
+  re-exported copy of the cache cap, not the one the explorer reads --
+  every "cache ≡ replay" assertion compared the cache with itself (the
+  parity claim above was re-established after the fix); a named `after`
+  delay advanced the clock a fixed 10⁹ ms and fired every later timer in
+  the same step, so `a --after slow--> b --after 300--> c` reported only
+  `{a, c}` -- it now advances to the earliest pending deadline; a step the
+  engine refused or contained (`maxIterations`) vanished silently -- one
+  `RuntimeWarning` per traversal names it; `reachable_states` gains
+  `max_configs`; `graph.py` split into `graph` / `_graph_model` /
+  `_graph_explorer`.
 - **Typed boundary, as battle-tested (#266).** A chart whose static
   `context` the `context_model` refuses **built and started** -- the
   `TypedContextPlugin` raise is contained by the plugin system -- and then
