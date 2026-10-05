@@ -15,7 +15,30 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ## [Unreleased]
 
-_No unreleased changes yet._
+### Test doubles & BDD (#272)
+
+- **`given(machine)` / `Scenario`, `xstate_statemachine.contrib.testing`.**
+  `given(m).in_state("paid").with_context(orderId="o").when("PACKED")
+  .then_state("shipped").then_context(trackingId="TRK-o")` over a
+  `SyncInterpreter` on a `SimulatedClock`; `after(ms)`, `then_not_state`,
+  `then_changed`, `then_denied`, `then_error`, `then_no_error`,
+  `then_done`. Every failure is an `AssertionError` that names the step
+  trail, the expected and the actual value. `in_state` refuses unknown,
+  ambiguous and history ids and runs no entry actions; a top-level final
+  state starts `done`; `when` / `after` on a stopped or finished scenario
+  and a non-finite `after` are errors, not silent no-ops. Sync engine
+  only.
+- **`FakeBrokerAdapter` / `SyncFakeBrokerAdapter`, `replay`,
+  `assert_replay_consistent`** are documented affordance by affordance
+  in the Testing guide, including `drain()` (a raising handler nacks
+  without requeue and re-raises) and the outbox relay's at-least-once
+  rule under `fail_next_publish()`.
+- **pytest-bdd recipe** (`tests/contrib/testing/bdd_order_specs/`): a
+  `.feature` file with a scenario outline, step definitions over
+  `given()`, run when `pytest-bdd` is installed and skipped otherwise.
+  `pytest-bdd` is not part of `[testing]`.
+- Benchmark rows `fake_broker_10k_envelopes` and `given_when_then_spec`
+  (no budget until the reference runner records one).
 
 ## [0.11.0] - 2026-10-01
 

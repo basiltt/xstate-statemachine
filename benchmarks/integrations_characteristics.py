@@ -84,6 +84,8 @@ ROWS = (
     "fastapi_router",
     "timer_scan_sqlite_100k",
     "circuit_breaker_call_closed",
+    "fake_broker_10k_envelopes",
+    "given_when_then_spec",
 )
 
 
@@ -815,6 +817,70 @@ def benchmark_circuit_breaker_call_closed(
     return metric
 
 
+def benchmark_fake_broker_10k_envelopes(
+    envelopes: int = 10_000, subjects: int = 20
+) -> Dict[str, Any]:
+    """Publish + drain *envelopes* through `SyncFakeBrokerAdapter` (#272).
+
+    📝 One sample = publish *envelopes* across *subjects* round-robin on
+    one topic, then `drain()` them through a no-op handler; reported per
+    run (µs), so a regression in the fake's lock / queue shows directly.
+    """
+    from xstate_statemachine.eda import Envelope, SyncFakeBrokerAdapter
+
+    batch = [
+        Envelope.new(type="xsm.o.GO", subject=f"s-{i % subjects}")
+        for i in range(envelopes)
+    ]
+
+    def once() -> float:
+        broker = SyncFakeBrokerAdapter()
+        broker.on("t", lambda env: None)
+        start = time.perf_counter_ns()
+        for env in batch:
+            broker.publish("t", env)
+        handled = broker.drain()
+        elapsed = (time.perf_counter_ns() - start) / 1000
+        if handled != envelopes:
+            raise RuntimeError(f"drained {handled} of {envelopes}")
+        return elapsed
+
+    once()  # warm
+    samples = [once() for _ in range(REPETITIONS)]
+    return _metric(samples, envelopes=envelopes, subjects=subjects)
+
+
+def benchmark_given_when_then_spec(specs: int = 200) -> Dict[str, Any]:
+    """One `given(m).in_state().when().then_state()` spec (#272).
+
+    📝 Each sample is the mean of *specs* full specs (µs): build the
+    scenario from `from_state_ids`, send one event, assert, stop.
+    """
+    from xstate_statemachine.contrib.testing.gwt import given
+
+    machine = create_machine(
+        {
+            "id": "order",
+            "initial": "pending",
+            "states": {
+                "pending": {"on": {"PAY": "paid"}},
+                "paid": {"on": {"SHIP": "shipped"}},
+                "shipped": {},
+            },
+        }
+    )
+
+    def loop() -> float:
+        start = time.perf_counter_ns()
+        for _ in range(specs):
+            with given(machine) as s:
+                s.in_state("paid").when("SHIP").then_state("shipped")
+        return (time.perf_counter_ns() - start) / 1000 / specs
+
+    loop()  # warm
+    return _metric([loop() for _ in range(REPETITIONS)], specs=specs)
+
+
 PLUGINS_NOTE = "IdempotencyPlugin + AuditPlugin + PrometheusPlugin (#273)"
 NO_PROMETHEUS_NOTE = (
     "IdempotencyPlugin + AuditPlugin; install [observability] to include "
@@ -860,6 +926,8 @@ def run(quick: bool = False) -> Dict[str, Any]:
         "model_test_200_examples": "#271 battle: one model_test run (200 derandomized examples) on AdvancePayment.json; no budget until the reference runner records one",
         "fastapi_router": "FastAPI router is not shipped yet",
         "circuit_breaker_call_closed": "#265 battle: per-call cb.call(f) on a closed breaker; no budget until the reference runner records one",
+        "fake_broker_10k_envelopes": "#272 battle: SyncFakeBrokerAdapter publish + drain of 10,000 envelopes across 20 subjects (per run); no budget until the reference runner records one",
+        "given_when_then_spec": "#272 battle: one given().in_state().when().then_state() spec incl. build and stop; no budget until the reference runner records one",
     }
     logger = logging.getLogger("xstate_statemachine")
     previous_level = logger.level
@@ -935,6 +1003,12 @@ def run(quick: bool = False) -> Dict[str, Any]:
         results["circuit_breaker_call_closed"] = _clean(
             benchmark_circuit_breaker_call_closed
         )
+        results["fake_broker_10k_envelopes"] = _clean(
+            benchmark_fake_broker_10k_envelopes
+        )
+        results["given_when_then_spec"] = _clean(
+            benchmark_given_when_then_spec
+        )
     finally:
         logger.setLevel(previous_level)
         if was_enabled:
@@ -995,6 +1069,11 @@ def measure_row(row: str, quick: bool = False) -> Dict[str, Any]:
         ),
         "timer_scan_sqlite_100k": (benchmark_timer_scan_sqlite_100k, ()),
         "model_test_200_examples": (benchmark_model_test_200_examples, ()),
+        "fake_broker_10k_envelopes": (
+            benchmark_fake_broker_10k_envelopes,
+            (),
+        ),
+        "given_when_then_spec": (benchmark_given_when_then_spec, ()),
     }
     if row not in dispatch:
         raise KeyError(f"{row!r} is not a re-measurable row")
