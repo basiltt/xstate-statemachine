@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -245,12 +246,31 @@ def parse_events_arg(
         if not tok:
             continue
         if tok.startswith("+"):
-            out.append({"clock": float(tok[1:])})
+            out.append({"clock": _advance_ms(tok[1:], tok)})
         else:
             out.append({"send": tok})
     if clock:
-        out.append({"clock": float(clock)})
+        out.append({"clock": _advance_ms(clock, f"--clock {clock}")})
     return out
+
+
+def _advance_ms(text: str, shown: str) -> float:
+    """A finite, non-negative millisecond count, or `ValueError`.
+
+    🔥 #269 battle: `+-5` / `+abc` escaped as tracebacks, and `+inf` /
+    `+nan` were accepted and printed as `Infinity` / `NaN` -- invalid
+    JSON under `--json`.
+    """
+    try:
+        ms = float(text)
+    except ValueError:
+        ms = math.nan
+    if not math.isfinite(ms) or ms < 0:
+        raise ValueError(
+            f"bad clock advance {shown!r}: expected +N with N a finite, "
+            f"non-negative number of milliseconds"
+        )
+    return ms
 
 
 # =============================================================================
@@ -532,7 +552,16 @@ def run_simulate(
         c.error(f"{path}: {type(exc).__name__}: {exc}")
         raise SystemExit(1)
 
-    commands = parse_events_arg(events, clock)
+    try:
+        commands = parse_events_arg(events, clock)
+    except ValueError as exc:
+        session.stop()
+        if recorder is not None:
+            recorder[0].uninstall()
+            recorder[1].close()
+        logging.disable(logging.NOTSET)
+        c.error(str(exc))
+        raise SystemExit(2)
     if script:
         commands += json.loads(Path(script).read_text(encoding="utf-8"))
     scripted = bool(commands) or as_json or not (c.interactive or source)

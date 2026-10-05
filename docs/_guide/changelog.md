@@ -15,7 +15,37 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ## [Unreleased]
 
-_No unreleased changes yet._
+### Fixed (#269 battle -- path generation, `xsm paths`)
+
+- **`xsm_path`: a chart that cannot start no longer aborts collection.**
+  The engine error used to escape `pytest_generate_tests` and interrupt
+  the whole session with a traceback; each test requesting `xsm_path` on
+  that chart now gets one `path[error]` case that errors with a one-line
+  message, and the rest of the session runs.
+- **`xsm_path`: one exploration per chart and options per session.** Two
+  test functions on the same chart used to explore it twice.
+- **`--xsm-max-depth` / `--xsm-max-paths` and `xsm paths --max-depth` /
+  `--max-paths` reject negative values** as usage errors.
+- **`xsm paths`: a chart that builds but cannot be explored** exits 1 with
+  one line instead of an engine traceback.
+- **`xsm paths --weight steps|time`**: the CLI now exposes
+  `shortest_paths(weight=)`; `--json` reports `weight`.
+- **`xsm simulate --events` / `--clock`: a clock advance must be a finite,
+  non-negative number of ms.** `+-5` and `+abc` used to crash with a
+  traceback; `+inf`, `+nan` and `+1e309` were accepted and printed
+  `Infinity` / `NaN` (invalid JSON) under `--json`. All now exit 2 with
+  one message.
+- **`xsm inspect` / `xsm validate` no longer call an entered state
+  "unreachable".** The static pass marked only a transition's target; a
+  deep `#id` or history target also enters every ancestor (and every
+  sibling region of a parallel ancestor). On the corpus this removes 16
+  false warnings (`product.unavailable`, `Token.With Artists`, the
+  thermostat's `online`, ...) and adds none; no remaining static warning
+  names a state `reachable_states(guards="both")` reaches.
+- **Docs:** the API index said an undefined named `after` delay produces a
+  `delay:<name>=unknown` step; only a delay defined in `logic.delays` does
+  (with the `UNKNOWN_DELAY_MS` sentinel), an undefined one is skipped. The
+  path-generation sample output used ids from a different test name.
 
 ## [0.11.0] - 2026-10-01
 

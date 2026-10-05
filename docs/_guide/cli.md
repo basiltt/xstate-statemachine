@@ -526,6 +526,7 @@ xsm paths checkout.json                      # one shortest path per reachable c
 xsm paths checkout.json --guards both        # also explore guard=False / service-error branches
 xsm paths checkout.json --simple --max-paths 50
 xsm paths checkout.json --json
+xsm paths checkout.json --weight time         # least simulated clock time, not fewest steps
 ```
 
 ```
@@ -542,6 +543,8 @@ xsm paths checkout.json --json
 ```
 
 The **Events** column is the `xsm simulate --events` grammar — paste it back into `xsm sim` to reproduce the path interactively. **Assumes** lists what the path relies on when `--guards both` explores alternatives: a guard forced `False`, a service forced to fail, or a named delay with no implementation. Every step was executed by the real engine (stub logic, simulated clock), never inferred from the JSON — see [Path generation](../testing-and-pure-api/#path-generation) for the Python API.
+
+`--max-depth` (default 50) and `--max-paths` (default 1000, `--simple` only) must be `>= 0`. Exit codes: `0` success, `1` the chart does not build or cannot be explored (one line, no traceback), `2` bad arguments. `xsm simulate --events` rejects a clock advance that is not a finite, non-negative number (`+-5`, `+nan`, `+1e309`) with exit code `2`.
 
 ## 🎮 Simulate
 

@@ -77,6 +77,7 @@ ROWS = (
     "snapshot_restore_async",
     "snapshot_restore_migrated_sync",
     "shortest_paths",
+    "shortest_paths_payment",
     "fastapi_router",
     "timer_scan_sqlite_100k",
     "circuit_breaker_call_closed",
@@ -608,15 +609,28 @@ def benchmark_shortest_paths() -> Optional[Dict[str, Any]]:
     📝 `savage.json` is the largest Stately chart that both loads (the
     larger `AtmScenario.json` is rejected by the build-time validator)
     and explores in milliseconds. `addressFields.json` -- 8 parallel
-    regions, 3,456 configurations, ~54 s -- is a combinatorial-explosion
-    case reported by `benchmarks/scaling.py`, not a budget row.
+    regions, 3,456 configurations, ~36 s with the prefix-snapshot cache
+    -- is a combinatorial-explosion case reported by
+    `benchmarks/scaling.py`, not a budget row.
     """
-    if not SHORTEST_PATHS_CHART.is_file():
+    return _shortest_paths_row(SHORTEST_PATHS_CHART)
+
+
+def benchmark_shortest_paths_payment() -> Optional[Dict[str, Any]]:
+    """`shortest_paths` on `AdvancePayment.json` (#269 battle): the small
+    chart the docs use -- the per-call floor of an exploration."""
+    return _shortest_paths_row(
+        SHORTEST_PATHS_CHART.with_name("AdvancePayment.json")
+    )
+
+
+def _shortest_paths_row(chart: Any) -> Optional[Dict[str, Any]]:
+    if not chart.is_file():
         return None
     from xstate_statemachine import shortest_paths
     from xstate_statemachine.testing_utils import stub_logic
 
-    config = json.loads(SHORTEST_PATHS_CHART.read_text(encoding="utf-8"))
+    config = json.loads(chart.read_text(encoding="utf-8"))
     machine = create_machine(config, logic=stub_logic(config))
     configurations = len(shortest_paths(machine))
     samples = []
@@ -624,9 +638,7 @@ def benchmark_shortest_paths() -> Optional[Dict[str, Any]]:
         start = time.perf_counter_ns()
         shortest_paths(machine)
         samples.append((time.perf_counter_ns() - start) / 1000)
-    return _metric(
-        samples, chart=SHORTEST_PATHS_CHART.name, configurations=configurations
-    )
+    return _metric(samples, chart=chart.name, configurations=configurations)
 
 
 def benchmark_fastapi_router() -> None:
@@ -708,6 +720,7 @@ def run(quick: bool = False) -> Dict[str, Any]:
         "snapshot_restore_async": "v4; historical v3 runtime not present",
         "snapshot_restore_migrated_sync": "#263 battle: 1-hop SnapshotMigrator; no budget until the reference runner records one",
         "shortest_paths": "savage.json (largest loadable corpus chart); no budget until a nightly records one",
+        "shortest_paths_payment": "#269 battle: AdvancePayment.json (3 configurations); no budget until a nightly records one",
         "fastapi_router": "FastAPI router is not shipped yet",
         "circuit_breaker_call_closed": "#265 battle: per-call cb.call(f) on a closed breaker; no budget until the reference runner records one",
     }
@@ -766,6 +779,9 @@ def run(quick: bool = False) -> Dict[str, Any]:
         ):
             results[name] = _clean(snap, snapshots)
         results["shortest_paths"] = _clean(benchmark_shortest_paths)
+        results["shortest_paths_payment"] = _clean(
+            benchmark_shortest_paths_payment
+        )
         results["timer_scan_sqlite_100k"] = _clean(
             benchmark_timer_scan_sqlite_100k
         )
@@ -825,6 +841,7 @@ def measure_row(row: str, quick: bool = False) -> Dict[str, Any]:
             (snapshots,),
         ),
         "shortest_paths": (benchmark_shortest_paths, ()),
+        "shortest_paths_payment": (benchmark_shortest_paths_payment, ()),
         "timer_scan_sqlite_100k": (benchmark_timer_scan_sqlite_100k, ()),
     }
     if row not in dispatch:

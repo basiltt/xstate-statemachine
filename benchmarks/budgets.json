@@ -43,6 +43,7 @@
       "budget_p50_us": 167.087
     },
     "shortest_paths": null,
+    "shortest_paths_payment": null,
     "snapshot_get_async": {
       "baseline_p50_us": 12.45,
       "budget_p50_us": 15.562
@@ -86,6 +87,7 @@
         "plugins_async": 239.427,
         "plugins_sync": 222.822,
         "shortest_paths": null,
+        "shortest_paths_payment": null,
         "snapshot_get_async": 17.421,
         "snapshot_get_sync": 16.342,
         "snapshot_restore_async": 44.228,
@@ -113,6 +115,7 @@
         "plugins_async": 115.77,
         "plugins_sync": 111.188,
         "shortest_paths": null,
+        "shortest_paths_payment": null,
         "snapshot_get_async": 8.736,
         "snapshot_get_sync": 8.225,
         "snapshot_restore_async": 18.44,
@@ -140,6 +143,7 @@
         "plugins_async": 142.939,
         "plugins_sync": 133.67,
         "shortest_paths": null,
+        "shortest_paths_payment": null,
         "snapshot_get_async": 12.45,
         "snapshot_get_sync": 12.105,
         "snapshot_restore_async": 24.365,
@@ -180,6 +184,7 @@
       "plugins_async": 142.851,
       "plugins_sync": 134.563,
       "shortest_paths": null,
+      "shortest_paths_payment": null,
       "snapshot_get_async": 11.171,
       "snapshot_get_sync": 10.618,
       "snapshot_restore_async": 24.452,
@@ -200,6 +205,7 @@
     "plugins_async": "IdempotencyPlugin + AuditPlugin + PrometheusPlugin (#273); re-recorded from perf run 36659646069 (attempt 2, ubuntu-24.04, AMD EPYC 9V74) -- that run measured every other row ~25-30% above its baseline too",
     "plugins_sync": "IdempotencyPlugin + AuditPlugin + PrometheusPlugin (#273); re-recorded from perf run 36659646069 (attempt 2, ubuntu-24.04, AMD EPYC 9V74) -- that run measured every other row ~25-30% above its baseline too",
     "shortest_paths": "shipped in #269; measured nightly on savage.json, reference to be recorded from the first nightly artifact that includes it",
+    "shortest_paths_payment": "#269 battle: AdvancePayment.json; reference to be recorded from the first nightly artifact that includes it",
     "snapshot_get_async": "v4; historical v3 runtime not present",
     "snapshot_get_sync": "v4; historical v3 runtime not present",
     "snapshot_restore_async": "v4; historical v3 runtime not present",
