@@ -1450,6 +1450,28 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **Test doubles, as battle-tested (#272).** The fulfilment team runs its
+  two-chart EDA pipeline with no broker. The #272 acceptance criteria
+  promised `given(machine).in_state(...).when(...).then_state(...)` and
+  it never shipped: `contrib.testing.given()` / `Scenario` exist now (sync
+  engine, `SimulatedClock`, `from_state_ids` for the starting
+  configuration; `in_state` / `with_context` / `when` / `after` /
+  `then_state` / `then_not_state` / `then_context` / `then_changed` /
+  `then_denied` / `then_error` / `then_no_error` / `then_done`; every
+  failure names the step trail, the expectation and what was active).
+  Pinned on `eda_fulfilment` with `SyncFakeBrokerAdapter`: an injected
+  publish failure leaves the outbox row pending and the relay raises to
+  its caller -- the next tick publishes it once (at-least-once, no
+  duplicate); a four-publish partition delays but never reorders a
+  subject's `OrderPaid → OrderPacked → OrderShipped`; a raising handler
+  nacks without requeue and the exception reaches the test; a poison
+  command is attempted exactly `MAX_ATTEMPTS` times, then dead-lettered
+  and acked with nothing committed or pending; 50 interleaved orders keep
+  per-subject order and every published event's `causationid` names its
+  inbound cause; 8 producer threads lose nothing and the fake's counters
+  balance; `assert_replay_consistent` holds for every order and a
+  tampered log raises `ReplayDivergenceError`; 10 000 envelopes through
+  the fake stay ordered per subject with linear memory.
 - **Model-based testing, as battle-tested (#271).** The orders team's
   path tests (#269) and coverage gate (#270) were green and a refund still
   drove `total_cents` negative after a specific interleaving. `model_test`
