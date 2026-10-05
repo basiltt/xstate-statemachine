@@ -67,7 +67,7 @@ with tempfile.TemporaryDirectory() as tmp:
     print(pathlib.Path(tmp, "snapshots", "paying.json").read_text(encoding="utf-8"))
 ```
 
-The recorded snapshot holds only what describes behaviour — `state_ids`, `value`, `context`, `status` — with sorted keys and a trailing newline, so it is byte-identical across runs and machines:
+The recorded snapshot holds only what describes behaviour — `state_ids`, `value`, `context`, `status` — with sorted keys and a trailing newline, so it is byte-identical across runs and machines (sets render as sorted lists). Deliberately **not** recorded: `history`, `actors`, pending or scheduled events and `after` deadlines — a regression in history restoration or timer scheduling is invisible to `xsm_snapshot`; cover those with `xsm_path` or an explicit assertion:
 
 ```json
 {
@@ -88,7 +88,7 @@ The recorded snapshot holds only what describes behaviour — `state_ids`, `valu
 
 | Marker | What it does |
 |:--|:--|
-| `@pytest.mark.xstate_machine(source, *, logic=None, strict_config=None, strict=None)` | Declares the machine the `xsm_*` fixtures serve. `source` is a **JSON path** (relative to the test file, then to pytest's rootdir), a **config dict**, or an already-built **`MachineNode`**. `logic` is a dotted `"package.module:callable"` whose call returns a `MachineLogic`; without it the machine runs on [`stub_logic`](../testing-and-pure-api/) — actions record their name, guards return `True`, services return `None` synchronously. `strict_config` and `strict` are passed to `create_machine` and must be `True`, `False` or `None`. A `MachineNode` source is used as-is: `logic=`, `strict_config=` and `strict=` are refused for it (the node is never mutated). A malformed marker, an unreadable file, an unloadable or raising `logic=` factory, or a config `create_machine` refuses is a `pytest.UsageError` naming the test. |
+| `@pytest.mark.xstate_machine(source, *, logic=None, strict_config=None, strict=None)` | Declares the machine the `xsm_*` fixtures serve. `source` is a **JSON path** (relative to the test file, then to pytest's rootdir), a **config dict**, or an already-built **`MachineNode`**. `logic` is a dotted `"package.module:callable"` string, a `MachineLogic` **instance**, or a zero-argument **callable** returning a `MachineLogic` (a factory returning anything else is refused); without it the machine runs on [`stub_logic`](../testing-and-pure-api/) — actions record their name, guards return `True`, services return `None` synchronously. `strict_config` and `strict` are passed to `create_machine` and must be `True`, `False` or `None`. A `MachineNode` source is used as-is: `logic=`, `strict_config=` and `strict=` are refused for it (the node is never mutated). A malformed marker, an unreadable file, an unloadable or raising `logic=` factory, or a config `create_machine` refuses is a `pytest.UsageError` naming the test. |
 | `@pytest.mark.xstate_guards_false("g1", "g2")` | With stub logic, the named guards return `False`; unlisted guards stay `True`. The table is held **by reference** — mutate `xsm_guards` between sends to flip a guard. Combining it with `logic=` (or a `MachineNode` source) is a `pytest.UsageError`: real logic owns its guards and the plugin will not pretend otherwise. |
 
 Both markers are registered, so `--strict-markers` projects need nothing extra.

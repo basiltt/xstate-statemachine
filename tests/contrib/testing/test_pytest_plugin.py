@@ -655,7 +655,15 @@ class TestPlumbing:
                 roots.update(a.name.split(".")[0] for a in node.names)
             elif isinstance(node, ast.ImportFrom) and node.level == 0:
                 roots.add((node.module or "").split(".")[0])
-        stdlib = {"difflib", "importlib", "json", "pathlib", "typing", "sys"}
+        stdlib = {
+            "difflib",
+            "importlib",
+            "json",
+            "pathlib",
+            "time",
+            "typing",
+            "sys",
+        }
         # 📝 pytest-asyncio lives in `_async_fixtures`, registered from
         #    `pytest_configure` only when the asyncio plugin is active.
         assert roots - stdlib - {"__future__"} == {"pytest"}

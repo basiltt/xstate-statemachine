@@ -199,3 +199,48 @@ class TestAtomicWrite:
         with pytest.raises(OSError):
             _atomic_write(tmp_path / "x.json", "a\n")
         assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.skipif(
+    importlib.util.find_spec("xdist") is None, reason="pytest-xdist missing"
+)
+def test_same_path_different_content_refused_across_xdist_workers(
+    xsm_pytester: Any,
+) -> None:
+    """reviewer H2: the per-process stash cannot see another worker; the
+    collision is caught on disk (a file written this session that
+    already differs)."""
+    xsm_pytester.makepyfile(textwrap.dedent("""
+            import pytest, time
+            CFG = {"id": "s", "initial": "a",
+                   "states": {"a": {"on": {"GO": "b"}}, "b": {}}}
+
+            @pytest.mark.xstate_machine(CFG)
+            def test_one(xsm_interp, xsm_snapshot):
+                xsm_snapshot(xsm_interp, "same.json")
+                time.sleep(0.5)
+
+            @pytest.mark.xstate_machine(CFG)
+            def test_two(xsm_interp, xsm_snapshot):
+                time.sleep(0.2)  # let the other worker write first
+                xsm_interp.send("GO")
+                xsm_snapshot(xsm_interp, "same.json")
+            """))
+    from .conftest import PLUGIN_ARGS
+
+    result = xsm_pytester.runpytest_subprocess(
+        *PLUGIN_ARGS,
+        "-q",
+        "-n",
+        "2",
+        "--dist",
+        "load",
+        "--xsm-update-snapshots",
+        "-p",
+        "no:django",
+    )
+    out = result.stdout.str()
+    # either the collision was detected on disk, or both landed on one
+    # worker and the in-process check caught it: never a silent pass
+    assert result.ret != 0, out
+    assert "already recorded with different content" in out

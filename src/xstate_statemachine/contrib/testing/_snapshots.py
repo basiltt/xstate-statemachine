@@ -166,7 +166,35 @@ def _claim(item: Any, target: pathlib.Path, text: str) -> None:
                 f"snapshot {target} was already recorded with different "
                 f"content by {previous[0]}; give each test its own file",
             )
+    elif previous is None and _written_this_session(item, target):
+        # 📝 reviewer H2 (#268 battle): under `-n 4` the stash is per
+        #    WORKER, so two tests on different workers writing different
+        #    content to one path last-won silently. Another worker's write
+        #    is visible on disk (atomic `os.replace`): a file newer than
+        #    this session that already differs is the same collision.
+        on_disk = target.read_text(encoding="utf-8")
+        if on_disk != text:
+            raise _usage_error(
+                item,
+                f"snapshot {target} was already recorded with different "
+                f"content in this session (another xdist worker); give "
+                f"each test its own file",
+            )
     writers[target] = (item.nodeid, text)
+
+
+def _written_this_session(item: Any, target: pathlib.Path) -> bool:
+    """``True`` when *target* exists and was modified after this pytest
+    session started (so a stale file from an older run never trips the
+    cross-worker check -- updating it is the point of the flag)."""
+    try:
+        mtime = target.stat().st_mtime
+    except OSError:
+        return False
+    started = getattr(item.session, "_xsm_started_at", None)
+    if started is None:
+        return False
+    return mtime >= started
 
 
 def _assert_snapshot(

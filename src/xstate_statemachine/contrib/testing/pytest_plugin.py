@@ -28,6 +28,7 @@
 from __future__ import annotations
 
 import pathlib
+import time
 import sys
 from typing import (
     Any,
@@ -143,13 +144,24 @@ def pytest_cmdline_main(config: Any) -> Optional[int]:
     return None
 
 
+def pytest_sessionstart(session: Any) -> None:
+    # 🕰️ For the cross-worker snapshot collision check (`_snapshots`): a
+    #    file written AFTER this instant by another xdist worker is "this
+    #    session"; an older file is a stale recording to be updated.
+    #    Under xdist every worker starts within the same second, so a
+    #    small grace keeps a worker that started late from calling its
+    #    peer's first write stale.
+    session._xsm_started_at = time.time() - 2.0
+
+
 def pytest_configure(config: Any) -> None:
     config.addinivalue_line(
         "markers",
         f"{MARKER}(source, *, logic=None, strict_config=None, strict=None): "
         "build the machine the xsm_* fixtures serve. `source` is a JSON "
         "path (relative to the test file, then rootdir), a config dict or "
-        "a MachineNode; `logic` a 'pkg.module:callable' returning a "
+        "a MachineNode; `logic` a 'pkg.module:callable' string, a "
+        "MachineLogic instance or a zero-argument callable returning a "
         "MachineLogic (stub logic when omitted).",
     )
     config.addinivalue_line(

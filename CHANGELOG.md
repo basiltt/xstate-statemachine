@@ -1492,6 +1492,15 @@ _No unreleased changes yet._
   broker section, coverage-under-xdist, `model_test` invariants/deadline
   notes, `--xsm-failing-dir`, threat-model notes (a marker's `logic=` is
   code; diffs print context unredacted) and six Troubleshooting rows.
+  **Independent review then found:** the same-path-different-content
+  snapshot refusal lived in a per-process stash, so under `-n 4` two
+  WORKERS writing one file still last-won silently -- a file written
+  this session that already differs on disk is now the same refusal; a
+  crashed xdist worker's coverage vanished without a word (one
+  `RuntimeWarning` names the worker); the marker help and the guide still
+  said `logic=` must be a dotted string; the guide now lists what a
+  snapshot deliberately does NOT record (history, actors, pending /
+  scheduled events, deadlines).
 - **Path generation, as battle-tested (#269).** The explorer replayed
   the WHOLE prefix for every candidate edge -- O(depth) engine runs per
   edge: the 35-state parallel `addressFields` chart (3 456

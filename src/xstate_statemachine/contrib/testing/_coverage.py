@@ -137,6 +137,21 @@ class CoverageSession:
         text = getattr(node, "workeroutput", {}).get(_WORKER_KEY)
         if text:
             self.worker_reports.extend(reports_from_json(text))
+        elif error is not None:
+            # 📝 reviewer M3 (#268 battle): a worker that crashed never
+            #    set `workeroutput`, so its coverage silently vanished and
+            #    the gate judged partial data. Say so (the gate fails
+            #    closed on the missing rows, but the operator must know
+            #    WHY).
+            import warnings
+
+            warnings.warn(
+                f"xsm coverage: worker {getattr(node, 'gateway', node)} "
+                f"ended with an error ({error}); its coverage data was "
+                f"lost and the gate judges the remaining workers only.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
     def merged_reports(self) -> List[CoverageReport]:
         """This process's reports merged with every worker's, by key."""
