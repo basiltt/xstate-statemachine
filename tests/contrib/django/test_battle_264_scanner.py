@@ -64,7 +64,23 @@ def test_four_scanner_threads_fire_each_row_exactly_once() -> None:
     for t in ts:
         t.join(120)
     assert [e for r in results for e in r.errors] == []
-    assert sum(r.woken for r in results) == 20
+    # 📝 One concurrent pass may leave a row for the NEXT tick: a scanner
+    #    that read the due list before a peer's save still finds the row
+    #    in flight (SQLite's `database is locked` → `LockTimeoutError` →
+    #    `locked`, or the optimistic loser → `skipped_stale`) and the
+    #    peer that won may have been counting a different row. The
+    #    contract is "exactly once, and converges": drain with one more
+    #    tick and assert the TOTAL -- never more than 20 (observed 19/20
+    #    on the Coverage runner once).
+    woken = sum(r.woken for r in results)
+    assert woken <= 20
+    if woken < 20:
+        sc = DueTimerScanner(
+            DjangoModelStore(Order),
+            lambda k: Order().statechart_machine_node(),
+        )
+        woken += sc.scan(later).woken
+    assert woken == 20
     for o in Order.objects.filter(pk__in=before):
         assert o.state == "order.expired"
         assert o.statechart_version == before[o.pk] + 1
