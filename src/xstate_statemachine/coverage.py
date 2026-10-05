@@ -285,16 +285,28 @@ class CoverageCollector(PluginBase[Any]):
     def _data_for(self, machine: Machine) -> _MachineData:
         return self._build_for(machine).data
 
+    @staticmethod
+    def _add_config(
+        data: _MachineData, machine: Machine, nodes: Iterable[Any]
+    ) -> None:
+        states = data.states
+        for node in nodes:
+            # 📝 States are always recorded with their whole ancestor
+            #    chain, so a known state means a known chain: stop.
+            while (
+                node is not None
+                and node is not machine
+                and node.id not in states
+            ):
+                states.add(node.id)
+                node = node.parent
+
     def _record_config(self, interpreter: Any, nodes: Iterable[Any]) -> None:
         machine = getattr(interpreter, "machine", None)
         if not isinstance(machine, MachineNode):
             return
         with self._lock:
-            data = self._data_for(machine)
-            for node in nodes:
-                while node is not None and node is not machine:
-                    data.states.add(node.id)
-                    node = node.parent
+            self._add_config(self._data_for(machine), machine, nodes)
 
     def on_interpreter_start(self, interpreter: Any) -> None:
         # 📝 Fresh interpreters have an empty configuration here (the init
@@ -311,12 +323,12 @@ class CoverageCollector(PluginBase[Any]):
         to_states: Any,
         transition: Any,
     ) -> None:
-        self._record_config(interpreter, list(to_states))
         machine = getattr(interpreter, "machine", None)
         if not isinstance(machine, MachineNode):
             return
         with self._lock:
             build = self._build_for(machine)
+            self._add_config(build.data, machine, to_states)
             triple = build.index.get(id(transition))
             if triple is not None:
                 build.data.hits.add(triple)
