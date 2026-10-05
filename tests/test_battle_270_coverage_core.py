@@ -5,12 +5,19 @@
 # -----------------------------------------------------------------------------
 """Battle-test regressions for `xstate_statemachine.coverage`."""
 
+import asyncio
 import gc
 import threading
 
 import pytest
 
-from xstate_statemachine import SyncInterpreter, create_machine, plugins
+from xstate_statemachine import (
+    Interpreter,
+    MachineLogic,
+    SyncInterpreter,
+    create_machine,
+    plugins,
+)
 from xstate_statemachine.coverage import (
     TEXT_LIST_LIMIT,
     CoverageCollector,
@@ -251,3 +258,104 @@ def test_global_registry_race_with_construction():
     for t in ts:
         t.join()
     assert errs == [] and plugins.global_plugins() == []
+
+
+# ------------------------------------------------------------ actors etc.
+KID = {
+    "id": "kid",
+    "initial": "k1",
+    "states": {"k1": {"on": {"KGO": "k2"}}, "k2": {"type": "final"}},
+}
+
+
+def _parent():
+    kid = create_machine(KID)
+    return create_machine(
+        {
+            "id": "par",
+            "initial": "a",
+            "states": {
+                "a": {"entry": "spawn_kid", "on": {"GO": "b"}},
+                "b": {"invoke": {"src": "kidm", "onDone": "c"}},
+                "c": {},
+            },
+        },
+        logic=MachineLogic(services={"kid": kid, "kidm": kid}),
+    )
+
+
+def _run_parent(i):
+    for a in list(i._actors.values()):
+        a.send("KGO")
+    i.send("GO")
+
+
+def test_used_collector_sees_only_its_interpreter():
+    par, cov = _parent(), CoverageCollector()
+    i = SyncInterpreter(par).use(cov).start()
+    _run_parent(i)
+    i.stop()
+    assert [r.machine_id for r in cov.reports()] == ["par"]
+
+
+def test_global_collector_files_children_under_their_own_key():
+    par, cov = _parent(), CoverageCollector()
+    plugins.register_global(cov)
+    try:
+        i = SyncInterpreter(par).start()
+        _run_parent(i)
+        i.stop()
+    finally:
+        plugins.clear_global_plugins()
+    rows = {r.machine_id: r for r in cov.reports()}
+    assert set(rows) == {"par", "kid"}
+    assert rows["kid"].transitions_hit == 1  # spawned child's KGO
+    assert rows["par"].unhit == (("par.b", "invoke 'kidm' onDone", "par.c"),)
+
+
+def test_async_restored_interpreter_counts_from_its_configuration():
+    m = create_machine(
+        {
+            "id": "s",
+            "initial": "a",
+            "states": {
+                "a": {"on": {"GO": "b"}},
+                "b": {"on": {"GO": "c"}},
+                "c": {},
+            },
+        }
+    )
+
+    async def run():
+        i = await Interpreter(m).start()
+        await i.send("GO")
+        await asyncio.sleep(0.05)
+        snap = i.get_snapshot()
+        await i.stop()
+        cov = CoverageCollector()
+        r = Interpreter.from_snapshot(snap, m).use(cov)
+        await r.start()
+        await r.send("GO")
+        await asyncio.sleep(0.05)
+        await r.stop()
+        return cov.report(m)
+
+    rep = asyncio.run(run())
+    assert rep.unvisited == ("s.a",)
+    assert rep.unhit == (("s.a", "on 'GO'", "s.b"),)
+
+
+def test_entry_action_failure_still_records_initial_state():
+    bad = create_machine(
+        {
+            "id": "f",
+            "initial": "a",
+            "states": {"a": {"entry": "boom", "on": {"GO": "b"}}, "b": {}},
+        },
+        logic=MachineLogic(actions={"boom": lambda *a: 1 / 0}),
+    )
+    cov = CoverageCollector()
+    i = SyncInterpreter(bad).use(cov).start()  # 📝 action errors contained
+    assert i.status == "running"
+    assert cov.report(bad).unvisited == ("f.b",)
+    i.stop()

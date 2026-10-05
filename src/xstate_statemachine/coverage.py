@@ -13,6 +13,21 @@
 #    matched on the `TransitionDefinition` object the engine executed, so
 #    the numerator and the denominator can never disagree on labels.
 #
+# ⚠️ The transition denominator is STATICALLY DECLARED, not
+#    engine-reachable: 100 % may be unattainable. Battle #270 replayed
+#    every edge `graph` finds (guards="both", depth 8) on 30 corpus
+#    charts: 0 hits outside the denominator, 105 of 731 targets never
+#    hit. Categories: a targetless/self-target `on` (31 -- the engine
+#    takes and counts it, but `graph` drops steps that leave the
+#    configuration unchanged, so generated paths never include it); an
+#    `always` whose guard alternatives shadow it (20);
+#    a source state the exploration never reaches (35: depth bound,
+#    unreachable region, a `*` handler on the root); an `invoke`
+#    onDone/onError of an inline actor the stubs cannot drive (16); a
+#    named `after` delay with no implementation (1). No cheap static
+#    rule separates these from "the suite missed it", so no
+#    `unreachable` field is offered.
+#
 # 🧵 One collector may observe interpreters on many threads (the sync
 #    engine's daemon threads, a pytest session with xdist-free threads):
 #    every mutation happens under one lock.
