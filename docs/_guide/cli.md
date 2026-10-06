@@ -117,7 +117,7 @@ xsm generate-template [JSON_FILES...] [OPTIONS]
 | — | `--log` | `yes/no` | `yes` | Include logging statements in generated code |
 | — | `--sleep` | `yes/no` | `yes` | Add sleep calls between events in simulation |
 | — | `--sleep-time` | `INT` | `2` | Sleep duration in seconds between events |
-| — | `--check` | flag | `false` | Write nothing; exit 1 if files on disk are out of date |
+| — | `--check` | flag | `false` | Write nothing (not even the `-o` dir); exit 1 if any file — primary or companion — is out of date or missing, 2 on usage errors |
 | — | `--diff` | flag | `false` | Like `--check`, plus a unified diff. Implies `--check` |
 | — | `--no-verify` | flag | `false` | Skip the structural fidelity check (syntax is still checked) |
 | `-v` | `--version` | flag | — | Show version number and exit |
@@ -147,6 +147,34 @@ Five **companion** templates produce a single extra module and can be requested 
 | `fastapi-router` | `<machine>_api.py` | An editable FastAPI `APIRouter`: `GET /{id}`, one `POST /{id}/events/<EVENT>` per declared event (typed by the `EventModel`s when `--with-models` is also on), `Depends(get_interpreter)`, `ReceiptResponse`, and an `authorize` stub that raises until you implement it. Imports only the `[fastapi]` extra |
 
 Companions are compiled and import-checked before writing, participate in `--check` / `--diff`, and are listed by `xsm list-templates` under "Companion outputs". When the extra is installed, the `fastapi-router` output is also mounted on a throwaway `FastAPI()` and its `openapi()` must list one route per event; without the extra the CLI prints a note and checks syntax only.
+
+#### Checking generated code in CI (`--check` / `--diff`)
+
+`--check` regenerates in memory and compares the text with what is on disk — the primary logic/runner files **and** every requested companion. It writes nothing, not even the `-o` directory, and reports every stale file before failing.
+
+| Exit | Meaning |
+|------|---------|
+| `0` | Every generated file is up to date |
+| `1` | At least one file is out of date or missing ("would be created"), or generation was refused |
+| `2` | Usage error (bad flags, `-o` names an existing file) |
+
+`--diff` is `--check` plus a unified diff per stale file on **stdout** (`--- <file> (on disk)` / `+++ <file> (generated)`), so a CI log shows exactly what changed. `-f` has no effect with `--check`. `--check` compares text only: it does not import or mount the web companions, so it needs no extra beyond generation and `--no-verify` makes no difference to it.
+
+Pass the same companion flags you generated with: a companion on disk that this run did not request (say `order_api.py` after you dropped `--with-api`) is **named in a warning** but neither checked nor deleted. When a write would replace a file whose banner names a *different* source chart (two charts with the same `id` into one `-o`), the CLI warns — give the charts distinct `id`s or separate `-o` directories.
+
+Hierarchical runs (`-jp parent.json -jc child.json`) name every file after the parent machine, companions included.
+
+#### Troubleshooting
+
+| Symptom | Cause / fix |
+|---------|-------------|
+| `Refusing to generate …` | The chart cannot be represented (no states, a target at the root, …). Fix the chart; the message names the state |
+| `out of date` from `--check` in CI | Someone edited the JSON without regenerating. Run the same command without `--check` and commit the result |
+| `ModuleNotFoundError: fastapi` / `pydantic` when importing `<machine>_api.py` / `_models.py` | Install the extra: `pip install "xstate-statemachine[fastapi]"` (router) / `[pydantic]` (models) |
+| `… was generated from a.json; overwriting it with code for b.json` | Two charts share an `id`. Use distinct `id`s or one `-o` per chart |
+| `<machine>_api.py (fastapi-router) exists but was not requested` | Leftover from an earlier `--with-api` run. Add the flag back or delete the file |
+| Note: verification skipped (extra not installed) | Generation only needs the CLI; the import/mount check runs when `[fastapi]` / `[pydantic]` is installed. Syntax is always checked |
+| `-o …: exists and is not a directory` | `-o` takes a directory (it is created if missing) |
 
 > **Note:** The `--style` flag (`class` / `function`) is deprecated and maps to `class-json` / `function-json`. It is still present in 0.10.0 and will be removed in a future release. Use `--template` instead.
 
