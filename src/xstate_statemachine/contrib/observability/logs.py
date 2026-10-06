@@ -18,8 +18,8 @@
 
 from __future__ import annotations
 
+import contextvars
 import importlib
-import threading
 from typing import Any, Dict, List, Optional, Tuple
 
 from ...plugins import PluginBase
@@ -28,6 +28,10 @@ from ._hygiene import event_label
 
 __all__ = ["StructlogPlugin", "LoguruPlugin", "log_context"]
 
+#: battle #273-b: a correlation id is a short opaque token; a payload
+#: smuggling 500 KB into one would otherwise land on EVERY log line.
+MAX_CORRELATION_ID_LEN = 128
+
 
 def _correlation_id(event: Any) -> Optional[str]:
     payload = getattr(event, "payload", None)
@@ -35,12 +39,12 @@ def _correlation_id(event: Any) -> Optional[str]:
         return None
     for key in ("correlation_id", "correlationid", "correlationId"):
         if key in payload:
-            return str(payload[key])
+            return str(payload[key])[:MAX_CORRELATION_ID_LEN]
     headers = payload.get("headers")
     if isinstance(headers, dict):
         for key in ("correlation_id", "x-correlation-id"):
             if key in headers:
-                return str(headers[key])
+                return str(headers[key])[:MAX_CORRELATION_ID_LEN]
     return None
 
 
@@ -69,16 +73,24 @@ def _soft(module: str, package: str) -> Any:
 
 
 class _ContextPlugin(PluginBase[Any]):
-    """Shared stack discipline: one context per in-flight event per thread."""
+    """Shared stack discipline: one context per in-flight event.
+
+    🏛️ The stack lives in a ``ContextVar`` (battle #273-b), not a
+    ``threading.local``: two async interpreters on ONE loop run their
+    drain loops as separate tasks, and a thread-local stack let task A's
+    ``on_event_processed`` unwind task B's in-flight entry (B's fields
+    were then reset in the wrong context, its entry leaked, and loguru's
+    token reset raised). Each task / thread now sees only its own events.
+    """
 
     def __init__(self) -> None:
-        self._local = threading.local()
+        self._var: "contextvars.ContextVar[Tuple[Tuple[Any, Any], ...]]" = (
+            contextvars.ContextVar(f"xsm_log_ctx_{id(self)}", default=())
+        )
 
     def _stack(self) -> List[Tuple[Any, Any]]:
-        stack = getattr(self._local, "stack", None)
-        if stack is None:
-            stack = self._local.stack = []
-        return stack
+        """A copy of this context's in-flight (event, token) stack."""
+        return list(self._var.get())
 
     def _enter(self, fields: Dict[str, Any]) -> Any:  # pragma: no cover
         raise NotImplementedError
@@ -88,17 +100,18 @@ class _ContextPlugin(PluginBase[Any]):
 
     def on_event_received(self, interpreter: Any, event: Any) -> None:
         token = self._enter(log_context(interpreter, event))
-        self._stack().append((event, token))
+        self._var.set(self._var.get() + ((event, token),))
 
     def on_event_processed(
         self, interpreter: Any, event: Any, receipt: Any
     ) -> None:
-        stack = self._stack()
+        stack = self._var.get()
         for idx in range(len(stack) - 1, -1, -1):
             if stack[idx][0] is event:
                 # unwind anything nested above it too (LIFO for contextvars)
-                while len(stack) > idx:
-                    self._exit(stack.pop()[1])
+                for _, token in reversed(stack[idx:]):
+                    self._exit(token)
+                self._var.set(stack[:idx])
                 return
 
 
@@ -129,6 +142,13 @@ class LoguruPlugin(_ContextPlugin):
     def __init__(self, logger: Any = None) -> None:
         super().__init__()
         self._logger = logger or _soft("loguru", "loguru").logger
+        # battle #273-b: fail at construction, not once per event later
+        if not callable(getattr(self._logger, "contextualize", None)):
+            raise TypeError(
+                "LoguruPlugin(logger=...) needs a loguru logger (an object "
+                "with .contextualize()); got "
+                f"{type(self._logger).__name__}"
+            )
 
     def _enter(self, fields: Dict[str, Any]) -> Any:
         cm = self._logger.contextualize(**fields)

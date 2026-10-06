@@ -35,6 +35,23 @@ class _Collector:
         return self
 
 
+def _use(interp: Any, plugin: Any) -> None:
+    """``.use()`` *plugin*; on an ALREADY-running interpreter also replay
+    ``on_interpreter_start`` (battle #273-b) -- otherwise a plugin that
+    registers the interpreter there (Prometheus' polled gauges) never
+    sees it. Dispatched through the engine's own `_SafePlugin` wrapper.
+
+    An instance already attached (e.g. via the global registry) is
+    skipped: the engine does not dedupe, and a second attach doubles
+    every counter and span."""
+    attached = getattr(interp, "_plugins", ())
+    if any(getattr(p, "wrapped", p) is plugin for p in attached):
+        return
+    interp.use(plugin)
+    if getattr(interp, "status", None) == "running":
+        interp._plugins[-1].on_interpreter_start(interp)
+
+
 def _build(
     *,
     otel: Any,
@@ -107,7 +124,7 @@ def instrument_all(
         if interp_or_app is not None and hasattr(interp_or_app, "use"):
             found = _plugins.attach_discovered(interp_or_app, allow=allow)
             for p in attached:
-                interp_or_app.use(p)
+                _use(interp_or_app, p)
             return attached + found
         collector = _Collector()
         _plugins.attach_discovered(collector, allow=allow)
@@ -117,7 +134,7 @@ def instrument_all(
             _plugins.register_global(p)
     elif hasattr(interp_or_app, "use"):
         for p in attached:
-            interp_or_app.use(p)
+            _use(interp_or_app, p)
     elif isinstance(getattr(interp_or_app, "plugins", None), list):
         interp_or_app.plugins.extend(attached)
     else:
