@@ -1493,9 +1493,10 @@ _No unreleased changes yet._
   registered globally *and* attached with `.use()` (or `.use()`-d twice)
   fired every hook twice -- the limitation documented in #305 -- and
   every metric doubled; `use()` now dedupes by identity on both engines.
-  Measured on a two-state chart: ≈3× slowdown with `PrometheusPlugin`,
-  ≈4–5× with `OpenTelemetryPlugin` (SDK, no exporter), ~40 % of it the
-  engine's per-event receipt; documented, no budget.
+  Overhead, measured once on a two-state chart (Windows, CPython 3.14;
+  not a budgeted benchmark): roughly 3× with `PrometheusPlugin`, 4–5×
+  with `OpenTelemetryPlugin` (SDK, no exporter), about 40 % of it the
+  engine's per-event receipt.
 - **Test doubles, as battle-tested (#272).** The fulfilment team runs its
   two-chart EDA pipeline with no broker. The #272 acceptance criteria
   promised `given(machine).in_state(...).when(...).then_state(...)` and

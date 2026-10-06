@@ -42,8 +42,8 @@ def _use(interp: Any, plugin: Any) -> None:
     sees it. Dispatched through the engine's own `_SafePlugin` wrapper.
 
     An instance already attached (e.g. via the global registry) is
-    skipped: the engine does not dedupe, and a second attach doubles
-    every counter and span."""
+    skipped here so `on_interpreter_start` is not replayed for it
+    (`use()` itself dedupes by identity since the #273 battle)."""
     attached = getattr(interp, "_plugins", ())
     if any(getattr(p, "wrapped", p) is plugin for p in attached):
         return

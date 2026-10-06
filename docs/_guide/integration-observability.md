@@ -113,13 +113,13 @@ An `on_span` callable for the `[agents]` `AgentTracePlugin`: each trace record b
 | `xstatemachine_guard_evaluations_total` | counter | `machine, guard, result` |
 | `xstatemachine_guard_errors_total` | counter | `machine, guard` |
 | `xstatemachine_action_errors_total` | counter | `machine, action` |
-| `xstatemachine_service_duration_seconds` | histogram | `machine, service` |
+| `xstatemachine_service_duration_seconds` | histogram | `machine, service` — completed and failed services only; a service **cancelled** because its state was exited is not observed (no sample, no error count; its OTel span ends with `statechart.cancelled=true`) |
 | `xstatemachine_service_errors_total` | counter | `machine, service` |
 | `xstatemachine_chain_trips_total` | counter | `machine` |
 | `xstatemachine_active_interpreters` | gauge (polled at scrape) | `machine` — interpreters whose `status` is `running` |
 | `xstatemachine_queue_depth` | gauge (polled at scrape) | `machine` |
 
-Metric objects are created once per `CollectorRegistry` and shared, so several plugins on one registry never collide. `labels=()` drops the `machine` label. `queue_depth` has no hook — it is a collector that reads `interpreter.queue_depth` from live interpreters at scrape time.
+Metric objects are created once per `CollectorRegistry` **and label set** and shared, so several plugins on one registry never collide; a second plugin with a *different* `labels=` on the same registry is a `ValueError`. `labels=()` drops the `machine` label. `queue_depth` has no hook — it is a collector that reads `interpreter.queue_depth` from live interpreters at scrape time.
 
 ### `StructlogPlugin()` / `LoguruPlugin(logger=None)`
 
@@ -137,7 +137,7 @@ The hygiene primitives the plugins share, exported for your own exporters.
 
 > **What this does:** observes every hook without changing behaviour — every plugin is wrapped by the engine's `_SafePlugin`, so an exporter that raises is reported via `on_plugin_error` and the machine keeps running. `instrument_all()` covers every interpreter constructed after the call, on both engines, including children and restores. The hot path pays for `on_event_processed` only when a plugin overrides it (all of these do, by design: it carries the outcome).
 >
-> **What this does not do:** configure an OTel SDK or exporter; retro-instrument interpreters that already exist; guarantee delivery of telemetry (exporters are best-effort); emit OTel messaging spans for brokers (those arrive with the EDA broker adapters). Per-event overhead is measured in the [performance budgets](../production-characteristics/).
+> **What this does not do:** configure an OTel SDK or exporter; retro-instrument interpreters that already exist; guarantee delivery of telemetry (exporters are best-effort); emit OTel messaging spans for brokers (those arrive with the EDA broker adapters). Per-event overhead was measured once, on a two-state chart (Windows, CPython 3.14): roughly 3× with `PrometheusPlugin`, 4–5× with `OpenTelemetryPlugin` (SDK, no exporter), about 40 % of it the engine's per-event receipt. It is not a budgeted benchmark; measure on your chart.
 >
 > See the programme-wide [Guarantees](../guarantees/) and [Security](../security/) pages ([#303](https://github.com/basiltt/xstate-statemachine/issues/303)).
 

@@ -31,7 +31,7 @@ from opentelemetry import trace
 from opentelemetry.trace import Link, Status, StatusCode
 
 from ...plugins import DEFAULT_REDACT_KEYS, PluginBase, redact
-from ._hygiene import event_label
+from ._hygiene import active_with_ancestors, event_label
 
 __all__ = ["OpenTelemetryPlugin", "agent_span_exporter", "TRACER_NAME"]
 
@@ -86,15 +86,6 @@ def _opaque(value: Any) -> str:
 
 def _leaf_ids(states: Any) -> List[str]:
     return sorted(str(getattr(s, "id", s)) for s in states or ())
-
-
-def _active_with_ancestors(interpreter: Any) -> set:
-    out: set = set()
-    for sid in interpreter.current_state_ids:
-        parts = str(sid).split(".")
-        for n in range(1, len(parts) + 1):
-            out.add(".".join(parts[:n]))
-    return out
 
 
 class OpenTelemetryPlugin(PluginBase[Any]):
@@ -367,7 +358,7 @@ class OpenTelemetryPlugin(PluginBase[Any]):
             ]
         if not mine:
             return
-        active = _active_with_ancestors(interpreter)
+        active = active_with_ancestors(interpreter)
         gone = [(k, v) for k, v in mine if v[1] and v[1] not in active]
         if not gone:
             return

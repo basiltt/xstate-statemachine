@@ -32,7 +32,7 @@ from prometheus_client import REGISTRY, Counter, Histogram
 from prometheus_client.core import GaugeMetricFamily
 
 from ...plugins import PluginBase
-from ._hygiene import LabelGuard, event_label
+from ._hygiene import LabelGuard, active_with_ancestors, event_label
 
 __all__ = ["PrometheusPlugin", "METRIC_PREFIX"]
 
@@ -370,11 +370,7 @@ class PrometheusPlugin(PluginBase[Any]):
             mine = [(k, v) for k, v in self._services.items() if k[0] == key]
         if not mine:
             return
-        active: set = set()
-        for sid in interpreter.current_state_ids:
-            parts = str(sid).split(".")
-            for n in range(1, len(parts) + 1):
-                active.add(".".join(parts[:n]))
+        active = active_with_ancestors(interpreter)
         with self._lock:
             for k, (_t, owner) in mine:
                 if owner and owner not in active:
