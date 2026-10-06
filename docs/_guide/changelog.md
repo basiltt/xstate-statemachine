@@ -1471,8 +1471,12 @@ _No unreleased changes yet._
   once. Defects found and fixed: **an `Idempotency-Key` on a registry
   without an inbox was silently ignored** -- 200, `duplicate: false`,
   three retries ran the event three times (`IdempotencyNotConfiguredError`
-  → 501 on `send_event` and `get_interpreter`, which now validates the
-  header and exposes it on `request.state.xsm_idempotency_key`); two
+  → 501 on `send_event` and `get_interpreter`, which validates the
+  header and hands it to `act(idempotency_key=)` so the handler's first
+  send is deduped with no handler code -- also on
+  `request.state.xsm_idempotency_key`); event-route `operationId`s are
+  stable when an event is added later (plain names claim the unsuffixed
+  id; folded names such as `ORDER.PAID` take the suffix); two
   `get_interpreter` parameters on the same key in one route gave a
   self-inflicted 409 (one interpreter per (machine, key) per request);
   `instrument_app` called twice duplicated the probe routes and nested
@@ -1484,7 +1488,9 @@ _No unreleased changes yet._
   invalid** (`ORDER.PAID` / `ORDER_PAID`, an event named `GET` /
   `send`; non-ASCII ids) -- ASCII-folded with deterministic suffixes;
   an `EventModel` field with an `alias` was 422 on a valid body on
-  `/send`, `/events/X` and `send(Model(...))` (`by_alias=True`);
+  `/send`, `/events/X` and `send(Model(...))` (`by_alias=True` -- actions
+  now read aliased fields under the ALIAS key in `event.payload`;
+  `contrib.pydantic` is unreleased, so no published user is affected);
   fallback body schema names collided for machines named `a_b` / `aB`;
   400 / 401 / 501 / 503 problem responses were undocumented. Added: an
   OpenAPI golden (`tests/contrib/fastapi/openapi_golden.json`,

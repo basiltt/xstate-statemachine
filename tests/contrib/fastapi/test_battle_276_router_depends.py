@@ -340,3 +340,66 @@ def test_concurrent_sends_threads():
         with ThreadPoolExecutor(16) as ex:
             codes = list(ex.map(one, range(50)))
     assert set(codes) <= {200, 409}, codes
+
+
+# --- independent review (#276) ----------------------------------------------
+def test_operation_ids_are_stable_when_an_event_is_added():
+    """H1: adding `ORDER.PAID` to a chart that declares `ORDER_PAID` must
+    not move `o_order_paid` (generated SDKs pin operationIds)."""
+    from src.xstate_statemachine.contrib.fastapi.router import _operation_ids
+
+    before = _operation_ids("o", ["ORDER_PAID", "SHIP"])
+    after = _operation_ids("o", ["ORDER_PAID", "SHIP", "ORDER.PAID"])
+    for ev, oid in before.items():
+        assert after[ev] == oid, (ev, oid, after[ev])
+    assert after["ORDER.PAID"] == "o_order_paid_2"
+    # declaration order decides among plain names; fixed routes never lose
+    ids = _operation_ids("o", ["send", "GET"])
+    assert ids == {"send": "o_send_2", "GET": "o_get_2"}
+
+
+def test_custom_route_with_header_dedups_without_handler_help():
+    """M2: a custom `get_interpreter` route that forwards nothing dedups
+    on `Idempotency-Key` -- `act(idempotency_key=)` stamps the first
+    send; a handler that forgets no longer gets a silent non-dedup."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from src.xstate_statemachine.contrib.fastapi import (
+        ReceiptResponse,
+        StatechartRegistry,
+        allow_all,
+        get_interpreter,
+        instrument_app,
+    )
+    from src.xstate_statemachine.persistence import MemoryInbox, MemoryStore
+    from tests.contrib.starlette._support import counter_machine
+
+    reg = StatechartRegistry(
+        MemoryStore(), inbox=MemoryInbox(), principal=lambda c: "ann"
+    )
+    reg.register(
+        "c", counter_machine(), authorize=allow_all, context_serializer=dict
+    )
+    app = FastAPI()
+
+    @app.post("/c/{id}/inc")
+    async def inc(o=get_interpreter(reg, "c")):
+        return ReceiptResponse(o, await o.send("INC", wait=True))
+
+    instrument_app(app, reg)
+    with TestClient(app) as c:
+        h = {"Idempotency-Key": "once"}
+        r1 = c.post("/c/k/inc", headers=h)
+        r2 = c.post("/c/k/inc", headers=h)
+        assert r1.status_code == 200 and r2.status_code == 200
+        assert r1.json()["duplicate"] is False
+        assert r2.json()["duplicate"] is True
+        assert r2.json()["context"]["n"] == 1
+        # a different key is a new request
+        assert (
+            c.post("/c/k/inc", headers={"Idempotency-Key": "two"}).json()[
+                "context"
+            ]["n"]
+            == 2
+        )

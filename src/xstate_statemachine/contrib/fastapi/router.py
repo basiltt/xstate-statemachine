@@ -208,10 +208,11 @@ def get_interpreter(
         await registry.authorize(request, name, k, None)
         # 🔥 battle #276: the dependency never looked at `Idempotency-Key`
         #    -- a client sending it on a custom route got no dedup and no
-        #    error. The header is validated here (400 malformed, 501 with
-        #    no inbox); the HANDLER still has to pass it to `send(...,
-        #    idempotency_key=request.state.xsm_idempotency_key)` -- it
-        #    is exposed on `request.state` for that.
+        #    error. Validated here (400 malformed, 501 with no inbox) and
+        #    handed to `act(idempotency_key=)`, which stamps it on the
+        #    handler's FIRST send so the inbox dedups it -- the handler
+        #    has nothing to remember. Also on `request.state` for a
+        #    handler that sends twice and wants to choose.
         idem = idempotency_key_from(request)
         if idem is not None and registry.inbox is None:
             raise IdempotencyNotConfiguredError()
@@ -231,7 +232,9 @@ def get_interpreter(
         if (name, k) in open_acts:
             yield open_acts[(name, k)]
             return
-        async with registry.act(name, k, principal=principal) as interp:
+        async with registry.act(
+            name, k, principal=principal, idempotency_key=idem
+        ) as interp:
             open_acts[(name, k)] = interp
             try:
                 yield interp
@@ -472,17 +475,26 @@ _FIXED_OPS = frozenset({"get", "send", "events", "diagram", "stream"})
 
 
 def _operation_ids(op: str, events: Sequence[str]) -> Dict[str, str]:
-    """A UNIQUE operationId per event route.
+    """A UNIQUE and STABLE operationId per event route.
 
     🔥 battle #276-b: ``ORDER.PAID`` and ``ORDER_PAID`` both became
     ``order_order_paid`` and an event named ``GET``/``send`` reused a
     fixed route's id -- a duplicate operationId is an invalid OpenAPI
-    document and silently merges two methods in generated SDKs. Events are
-    visited sorted, so the suffixes (``_2`` ...) are deterministic.
+    document and silently merges two methods in generated SDKs.
+
+    📝 review (H1): ids must not move when an event is ADDED later -- a
+    generated SDK pins them. Two passes: events whose name already IS the
+    folded identifier (``ORDER_PAID``) claim the plain id first, in
+    declaration order; names that had to be folded (``ORDER.PAID``,
+    ``pay-now``) come second and take a ``_2`` ... suffix only when the
+    plain id is taken. Adding ``ORDER.PAID`` to a chart that declares
+    ``ORDER_PAID`` therefore leaves ``order_order_paid`` where it was.
     """
     taken = {f"{op}_{f}" for f in _FIXED_OPS}
     out: Dict[str, str] = {}
-    for etype in sorted(events):
+    plain = [e for e in events if _ident(e) == e.lower()]
+    folded = [e for e in events if _ident(e) != e.lower()]
+    for etype in plain + folded:
         base = f"{op}_{_ident(etype)}"
         cand, n = base, 1
         while cand in taken:

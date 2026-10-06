@@ -52,3 +52,28 @@ def _comparable(interp: Any) -> Any:
         return object()
     data.pop("taken_at", None)
     return data
+
+
+class _StampIdempotencyKey(PluginBase):  # type: ignore[type-arg]
+    """Put a request's ``Idempotency-Key`` on the FIRST user send of an
+    `act()` so the inbox plugin (which runs after this one) sees it.
+
+    🔥 #276 review (M2): `get_interpreter` validated the header and then
+    left it on `request.state` for the handler to forward -- a handler
+    that forgot got a silent 200 without dedup, the very hole the 501
+    closed on `/send`. The key is attached once; a second user send in
+    the same request is not a retry of the first and is left alone.
+    """
+
+    def __init__(self, key: str) -> None:
+        self.key = key
+        self._done = False
+
+    def on_before_send(self, interpreter: Any, event: Any) -> Any:
+        if self._done:
+            return None
+        payload = getattr(event, "payload", None)
+        if isinstance(payload, dict) and "idempotency_key" not in payload:
+            payload["idempotency_key"] = self.key
+        self._done = True
+        return None

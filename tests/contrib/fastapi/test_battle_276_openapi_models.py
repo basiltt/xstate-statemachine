@@ -154,8 +154,10 @@ def test_non_identifier_event_names_get_unique_operation_ids() -> None:
         for p, v in doc["paths"].items()
         if "/events/" in p
     }
-    assert ids["ORDER.PAID"] == "o_order_paid"
-    assert ids["ORDER_PAID"] == "o_order_paid_2"
+    # review H1: the PLAIN name keeps the unsuffixed id (stable when an
+    # event is added later); the folded one takes the suffix
+    assert ids["ORDER_PAID"] == "o_order_paid"
+    assert ids["ORDER.PAID"] == "o_order_paid_2"
     assert ids["éclair"] == "o_eclair"
     assert ids["GET"] == "o_get_2"
 
