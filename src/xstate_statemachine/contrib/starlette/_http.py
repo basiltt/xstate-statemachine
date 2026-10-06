@@ -36,6 +36,7 @@ from ...persistence.helpers import KeyNotFoundError
 from ...persistence.idempotency import (
     IdempotencyInFlightError,
     IdempotencyMismatchError,
+    validate_idempotency_key,
     validate_principal,
 )
 from ...persistence.store import DEFAULT_MAX_SNAPSHOT_BYTES
@@ -53,6 +54,7 @@ __all__ = [
     "RESERVED_SEND_KEYS",
     "ReservedKeyError",
     "ReceiptResponse",
+    "ShuttingDownError",
     "UnauthenticatedError",
     "UnsupportedMediaTypeError",
     "idempotency_key_from",
@@ -119,6 +121,16 @@ def principal_or_401(value: Any) -> str:
         return validate_principal(value)
     except ValueError as exc:
         raise UnauthenticatedError(str(exc)) from exc
+
+
+class ShuttingDownError(HTTPProblemError, RuntimeError):
+    """The registry is draining (battle #275-a): retryable, 503.
+
+    Still a `RuntimeError` -- what `resident()` raised before -- so an
+    existing ``except RuntimeError`` keeps working."""
+
+    status = 503
+    title = "Shutting down"
 
 
 class PayloadTooLargeError(HTTPProblemError):
@@ -254,6 +266,15 @@ def receipt_to_status(
     can never disagree; the keyword overrides here only rename the
     non-error outcomes.
     """
+    for opt in (changed, unchanged, denied, deferred, duplicate, error):
+        # 🧾 Battle #275-a: a typo'd override (``"200"``, ``600``) used to
+        #    reach the ASGI server as an invalid status line.
+        if (
+            not isinstance(opt, int)
+            or isinstance(opt, bool)
+            or not 100 <= opt <= 599
+        ):
+            raise ValueError(f"HTTP status override {opt!r} not in 100-599")
     err = receipt.error
     if isinstance(err, IdempotencyMismatchError):
         return 422
@@ -348,9 +369,17 @@ def ReceiptResponse(  # noqa: N802 -- reads as a response class
 # 📥 Request helpers
 # -----------------------------------------------------------------------------
 def idempotency_key_from(conn: HTTPConnection) -> Optional[str]:
-    """The ``Idempotency-Key`` header, or ``None``."""
+    """The ``Idempotency-Key`` header, or ``None``; 400 if malformed."""
     value = conn.headers.get(IDEMPOTENCY_HEADER)
-    return value if value else None
+    if not value:
+        return None
+    try:
+        return validate_idempotency_key(value)
+    except ValueError:
+        # 🔑 Battle #275-a: an over-long / non-ASCII key reached the
+        #    plugin, which refused it as a duplicate-flagged receipt --
+        #    the client got 200 and the event silently never ran.
+        raise BadRequestError("Invalid Idempotency-Key header") from None
 
 
 async def json_body(
