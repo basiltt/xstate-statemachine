@@ -40,6 +40,12 @@ def test_scaffold_writes_the_project(tmp_path: Path) -> None:
     )
 
 
+# 📝 battle #279-b: `app.py` is deliberately NOT pinned. The example app
+#    has grown deployment features (chart versioning + migrations, a
+#    circuit breaker, dead-letter plugin, bounded routes) that a starter
+#    scaffold should not carry; the template is a reduced copy. Its
+#    health is pinned instead by rendering + parsing it
+#    (test_battle_279_cli_plumbing) and by its own tests/ running green.
 @pytest.mark.parametrize("fname", ["logic.py", "models.py", "machine.json"])
 def test_template_has_not_drifted_from_the_example(
     tmp_path: Path, fname: str

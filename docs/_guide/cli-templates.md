@@ -1298,10 +1298,9 @@ async def send_submit(
     request: Request,
     instance_id: str = INSTANCE_ID,
     body: Optional[SubmitEvent] = Body(None),
-    interp: Any = get_interpreter(registry, MACHINE_NAME, key="id"),
 ) -> Response:
     """Accepted in: cart."""
-    return await _send(request, interp, "SUBMIT", _payload(body))
+    return await _send(request, instance_id, "SUBMIT", _payload(body))
 
 
 # 📝 Declared LAST: the literal routes above win; anything else is
@@ -1311,7 +1310,7 @@ async def unknown_event(event: str) -> Response:
     return problem(404, "Unknown event")
 ```
 
-Wire it with `register(create_machine(config, logic=...))`, `app.include_router(router)` and `instrument_app(app, registry)`. Every send goes through `get_interpreter` (the instance is loaded, and saved when the handler returns) and is answered with `ReceiptResponse`: 200 with the new state, 409 when a guard denies, 422 when the body does not fit the model (problem+json listing only field locations and error types). An event the chart does not declare is a 404 problem. Docstrings come from the transition's `description` (or `meta.description`) and the states that accept the event; event names that are not URL-safe (`"BTN: Abort"`) are slugged in the path (`/events/btn_abort`) but sent under their real name.
+Wire it with `register(create_machine(config, logic=...))`, `app.include_router(router)` and `instrument_app(app, registry)`. Every send goes through `registry.send_event` under `bounded_route_class` -- exactly the path the library's `StatechartRouter` uses -- so the generated router has the registry's rules, not a lookalike: 200 with the new state, 409 when a guard denies (and **nothing saved**), 422 when the body does not fit the model (problem+json listing only field locations and error types, at most 50 + `errors_total`), 413 over `max_body_bytes`, 415 for a non-JSON body, 501 for an `Idempotency-Key` without an inbox, a replay answered `duplicate` without a save; the reserved send options `wait`, `priority` and the discriminator `type` are refused as payload field names at generation. An event the chart does not declare is a 404 problem. Use `get_interpreter` for the custom routes you add beside the generated ones. Docstrings come from the transition's `description` (or `meta.description`) and the states that accept the event; event names that are not URL-safe (`"BTN: Abort"`) are slugged in the path (`/events/btn_abort`) but sent under their real name.
 
 When `fastapi` is installed, the generator imports the module, mounts it on a throwaway `FastAPI()` and checks that `openapi()` lists one route per event before writing. Without it, the CLI prints a note and checks syntax only. `--check` / `--diff` report drift in both files: add an event to the JSON and CI shows the missing model and route.
 

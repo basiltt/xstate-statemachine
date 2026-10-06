@@ -2,6 +2,7 @@
 
 Source:    checkout.json
 Template:  pydantic-models
+Generator: xstate-statemachine 0.11.0
 
 Regenerate with::
 

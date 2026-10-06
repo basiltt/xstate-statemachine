@@ -1450,6 +1450,52 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **Codegen companions, as battle-tested (#279).** `xsm gt --with-api
+  --with-models` across the whole 104-chart corpus, in-process: every
+  chart that generates yields a router and models that parse, import,
+  mount and document one route per event; regeneration is byte-stable;
+  `--check` / `--diff` detect drift; odd event names slug into unique
+  routes and `operationId`s; output dirs with spaces / unicode / `#` /
+  `'`; bounded time. Found and fixed: **the generated router was weaker
+  than the library's `StatechartRouter` in six ways** -- a 2 MB body was
+  200 (not 413), `text/plain` was 422 (not 415), `{"wait": false}` was a
+  500, `{"priority": true}` was accepted and jumped the queue, the 422
+  error list was uncapped, and an idempotent replay was SAVED every time
+  (three retries took the version from 1 to 3, so the original writer
+  lost with 409); a per-event `authorize` denial was answered as a 403
+  problem from inside the handler so the enclosing `get_interpreter`
+  saved and the version bumped for a refused request -- the generated
+  handlers now call `registry.send_event` under `bounded_route_class`,
+  exactly the library's path (a parity table of 11 cases is pinned;
+  **regenerating an older router replaces its `get_interpreter`
+  handlers -- `--diff` shows it**); a payload field named `wait`,
+  `priority` or `type` could never be sent (`wait`/`priority` are send
+  options the registry refuses; `type` is the discriminator and silently
+  took the event's name) -- refused at generation with one line; a bare
+  JSON-Schema `{"type": "object"}` payload was read as a field called
+  `type`; the router's `Regenerate with::` command omitted
+  `--with-models` and did not quote paths with spaces, so following it
+  did not reproduce the file; the header told users to call a
+  `build_<name>_machine()` that no template generates; a generation
+  refusal reached only the logger; `--check` / `--diff` stopped at a
+  stale logic file and never reported stale companions; `--check` /
+  `--diff` CREATED the output directory and imported + mounted every web
+  companion (a FastAPI build per chart -- it compares text now and
+  writes nothing, pinned by an mtime/bytes comparison and by a test that
+  makes the web verification raise); a payload schema whose root type is
+  a list (`{"type": ["object", "null"]}`) was read as a field map with a
+  field named `type` and refused (a JSON-Schema root is recognised by its
+  type keyword; a non-object root is refused for the right reason); `-o FILE` crashed with a traceback (exit 2,
+  one line); an unrequested leftover companion (`--with-api` dropped)
+  was invisible to `--check` (named in a warning); two charts with the
+  same `id` silently overwrote each other's output (a warning names the
+  other source); `gt` with several JSON paths hung on the "Is this
+  correct?" prompt in a non-interactive run (EOF accepts the detected
+  parent; `-jp/-jc` is the prompt-free path). Confirmed: odd context
+  keys (`order-id`, `class`, `1st`, `model_config`) become aliased
+  fields that round-trip; chart ids that clash with stdlib modules get a
+  `_machine` suffix; hierarchical runs emit the parent's companions
+  only; provenance banners carry basenames, never a local path.
 - **Litestar integration, as battle-tested (#278).** The orders chart
   served through `create_statechart_controller` + `XStatePlugin`, driven
   the way the #275 / #276 battles drove the FastAPI surface, so every

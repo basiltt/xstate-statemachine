@@ -170,7 +170,16 @@ def _determine_output_paths(
     logger.info("🗺️ Determining output file paths...")
     # 📁 Define output directory (or infer it from the first JSON path)
     out_dir = Path(args.output) if args.output else Path(json_paths[0]).parent
-    out_dir.mkdir(parents=True, exist_ok=True)
+    # 🔥 battle #279-b: `-o some_file` died in mkdir with a FileExistsError
+    #    traceback; and --check/--diff CREATED the output directory --
+    #    a drift check must write nothing at all.
+    if out_dir.exists() and not out_dir.is_dir():
+        from .commands import get_console
+
+        get_console().error(f"-o {out_dir}: exists and is not a directory")
+        raise SystemExit(2)
+    if not (getattr(args, "check", False) or getattr(args, "diff", False)):
+        out_dir.mkdir(parents=True, exist_ok=True)
 
     # 📝 Determine the base filename for the output files
     if hierarchy_flag and len(machine_names) > 1:
@@ -362,6 +371,7 @@ def _write_output_files(
     paths: Dict[str, Path],
     logic_code: str,
     runner_code: str,
+    json_paths: List[str],
 ) -> None:
     """Writes the generated code strings to the appropriate files.
 
@@ -373,7 +383,13 @@ def _write_output_files(
     """
     from .commands import get_console
 
+    from .commands.generate import warn_foreign_overwrite
+
     c = get_console()
+    for key in (
+        ("single_file",) if file_count == 1 else ("logic_file", "runner_file")
+    ):
+        warn_foreign_overwrite(paths[key], json_paths)
     if file_count == 1:
         # 🤝 Merge code into a single file
         combined_code = _combined_output(logic_code, runner_code)
@@ -560,7 +576,14 @@ def _handle_interactive_hierarchy(
                 f"  {i + 1}. {display_id} (looks like child, score: {score})"
             )
 
-    answer = input("Is this correct? [Y/n] ").strip().lower()
+    # 🔥 battle #279: a non-interactive run (CI, a wrapper with stdin at
+    #    EOF) hung on this prompt forever. An EOF answers "yes" to the
+    #    heuristic; `-jp/-jc` is the explicit, prompt-free path.
+    try:
+        answer = input("Is this correct? [Y/n] ").strip().lower()
+    except EOFError:
+        print("(no input: accepting the detected parent; use -jp/-jc)")
+        answer = ""
 
     if answer in ("", "y", "yes"):
         final_parent_path = parent_path
@@ -932,17 +955,36 @@ def run_generation_workflow(
 
     # 8. 💾 Write generated code to files — or, in check mode, compare only.
     if getattr(args, "check", False) or getattr(args, "diff", False):
-        _check_output_files(
-            args.file_count,
-            paths,
-            logic_code,
-            runner_code,
-            show_diff=getattr(args, "diff", False),
-        )
-        _companions()
+        # 🔥 battle #279: the primary check raised SystemExit(1) BEFORE the
+        #    companions were checked, so a stale router/models file was
+        #    never reported (and `--diff` never showed its hunk) whenever
+        #    the logic file was stale too. Check everything, then fail.
+        stale = False
+        try:
+            _check_output_files(
+                args.file_count,
+                paths,
+                logic_code,
+                runner_code,
+                show_diff=getattr(args, "diff", False),
+            )
+        except SystemExit as exc:
+            if int(exc.code or 0) != 1:
+                raise
+            stale = True
+        try:
+            _companions()
+        except SystemExit as exc:
+            if int(exc.code or 0) != 1:
+                raise
+            stale = True
+        if stale:
+            raise SystemExit(1)
         return
 
-    _write_output_files(args.file_count, paths, logic_code, runner_code)
+    _write_output_files(
+        args.file_count, paths, logic_code, runner_code, json_paths
+    )
     _companions()
 
 
@@ -1036,6 +1078,12 @@ def _verify_or_refuse(
     if problems:
         message = format_refusal(template, machine_id, problems)
         logger.error("❌ %s", message)
+        # 🔥 battle #279: the refusal reached ONLY the logger -- a caller
+        #    that captured stdout (CI, a wrapper script) saw exit 1 and
+        #    an empty message. Say it on the console as well.
+        from .commands import get_console
+
+        get_console().error(message)
         raise SystemExit(1)
 
     if structural:
