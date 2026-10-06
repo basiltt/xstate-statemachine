@@ -25,7 +25,15 @@ def to_starlette(request: Any) -> StarletteRequest:
     The registry's helpers only read headers, path params and -- when no
     payload is passed -- the body stream, so the view is lossless.
     """
-    return StarletteRequest(request.scope, request.receive)
+    conn = StarletteRequest(request.scope, request.receive)
+    # 🔥 battle #278-a: once Litestar had read the body (`request.json()`
+    #    in a handler, the controller's size guard) the stream was spent,
+    #    and `registry.send_event(to_starlette(request), ...)` without a
+    #    payload waited for a body that never came. Hand over the cache.
+    body = getattr(request, "_body", None)
+    if isinstance(body, (bytes, bytearray)):
+        conn._body = bytes(body)
+    return conn
 
 
 def to_litestar(resp: StarletteResponse) -> Any:
