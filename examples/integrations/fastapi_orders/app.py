@@ -22,7 +22,6 @@ import json
 import logging
 import os
 import signal
-import sys
 import threading
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -374,22 +373,6 @@ def run_scheduler(interval_s: float = 1.0) -> None:
     scanner.run_forever(interval_s)
 
 
-#: battle #277-a: the event loop for `--workers N` on Windows. uvicorn
-#: picks `SelectorEventLoop` for its spawned workers there; with the
-#: listening socket shared into N processes (`socket.share`), a few
-#: accepted connections in some fleets never report readable -- the
-#: request's body is never delivered and the client times out (7 of 25
-#: fleets with a no-op ASGI app, 0 of 25 on the Proactor loop).
-WINDOWS_WORKER_LOOP = "asyncio:ProactorEventLoop"
-
-
-def worker_loop(workers: int) -> str:
-    """uvicorn's ``--loop`` for *workers* processes on this platform."""
-    if sys.platform == "win32" and workers > 1:
-        return WINDOWS_WORKER_LOOP
-    return "auto"
-
-
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -410,11 +393,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     import uvicorn
 
     uvicorn.run(
-        "app:app",
-        host=args.host,
-        port=args.port,
-        workers=args.workers,
-        loop=worker_loop(args.workers),
+        "app:app", host=args.host, port=args.port, workers=args.workers
     )
     return 0
 
