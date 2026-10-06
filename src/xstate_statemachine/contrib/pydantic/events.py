@@ -43,7 +43,9 @@ class EventModel(BaseModel):
     type: str
 
     def __xstate_event__(self) -> Dict[str, Any]:
-        data = self.model_dump(mode="python")
+        # 🔥 battle #276-b: by_alias -- the validator re-validates with this
+        #    model, which (without populate_by_name) only accepts aliases.
+        data = self.model_dump(mode="python", by_alias=True)
         return data  # includes "type" -- exactly the dict form send() takes
 
     @classmethod
