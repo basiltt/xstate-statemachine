@@ -154,7 +154,11 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
         max_body_bytes: `json_body` cap for `send_event`.
         body_timeout_s: battle #277-a -- longest a request body may take
             to arrive; beyond it the request is a 408 problem instead of
-            a handler (and its client) waiting forever.
+            a handler (and its client) waiting forever. Always on (30 s
+            default; a finite number > 0 -- ``None`` is refused). Covers
+            the library's own routes and FastAPI routes mounted with
+            `bounded_route_class`; a plain ``APIRouter`` route parses its
+            body itself and is not bounded by this.
         settle_timeout: #263 battle -- how long a request waits, after
             its event's receipt, for engine completions still in flight
             (a chain of plain ``def`` invokes) before responding and

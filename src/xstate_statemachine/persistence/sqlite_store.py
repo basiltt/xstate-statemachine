@@ -269,7 +269,13 @@ class SQLiteStore(BaseStore):
             except sqlite3.OperationalError as exc:
                 if not _is_locked_error(exc):
                     raise
-            current = str(conn.execute("PRAGMA journal_mode").fetchone()[0])
+            try:
+                current = str(
+                    conn.execute("PRAGMA journal_mode").fetchone()[0]
+                )
+            except sqlite3.OperationalError as exc:  # review L2: the
+                if not _is_locked_error(exc):  # re-read can be locked too
+                    raise
             if (
                 current.upper() == self.journal_mode
                 or time.monotonic() >= deadline
