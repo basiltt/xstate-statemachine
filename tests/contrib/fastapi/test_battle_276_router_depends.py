@@ -62,7 +62,7 @@ class StampStore(MemoryStore):
     saved_at: List[float] = []
 
     def save(self, *a, **kw):
-        type(self).saved_at.append(time.monotonic())
+        type(self).saved_at.append(time.perf_counter())
         return super().save(*a, **kw)
 
 
@@ -92,14 +92,17 @@ def test_save_commits_before_response():
     @app.post("/x/{id}")
     async def pay(o=get_interpreter(reg, "order")):
         r = await o.send("CANCEL", wait=True)
-        sent.append(time.monotonic())
+        sent.append(time.perf_counter())
         return ReceiptResponse(o, r)
 
     with TestClient(app) as c:
         assert c.post("/x/a").status_code == 200
-        got = time.monotonic()
+        got = time.perf_counter()
     assert StampStore.saved_at
-    assert sent[0] <= StampStore.saved_at[-1] < got
+    # 📝 `<=`: a coarse clock (Windows, 3.9) can stamp two adjacent
+    #    events identically; the ORDER is what matters -- the save
+    #    happened no later than the response was received.
+    assert sent[0] <= StampStore.saved_at[-1] <= got
 
 
 def test_key_callable_raising_is_problem_not_traceback():

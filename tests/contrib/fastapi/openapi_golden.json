@@ -293,8 +293,7 @@
                   "$ref": "#/components/schemas/StateModel"
                 }
               }
-            },
-            "description": "Successful Response"
+            }
           },
           "400": {
             "content": {
@@ -308,8 +307,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Bad Request"
+            }
           },
           "401": {
             "content": {
@@ -323,8 +321,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Unauthorized"
+            }
           },
           "403": {
             "content": {
@@ -338,8 +335,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Forbidden"
+            }
           },
           "404": {
             "content": {
@@ -353,8 +349,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Not Found"
+            }
           },
           "422": {
             "content": {
@@ -363,8 +358,7 @@
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
-            },
-            "description": "Validation Error"
+            }
           },
           "500": {
             "content": {
@@ -378,8 +372,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Internal Server Error"
+            }
           },
           "503": {
             "content": {
@@ -393,8 +386,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Service Unavailable"
+            }
           }
         },
         "summary": "Current state of a payment",
@@ -425,8 +417,7 @@
                   "type": "string"
                 }
               }
-            },
-            "description": "Successful Response"
+            }
           },
           "401": {
             "content": {
@@ -440,8 +431,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Unauthorized"
+            }
           },
           "403": {
             "content": {
@@ -455,8 +445,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Forbidden"
+            }
           },
           "422": {
             "content": {
@@ -465,8 +454,7 @@
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
-            },
-            "description": "Validation Error"
+            }
           }
         },
         "summary": "Mermaid diagram of the chart",
@@ -497,8 +485,7 @@
                   "$ref": "#/components/schemas/EventsModel"
                 }
               }
-            },
-            "description": "Successful Response"
+            }
           },
           "400": {
             "content": {
@@ -512,8 +499,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Bad Request"
+            }
           },
           "401": {
             "content": {
@@ -527,8 +513,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Unauthorized"
+            }
           },
           "403": {
             "content": {
@@ -542,8 +527,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Forbidden"
+            }
           },
           "404": {
             "content": {
@@ -557,8 +541,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Not Found"
+            }
           },
           "422": {
             "content": {
@@ -567,8 +550,7 @@
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
-            },
-            "description": "Validation Error"
+            }
           },
           "500": {
             "content": {
@@ -582,8 +564,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Internal Server Error"
+            }
           },
           "503": {
             "content": {
@@ -597,8 +578,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Service Unavailable"
+            }
           }
         },
         "summary": "Events accepted now, and every declared event",
@@ -647,8 +627,7 @@
                   "$ref": "#/components/schemas/ReceiptModel"
                 }
               }
-            },
-            "description": "Receipt"
+            }
           },
           "202": {
             "content": {
@@ -657,8 +636,7 @@
                   "$ref": "#/components/schemas/ReceiptModel"
                 }
               }
-            },
-            "description": "Deferred"
+            }
           },
           "400": {
             "content": {
@@ -672,8 +650,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Bad Request"
+            }
           },
           "401": {
             "content": {
@@ -687,8 +664,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Unauthorized"
+            }
           },
           "403": {
             "content": {
@@ -702,8 +678,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Forbidden"
+            }
           },
           "404": {
             "content": {
@@ -717,8 +692,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Not Found"
+            }
           },
           "409": {
             "content": {
@@ -732,8 +706,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Conflict"
+            }
           },
           "413": {
             "content": {
@@ -747,8 +720,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Content Too Large"
+            }
           },
           "415": {
             "content": {
@@ -762,8 +734,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Unsupported Media Type"
+            }
           },
           "422": {
             "content": {
@@ -777,8 +748,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Unprocessable Content"
+            }
           },
           "500": {
             "content": {
@@ -792,8 +762,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Internal Server Error"
+            }
           },
           "501": {
             "content": {
@@ -807,8 +776,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Not Implemented"
+            }
           },
           "503": {
             "content": {
@@ -822,8 +790,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Service Unavailable"
+            }
           }
         },
         "summary": "Send RESET",
@@ -872,8 +839,7 @@
                   "$ref": "#/components/schemas/ReceiptModel"
                 }
               }
-            },
-            "description": "Receipt"
+            }
           },
           "202": {
             "content": {
@@ -882,8 +848,7 @@
                   "$ref": "#/components/schemas/ReceiptModel"
                 }
               }
-            },
-            "description": "Deferred"
+            }
           },
           "400": {
             "content": {
@@ -897,8 +862,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Bad Request"
+            }
           },
           "401": {
             "content": {
@@ -912,8 +876,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Unauthorized"
+            }
           },
           "403": {
             "content": {
@@ -927,8 +890,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Forbidden"
+            }
           },
           "404": {
             "content": {
@@ -942,8 +904,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Not Found"
+            }
           },
           "409": {
             "content": {
@@ -957,8 +918,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Conflict"
+            }
           },
           "413": {
             "content": {
@@ -972,8 +932,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Content Too Large"
+            }
           },
           "415": {
             "content": {
@@ -987,8 +946,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Unsupported Media Type"
+            }
           },
           "422": {
             "content": {
@@ -1002,8 +960,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Unprocessable Content"
+            }
           },
           "500": {
             "content": {
@@ -1017,8 +974,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Internal Server Error"
+            }
           },
           "501": {
             "content": {
@@ -1032,8 +988,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Not Implemented"
+            }
           },
           "503": {
             "content": {
@@ -1047,8 +1002,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Service Unavailable"
+            }
           }
         },
         "summary": "Send RETRY",
@@ -1097,8 +1051,7 @@
                   "$ref": "#/components/schemas/ReceiptModel"
                 }
               }
-            },
-            "description": "Receipt"
+            }
           },
           "202": {
             "content": {
@@ -1107,8 +1060,7 @@
                   "$ref": "#/components/schemas/ReceiptModel"
                 }
               }
-            },
-            "description": "Deferred"
+            }
           },
           "400": {
             "content": {
@@ -1122,8 +1074,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Bad Request"
+            }
           },
           "401": {
             "content": {
@@ -1137,8 +1088,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Unauthorized"
+            }
           },
           "403": {
             "content": {
@@ -1152,8 +1102,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Forbidden"
+            }
           },
           "404": {
             "content": {
@@ -1167,8 +1116,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Not Found"
+            }
           },
           "409": {
             "content": {
@@ -1182,8 +1130,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Conflict"
+            }
           },
           "413": {
             "content": {
@@ -1197,8 +1144,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Content Too Large"
+            }
           },
           "415": {
             "content": {
@@ -1212,8 +1158,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Unsupported Media Type"
+            }
           },
           "422": {
             "content": {
@@ -1227,8 +1172,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Unprocessable Content"
+            }
           },
           "500": {
             "content": {
@@ -1242,8 +1186,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Internal Server Error"
+            }
           },
           "501": {
             "content": {
@@ -1257,8 +1200,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Not Implemented"
+            }
           },
           "503": {
             "content": {
@@ -1272,8 +1214,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Service Unavailable"
+            }
           }
         },
         "summary": "Send SUBMIT",
@@ -1322,8 +1263,7 @@
                   "$ref": "#/components/schemas/ReceiptModel"
                 }
               }
-            },
-            "description": "Receipt"
+            }
           },
           "202": {
             "content": {
@@ -1332,8 +1272,7 @@
                   "$ref": "#/components/schemas/ReceiptModel"
                 }
               }
-            },
-            "description": "Deferred"
+            }
           },
           "400": {
             "content": {
@@ -1347,8 +1286,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Bad Request"
+            }
           },
           "401": {
             "content": {
@@ -1362,8 +1300,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Unauthorized"
+            }
           },
           "403": {
             "content": {
@@ -1377,8 +1314,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Forbidden"
+            }
           },
           "404": {
             "content": {
@@ -1392,8 +1328,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Not Found"
+            }
           },
           "409": {
             "content": {
@@ -1407,8 +1342,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Conflict"
+            }
           },
           "413": {
             "content": {
@@ -1422,8 +1356,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Content Too Large"
+            }
           },
           "415": {
             "content": {
@@ -1437,8 +1370,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Unsupported Media Type"
+            }
           },
           "422": {
             "content": {
@@ -1452,8 +1384,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Unprocessable Content"
+            }
           },
           "500": {
             "content": {
@@ -1467,8 +1398,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Internal Server Error"
+            }
           },
           "501": {
             "content": {
@@ -1482,8 +1412,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Not Implemented"
+            }
           },
           "503": {
             "content": {
@@ -1497,8 +1426,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Service Unavailable"
+            }
           }
         },
         "summary": "Send UPDATE_FORM",
@@ -1539,8 +1467,7 @@
                   "$ref": "#/components/schemas/ReceiptModel"
                 }
               }
-            },
-            "description": "Receipt"
+            }
           },
           "202": {
             "content": {
@@ -1549,8 +1476,7 @@
                   "$ref": "#/components/schemas/ReceiptModel"
                 }
               }
-            },
-            "description": "Deferred"
+            }
           },
           "400": {
             "content": {
@@ -1564,8 +1490,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Bad Request"
+            }
           },
           "401": {
             "content": {
@@ -1579,8 +1504,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Unauthorized"
+            }
           },
           "403": {
             "content": {
@@ -1594,8 +1518,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Forbidden"
+            }
           },
           "404": {
             "content": {
@@ -1609,8 +1532,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Not Found"
+            }
           },
           "409": {
             "content": {
@@ -1624,8 +1546,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Conflict"
+            }
           },
           "413": {
             "content": {
@@ -1639,8 +1560,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Content Too Large"
+            }
           },
           "415": {
             "content": {
@@ -1654,8 +1574,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Unsupported Media Type"
+            }
           },
           "422": {
             "content": {
@@ -1669,8 +1588,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Unprocessable Content"
+            }
           },
           "500": {
             "content": {
@@ -1684,8 +1602,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Internal Server Error"
+            }
           },
           "501": {
             "content": {
@@ -1699,8 +1616,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Not Implemented"
+            }
           },
           "503": {
             "content": {
@@ -1714,8 +1630,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Service Unavailable"
+            }
           }
         },
         "summary": "Send any event to a payment",
@@ -1745,8 +1660,7 @@
                 "schema": {}
               },
               "text/event-stream": {}
-            },
-            "description": "Successful Response"
+            }
           },
           "400": {
             "content": {
@@ -1760,8 +1674,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Bad Request"
+            }
           },
           "401": {
             "content": {
@@ -1775,8 +1688,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Unauthorized"
+            }
           },
           "403": {
             "content": {
@@ -1790,8 +1702,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Forbidden"
+            }
           },
           "404": {
             "content": {
@@ -1805,8 +1716,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Not Found"
+            }
           },
           "422": {
             "content": {
@@ -1815,8 +1725,7 @@
                   "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
-            },
-            "description": "Validation Error"
+            }
           },
           "429": {
             "content": {
@@ -1830,8 +1739,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Too Many Requests"
+            }
           },
           "503": {
             "content": {
@@ -1845,8 +1753,7 @@
                   "$ref": "#/components/schemas/Problem"
                 }
               }
-            },
-            "description": "Service Unavailable"
+            }
           }
         },
         "summary": "Server-Sent Events: snapshot, then each transition",

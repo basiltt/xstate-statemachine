@@ -102,6 +102,15 @@ def normalise(doc: Dict[str, Any]) -> Dict[str, Any]:
     # 📝 FastAPI's own `ValidationError` grows fields across releases
     #    (`input`, `ctx` in 0.11x); its shape is not ours to pin.
     out.get("components", {}).get("schemas", {}).pop("ValidationError", None)
+    # 📝 Response `description`s default to the stdlib's HTTP reason
+    #    phrases, which changed between Python releases ("Unprocessable
+    #    Entity" → "Unprocessable Content" in 3.13): not ours to pin.
+    for path in out.get("paths", {}).values():
+        for op in path.values():
+            if isinstance(op, dict):
+                for resp in op.get("responses", {}).values():
+                    if isinstance(resp, dict):
+                        resp.pop("description", None)
     return out
 
 
