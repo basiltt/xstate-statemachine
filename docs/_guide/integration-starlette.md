@@ -165,19 +165,56 @@ The `Idempotency-Key` header or `None`. `json_body` requires `Content-Type: appl
 
 ### `await transition_stream(registry, name, key, request)`
 
-A `text/event-stream` response: `event: snapshot` on connect, then one `event: transition` per changed receipt committed in this process, `id:` a per-instance increasing sequence, and a `: heartbeat` comment every `heartbeat_s`. Refuses with 403 (Origin / authorize) or 429 (`max_connections_per_key`). The subscriber is removed when the client disconnects.
+A `text/event-stream` response: `event: snapshot` on connect, then one `event: transition` per changed receipt committed in this process, `id:` a per-instance increasing sequence, and a `: heartbeat` comment every `heartbeat_s`. Refuses with 403 (Origin / authorize), 429 (`max_connections_per_key`) or 503 (server shutting down). The subscriber and its connection slot are released when the client disconnects — detected immediately, even while frames are flowing. See [Wire contract](#wire-contract).
 
 ### `websocket_endpoint(registry, name, *, key_param="key")`
 
-Returns a `WebSocketEndpoint` subclass for `WebSocketRoute("/ws/{key}", ...)`. On connect sends `{"kind": "snapshot", ...}`; a client message `{"type": "EVENT", "payload": {...}}` is authorized, run through `act()`, and answered with `{"kind": "receipt", ...}` or `{"kind": "error", "status", "title", ...}`; committed transitions arrive as `{"kind": "transition", "seq": n, ...}`; `{"kind": "ping"}` every `heartbeat_s`. Closes 1008 when Origin or `authorize` refuses, 1013 over `max_connections_per_key`. Holds no resident.
+Returns a `WebSocketEndpoint` subclass for `WebSocketRoute("/ws/{key}", ...)`. On connect sends `{"kind": "snapshot", ...}`; a client message `{"type": "EVENT", "payload": {...}}` is authorized, run through `act()`, and answered with `{"kind": "receipt", ...}` or `{"kind": "error", "status", "title", ...}`; committed transitions arrive as `{"kind": "transition", "seq": n, ...}`; `{"kind": "ping"}` every `heartbeat_s`. Close codes and frame shapes: see [Wire contract](#wire-contract). Holds no resident.
 
 ### `mount_inspector(app, registry, path="/_xsm/inspect", *, debug=False)`
 
 Raises `RuntimeError` unless `debug=True`. Mounts the live inspector over WebSocket (`WebSocketSink`, one Stately Inspector protocol message per frame) and appends an `InspectorPlugin` to `registry.plugins`; token, loopback `Host` and `Origin` checks per X0.7. Keyword options `token`, `context_allowlist`, `include_payloads`, `allow_remote`; returns the sink. See [Live inspector](../integration-inspector/) ([#274](https://github.com/basiltt/xstate-statemachine/issues/274)).
 
+## Wire contract
+
+**SSE** (`transition_stream`):
+
+| Frame | When | `id:` |
+|:--|:--|:--|
+| `event: snapshot` + `data: {state, state_ids, available_events[, context]}` | first frame of every connection | the current sequence (`0` if nobody was listening) |
+| `event: transition` + `data:` the receipt body | each CHANGED receipt committed in **this process** — by a request *or* by the timer scanner | per-instance sequence, +1 per frame |
+| `: heartbeat` (comment) | after `heartbeat_s` of silence | — |
+
+**Reconnect = fresh snapshot, no replay.** No history is kept. A browser's `EventSource` sends `Last-Event-ID` on reconnect; the server ignores it and starts with a new `snapshot`, which already contains everything the missed frames would have told you. The sequence is forgotten when the last subscriber of an instance leaves, so do not compare `id:` values across connections. The stream ends (and the client reconnects) on shutdown, when the client falls `MAX_BACKLOG` (256) frames behind, and if a frame cannot be encoded as JSON (logged).
+
+**WebSocket** (`websocket_endpoint`) — every frame is a JSON object with `kind`:
+
+| Direction | Frame | Notes |
+|:--|:--|:--|
+| server → client | `{"kind": "snapshot", ...}` | once, after accept |
+| client → server | `{"type": "EVENT", "payload": {...}}` | text or UTF-8 binary; `payload` optional |
+| server → client | `{"kind": "receipt", ...}` | the answer to *your* event |
+| server → client | `{"kind": "transition", "seq": n, ...}` | every committed change, yours included |
+| server → client | `{"kind": "error", "status": 400}` | frame is not JSON — session stays open |
+| server → client | `{"kind": "error", "status": 422, ...}` | not an object, `type` not a string, `payload` not an object, a reserved key (`wait`, `priority`) in `payload`, or an undeclared event under `strict` |
+| server → client | `{"kind": "error", "status": 409/404/..., ...}` | the same problem body HTTP would return |
+| server → client | `{"kind": "ping"}` | after `heartbeat_s` of silence |
+
+Events from one socket are processed one at a time, in order.
+
+| Close code | Meaning |
+|:--|:--|
+| 1001 | server shutting down (on connect or mid-session) — reconnect elsewhere |
+| 1008 | `Origin` refused, or `authorize` refused on connect or for an event |
+| 1009 | inbound frame larger than `max_body_bytes` |
+| 1011 | internal error (connect failed, or a frame could not be encoded) — logged |
+| 1013 | over `max_connections_per_key`, or cut for falling `MAX_BACKLOG` frames behind |
+
 ## Guarantees
 
 > **What this does:** Multi-worker model is **create → act → persist → discard**: each request builds one async `Interpreter` from the stored snapshot and saves it with `expected_version`, so two workers racing on one key produce one winner and one `409` — never a lost update (tested with 50 concurrent requests on `MemoryStore` and `SQLiteStore`). Subscribers hear a transition only after its save commits. Persisted `after` deadlines fire under `lifespan` via `DueTimerScanner` when `run_timers=True`. Shutdown is bounded by `drain_timeout_s`; residents, connections per key and per-subscriber backlog are all capped.
+>
+> **Fan-out is PER PROCESS.** With `--workers 4`, a `POST` handled by worker 2 is invisible to a stream held open on worker 1 — it only shows up after that client reconnects and gets a fresh `snapshot`. Use one worker, sticky routing for both the stream and the writes, or a broker.
 >
 > **What this does not do:** Residents are **single-process** — two workers holding the same key as residents will conflict on save. SSE/WebSocket fan-out is **per-process**: a client only hears transitions made by the worker it is connected to; cross-worker fan-out needs a broker layer, which is out of scope here. `act()` does not retry a `ConflictError` for you.
 >
@@ -206,4 +243,9 @@ Raises `RuntimeError` unless `debug=True`. Mounts the live inspector over WebSoc
 | Every POST is `409` under load | optimistic conflicts on a hot key | retry on 409, or `lock=PessimisticLock()` |
 | `ValueError: act(principal=) is required` | `inbox=` without a principal | pass `principal=` to the registry (HTTP helpers) or to `act()` |
 | SSE client never sees transitions from other workers | fan-out is per-process | pin the stream to one worker, or add a broker |
+| Stream shows a stale state after an `after` timer | the timer fired in a scanner in **another process** (or `run_timers=False`) — only the registry that owns the scanner pushes timer transitions | run the scanner in the web process (`run_timers=True`, single worker), or have clients re-read on a timer of their own |
+| `429` on the stream | `max_connections_per_key` reached — tabs left open, or a client reconnecting in a loop | raise the cap; disconnected clients release their slot immediately |
+| `503` on the stream / WebSocket close `1001` | the server is draining (shutdown) | reconnect; the balancer sends you to a live worker |
+| A resident lost an update | residents are single-process; another writer saved first | see `registry.resident()` above — prefer `act()` per request |
+| `409 Conflict` storms | optimistic retries on one hot key | retry with jitter, or `lock=PessimisticLock()` |
 | `RuntimeError: run_timers=True needs a sync StateStore` | registry built on an `AsyncStateStore` | pass the sync store; the scanner runs in a thread |
