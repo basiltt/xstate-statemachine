@@ -385,7 +385,7 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
         response_model=None,
         responses={
             200: {"content": {"text/event-stream": {}}},
-            **problem_responses(403, 429),
+            **problem_responses(403, 429, 503),
         },
         summary="Server-Sent Events: snapshot, then each transition",
     )

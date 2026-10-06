@@ -18,14 +18,14 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any, AsyncIterator, Dict, Optional, Type
+from typing import Any, AsyncIterator, Dict, List, Optional, Type
 
 from starlette.endpoints import WebSocketEndpoint
 from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 from starlette.websockets import WebSocket
 
-from ._fanout import CLOSED
+from ._fanout import CLOSED, TimerPublisher
 from ._http import (
     ForbiddenError,
     problem,
@@ -38,8 +38,41 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["transition_stream", "websocket_endpoint"]
 
+WS_GOING_AWAY = 1001
 WS_POLICY_VIOLATION = 1008
+WS_MESSAGE_TOO_BIG = 1009
+WS_INTERNAL_ERROR = 1011
 WS_TRY_AGAIN_LATER = 1013
+_BAD_FRAME = object()
+_TOO_BIG = object()
+
+
+def _attach_timer_fanout(registry: Any) -> None:
+    """Make scanner-fired ``after`` transitions reach this process' streams.
+
+    🔥 battle #275: the scanner saves through `persisted()` in a thread and
+    never through `act()`, so streams missed every timer transition. The
+    publisher goes on the SCANNER's own plugin list (a copy -- `act()`
+    already publishes its own receipts, never twice). Idempotent; a
+    restarted scanner gets a fresh one.
+    """
+    scanner = getattr(registry, "scanner", None)
+    if scanner is None:
+        return
+    if any(isinstance(p, TimerPublisher) for p in scanner.plugins):
+        return
+
+    def body_of(interp: Any, receipt: Any, name: str) -> Dict[str, Any]:
+        reg = registry._reg(name)
+        return receipt_body(
+            interp, receipt, context_serializer=reg.context_serializer
+        )
+
+    scanner.plugins.append(
+        TimerPublisher(
+            registry.subscribers, asyncio.get_running_loop(), body_of
+        )
+    )
 
 
 def _sse(event: str, data: Dict[str, Any], seq: Optional[int] = None) -> bytes:
@@ -76,11 +109,38 @@ async def transition_stream(
         return problem(503, "Shutting down")
     if not registry.try_open_connection(name, key):
         return problem(429, "Too many connections for this instance")
+    _attach_timer_fanout(registry)
     sub = registry.subscribers.subscribe(name, str(key))
     seq0 = registry.subscribers.seq(name, str(key))
+    released: List[bool] = []
+    watcher: List["asyncio.Task[None]"] = []
+
+    def release() -> None:
+        # 🔥 battle #275: idempotent; runs from the generator's `finally`
+        #    AND from the response's -- under ASGI spec >= 2.4 Starlette
+        #    raises `ClientDisconnect` out of a failed `send` without ever
+        #    closing the generator, so the slot and the subscriber leaked
+        #    until GC (`max_connections_per_key` exhausted by dead clients).
+        for t in watcher:
+            t.cancel()
+        if released:
+            return
+        released.append(True)
+        registry.subscribers.unsubscribe(sub)
+        registry.close_connection(name, key)
+
+    async def watch_disconnect() -> None:
+        # 📡 Spec >= 2.4: nobody else reads `receive()`, so a client that
+        #    went away while frames flow was only noticed at the next IDLE
+        #    heartbeat (never, under steady traffic). Wake the pump now.
+        while (await request.receive())["type"] != "http.disconnect":
+            pass
+        _offer_closed(sub)
 
     async def body() -> AsyncIterator[bytes]:
         try:
+            if _owns_receive(request):
+                watcher.append(asyncio.ensure_future(watch_disconnect()))
             yield _sse("snapshot", snapshot, seq0)
             while True:
                 try:
@@ -95,16 +155,59 @@ async def transition_stream(
                 if item is CLOSED:
                     return
                 seq, data = item
-                yield _sse("transition", data, seq)
+                try:
+                    frame = _sse("transition", data, seq)
+                except (TypeError, ValueError):
+                    # 🔥 battle #275: a non-JSON body (a `context_serializer`
+                    #    returning a datetime ...) killed the stream with a
+                    #    bare traceback. Log it and end the stream; the
+                    #    client reconnects to a fresh snapshot.
+                    logger.exception("📡 SSE frame for %r not JSON", key)
+                    return
+                yield frame
         finally:
-            registry.subscribers.unsubscribe(sub)
-            registry.close_connection(name, key)
+            release()
 
-    return StreamingResponse(
+    return _SSEResponse(
         body(),
+        release,
         media_type="text/event-stream",
         headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
     )
+
+
+def _owns_receive(request: Request) -> bool:
+    """Starlette listens for ``http.disconnect`` itself below ASGI 2.4."""
+    raw = str(request.scope.get("asgi", {}).get("spec_version", "2.0"))
+    try:
+        return tuple(int(p) for p in raw.split(".")[:2]) >= (2, 4)
+    except ValueError:
+        return False
+
+
+def _offer_closed(sub: Any) -> None:
+    try:
+        sub.queue.put_nowait(CLOSED)
+    except asyncio.QueueFull:
+        pass  # already cut by the fan-out: CLOSED is queued
+
+
+class _SSEResponse(StreamingResponse):
+    def __init__(self, content: Any, release: Any, **kw: Any) -> None:
+        super().__init__(content, **kw)
+        self._release = release
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._release()
+            aclose = getattr(self.body_iterator, "aclose", None)
+            if aclose is not None:
+                try:
+                    await aclose()
+                except Exception:  # noqa: BLE001 -- already torn down
+                    pass
 
 
 def websocket_endpoint(
@@ -140,16 +243,55 @@ def websocket_endpoint(
             except ForbiddenError:
                 await websocket.close(code=WS_POLICY_VIOLATION)
                 return
+            except Exception:  # noqa: BLE001 -- never leaked to the peer
+                logger.exception("📡 websocket connect failed for %r", key)
+                await websocket.close(code=WS_INTERNAL_ERROR)
+                return
+            if registry.draining:
+                # 🔥 battle #275: was 1013 "try again later" -- this
+                #    server is going away; 1001 sends the client elsewhere.
+                await websocket.close(code=WS_GOING_AWAY)
+                return
             if not registry.try_open_connection(name, key):
                 await websocket.close(code=WS_TRY_AGAIN_LATER)
                 return
             self._opened = True
-            await websocket.accept()
-            self._sub = registry.subscribers.subscribe(name, key)
-            await websocket.send_json({"kind": "snapshot", **snapshot})
+            try:
+                await websocket.accept()
+                _attach_timer_fanout(registry)
+                self._sub = registry.subscribers.subscribe(name, key)
+                await websocket.send_json({"kind": "snapshot", **snapshot})
+            except BaseException:
+                # 🔥 battle #275: Starlette calls `on_disconnect` only when
+                #    `on_connect` RETURNS; a peer gone during accept/the
+                #    snapshot leaked its `max_connections_per_key` slot.
+                await self.on_disconnect(websocket, WS_INTERNAL_ERROR)
+                raise
             self._pump = asyncio.ensure_future(self._push(websocket))
 
+        async def decode(self, websocket: WebSocket, message: Any) -> Any:
+            # 🔥 battle #275: Starlette's json decoding closed the socket
+            #    (1003) and raised on a non-JSON text frame, and a
+            #    non-UTF-8 binary frame crashed `dispatch` outright. A bad
+            #    frame is an error frame; the session survives.
+            raw = message.get("text")
+            if raw is None:
+                raw = message.get("bytes") or b""
+            if len(raw) > registry.max_body_bytes:
+                return _TOO_BIG
+            try:
+                return json.loads(raw)
+            except ValueError:  # JSONDecodeError + UnicodeDecodeError
+                return _BAD_FRAME
+
+        async def _reply(self, websocket: WebSocket, frame: Any) -> None:
+            try:
+                await websocket.send_json(frame)
+            except Exception:  # noqa: BLE001 -- peer already gone
+                logger.debug("📡 websocket reply dropped (peer gone)")
+
         async def _push(self, websocket: WebSocket) -> None:
+            key = self._key
             try:
                 while True:
                     try:
@@ -160,7 +302,14 @@ def websocket_endpoint(
                         await websocket.send_json({"kind": "ping"})
                         continue
                     if item is CLOSED:
-                        await websocket.close()
+                        # 1001 on shutdown; 1013 when cut for lagging.
+                        await websocket.close(
+                            code=(
+                                WS_GOING_AWAY
+                                if registry.draining
+                                else WS_TRY_AGAIN_LATER
+                            )
+                        )
                         return
                     seq, data = item
                     await websocket.send_json(
@@ -168,17 +317,40 @@ def websocket_endpoint(
                     )
             except asyncio.CancelledError:
                 raise
+            except (TypeError, ValueError):
+                # 🔥 battle #275: an unserialisable frame ended the pump
+                #    SILENTLY -- the socket stayed open, receipts still
+                #    flowed, pushes never came again. Close it loudly.
+                logger.exception("📡 websocket frame for %r not JSON", key)
+                try:
+                    await websocket.close(code=WS_INTERNAL_ERROR)
+                except Exception:  # noqa: BLE001 -- already closed
+                    pass
             except Exception:  # noqa: BLE001 -- socket gone
                 return
 
         async def on_receive(self, websocket: WebSocket, data: Any) -> None:
+            if data is _TOO_BIG:
+                await websocket.close(code=WS_MESSAGE_TOO_BIG)
+                return
+            if data is _BAD_FRAME:
+                await self._reply(
+                    websocket,
+                    {
+                        "kind": "error",
+                        "status": 400,
+                        "title": "Malformed JSON",
+                    },
+                )
+                return
             if (
                 not isinstance(data, dict)
                 or not isinstance(data.get("type"), str)
                 or not isinstance(data.get("payload", {}), dict)
             ):
-                await websocket.send_json(
-                    {"kind": "error", "status": 422, "title": "Bad message"}
+                await self._reply(
+                    websocket,
+                    {"kind": "error", "status": 422, "title": "Bad message"},
                 )
                 return
             etype = data["type"]
@@ -208,11 +380,12 @@ def websocket_endpoint(
                 return
             except Exception as exc:  # noqa: BLE001 -- mapped, not leaked
                 resp = problem_for_exception(exc)
-                await websocket.send_json(
-                    {"kind": "error", **json.loads(bytes(resp.body))}
+                await self._reply(
+                    websocket,
+                    {"kind": "error", **json.loads(bytes(resp.body))},
                 )
                 return
-            await websocket.send_json({"kind": "receipt", **body})
+            await self._reply(websocket, {"kind": "receipt", **body})
 
         async def on_disconnect(
             self, websocket: WebSocket, close_code: int

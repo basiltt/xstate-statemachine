@@ -350,6 +350,7 @@ Buffering proxies hold the stream back. `transition_stream` already sends `X-Acc
 * **nginx:** `proxy_buffering off;` if your config overrides the header, and `proxy_read_timeout` above `registry.heartbeat_s` (default 15 s).
 * **Load balancers** with an idle timeout shorter than the heartbeat close the stream. Lower `heartbeat_s`.
 * **Compression** (for example `GZipMiddleware`) buffers the stream. Exclude `text/event-stream`.
+* **Wire format** (frames, reconnect, close codes): see [Starlette → Wire contract](../integration-starlette/#wire-contract). Reconnect gives a fresh `snapshot`; nothing is replayed from `Last-Event-ID`.
 * **Multiple workers:** SSE fan-out is per process. A client connected to worker A does not see a change committed on worker B. Use sticky sessions, or reconnect and read the `snapshot` event. `EventSource` reconnects automatically.
 
 ### Cookie authentication and CSRF
