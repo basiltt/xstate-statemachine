@@ -27,6 +27,7 @@ from __future__ import annotations
 import hmac
 import ipaddress
 import json
+import math
 import os
 import queue
 import secrets
@@ -204,8 +205,8 @@ class SseSink:
         max_queue: int = 10_000,
         keepalive: float = 15.0,
     ) -> None:
-        if keepalive <= 0:
-            raise ValueError("keepalive must be > 0")
+        if not (keepalive > 0 and math.isfinite(keepalive)):
+            raise ValueError("keepalive must be a finite number > 0")
         #: seconds between ``: keep-alive`` comments on an idle stream
         self.keepalive = keepalive
         if max_queue < 1:
@@ -276,7 +277,7 @@ class SseSink:
                 f"data: {json.dumps(message, default=str)}\n\n"
             )
             clients = list(self._clients)
-        self.sent += 1
+            self.sent += 1
         for q in clients:
             try:
                 q.put_nowait(frame)

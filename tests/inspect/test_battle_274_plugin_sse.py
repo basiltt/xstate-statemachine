@@ -322,3 +322,87 @@ def test_frames_are_json():
         json.dumps(s.messages, default=str)
     finally:
         s.close()
+
+
+# --- independent review (#274) ----------------------------------------------
+def test_include_payloads_is_deny_by_default_and_warns_once(caplog):
+    """M1: `include_payloads=True` without an allow-list used to send
+    every key through key-name redaction -- the hole the battle found."""
+    import logging
+
+    from src.xstate_statemachine import SyncInterpreter, create_machine
+    from src.xstate_statemachine.inspect import InspectorPlugin, MemorySink
+
+    m = create_machine(
+        {"id": "p", "initial": "a", "states": {"a": {"on": {"GO": "a"}}}}
+    )
+    with caplog.at_level(logging.WARNING, logger="xstate_statemachine"):
+        sink = MemorySink()
+        plug = InspectorPlugin(sink, include_payloads=True)
+    assert [r for r in caplog.records if "payload_allowlist" in r.message]
+    i = SyncInterpreter(m).use(plug).start()
+    i.send("GO", reason="card 4111 declined", orderId="o-1")
+    i.stop()
+    events = [x for x in sink.messages if x["type"] == "@xstate.event"]
+    assert events[-1]["event"] == {"type": "GO"}
+    allowed = MemorySink()
+    j = (
+        SyncInterpreter(m)
+        .use(
+            InspectorPlugin(
+                allowed, include_payloads=True, payload_allowlist=("orderId",)
+            )
+        )
+        .start()
+    )
+    j.send("GO", reason="card 4111 declined", orderId="o-1")
+    j.stop()
+    events = [x for x in allowed.messages if x["type"] == "@xstate.event"]
+    assert events[-1]["event"] == {"type": "GO", "orderId": "o-1"}
+
+
+def test_system_id_child_has_a_stable_session_segment():
+    """M2: a child spawned with only a `systemId` had a uuid-suffixed
+    runtime id -- recordings never diffed stably."""
+    from src.xstate_statemachine import SyncInterpreter, create_machine
+    from src.xstate_statemachine.inspect import MemorySink, InspectorPlugin
+
+    child = {"id": "c", "initial": "x", "states": {"x": {}}}
+    parent = {
+        "id": "p",
+        "initial": "a",
+        "invoke": {"src": "kid", "systemId": "sys"},
+        "states": {"a": {}},
+    }
+    sessions = []
+    for _ in range(2):
+        m = create_machine(
+            parent,
+            logic=MachineLogic(services={"kid": create_machine(child)}),
+        )
+        sink = MemorySink()
+        plug = InspectorPlugin(sink).install()
+        try:
+            i = SyncInterpreter(m)
+            i.store_key = "order-1"
+            i.start()
+            i.stop()
+        finally:
+            plug.uninstall()
+        sessions.append(
+            sorted(
+                {
+                    x["sessionId"]
+                    for x in sink.messages
+                    if x["type"] == "@xstate.actor"
+                }
+            )
+        )
+    assert sessions[0] == sessions[1] == ["order-1", "order-1:sys"]
+
+
+def test_keepalive_rejects_nan():
+    from src.xstate_statemachine.inspect import SseSink
+
+    with pytest.raises(ValueError):
+        SseSink(port=0, keepalive=float("nan"))

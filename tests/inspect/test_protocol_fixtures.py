@@ -195,13 +195,23 @@ class TestRedaction:
             MemorySink,
         )
 
-        for include, expect in (
-            (False, {"type": "GO"}),
-            (True, {"type": "GO", "n": 1, "password": "***"}),
+        # 📝 #274 battle: payload keys are deny-by-default too -- name
+        #    them in `payload_allowlist`; a listed secret key is still
+        #    redacted by name.
+        for include, allow, expect in (
+            (False, (), {"type": "GO"}),
+            (True, (), {"type": "GO"}),
+            (
+                True,
+                ("n", "password"),
+                {"type": "GO", "n": 1, "password": "***"},
+            ),
         ):
             sink = MemorySink()
             i = SyncInterpreter(family).use(
-                InspectorPlugin(sink, include_payloads=include)
+                InspectorPlugin(
+                    sink, include_payloads=include, payload_allowlist=allow
+                )
             )
             i.start()
             i.send("GO", n=1, password="hunter2")

@@ -47,6 +47,13 @@ _INIT = "___xstate_statemachine_init___"
 logger = logging.getLogger("xstate_statemachine.inspect")
 
 
+def _root(interp: Any) -> Any:
+    node = interp
+    while getattr(node, "parent", None) is not None:
+        node = node.parent
+    return node
+
+
 def session_id_of(interp: Any) -> str:
     """The inspector session id of *interp*.
 
@@ -67,16 +74,17 @@ def session_id_of(interp: Any) -> str:
         own = str(interp.id)
         pid = str(parent.id)
         psid = session_id_of(parent)
+        # 📝 review #274 (M2): a child spawned with only a `systemId` has
+        #    a uuid-suffixed runtime id -- use the stable systemId as the
+        #    trailing segment so recordings diff and the Inspector shows
+        #    the declared name.
+        system = getattr(_root(interp), "_system", None) or {}
+        for sys_id, actor in system.items():
+            if actor is interp:
+                return f"{psid}:{sys_id}"
         if psid != pid and own.startswith(pid + ":"):
             return psid + own[len(pid) :]
     return str(interp.id)
-
-
-def _root(interp: Any) -> Any:
-    node = interp
-    while getattr(node, "parent", None) is not None:
-        node = node.parent
-    return node
 
 
 class InspectorPlugin(PluginBase[Any]):
@@ -91,9 +99,11 @@ class InspectorPlugin(PluginBase[Any]):
         include_payloads: Send event payload fields (redacted). Default
             ``False``: events carry only ``type``.
         payload_allowlist: With ``include_payloads=True``, send ONLY these
-            payload keys (battle #274: a free-text ``reason`` carried a
-            card number past `redact()`, which matches key names). Empty
-            (default) keeps the 0.11 behaviour: every key, redacted.
+            payload keys -- deny by default, exactly like
+            ``context_allowlist`` (battle #274: a free-text ``reason``
+            carried a card number past `redact()`, which matches key
+            names). ``include_payloads=True`` with an empty allow-list
+            sends only ``type`` and warns once at construction.
         redact_keys: Key substrings redacted inside allowed values.
         clock: ``() -> float`` epoch seconds for ``createdAt``.
     """
@@ -115,6 +125,12 @@ class InspectorPlugin(PluginBase[Any]):
         self.context_allowlist = frozenset(context_allowlist)
         self.include_payloads = include_payloads
         self.payload_allowlist = frozenset(payload_allowlist)
+        if include_payloads and not self.payload_allowlist:
+            logger.warning(
+                "InspectorPlugin(include_payloads=True) without "
+                "payload_allowlist= sends only the event type; name the "
+                "payload keys that may leave the process (X0.7)"
+            )
         self.redact_keys = redact_keys
         self.clock = clock
         self._lock = threading.Lock()
@@ -169,7 +185,7 @@ class InspectorPlugin(PluginBase[Any]):
         if self.include_payloads and isinstance(payload, dict):
             allowed = self.payload_allowlist
             for k, v in redact(payload, self.redact_keys).items():
-                if k == "type" or (allowed and k not in allowed):
+                if k == "type" or k not in allowed:
                     continue
                 out[k] = v
         return out

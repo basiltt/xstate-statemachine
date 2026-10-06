@@ -1483,7 +1483,9 @@ _No unreleased changes yet._
   line is skipped (a corrupt line in the middle still raises);
   `include_payloads=True` sent free-text payload fields through
   key-name redaction -- a card number in `PAYMENT_FAILED.reason` left
-  the process -- `payload_allowlist=`; `MemorySink(maxlen=)`; the
+  the process -- `payload_allowlist=` (deny by default, like
+  `context_allowlist`; `include_payloads=True` without it sends only
+  `type` and warns once); `MemorySink(maxlen=)`; the
   pending-sends table grew with unique target ids (capped at 1 024);
   `replay_messages(Path(...))` raised `TypeError` (`os.PathLike`
   accepted); a negative / NaN `speed` was accepted (`ValueError`; the
