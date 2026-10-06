@@ -57,6 +57,7 @@ __all__ = [
     "ShuttingDownError",
     "UnauthenticatedError",
     "UnsupportedMediaTypeError",
+    "IdempotencyNotConfiguredError",
     "idempotency_key_from",
     "json_body",
     "principal_or_401",
@@ -141,6 +142,16 @@ class PayloadTooLargeError(HTTPProblemError):
 class UnsupportedMediaTypeError(HTTPProblemError):
     status = 415
     title = "Unsupported Media Type"
+
+
+class IdempotencyNotConfiguredError(HTTPProblemError):
+    """🔥 battle #276: an ``Idempotency-Key`` on a registry WITHOUT an
+    inbox was silently ignored -- 200, ``duplicate: false``, and three
+    retries ran the event three times while the client believed its
+    retries were safe. A promise the server cannot keep is refused."""
+
+    status = 501
+    title = "Idempotency-Key not supported: no idempotency inbox configured"
 
 
 class UnprocessableBodyError(HTTPProblemError):

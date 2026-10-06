@@ -68,13 +68,19 @@ from ...persistence.locking import (
 )
 from ...persistence.store import validate_key
 from ...plugins import PluginBase
-from ._act_helpers import _comparable, _Recorder, _SkipSave
+from ._act_helpers import (
+    _comparable,
+    _Recorder,
+    _SkipSave,
+    _StampIdempotencyKey,
+)
 from ._fanout import _Subscribers
 from ._probes import _ProbesMixin
 from ._scanner import _ScannerMixin
 from ._http import (
     ForbiddenError,
     ShuttingDownError,
+    IdempotencyNotConfiguredError,
     idempotency_key_from,
     json_body,
     principal_or_401,
@@ -334,7 +340,12 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
     # -- create → act → persist → discard ------------------------------------
     @contextlib.asynccontextmanager
     async def act(
-        self, name: str, key: str, *, principal: Optional[str] = None
+        self,
+        name: str,
+        key: str,
+        *,
+        principal: Optional[str] = None,
+        idempotency_key: Optional[str] = None,
     ) -> AsyncIterator[Interpreter]:
         """Yield a started async `Interpreter` for *key*; save on exit.
 
@@ -347,10 +358,17 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
             principal: The authenticated caller. **Required** when the
                 registry has an *inbox* -- it scopes idempotency keys
                 (X0.2).
+            idempotency_key: A validated ``Idempotency-Key``; stamped on
+                the first user send so the inbox dedups it (#276). Needs
+                an *inbox* (`IdempotencyNotConfiguredError` otherwise).
         """
         reg = self._reg(name)
         skey = self.store_key(name, key)
         plugins = list(self.plugins)
+        if idempotency_key is not None:
+            if self.inbox is None:
+                raise IdempotencyNotConfiguredError()
+            plugins.append(_StampIdempotencyKey(idempotency_key))
         if self.inbox is not None:
             if principal is None:
                 raise ValueError(
@@ -488,6 +506,8 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
             refuse_reserved_send_keys(payload)
             idem = idempotency_key_from(request)
             if idem is not None:
+                if self.inbox is None:
+                    raise IdempotencyNotConfiguredError()
                 payload["idempotency_key"] = idem
             if principal is None:
                 principal = self._principal_of(request)

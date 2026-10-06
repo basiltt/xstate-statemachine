@@ -161,7 +161,8 @@ async def pay(id: str, request: Request, background: BackgroundTasks):
             background.add_task(sent.append, id)   # after the response, once
     return response
 
-# PAY is refused on /send (403), so the email hook cannot be bypassed
+# PAY is refused on /send (403); in a real service ALSO gate it in
+# `authorize` (see "Request rules") so another router cannot bypass it
 app.include_router(StatechartRouter(registry, "order", prefix="/orders",
                                     per_event_dependencies={"PAY": []}))
 instrument_app(app, registry)
@@ -176,6 +177,26 @@ assert sent == ["1"]
 ```
 
 `send_event` returns only after the save has committed. A `409`, a guard denial or an `Idempotency-Key` replay therefore never schedules the task. `BackgroundTasks` still runs *in the web worker*, and a crash after the response loses the task. When the side effect must happen, write it to an **outbox** in the same transaction and deliver it from a separate process. See the event-driven architecture guide (arriving with the Phase F integrations).
+
+## Request rules
+
+**`get_interpreter` persistence.** The interpreter lives inside `registry.act()` for the request. It is **saved** when the handler *returns*, **discarded** (nothing saved) when the handler *raises*, and **stopped** once the response is produced. A `BackgroundTasks` closure that captured it acts on a dead interpreter — the task must open its own `async with registry.act(name, key) as interp:`.
+
+**Idempotency.** An `Idempotency-Key` header needs a registry built with `inbox=`. Without one the request is refused with `501` (`IdempotencyNotConfiguredError`) — never silently ignored; a malformed key is `400`. `get_interpreter` validates the header too and hands it to `act(idempotency_key=)`, which stamps it on your handler's **first** `send` -- the replay is deduped with no handler code. A handler that sends more than once and wants to choose which send carries the key reads `request.state.xsm_idempotency_key` and passes `idempotency_key=` itself.
+
+**Gate sensitive events on `authorize`, not only on a router.** `per_event_dependencies` guards *that router's* `/events/EVENT` route. A second router on another prefix (an admin API), the WebSocket route or a custom route does not inherit it. Put the real rule in `register(authorize=)` — it sees every send with the event type, including WebSocket frames (refused with close code `1008`). The orders example marks the one allowed route on `request.state` and lets `authorize` check the mark.
+
+**`GET /{id}/events` runs your guards.** `available` is computed with `can()`, which evaluates guards against the live context on every GET. Guards must therefore be pure: no counters, no I/O. A guard that raises is logged and its event is simply absent from `available`.
+
+## OpenAPI
+
+The document is generated from the chart, so it is deterministic for a given chart and model set.
+
+* **operationIds** — `<prefix>_get`, `<prefix>_send`, `<prefix>_events`, `<prefix>_diagram`, `<prefix>_stream`, and `<prefix>_<event>` for each event route. Event names are folded to ASCII `[a-z0-9_]` (`ORDER.PAID` → `order_paid`, `éclair` → `eclair`); when two names fold to the same id, or an event is called `GET`/`send`, the later one (in sorted order) gets `_2`, `_3`, … so every id is unique.
+* **`/send` body** — one model: that model; two or more: a `oneOf` with `discriminator: type`; none: `<Name>Event` = `{type: Literal[...], payload: {}}`. Field aliases are honoured on every send path; note that actions then read an aliased field under its **alias** in `event.payload` (the body's key), not the Python field name. Event-route `operationId`s are stable when you add an event later: names that are already plain identifiers (`ORDER_PAID`) keep the unsuffixed id; a name that had to be folded (`ORDER.PAID`, `pay-now`) takes `_2` only when the plain id is taken.
+* **Statuses** — every route documents its failures as `application/problem+json` with the `Problem` schema: `400 401 403 404 409 413 415 422 500 501 503` on sends, `400 401 403 404 500 503` on reads, `429` on `/stream`.
+* **Schemas are public.** `/events` and `/openapi.json` publish each model's JSON Schema, *including field defaults* — never put a secret in an `EventModel` default.
+* **Golden.** The library pins the AdvancePayment router's document in `tests/contrib/fastapi/openapi_golden.json`; after an intended change run `XSM_UPDATE_GOLDEN=1 pytest tests/contrib/fastapi -k golden` and review the diff. Do the same in your service: commit `app.openapi()` and compare it in a test.
 
 ## Sessions & wizards
 
@@ -253,9 +274,11 @@ Returns an `APIRouter` for machine *name* (already registered on *registry*). `p
 | `POST /{id}/send` | discriminated union of the event models on `type` | receipt: 200 changed/unchanged/duplicate, 202 deferred, 409 guard denied or conflict, 422 invalid |
 | `POST /{id}/events/<EVENT>` | that event's model, optional | same as `/send` — one route per declared event |
 | `GET /{id}/events` | — | `{available: [...], declared: [{type, schema}]}` — `available` is what `can()` accepts now |
-| `GET /{id}/diagram.mmd` | — | Mermaid, `text/plain` (omit with `include_diagram=False`) |
+| `GET /{id}/diagram.mmd` | — | Mermaid, `text/plain` (omit with `include_diagram=False`); runs `authorize` |
 | `GET /{id}/stream` | — | SSE, via [`transition_stream`](../integration-starlette/#reference) |
 | `WS /{id}/ws` | — | [`websocket_endpoint`](../integration-starlette/#reference) protocol |
+
+📝 **Not generated (deferred from #276):** `GET /{id}/history` needs a transition-log store wired into the registry, which `StatechartRegistry` does not take yet; the chart-level `/schema/diagram.mmd`, `/schema/machine.json`, `/schema/events.json` routes are replaced by the per-instance `/{id}/diagram.mmd` and `/{id}/events` plus `/openapi.json`. Use [`machine_json_schema`](../integration-pydantic/) in your own route if you need the events schema without an instance.
 
 * **`event_models`** — `EventModel` subclasses. Defaults to the models behind the machine's `events_union()` schemas. Without any, the `/send` body is `{type: Literal[<declared events>], payload: {...}}`, so the schema is still deterministic.
 * **`create_if_missing=False`** — reads and sends on an unknown key are `404` instead of starting a new instance.
@@ -317,6 +340,11 @@ The Pydantic models that describe the wire shapes in OpenAPI. Every 4xx/5xx is d
 | `KeyError: No machine registered as 'order'` | router built before `register()` | register first, then build the router |
 | `/send` body schema is `{type, payload}` | the machine has no `events_union()` models | pass `event_schemas=events_union(...)` to `create_machine`, or `event_models=` to the router |
 | `403 Use this event's dedicated route` | event has `per_event_dependencies` | post to `/{id}/events/<EVENT>` |
+| `501` with `error: IdempotencyNotConfiguredError` | `Idempotency-Key` sent, registry has no `inbox=` | pass `inbox=SQLiteInbox(store)` (or drop the header) |
+| Background task fails with `InterpreterStoppedError` | it used the `get_interpreter` interpreter after the response | open `registry.act()` inside the task |
+| Event reachable through another router despite `per_event_dependencies` | the gate is per router | enforce it in `authorize` |
+| `UserWarning: Duplicate Operation ID` on an older release | two event names folded to the same id | upgrade; ids are now suffixed `_2`, `_3` |
+| A guard's side effect fires on `GET /{id}/events` | `available` runs guards | keep guards pure |
 | Every POST is `409` under load | optimistic conflicts on a hot key | retry on 409, or `lock=PessimisticLock()` |
 | A `get_interpreter` save conflict is logged, response already 200 | FastAPI older than 0.121 (no dependency `scope`) | upgrade FastAPI, or use `registry.act()` inside the handler |
 

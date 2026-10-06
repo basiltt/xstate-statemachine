@@ -129,10 +129,28 @@ def customer_of(conn: Any) -> str:
     )
 
 
+#: Set on `request.state` by the ONE route allowed to send PAY.
+PAY_GATE_ATTR = "xsm_pay_gate"
+
+
 def authorize(conn: Any, *, name: str, key: str, event: Optional[str]) -> bool:
     """Demo policy: any identified customer. A real service would also
-    check that the order belongs to them."""
-    return bool(customer_of(conn))
+    check that the order belongs to them.
+
+    🔐 battle #276: the PAY gate (the email hook) used to live only on
+    the generated router's `per_event_dependencies` -- a second router
+    on another prefix (an admin API) that forgot it exposed PAY without
+    the hook. The gate belongs HERE, on the registry's authorize, which
+    every route goes through: PAY is allowed only when the confirmation
+    route marked the request.
+    """
+    if not customer_of(conn):
+        return False
+    if event == "PAY":
+        return bool(
+            getattr(getattr(conn, "state", None), PAY_GATE_ATTR, False)
+        )
+    return True
 
 
 def log_email(order_id: str, charge_id: Optional[str], customer: str) -> None:
@@ -259,6 +277,7 @@ def add_pay_route(
         body: Pay = Body(...),
     ) -> Response:
         payload = body.model_dump(mode="python", exclude={"type"})
+        setattr(request.state, PAY_GATE_ATTR, True)  # see `authorize`
         response = await registry.send_event(
             request, MACHINE_NAME, id, "PAY", payload
         )

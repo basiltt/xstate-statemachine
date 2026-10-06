@@ -19,6 +19,7 @@
 """`StatechartRouter` and `get_interpreter`."""
 
 import inspect
+import unicodedata
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 from fastapi import APIRouter, Body, Depends, Path, Request
@@ -31,8 +32,10 @@ from ...persistence.helpers import KeyNotFoundError
 from ..pydantic.events import models_of
 from ..starlette._http import (
     HTTPProblemError,
+    IdempotencyNotConfiguredError,
     PayloadTooLargeError,
     UnsupportedMediaTypeError,
+    idempotency_key_from,
     problem,
     problem_for_exception,
 )
@@ -52,7 +55,10 @@ _HAS_DEP_SCOPE = "scope" in inspect.signature(DependsParam.__init__).parameters
 _SEND_RESPONSES: Dict[Any, Any] = {
     200: {"model": ReceiptModel, "description": "Receipt"},
     202: {"model": ReceiptModel, "description": "Deferred"},
-    **problem_responses(403, 404, 409, 413, 415, 422, 500),
+    # 🔥 battle #276-b: 400 (bad key / malformed Idempotency-Key), 401
+    #    (unauthenticated), 501 (Idempotency-Key without an inbox) and 503
+    #    (store down / shutting down) are all returned but were undocumented.
+    **problem_responses(400, 401, 403, 404, 409, 413, 415, 422, 500, 501, 503),
 }
 
 
@@ -120,15 +126,26 @@ async def _bounded_json(request: Request, limit: int) -> None:
             )
 
 
+#: Most validation errors listed in one 422 problem body.
+MAX_VALIDATION_ERRORS = 50
+
+
 def _validation_problem(exc: RequestValidationError) -> Response:
+    # 🔥 battle #276-a: a list of 10 000 bad items produced a 500 KB 422
+    #    (one entry per item) -- an amplification lever on a bounded body.
+    #    The first MAX_VALIDATION_ERRORS are listed; the total is reported.
+    raw = exc.errors()
     errors = [
         {
             "loc": [str(p) for p in e.get("loc", ())],
             "type": str(e.get("type", "")),
         }
-        for e in exc.errors()
+        for e in list(raw)[:MAX_VALIDATION_ERRORS]
     ]
-    return problem(422, "Request validation failed", errors=errors)
+    extra: Dict[str, Any] = {}
+    if len(raw) > MAX_VALIDATION_ERRORS:
+        extra["errors_total"] = len(raw)
+    return problem(422, "Request validation failed", errors=errors, **extra)
 
 
 # -----------------------------------------------------------------------------
@@ -189,10 +206,40 @@ def get_interpreter(
     ) -> Any:
         k = str(key_of(request))
         await registry.authorize(request, name, k, None)
+        # 🔥 battle #276: the dependency never looked at `Idempotency-Key`
+        #    -- a client sending it on a custom route got no dedup and no
+        #    error. Validated here (400 malformed, 501 with no inbox) and
+        #    handed to `act(idempotency_key=)`, which stamps it on the
+        #    handler's FIRST send so the inbox dedups it -- the handler
+        #    has nothing to remember. Also on `request.state` for a
+        #    handler that sends twice and wants to choose.
+        idem = idempotency_key_from(request)
+        if idem is not None and registry.inbox is None:
+            raise IdempotencyNotConfiguredError()
+        request.state.xsm_idempotency_key = idem
         if not create_if_missing and not await registry.exists(name, k):
             raise KeyNotFoundError(k)
-        async with registry.act(name, k, principal=principal) as interp:
-            yield interp
+        # 🔥 battle #276-a: two `get_interpreter(reg, name)` parameters on
+        #    one route (e.g. one in a sub-dependency) are DIFFERENT
+        #    dependencies to FastAPI, so each opened its own `act()` on the
+        #    same key: both loaded version N, the second save was a
+        #    self-inflicted 409. The first one opened for (name, key) in a
+        #    request owns the save; the others share its interpreter.
+        open_acts = getattr(request.state, "xsm_open_acts", None)
+        if open_acts is None:
+            open_acts = {}
+            request.state.xsm_open_acts = open_acts
+        if (name, k) in open_acts:
+            yield open_acts[(name, k)]
+            return
+        async with registry.act(
+            name, k, principal=principal, idempotency_key=idem
+        ) as interp:
+            open_acts[(name, k)] = interp
+            try:
+                yield interp
+            finally:
+                open_acts.pop((name, k), None)
 
     return _depends(interpreter_dependency)
 
@@ -239,6 +286,15 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
     models: List[Any] = list(event_models or models_of(machine.event_schemas))
     by_type = {m.event_type(): m for m in models}
     gated = dict(per_event_dependencies or {})
+    # 🔥 battle #276-a: a gate on a typo'd / undeclared event was silently
+    #    dropped -- the author believed an event was protected that the
+    #    router never routes. Silent acceptance is a bug: fail at build.
+    unknown = sorted(set(gated) - set(user_events(machine)))
+    if unknown:
+        raise ValueError(
+            f"per_event_dependencies names events {unknown} that machine "
+            f"{name!r} does not declare"
+        )
     op = operation_id_prefix or name
     base = f"/{name}" if prefix is None else prefix
     kp = "{" + key_param + "}"
@@ -293,7 +349,12 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
         if etype in gated:
             return problem(403, "Use this event's dedicated route")
         if models:
-            payload = body.model_dump(mode="python", exclude={"type"})
+            # 🔥 battle #276-b: by_alias -- the engine re-validates the
+            #    payload with the same model, which only knows the ALIAS
+            #    (an aliased field was a 422 on a valid body).
+            payload = body.model_dump(
+                mode="python", by_alias=True, exclude={"type"}
+            )
         else:
             payload = dict(body.payload)
         return await _send(request, key, etype, payload, principal)
@@ -328,7 +389,8 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
     async def stream(request: Request, key: str = KeyPath) -> Response:
         return await transition_stream(registry, name, key, request)
 
-    reads = problem_responses(403, 404, 500)
+    reads = problem_responses(400, 401, 403, 404, 500, 503)
+    op_ids = _operation_ids(op, user_events(machine))
     router.add_api_route(
         f"/{kp}",
         get_state,
@@ -352,7 +414,7 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
             f"/{kp}/events/{etype}",
             _event_handler(etype, by_type.get(etype), _send, KeyPath, Actor),
             methods=["POST"],
-            operation_id=f"{op}_{_ident(etype)}",
+            operation_id=op_ids[etype],
             response_model=None,
             responses=_SEND_RESPONSES,
             dependencies=list(gated.get(etype, ())),
@@ -374,7 +436,7 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
             methods=["GET"],
             operation_id=f"{op}_diagram",
             response_class=PlainTextResponse,
-            responses=problem_responses(403),
+            responses=problem_responses(401, 403),
             summary="Mermaid diagram of the chart",
         )
     router.add_api_route(
@@ -385,7 +447,7 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
         response_model=None,
         responses={
             200: {"content": {"text/event-stream": {}}},
-            **problem_responses(403, 429, 503),
+            **problem_responses(400, 401, 403, 404, 429, 503),
         },
         summary="Server-Sent Events: snapshot, then each transition",
     )
@@ -398,7 +460,49 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
 
 
 def _ident(etype: str) -> str:
-    return "".join(c if c.isalnum() else "_" for c in etype).lower()
+    """ASCII ``[a-z0-9_]`` spelling of *etype* (operationIds feed SDK
+    generators: ``éclair`` → ``eclair``, ``pay-now`` → ``pay_now``)."""
+    ascii_ = (
+        unicodedata.normalize("NFKD", etype)
+        .encode("ascii", "ignore")
+        .decode("ascii")
+    )
+    return "".join(c if c.isalnum() else "_" for c in ascii_).lower() or "e"
+
+
+#: Suffixes of the fixed routes' operationIds (``<op>_get`` ...).
+_FIXED_OPS = frozenset({"get", "send", "events", "diagram", "stream"})
+
+
+def _operation_ids(op: str, events: Sequence[str]) -> Dict[str, str]:
+    """A UNIQUE and STABLE operationId per event route.
+
+    🔥 battle #276-b: ``ORDER.PAID`` and ``ORDER_PAID`` both became
+    ``order_order_paid`` and an event named ``GET``/``send`` reused a
+    fixed route's id -- a duplicate operationId is an invalid OpenAPI
+    document and silently merges two methods in generated SDKs.
+
+    📝 review (H1): ids must not move when an event is ADDED later -- a
+    generated SDK pins them. Two passes: events whose name already IS the
+    folded identifier (``ORDER_PAID``) claim the plain id first, in
+    declaration order; names that had to be folded (``ORDER.PAID``,
+    ``pay-now``) come second and take a ``_2`` ... suffix only when the
+    plain id is taken. Adding ``ORDER.PAID`` to a chart that declares
+    ``ORDER_PAID`` therefore leaves ``order_order_paid`` where it was.
+    """
+    taken = {f"{op}_{f}" for f in _FIXED_OPS}
+    out: Dict[str, str] = {}
+    plain = [e for e in events if _ident(e) == e.lower()]
+    folded = [e for e in events if _ident(e) != e.lower()]
+    for etype in plain + folded:
+        base = f"{op}_{_ident(etype)}"
+        cand, n = base, 1
+        while cand in taken:
+            n += 1
+            cand = f"{base}_{n}"
+        taken.add(cand)
+        out[etype] = cand
+    return out
 
 
 def _event_handler(
@@ -420,7 +524,9 @@ def _event_handler(
             payload: Dict[str, Any] = (
                 {}
                 if body is None
-                else body.model_dump(mode="python", exclude={"type"})
+                else body.model_dump(
+                    mode="python", by_alias=True, exclude={"type"}
+                )
             )
             return await send(request, key, etype, payload, principal)
 

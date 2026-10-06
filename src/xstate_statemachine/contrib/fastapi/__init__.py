@@ -25,6 +25,7 @@ from .._compat import require_extra
 require_extra("fastapi", "fastapi", "starlette", "pydantic")
 
 from ..starlette import (  # noqa: E402
+    IdempotencyNotConfiguredError,
     ReceiptResponse,
     StatechartRegistry,
     allow_all,
@@ -41,6 +42,7 @@ from .router import (  # noqa: E402
 )
 
 __all__ = [
+    "IdempotencyNotConfiguredError",
     "Problem",
     "ReceiptModel",
     "ReceiptResponse",

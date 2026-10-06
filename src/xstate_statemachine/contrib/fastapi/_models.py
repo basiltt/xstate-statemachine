@@ -101,7 +101,13 @@ def send_body_type(
         return Union[tuple(models)]  # type: ignore[valid-type]
     events = user_events(machine)
     etype: Any = Literal[tuple(events)] if events else str  # type: ignore
-    title = "".join(p[:1].upper() + p[1:] for p in name.split("_"))
+    # 🔥 battle #276-b: `"".join(capitalised "_" parts)` mapped `a_b` and
+    #    `aB` to the same `ABEvent`; pydantic then emitted two schemas
+    #    named `xstate_statemachine__contrib__...__ABEvent__1/__2` -- an
+    #    unstable, leaky component name in every generated SDK. Keep every
+    #    alnum char and spell the rest `_` (registry names are unique).
+    safe = "".join(c if c.isalnum() else "_" for c in name)
+    title = safe[:1].upper() + safe[1:]
     return create_model(
         f"{title}Event",
         __config__=ConfigDict(extra="forbid"),
