@@ -932,14 +932,31 @@ def run_generation_workflow(
 
     # 8. 💾 Write generated code to files — or, in check mode, compare only.
     if getattr(args, "check", False) or getattr(args, "diff", False):
-        _check_output_files(
-            args.file_count,
-            paths,
-            logic_code,
-            runner_code,
-            show_diff=getattr(args, "diff", False),
-        )
-        _companions()
+        # 🔥 battle #279: the primary check raised SystemExit(1) BEFORE the
+        #    companions were checked, so a stale router/models file was
+        #    never reported (and `--diff` never showed its hunk) whenever
+        #    the logic file was stale too. Check everything, then fail.
+        stale = False
+        try:
+            _check_output_files(
+                args.file_count,
+                paths,
+                logic_code,
+                runner_code,
+                show_diff=getattr(args, "diff", False),
+            )
+        except SystemExit as exc:
+            if int(exc.code or 0) != 1:
+                raise
+            stale = True
+        try:
+            _companions()
+        except SystemExit as exc:
+            if int(exc.code or 0) != 1:
+                raise
+            stale = True
+        if stale:
+            raise SystemExit(1)
         return
 
     _write_output_files(args.file_count, paths, logic_code, runner_code)
@@ -1036,6 +1053,12 @@ def _verify_or_refuse(
     if problems:
         message = format_refusal(template, machine_id, problems)
         logger.error("❌ %s", message)
+        # 🔥 battle #279: the refusal reached ONLY the logger -- a caller
+        #    that captured stdout (CI, a wrapper script) saw exit 1 and
+        #    an empty message. Say it on the console as well.
+        from .commands import get_console
+
+        get_console().error(message)
         raise SystemExit(1)
 
     if structural:

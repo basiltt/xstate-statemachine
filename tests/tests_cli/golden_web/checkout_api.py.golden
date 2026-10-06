@@ -2,6 +2,7 @@
 
 Source:    checkout.json
 Template:  fastapi-router
+Generator: xstate-statemachine 0.11.0
 
 Regenerate with::
 
@@ -139,11 +140,14 @@ async def _send(
     request: Request, interp: Any, event: str, payload: Dict[str, Any]
 ) -> Response:
     key = str(request.path_params["id"])
-    try:
-        await registry.authorize(request, MACHINE_NAME, key, event)
-        receipt = await interp.send(event, wait=True, **payload)
-    except Exception as exc:  # noqa: BLE001 -- mapped, never leaked
-        return problem_for_exception(exc)
+    # A denial / engine error is RAISED, not answered here: the
+    # `get_interpreter` dependency then discards the act (nothing
+    # saved, the version does not bump -- a refused request must not
+    # make a concurrent writer lose with 409) and `instrument_app`
+    # maps it to problem+json. Answering a problem from inside the
+    # handler would RETURN normally and save (#279 battle).
+    await registry.authorize(request, MACHINE_NAME, key, event)
+    receipt = await interp.send(event, wait=True, **payload)
     return ReceiptResponse(interp, receipt)
 
 
