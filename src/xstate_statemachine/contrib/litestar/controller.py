@@ -45,19 +45,22 @@ MAX_VALIDATION_ERRORS = 50
 _UNKNOWN_FIELD = re.compile(r"unknown field `([^`]{1,64})`")
 
 
-class Problem(msgspec.Struct, kw_only=True):
-    """RFC 9457 problem body (what every non-2xx answer carries)."""
+class Problem(msgspec.Struct):
+    """RFC 9457 problem body (what every non-2xx answer carries).
 
-    type: str = "about:blank"
+    📝 No ``kw_only`` (CI's mypy stub for msgspec rejects it): required
+    fields come first, defaults after, as a plain Struct demands."""
+
     title: str
     status: int
+    type: str = "about:blank"
     detail: Optional[str] = None
     error: Optional[str] = None
     errors: Optional[List[Dict[str, str]]] = None
     errors_total: Optional[int] = None
 
 
-class StateBody(msgspec.Struct, kw_only=True):
+class StateBody(msgspec.Struct):
     """``GET /{id}`` -- state only; ``context`` exists only when the
     registry has a `context_serializer` (X0.1: never promised fields)."""
 
@@ -68,13 +71,15 @@ class StateBody(msgspec.Struct, kw_only=True):
     context: Optional[Any] = None
 
 
-class ReceiptBody(StateBody, kw_only=True):
-    """The `ReceiptResponse` body of both POST routes."""
+class ReceiptBody(StateBody):
+    """The `ReceiptResponse` body of both POST routes (defaults only
+    because the parent already has defaulted fields; the server always
+    sets all four flags)."""
 
-    changed: bool
-    denied: bool
-    deferred: bool
-    duplicate: bool
+    changed: bool = False
+    denied: bool = False
+    deferred: bool = False
+    duplicate: bool = False
     error: Optional[str] = None
 
 

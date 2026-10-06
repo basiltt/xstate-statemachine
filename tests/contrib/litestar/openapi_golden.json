@@ -143,6 +143,7 @@
             "type": "array"
           },
           "changed": {
+            "default": false,
             "type": "boolean"
           },
           "context": {
@@ -154,12 +155,15 @@
             ]
           },
           "deferred": {
+            "default": false,
             "type": "boolean"
           },
           "denied": {
+            "default": false,
             "type": "boolean"
           },
           "duplicate": {
+            "default": false,
             "type": "boolean"
           },
           "error": {
@@ -192,10 +196,6 @@
         },
         "required": [
           "available_events",
-          "changed",
-          "deferred",
-          "denied",
-          "duplicate",
           "state",
           "state_ids"
         ],

@@ -176,6 +176,7 @@ def test_colliding_event_names_get_unique_stable_ids() -> None:
 
 
 def test_routers_share_one_operation_id_rule() -> None:
+    pytest.importorskip("fastapi")  # the [litestar] CI cell has no fastapi
     from src.xstate_statemachine.contrib import _openapi
     from src.xstate_statemachine.contrib.fastapi import router
 
