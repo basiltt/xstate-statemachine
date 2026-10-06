@@ -45,6 +45,12 @@ needs_uvicorn = pytest.mark.skipif(
     reason="uvicorn not installed: the README's multi-worker commands "
     "need a real server (pip install uvicorn)",
 )
+# see test_battle_277_fleet.WINDOWS_UVICORN_STALL: a burst at N Windows
+# workers can park one request on a frozen accept() -- not ours
+windows_multiworker_stall = pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="uvicorn --workers N on Windows: shared-socket accept() stall",
+)
 
 
 def _env(tmp_path: Path) -> dict:
@@ -112,6 +118,7 @@ def test_xsm_simulate_reaches_paid():
 # -----------------------------------------------------------------------------
 # 🌐 init + 4 workers + the curl walkthrough
 # -----------------------------------------------------------------------------
+@windows_multiworker_stall
 @needs_uvicorn
 def test_init_then_four_workers_then_the_walkthrough(tmp_path):
     import httpx
@@ -210,6 +217,7 @@ def test_scheduler_role_starts_and_stops(tmp_path):
     _stop(proc)
 
 
+@windows_multiworker_stall
 @needs_uvicorn
 def test_loadtest_json_reports_conflict_retries():
     out = subprocess.run(
