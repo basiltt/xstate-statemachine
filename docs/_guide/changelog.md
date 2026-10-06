@@ -1456,6 +1456,51 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **Starlette integration, as battle-tested (#275).** The order service's
+  `StatechartRegistry` under real web load. Pinned on `fastapi_orders`:
+  50 concurrent `ADD_ITEM` POSTs to one order on SQLite lose nothing
+  (409s retry to convergence; stored version == successful sends); 4
+  `EventSource` readers plus a stalled subscriber -- the stalled one is
+  cut at `MAX_BACKLOG`, the writers never wait; streams are isolated per
+  order; 5 000 orders leave no per-topic state; a resident handle kept
+  after LRU eviction is refused, not a silent sink; `lifespan` exit with
+  a stream open and a POST in flight never hangs past `drain_timeout_s`.
+  Defects found and fixed: the fan-out's per-topic `seq` lived forever
+  (freed with the last subscriber); a stream opened during shutdown was
+  429 (now 503); **`peek()` ran the initial state's entry actions on
+  every GET / stream connect** (a pure probe now); a no-op send (an
+  undeclared event, an event to a finished instance) still saved and
+  bumped the version, so a concurrent real writer lost with a 409
+  (skipped unless an `Idempotency-Key` must be recorded or the blob
+  needs the current `machine_version`); an empty instance key was
+  accepted (400); a malformed `Idempotency-Key` (> 255 chars /
+  non-ASCII) gave a silent 200 with the event never run (400);
+  `receipt_to_status` accepted `600` / `"200"` (`ValueError`);
+  `release_resident` swallowed a fenced save -- the resident's work was
+  lost with a log line (raises `ConflictError`; background eviction
+  still only logs); `resident()` while draining was a bare
+  `RuntimeError` → 500 (new `ShuttingDownError` → 503); residents
+  abandoned on drain timeout kept running (stopped); `run_timers=True`
+  with an async store failed inside `lifespan` (`TypeError` at
+  construction); `heartbeat_s` 0 / negative / nan made the SSE loop
+  busy-spin (refused); **dead SSE clients held their connection slot
+  under ASGI spec ≥ 2.4** (Starlette raises `ClientDisconnect` without
+  closing the generator) -- released exactly once, and a disconnect is
+  noticed immediately, not at the next 15 s heartbeat; **timer
+  (`after`) transitions fired by the registry's scanner never reached
+  open streams** (the scanner saves through `persisted()` in its
+  thread) -- a `TimerPublisher` on the scanner's plugin list publishes
+  committed receipts onto the serving loop; malformed WebSocket frames
+  closed the session with 1003 and a non-UTF-8 binary frame crashed it
+  (an error frame now; oversized frames close 1009); WebSocket close
+  codes: 1001 on shutdown (was 1013), 1013 when cut for lagging (was
+  1000), 1011 on a snapshot-load or encode failure; a peer that vanished
+  during `accept()` kept its slot; an unserialisable frame killed the
+  SSE stream with a traceback (logged, stream ends, slot freed). The
+  SSE / WebSocket **wire contract** (frames, reconnect = fresh snapshot
+  with no replay, close codes) and the per-process fan-out rule are
+  documented; `registry.py` split (`_act_helpers`, `_probes`,
+  `_scanner`).
 - **Live inspector, as battle-tested (#274).** The fulfilment team
   watches the pipeline in the Stately Inspector and records sessions for
   post-mortems. Pinned on `eda_fulfilment`: 20 orders are 20 distinct
