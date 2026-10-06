@@ -67,6 +67,17 @@ def instrument_app(
 
     Returns *app*.
     """
+    # 🔥 battle #276-a: a second call (e.g. a factory re-run) appended the
+    #    probes twice and nested `registry.lifespan` in itself -- startup
+    #    ran twice and the inner shutdown drained the registry while the
+    #    outer was still "running". Instrumenting is once per registry.
+    done = getattr(app.state, "xsm_instrumented", None)
+    if done is None:
+        done = set()
+        app.state.xsm_instrumented = done
+    if id(registry) in done:
+        return app
+    done.add(id(registry))
     app.router.routes.append(registry.health_route(health_path))
     app.router.routes.append(registry.ready_route(ready_path))
     inner = app.router.lifespan_context

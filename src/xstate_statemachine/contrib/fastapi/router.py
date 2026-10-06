@@ -122,15 +122,26 @@ async def _bounded_json(request: Request, limit: int) -> None:
             )
 
 
+#: Most validation errors listed in one 422 problem body.
+MAX_VALIDATION_ERRORS = 50
+
+
 def _validation_problem(exc: RequestValidationError) -> Response:
+    # 🔥 battle #276-a: a list of 10 000 bad items produced a 500 KB 422
+    #    (one entry per item) -- an amplification lever on a bounded body.
+    #    The first MAX_VALIDATION_ERRORS are listed; the total is reported.
+    raw = exc.errors()
     errors = [
         {
             "loc": [str(p) for p in e.get("loc", ())],
             "type": str(e.get("type", "")),
         }
-        for e in exc.errors()
+        for e in list(raw)[:MAX_VALIDATION_ERRORS]
     ]
-    return problem(422, "Request validation failed", errors=errors)
+    extra: Dict[str, Any] = {}
+    if len(raw) > MAX_VALIDATION_ERRORS:
+        extra["errors_total"] = len(raw)
+    return problem(422, "Request validation failed", errors=errors, **extra)
 
 
 # -----------------------------------------------------------------------------
@@ -203,8 +214,25 @@ def get_interpreter(
         request.state.xsm_idempotency_key = idem
         if not create_if_missing and not await registry.exists(name, k):
             raise KeyNotFoundError(k)
+        # 🔥 battle #276-a: two `get_interpreter(reg, name)` parameters on
+        #    one route (e.g. one in a sub-dependency) are DIFFERENT
+        #    dependencies to FastAPI, so each opened its own `act()` on the
+        #    same key: both loaded version N, the second save was a
+        #    self-inflicted 409. The first one opened for (name, key) in a
+        #    request owns the save; the others share its interpreter.
+        open_acts = getattr(request.state, "xsm_open_acts", None)
+        if open_acts is None:
+            open_acts = {}
+            request.state.xsm_open_acts = open_acts
+        if (name, k) in open_acts:
+            yield open_acts[(name, k)]
+            return
         async with registry.act(name, k, principal=principal) as interp:
-            yield interp
+            open_acts[(name, k)] = interp
+            try:
+                yield interp
+            finally:
+                open_acts.pop((name, k), None)
 
     return _depends(interpreter_dependency)
 
@@ -251,6 +279,15 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
     models: List[Any] = list(event_models or models_of(machine.event_schemas))
     by_type = {m.event_type(): m for m in models}
     gated = dict(per_event_dependencies or {})
+    # 🔥 battle #276-a: a gate on a typo'd / undeclared event was silently
+    #    dropped -- the author believed an event was protected that the
+    #    router never routes. Silent acceptance is a bug: fail at build.
+    unknown = sorted(set(gated) - set(user_events(machine)))
+    if unknown:
+        raise ValueError(
+            f"per_event_dependencies names events {unknown} that machine "
+            f"{name!r} does not declare"
+        )
     op = operation_id_prefix or name
     base = f"/{name}" if prefix is None else prefix
     kp = "{" + key_param + "}"
