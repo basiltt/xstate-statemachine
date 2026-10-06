@@ -25,7 +25,7 @@ from starlette.requests import Request
 from starlette.responses import Response, StreamingResponse
 from starlette.websockets import WebSocket
 
-from ._fanout import CLOSED, TimerPublisher
+from ._fanout import CLOSED
 from ._http import (
     ForbiddenError,
     problem,
@@ -45,34 +45,6 @@ WS_INTERNAL_ERROR = 1011
 WS_TRY_AGAIN_LATER = 1013
 _BAD_FRAME = object()
 _TOO_BIG = object()
-
-
-def _attach_timer_fanout(registry: Any) -> None:
-    """Make scanner-fired ``after`` transitions reach this process' streams.
-
-    🔥 battle #275: the scanner saves through `persisted()` in a thread and
-    never through `act()`, so streams missed every timer transition. The
-    publisher goes on the SCANNER's own plugin list (a copy -- `act()`
-    already publishes its own receipts, never twice). Idempotent; a
-    restarted scanner gets a fresh one.
-    """
-    scanner = getattr(registry, "scanner", None)
-    if scanner is None:
-        return
-    if any(isinstance(p, TimerPublisher) for p in scanner.plugins):
-        return
-
-    def body_of(interp: Any, receipt: Any, name: str) -> Dict[str, Any]:
-        reg = registry._reg(name)
-        return receipt_body(
-            interp, receipt, context_serializer=reg.context_serializer
-        )
-
-    scanner.plugins.append(
-        TimerPublisher(
-            registry.subscribers, asyncio.get_running_loop(), body_of
-        )
-    )
 
 
 def _sse(event: str, data: Dict[str, Any], seq: Optional[int] = None) -> bytes:
@@ -109,7 +81,6 @@ async def transition_stream(
         return problem(503, "Shutting down")
     if not registry.try_open_connection(name, key):
         return problem(429, "Too many connections for this instance")
-    _attach_timer_fanout(registry)
     sub = registry.subscribers.subscribe(name, str(key))
     seq0 = registry.subscribers.seq(name, str(key))
     released: List[bool] = []
@@ -258,7 +229,6 @@ def websocket_endpoint(
             self._opened = True
             try:
                 await websocket.accept()
-                _attach_timer_fanout(registry)
                 self._sub = registry.subscribers.subscribe(name, key)
                 await websocket.send_json({"kind": "snapshot", **snapshot})
             except BaseException:

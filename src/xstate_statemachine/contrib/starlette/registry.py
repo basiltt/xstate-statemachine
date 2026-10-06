@@ -27,6 +27,7 @@ import asyncio
 import contextlib
 import inspect
 import logging
+import math
 import threading
 import time
 from collections import OrderedDict
@@ -70,6 +71,7 @@ from ...plugins import PluginBase
 from ._act_helpers import _comparable, _Recorder, _SkipSave
 from ._fanout import _Subscribers
 from ._probes import _ProbesMixin
+from ._scanner import _ScannerMixin
 from ._http import (
     ForbiddenError,
     ShuttingDownError,
@@ -131,7 +133,7 @@ class _Resident:
         self.last_used = now
 
 
-class StatechartRegistry(_ProbesMixin):
+class StatechartRegistry(_ProbesMixin, _ScannerMixin):
     """Named machines over one store, exposed to an ASGI app.
 
     Args:
@@ -218,6 +220,10 @@ class StatechartRegistry(_ProbesMixin):
         self.scanner_interval_s = float(scanner_interval_s)
         self.scanner_now = scanner_now
         self.heartbeat_s = float(heartbeat_s)
+        # 🔥 battle #275 (B): heartbeat 0 / negative / nan made the SSE
+        #    loop time out instantly and busy-spin on heartbeats.
+        if not (self.heartbeat_s > 0 and math.isfinite(self.heartbeat_s)):
+            raise ValueError("heartbeat_s must be a finite number > 0")
         self.allowed_origins = frozenset(allowed_origins)
         from ...persistence.store import DEFAULT_MAX_SNAPSHOT_BYTES
 
@@ -710,43 +716,6 @@ class StatechartRegistry(_ProbesMixin):
         return bare == host
 
     # -- lifespan -------------------------------------------------------------
-    def _start_scanner(self) -> None:
-        from ...persistence.timers import DueTimerScanner
-
-        if self._sync_store is None:
-            raise RuntimeError(
-                "run_timers=True needs a sync StateStore (the scanner runs "
-                "in a thread); pass the sync store to the registry."
-            )
-        self.scanner = DueTimerScanner(
-            self._sync_store,
-            self.machine_for_store_key,
-            lock=self.lock,
-            plugins=self.plugins,
-            now=self.scanner_now,
-            migrator=self.migrator,
-        )
-        scanner = self.scanner
-        self._scanner_thread = threading.Thread(
-            target=scanner.run_forever,
-            args=(self.scanner_interval_s,),
-            name="xsm-timer-scanner",
-            daemon=True,
-        )
-        self._scanner_thread.start()
-
-    def _stop_scanner(self, timeout: float) -> None:
-        if self.scanner is not None:
-            self.scanner.stop()
-        if self._scanner_thread is not None:
-            self._scanner_thread.join(timeout)
-            if self._scanner_thread.is_alive():
-                logger.warning(
-                    "⚠️ timer scanner did not stop in %.1fs", timeout
-                )
-        self.scanner = None
-        self._scanner_thread = None
-
     @contextlib.asynccontextmanager
     async def lifespan(self, app: Any = None) -> AsyncIterator[None]:
         """``Starlette(lifespan=registry.lifespan)``.
