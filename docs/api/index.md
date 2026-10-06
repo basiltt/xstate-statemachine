@@ -2106,7 +2106,7 @@ All hooks have empty default implementations -- override only those you need.
 | `on_event_received` | `(self, interpreter: TInterpreter, event: Event) -> None` | An event is passed to the interpreter, before processing. |
 | `on_before_send` | `(self, interpreter: TInterpreter, event: AnyEvent) -> Optional[Receipt]` | **[0.11.0]** Interception before queueing (after `strict`/`event_schemas`). Return a `Receipt` to short-circuit -- not queued, caller gets it, no `on_event_received`/`on_event_processed`. First plugin wins. Fail-open: a raising interceptor is reported via `on_plugin_error` and the event is admitted. Not fired for engine-minted events (#304). |
 | `on_event_processed` | `(self, interpreter: TInterpreter, event: AnyEvent, receipt: Receipt) -> None` | **[0.11.0]** Once per event that entered the machine (user and engine-minted), after it settled or was denied/unhandled/deferred/dropped, with the same `Receipt` a `wait=True` caller gets. Not fired for short-circuited events (#304). |
-| `on_event_sent` | `(self, interpreter: TInterpreter, target_id: str, event: AnyEvent) -> None` | **[0.12.0]** On the SENDER when `sendTo` / `sendParent` / `forwardTo` resolves its target, before delivery (#274). Sender provenance for the live inspector. Not for `raise` or unresolved targets. Both engines; `_SafePlugin`-contained |
+| `on_event_sent` | `(self, interpreter: TInterpreter, target_id: str, event: AnyEvent) -> None` | **[0.11.0]** On the SENDER when `sendTo` / `sendParent` / `forwardTo` resolves its target, before delivery (#274). Sender provenance for the live inspector. Not for `raise` or unresolved targets. Both engines; `_SafePlugin`-contained |
 | `on_transition` | `(self, interpreter: TInterpreter, from_states: Set[StateNode], to_states: Set[StateNode], transition: TransitionDefinition) -> None` | After a state transition completes (both external and internal). |
 | `on_action_execute` | `(self, interpreter: TInterpreter, action: ActionDefinition) -> None` | Right before an action's implementation is executed. |
 | `on_guard_evaluated` | `(self, interpreter: TInterpreter, guard_name: str, event: Event, result: bool) -> None` | After a guard condition is evaluated. |
@@ -2333,7 +2333,7 @@ Everything above is importable from the package root (`from xstate_statemachine 
 | `clock` | `Clock`, `RealClock`, `SimulatedClock` | — |
 | `plugins` | `PluginBase`, `LoggingInspector`, `DEFAULT_REDACT_KEYS`, `redact()`, entry-point `discover()` / `attach_discovered()` | `discover`, `attach_discovered`, `DiscoveredPlugin` |
 | `plugin_discovery` | The implementation behind `plugins.discover` (3.9 shim, `XSM_DISABLE_PLUGIN_DISCOVERY`) | — |
-| `inspect` | **[0.12.0]** Live inspector (#274), stdlib only: `InspectorPlugin` (`payload_allowlist=`), `session_id_of`, `MemorySink` (`maxlen=`, `dropped`), `JsonLinesSink`, `SseSink` (`max_queue=`, `dropped`, `sent`, `clients`), `read_jsonl`, `replay_messages`, `actor_message` / `event_message` / `snapshot_message`, `PROTOCOL_VERSION`, `MESSAGE_TYPES`, `COOKIE_NAME` | [Live inspector](../guide/integration-inspector/) |
+| `inspect` | **[0.11.0]** Live inspector (#274), stdlib only: `InspectorPlugin` (`payload_allowlist=`), `session_id_of`, `MemorySink` (`maxlen=`, `dropped`), `JsonLinesSink`, `SseSink` (`max_queue=`, `dropped`, `sent`, `clients`), `read_jsonl`, `replay_messages`, `actor_message` / `event_message` / `snapshot_message`, `PROTOCOL_VERSION`, `MESSAGE_TYPES`, `COOKIE_NAME` | [Live inspector](../guide/integration-inspector/) |
 | `deprecations` | `deprecated()`, the `deprecations()` registry | Policy tooling |
 | `helpers` | The pure API (`PureSnapshot`, `initial_transition`, `pure_transition`, `get_*_snapshot`) and the waiting helpers | — |
 | `pythonic` | `State`, `StateMachine`, `MachineBuilder`, `Transition`, `build_machine` | — |
@@ -2490,7 +2490,7 @@ assert interp.send("GO", wait=True).changed and ran == ["log"]
 
 ---
 
-## Graph Algorithms **[0.12.0]**
+## Graph Algorithms **[0.11.0]**
 
 `from xstate_statemachine import shortest_paths, simple_paths, reachable_states, transition_coverage_targets, Path, Step` (#269). The Python counterpart of `@xstate/graph`. Every candidate step is **executed by the real engine** (`SyncInterpreter` + `SimulatedClock` + `stub_logic`), so what comes back is what the engine does. `guards` is `"true"` (default), `"false"` or `"both"`; anything else is `ValueError`.
 

@@ -114,3 +114,5 @@ Code in the transition method body becomes an action, or an `invoke`d service if
 - You also run the workflow outside Django: in FastAPI, Flask, a worker or a CLI.
 
 See [SQLAlchemy](../integration-sqlalchemy/) and [Persistence](../persistence/) for how a statechart lives on a database row.
+
+New to the library? Start with the [integrations journey](../integrations/): pick your path, then a fifteen-minute tutorial.

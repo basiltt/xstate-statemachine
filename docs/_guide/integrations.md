@@ -11,7 +11,7 @@ This page is the entry point: pick your path, then do the fifteen-minute tutoria
 
 ## Pick your path
 
-Answer four questions — web framework, store, worker model, how events arrive — and read the pages at the leaf, in order.
+Answer four questions — web framework, store, worker model, how events arrive — and read the pages at the leaf, in order. Every framework combines with every store, but not every worker model: **residents** (long-lived in-memory interpreters) exist only on the ASGI registry (Starlette / FastAPI / Litestar), not under Flask or Django — use per-request there. **Celery** workers combine with any store, and Celery Beat replaces `DueTimerScanner` as the timer process.
 
 ```mermaid
 flowchart LR
@@ -40,6 +40,7 @@ flowchart LR
     Q3 -->|Celery workers| PL3["[celery]<br/>read: Celery"]
     ACT --> Q4
     RES --> Q4
+    PL3 --> Q4
     Q4{Events in?}
     Q4 -->|HTTP| HT["Idempotency-Key + inbox<br/>read: Security"]
     Q4 -->|timers| TM["DueTimerScanner<br/>read: Persistence"]
@@ -57,12 +58,12 @@ flowchart LR
 | Several hosts | `[redis]` | [Redis](../integration-redis/) → [Persistence](../persistence/) |
 | SQLAlchemy / Django ORM | `[sqlalchemy]` / `[django]` | [SQLAlchemy](../integration-sqlalchemy/) / [Django](../integration-django/) → [Persistence](../persistence/) |
 | Per request | — | [Guarantees](../guarantees/) → [Production characteristics](../production-characteristics/) |
-| Long-lived | — | [Starlette](../integration-starlette/) (`resident()`) → [Actors](../actors/) |
-| Celery workers | `[celery]` | [Celery](../integration-celery/) |
+| Long-lived | — (ASGI only: Starlette / FastAPI / Litestar) | [Starlette](../integration-starlette/) (`resident()`) → [Actors](../actors/) |
+| Celery workers | `[celery]` | [Celery](../integration-celery/) (Celery Beat + `DurableTimerScheduler` is the `after` scheduler) |
 | HTTP | — | [Security](../security/) (principal, `Idempotency-Key`) |
 | Timers | core | [Persistence](../persistence/) (`DueTimerScanner`) → [Delayed transitions](../delayed-transitions/) |
 | Broker | core `eda` + `[cloudevents]` | envelope, consumer loop, outbox, DLQ, sagas: [Event-driven](../integration-eda/); broker adapters `[kafka]` / `[rabbitmq]` / `[nats]` / `[sqs]` (Redis Streams in `[redis]`): [Brokers](../integration-brokers/) |
-| LLM agents | `[agents]` | [LLM agents](../integration-agents/) → [Security](../security/) (X0.13) |
+| LLM agents | `[agents]` | [LLM agents](../integration-agents/) → [Security](../security/) (baseline row X0.13: agent safety) |
 | Testing | `[testing]` | [pytest](../integration-testing/) — `xstate_machine` marker and `xsm_*` fixtures |
 | Observability | `[observability]` | [Observability](../integration-observability/) ([#273](https://github.com/basiltt/xstate-statemachine/issues/273)) → [Live inspector](../integration-inspector/) (core, [#274](https://github.com/basiltt/xstate-statemachine/issues/274)) |
 
@@ -261,16 +262,14 @@ assert record.version == 1                      # three deliveries, one change
 
 ### 6. Run four workers
 
-Because no worker holds an order in memory, the same app runs under `uvicorn app:app --workers 4` unchanged, on SQLite (one host) or Redis (many). Racing writers get one winner and a `409`, never a lost update. Start exactly one `python app.py --role scheduler` to wake persisted `after` timers. The example's `loadtest.py --workers 4 --requests 200` fires 200 concurrent payments at one order and checks that exactly one charge happened; the numbers are in the [FastAPI guide](../integration-fastapi/#multi-worker-deployments).
+Because no worker holds an order in memory, the same app runs under `uvicorn app:app --workers 4` unchanged, on SQLite (one host) or Redis (many). Racing writers get one winner and a `409`, never a lost update. Start exactly one `python app.py --role scheduler` to wake persisted `after` timers. The example's `loadtest.py --workers 4 --requests 200` fires 200 concurrent payments at one order and checks that exactly one charge happened; this step has no code block of its own — the runnable example, the numbers and the Windows caveat (`--workers N` can stall in `accept()`; use separate single-worker processes there) are in the [FastAPI guide's multi-worker section](../integration-fastapi/#multi-worker-deployments).
 
 ### 7. Test it, then the coverage gate and live inspector
 
 - **Tests** — `pip install "xstate-statemachine[testing]"` and mark a test `@pytest.mark.xstate_machine("order.json")`: the plugin hands you a started `xsm_interp`, a `xsm_clock` for the `after` timers, `xsm_ran` for the actions that fired and `xsm_snapshot` for file-backed snapshot assertions ([pytest guide](../integration-testing/)). `xsm gt order.json -t pytest --fixtures` scaffolds such a module.
 - **Live inspector** — `xsm inspect order.json --live --open` streams the machine to the Stately Inspector (or the built-in page) over the `@statelyai/inspect` protocol; `xsm sim --record` / `xsm replay --live` record and replay; under Starlette/FastAPI, `mount_inspector(app, registry, debug=True)` serves it over WebSocket ([Live inspector](../integration-inspector/)). Metrics, traces and log context come from `[observability]` ([Observability](../integration-observability/)).
 
-Not shipped yet:
-
-- **State/transition coverage gate** (`pytest --xsm-coverage --xsm-fail-under-state-coverage=90`) arrives with [#270](https://github.com/basiltt/xstate-statemachine/issues/270).
+- **Coverage gate** — `pytest --xsm-coverage --xsm-fail-under-state-coverage=90` (and `--xsm-fail-under-transition-coverage=N`) records every machine the session runs and fails the build below the threshold ([State & transition coverage](../integration-testing/#state-transition-coverage), [#270](https://github.com/basiltt/xstate-statemachine/issues/270)).
 
 ## What you get / what you don't
 
@@ -280,7 +279,8 @@ Not shipped yet:
 | `Idempotency-Key` replays return the stored receipt, scoped to the caller's principal. | A key shared across principals — one caller can never replay another's receipt. |
 | `after` timers survive restarts as persisted deadlines, woken by one scanner. | Timers that fire *at* a deadline; they fire **not before** it, when the scanner next runs. |
 | Validated event bodies and RFC 9457 problems; context is never exposed unless you serialise it. | Authentication. `authorize=` is required on every route and it is yours to write. |
-| Zero runtime dependencies in the core, extras one at a time. | A framework integration before its issue ships — planned extras resolve but contain no code. |
+| Zero runtime dependencies in the core, extras one at a time. | Cross-worker push: SSE/WebSocket fan-out is **per process**, and residents are single-process ([Starlette guarantees](../integration-starlette/#guarantees)). |
+| `after` timers woken by one `DueTimerScanner` / Beat process. | Timers in every worker — run **exactly one** scheduler. On Windows, `uvicorn --workers N` can stall a request in `accept()`; run single-worker processes behind a proxy ([FastAPI troubleshooting](../integration-fastapi/#troubleshooting)). |
 
 The full crash-consistency specification is [Guarantees](../guarantees/); the trust model and each baseline item's enforcing test are in [Security](../security/).
 

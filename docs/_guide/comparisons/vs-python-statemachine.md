@@ -101,3 +101,5 @@ If you prefer classes to JSON, the [Pythonic API](../pythonic-api/) builds the s
 - You need an **actor system** (spawned children that message each other), not only invoked child machines.
 
 See [Integration extras](../integrations-extras/) for everything that ships today.
+
+New to the library? Start with the [integrations journey](../integrations/): pick your path, then a fifteen-minute tutorial.
