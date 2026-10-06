@@ -24,13 +24,13 @@ from .._compat import require_extra
 require_extra("litestar", "litestar", "starlette")
 
 from ..starlette import (  # noqa: E402
-    ReceiptResponse,
     StatechartRegistry,
     allow_all,
     problem,
     problem_for_exception,
     receipt_to_status,
 )
+from ._edge import ReceiptResponse  # noqa: E402
 from .controller import create_statechart_controller  # noqa: E402
 from .plugin import XStatePlugin, get_interpreter  # noqa: E402
 

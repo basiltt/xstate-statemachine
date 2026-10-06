@@ -14,7 +14,7 @@ from starlette.requests import Request as StarletteRequest
 from starlette.responses import Response as StarletteResponse
 from starlette.responses import StreamingResponse
 
-__all__ = ["to_litestar", "to_starlette"]
+__all__ = ["ReceiptResponse", "to_litestar", "to_starlette"]
 
 _DROP = frozenset({"content-type", "content-length"})
 
@@ -45,4 +45,30 @@ def to_litestar(resp: StarletteResponse) -> Any:
         status_code=resp.status_code,
         media_type=resp.media_type,
         headers=headers,
+    )
+
+
+def ReceiptResponse(  # noqa: N802 -- reads as a response class
+    interp: Any,
+    receipt: Any,
+    *,
+    context_serializer: Any = None,
+    status: Any = None,
+) -> Response:
+    """A Litestar `Response` for *receipt* (status from `receipt_to_status`).
+
+    🔥 battle #278: `contrib.litestar` re-exported Starlette's
+    `ReceiptResponse`, which Litestar cannot return from a handler -- the
+    documented ``Provide`` recipe answered 500. This one IS a Litestar
+    response; the body and status mapping are the shared ones.
+    """
+    from ..starlette._http import ReceiptResponse as _starlette
+
+    return to_litestar(
+        _starlette(
+            interp,
+            receipt,
+            context_serializer=context_serializer,
+            status=status,
+        )
     )

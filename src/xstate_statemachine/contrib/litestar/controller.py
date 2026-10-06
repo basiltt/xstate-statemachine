@@ -41,6 +41,59 @@ def _ident(etype: str) -> str:
     return "".join(c if c.isalnum() else "_" for c in etype).lower()
 
 
+class Problem(msgspec.Struct, kw_only=True):
+    """RFC 9457 problem body (what every non-2xx answer carries)."""
+
+    type: str = "about:blank"
+    title: str
+    status: int
+    error: Optional[str] = None
+
+
+def _problem_responses(*statuses: int) -> Dict[int, Any]:
+    """🔥 battle #278: Litestar's document listed only 200 / 400 for every
+    route -- 409 (denied / conflict), 422, 401, 403, 404, 413, 415, 501
+    and 503, all of which the routes answer, were undocumented."""
+    from litestar.openapi.datastructures import ResponseSpec
+    from litestar.openapi.spec import Example
+
+    return {
+        code: ResponseSpec(
+            data_container=Problem,
+            description=_REASONS.get(code, "Problem"),
+            media_type="application/problem+json",
+            examples=[
+                Example(
+                    summary="problem",
+                    value={
+                        "type": "about:blank",
+                        "title": _REASONS.get(code, "Problem"),
+                        "status": code,
+                    },
+                )
+            ],
+        )
+        for code in statuses
+    }
+
+
+_REASONS = {
+    400: "Bad Request",
+    401: "Unauthorized",
+    403: "Forbidden",
+    404: "Not Found",
+    409: "Conflict",
+    413: "Content Too Large",
+    415: "Unsupported Media Type",
+    422: "Unprocessable Content",
+    429: "Too Many Requests",
+    501: "Not Implemented",
+    503: "Service Unavailable",
+}
+_SEND_STATUSES = (400, 401, 403, 404, 409, 413, 415, 422, 501, 503)
+_READ_STATUSES = (400, 401, 403, 404, 503)
+
+
 def _models_for(machine: Any, event_models: Optional[Sequence[Any]]) -> List:
     if event_models:
         return list(event_models)
@@ -133,6 +186,9 @@ def create_statechart_controller(
     include_diagram: bool = True,
     create_if_missing: bool = True,
     operation_id_prefix: Optional[str] = None,
+    exclude_events: Sequence[str] = (),
+    guards: Sequence[Any] = (),
+    dependencies: Optional[Dict[str, Any]] = None,
 ) -> type:
     """A `Controller` subclass exposing machine *name* of *registry*.
 
@@ -140,10 +196,29 @@ def create_statechart_controller(
     ``POST /{id}/events/<EVENT>`` per declared event, ``GET /{id}/events``,
     ``GET /{id}/diagram.mmd``, ``GET /{id}/stream`` (SSE), ``WS /{id}/ws``.
     Status mapping, idempotency and authorization are the registry's.
+
+    Args:
+        exclude_events: 🔥 battle #278 -- events whose ``/events/<EVENT>``
+            route the APP owns (a payment route with a side-effect hook).
+            Litestar refuses two handlers on one path, so unlike FastAPI
+            the app cannot shadow a generated route; it excludes it here
+            and registers its own. Such an event is also REFUSED on
+            ``/send`` (403) so the app's route cannot be bypassed -- gate
+            it in `registry.authorize` too, which every route goes
+            through. Unknown names are a `ValueError`.
+        guards: Litestar guards applied to every route of the controller.
+        dependencies: Litestar ``Provide`` mapping for every route.
     """
     machine = registry.machines[name]
     models = _models_for(machine, event_models)
     by_type = {m.event_type(): m for m in models}
+    excluded = frozenset(exclude_events)
+    unknown = sorted(excluded - set(declared_events(machine)))
+    if unknown:
+        raise ValueError(
+            f"exclude_events= names events {name!r} does not declare: "
+            f"{unknown}"
+        )
     op = operation_id_prefix or name
     kp = "{" + key_param + ":str}"
     body_t = _body_type(name, machine, models)
@@ -182,6 +257,10 @@ def create_statechart_controller(
 
     async def send(self: Any, request: Request, data: Any) -> Response:  # type: ignore[type-arg]
         etype, payload = _split(data)
+        if etype in excluded:
+            return to_litestar(  # type: ignore[return-value]
+                problem(403, "Use this event's dedicated route")
+            )
         return await do_send(request, etype, payload)  # type: ignore
 
     send.__annotations__["data"] = body_t
@@ -233,19 +312,29 @@ def create_statechart_controller(
             HTTPProblemError: _http_problem,
         },
         "get_state": get(
-            f"/{kp}", operation_id=f"{op}_get", summary=f"Current {name}"
+            f"/{kp}",
+            operation_id=f"{op}_get",
+            summary=f"Current {name}",
+            responses=_problem_responses(*_READ_STATUSES),
         )(get_state),
         "send": post(
             f"/{kp}/send",
             operation_id=f"{op}_send",
             status_code=200,
             summary=f"Send any event to a {name}",
+            responses=_problem_responses(*_SEND_STATUSES),
         )(send),
         "list_events": get(
-            f"/{kp}/events", operation_id=f"{op}_events", summary="Events"
+            f"/{kp}/events",
+            operation_id=f"{op}_events",
+            summary="Events",
+            responses=_problem_responses(*_READ_STATUSES),
         )(list_events),
         "stream": get(
-            f"/{kp}/stream", operation_id=f"{op}_stream", summary="SSE"
+            f"/{kp}/stream",
+            operation_id=f"{op}_stream",
+            summary="SSE",
+            responses=_problem_responses(400, 401, 403, 404, 429, 503),
         )(stream),
         "ws": websocket(f"/{kp}/ws")(ws),
     }
@@ -255,14 +344,22 @@ def create_statechart_controller(
             operation_id=f"{op}_diagram",
             media_type="text/plain",
             summary="Mermaid diagram",
+            responses=_problem_responses(401, 403),
         )(diagram)
+    if guards:
+        ns["guards"] = list(guards)
+    if dependencies:
+        ns["dependencies"] = dict(dependencies)
     for etype in declared_events(machine):
+        if etype in excluded:
+            continue
         attr = f"send_{_ident(etype)}"
         ns[attr] = post(
             f"/{kp}/events/{etype}",
             operation_id=f"{op}_{_ident(etype)}",
             status_code=200,
             summary=f"Send {etype}",
+            responses=_problem_responses(*_SEND_STATUSES),
         )(_event_handler(etype, by_type.get(etype), do_send))
     title = "".join(p[:1].upper() + p[1:] for p in name.split("_"))
     return type(f"{title}StatechartController", (Controller,), ns)
