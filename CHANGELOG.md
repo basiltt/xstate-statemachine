@@ -1465,8 +1465,10 @@ _No unreleased changes yet._
   every GET / stream connect** (a pure probe now); a no-op send (an
   undeclared event, an event to a finished instance) still saved and
   bumped the version, so a concurrent real writer lost with a 409
-  (skipped unless an `Idempotency-Key` must be recorded or the blob
-  needs the current `machine_version`); an empty instance key was
+  (skipped only when no action ran either -- a targetless
+  action-only transition is saved so its outbox / audit marks flush --
+  and unless an `Idempotency-Key` must be recorded or the blob needs
+  the current `machine_version`); an empty instance key was
   accepted (400); a malformed `Idempotency-Key` (> 255 chars /
   non-ASCII) gave a silent 200 with the event never run (400);
   `receipt_to_status` accepted `600` / `"200"` (`ValueError`);

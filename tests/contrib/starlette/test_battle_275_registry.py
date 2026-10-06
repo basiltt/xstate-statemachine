@@ -499,3 +499,92 @@ def test_drain_timeout_stops_abandoned_residents():
 
     assert all(s != "running" for s in asyncio.run(main()))
     assert reg.residents == 0
+
+
+# --- independent review (#275) ----------------------------------------------
+def test_action_only_transition_is_saved_and_marks_flushed():
+    """H1: a targetless transition that only RUNS an action left the
+    snapshot equal, was classed a no-op and `_SkipSave` discarded the
+    outbox / audit marks other plugins collected -- the side effect had
+    happened, its record was lost. 'No-op' = no action ran AND nothing
+    changed."""
+    import asyncio
+
+    from starlette.requests import Request
+
+    from src.xstate_statemachine import MachineLogic, create_machine
+    from src.xstate_statemachine.contrib.starlette import (
+        StatechartRegistry,
+        allow_all,
+    )
+    from src.xstate_statemachine.persistence import MemoryStore
+    from src.xstate_statemachine.plugins import PluginBase
+
+    ran = []
+
+    class Marker(PluginBase):
+        def __init__(self):
+            self.flushed = 0
+            self.discarded = 0
+
+        def flush_marks(self, *a, **k):
+            self.flushed += 1
+
+        def discard_marks(self, *a, **k):
+            self.discarded += 1
+
+    m = create_machine(
+        {
+            "id": "n",
+            "initial": "a",
+            "context": {"x": 0},
+            "states": {
+                "a": {
+                    "on": {
+                        "NOTIFY": {"actions": "email"},
+                        "NOPE_GUARDED": {"target": "b", "guard": "never"},
+                    }
+                },
+                "b": {},
+            },
+        },
+        logic=MachineLogic(
+            actions={"email": lambda i, c, e, a: ran.append(1)},
+            guards={"never": lambda c, e: False},
+        ),
+    )
+    store = MemoryStore()
+    marker = Marker()
+    reg = StatechartRegistry(store, plugins=[marker])
+    reg.register("n", m, authorize=allow_all)
+
+    def req(event):
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": f"/n/k/events/{event}",
+            "headers": [(b"content-type", b"application/json")],
+            "query_string": b"",
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b"{}"}
+
+        return Request(scope, receive)
+
+    async def go():
+        async with reg.lifespan():
+            r1 = await reg.send_event(req("NOTIFY"), "n", "k", "NOTIFY")
+            assert r1.status_code == 200
+            v1 = store.load(reg.store_key("n", "k")).version
+            assert ran == [1]
+            assert marker.flushed >= 1 and marker.discarded == 0
+            # a genuinely refused send (guard false): no action ran,
+            # nothing changed -> no save, no version bump
+            r2 = await reg.send_event(
+                req("NOPE_GUARDED"), "n", "k", "NOPE_GUARDED"
+            )
+            assert r2.status_code in (200, 409)
+            assert store.load(reg.store_key("n", "k")).version == v1
+
+    asyncio.run(go())

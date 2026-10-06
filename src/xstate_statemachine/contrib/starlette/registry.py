@@ -409,6 +409,15 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
         stored = getattr(rec, "machine_version", "") or ""
         return bool(stored == (reg.machine.version or ""))
 
+    @staticmethod
+    def _actions_run(interp: Any) -> int:
+        """Actions executed during this `act()` (review H1, see `_Recorder`)."""
+        for p in getattr(interp, "plugins", ()):
+            inner = getattr(p, "wrapped", p)
+            if isinstance(inner, _Recorder):
+                return inner.actions_run
+        return 1  # unknown: never skip
+
     async def exists(self, name: str, key: str) -> bool:
         """Whether instance *key* of *name* has a stored snapshot."""
         return await self._astore.load(self.store_key(name, key)) is not None
@@ -508,6 +517,7 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
                         raise _SkipSave(receipt, body)
                     if (
                         idem is None
+                        and self._actions_run(interp) == 0
                         and _comparable(interp) == before
                         and await self._stored_is_current(name, key, reg)
                     ):

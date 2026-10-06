@@ -119,7 +119,10 @@ async def transition_stream(
                         sub.queue.get(), timeout=registry.heartbeat_s
                     )
                 except asyncio.TimeoutError:
-                    if await request.is_disconnected():
+                    # 📝 review M1: with the watcher running, it is the
+                    #    ONLY reader of `receive()` -- two readers on one
+                    #    ASGI channel can lose a message.
+                    if not watcher and await request.is_disconnected():
                         return
                     yield b": heartbeat\n\n"
                     continue
@@ -264,8 +267,12 @@ def websocket_endpoint(
     ``{"kind": "receipt", ...}`` (or ``{"kind": "error", "status", ...}``);
     committed transitions from any client arrive as
     ``{"kind": "transition", "seq": n, ...}``. A ``{"kind": "ping"}`` is
-    sent every `registry.heartbeat_s`. Close codes: 1008 origin /
-    authorize refused, 1013 too many connections.
+    sent every `registry.heartbeat_s`. Close codes: 1001 shutting down,
+    1008 origin / authorize refused, 1009 frame over `max_body_bytes`,
+    1011 a frame that could not be encoded / a snapshot that failed to
+    load, 1013 too many connections or cut for lagging. A malformed
+    inbound frame answers ``{"kind": "error", "status": 400|422}`` and
+    the session stays open.
     """
 
     class StatechartWebSocketEndpoint(WebSocketEndpoint):

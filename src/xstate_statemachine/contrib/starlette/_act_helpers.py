@@ -17,6 +17,15 @@ class _Recorder(PluginBase):  # type: ignore[type-arg]
 
     def __init__(self) -> None:
         self.changed: List[Receipt] = []
+        #: 🔥 #275 review (H1): actions that RAN. A targetless transition
+        #: (``"NOTIFY": {"actions": "email"}``) leaves the snapshot equal
+        #: but its side effects -- and the outbox / audit rows other
+        #: plugins collected -- happened; skipping the save would discard
+        #: those marks. "No-op" means no action ran AND nothing changed.
+        self.actions_run = 0
+
+    def on_action_execute(self, interpreter: Any, action: Any) -> None:
+        self.actions_run += 1
 
     def on_event_processed(
         self, interpreter: Any, event: Any, receipt: Receipt
