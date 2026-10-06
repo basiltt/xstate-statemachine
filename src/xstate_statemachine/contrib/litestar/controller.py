@@ -162,9 +162,18 @@ def _json_guard(limit: int) -> Callable[..., Any]:
         declared = request.headers.get("content-length")
         if declared and declared.isdigit() and int(declared) > limit:
             raise PayloadTooLargeError()
-        raw = await request.body()
-        if len(raw) > limit:
-            raise PayloadTooLargeError()
+        # 🔥 battle #278-a: a chunked body (no content-length) was read
+        #    WHOLE into memory before the size check. Stop at limit+1.
+        chunks: List[bytes] = []
+        size = 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > limit:
+                raise PayloadTooLargeError()
+            chunks.append(chunk)
+        raw = b"".join(chunks)
+        request._body = raw  # what `request.body()` / the edge reuse
+        request._connection_state.body = raw
         if raw.strip():
             ctype = request.headers.get("content-type", "")
             if ctype.split(";", 1)[0].strip().lower() != "application/json":
@@ -294,6 +303,13 @@ def create_statechart_controller(
         return Response(machine.to_mermaid(), media_type="text/plain")
 
     async def stream(self: Any, request: Request) -> Any:  # type: ignore[type-arg]
+        # 🔥 battle #278-a: with create_if_missing=False `/stream` opened
+        #    an endless SSE for a key that does not exist (every other
+        #    route answered 404).
+        try:
+            await guard_read(to_starlette(request), key_of(request))
+        except Exception as exc:  # noqa: BLE001
+            return to_litestar(problem_for_exception(exc))
         resp = await transition_stream(
             registry, name, key_of(request), to_starlette(request)
         )
@@ -301,6 +317,13 @@ def create_statechart_controller(
 
     async def ws(self: Any, socket: WebSocket) -> None:  # type: ignore[type-arg]
         scope: Any = socket.scope
+        # 🔥 battle #278-a: with create_if_missing=False the socket opened
+        #    (and a send CREATED the instance). Refused like a denied one.
+        if not create_if_missing and not await registry.exists(
+            name, str(scope["path_params"][key_param])
+        ):
+            await socket.close(code=1008)
+            return
         await ws_endpoint(scope, socket.receive, socket.send)  # type: ignore
 
     ns: Dict[str, Any] = {

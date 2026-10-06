@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, AsyncGenerator, Callable, Optional
 
@@ -16,7 +17,12 @@ from litestar.plugins import InitPluginProtocol, OpenAPISchemaPluginProtocol
 
 from ...exceptions import StoreUnavailableError, XStateMachineError
 from ...persistence.helpers import KeyNotFoundError
-from ..starlette._http import problem_for_exception, status_for_exception
+from ..starlette._http import (
+    IdempotencyNotConfiguredError,
+    idempotency_key_from,
+    problem_for_exception,
+    status_for_exception,
+)
 from ._edge import to_litestar, to_starlette
 
 __all__ = ["XStatePlugin", "get_interpreter"]
@@ -55,13 +61,108 @@ def get_interpreter(
         conn = to_starlette(request)
         k = str(key_of(request))
         await registry.authorize(conn, name, k, None)
+        # 🔥 battle #278-a: the `Idempotency-Key` header was ignored on a
+        #    `Provide` route (no dedup, no 400/501). Validated here and
+        #    stamped on the handler's first send, as in FastAPI (#276).
+        idem = idempotency_key_from(conn)
+        if idem is not None and registry.inbox is None:
+            raise IdempotencyNotConfiguredError()
         if not create_if_missing and not await registry.exists(name, k):
             raise KeyNotFoundError(k)
+        # 🔥 battle #278-a: two `get_interpreter` dependencies for one key
+        #    on one route each opened an `act()` -- a self-inflicted 409.
+        #    The first registers a future in the request scope (sync
+        #    check-and-set: no race between concurrently resolved
+        #    dependencies); the others share its interpreter.
+        state = request.scope.setdefault("state", {})
+        open_acts = state.setdefault("xsm_open_acts", {})
+        shared = open_acts.get((name, k))
+        if shared is not None:
+            yield await shared
+            return
+        ready: "asyncio.Future[Any]" = (
+            asyncio.get_running_loop().create_future()
+        )
+        open_acts[(name, k)] = ready
         principal = registry._principal_of(conn)
-        async with registry.act(name, k, principal=principal) as interp:
-            yield interp
+        owner = _ActOwner(registry, name, k, principal, idem, ready)
+        try:
+            interp = await owner.start()
+            outcome: Optional[BaseException] = None
+            try:
+                yield interp
+            except BaseException as exc:
+                outcome = exc
+                raise
+            finally:
+                await owner.finish(outcome)
+        finally:
+            open_acts.pop((name, k), None)
 
     return Provide(interpreter_dependency)
+
+
+class _ActOwner:
+    """Run one `registry.act()` start-to-finish in ONE task.
+
+    🔥 battle #278-a: Litestar resolves a batch of dependencies -- and
+    cleans up several generator dependencies -- concurrently in an anyio
+    task group, so `act()` was entered in one task and exited in another:
+    the commit scope's ``ContextVar`` reset raised and the route answered
+    500 whenever the interpreter sat next to ANY other dependency.
+    """
+
+    def __init__(
+        self,
+        registry: Any,
+        name: str,
+        key: str,
+        principal: Optional[str],
+        idem: Optional[str],
+        ready: "asyncio.Future[Any]",
+    ) -> None:
+        self.args = (registry, name, key, principal, idem)
+        self.ready = ready
+        self.done: "asyncio.Future[Optional[BaseException]]" = (
+            asyncio.get_running_loop().create_future()
+        )
+        self.task: Optional["asyncio.Task[None]"] = None
+
+    async def _run(self) -> None:
+        registry, name, key, principal, idem = self.args
+        try:
+            async with registry.act(
+                name, key, principal=principal, idempotency_key=idem
+            ) as interp:
+                self.ready.set_result(interp)
+                failure = await self.done
+                if failure is not None:
+                    raise _Discard()
+        except _Discard:
+            pass
+        except BaseException as exc:
+            if not self.ready.done():
+                self.ready.set_exception(exc)
+                return
+            raise
+
+    async def start(self) -> Any:
+        self.task = asyncio.ensure_future(self._run())
+        try:
+            return await asyncio.shield(self.ready)
+        except asyncio.CancelledError:
+            self.task.cancel()
+            raise
+
+    async def finish(self, failure: Optional[BaseException]) -> None:
+        if not self.done.done():
+            self.done.set_result(failure)
+        assert self.task is not None
+        await self.task  # ✅ the save (or a ConflictError) lands here
+
+
+class _Discard(Exception):
+    """Unwind `act()` without saving (the handler raised)."""
 
 
 def _problem_handler(request: Any, exc: Exception) -> Any:
@@ -133,14 +234,26 @@ class XStatePlugin(InitPluginProtocol, OpenAPISchemaPluginProtocol):
 
     def on_app_init(self, app_config: AppConfig) -> AppConfig:
         reg = self.registry
-        app_config.lifespan.append(reg.lifespan)
+        # 🔥 battle #278-a: a second `XStatePlugin` over the same registry
+        #    (one per controller module) ran the lifespan twice -- two
+        #    timer scanners, two shutdown drains. One per registry.
+        if reg.lifespan not in app_config.lifespan:
+            app_config.lifespan.append(reg.lifespan)
         app_config.exception_handlers.setdefault(
             XStateMachineError, _problem_handler
         )
         if self.dependencies:
             for name in reg.machines:
-                app_config.dependencies[f"{self.dependency_prefix}{name}"] = (
-                    get_interpreter(reg, name, key=self.key_param)
+                dep = f"{self.dependency_prefix}{name}"
+                # 🔥 battle #278-a: a user's app-level dependency of the
+                #    same name was silently REPLACED by an interpreter.
+                if dep in app_config.dependencies:
+                    raise ValueError(
+                        f"XStatePlugin(dependencies=True): app dependency "
+                        f"{dep!r} already exists; set dependency_prefix="
+                    )
+                app_config.dependencies[dep] = get_interpreter(
+                    reg, name, key=self.key_param
                 )
         if self.health_path:
             health = reg.health_route(self.health_path).endpoint
