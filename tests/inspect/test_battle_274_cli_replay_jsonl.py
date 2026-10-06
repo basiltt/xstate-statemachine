@@ -187,3 +187,16 @@ def test_websocket_sink_cuts_a_client_that_lags():
     assert sink._clients == []
     assert q.qsize() == 1 and q.get_nowait() is wsmod._CUT
     assert len(sink.messages) == 10  # history unaffected
+
+
+# ------------------------------------------------------------- docs gate
+def test_every_inspect_export_is_in_the_api_reference():
+    import pathlib
+
+    import xstate_statemachine.inspect as mod
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    text = (root / "docs" / "api" / "index.md").read_text(encoding="utf-8")
+    row = next(ln for ln in text.splitlines() if ln.startswith("| `inspect`"))
+    missing = [n for n in mod.__all__ if f"`{n}`" not in row]
+    assert missing == []
