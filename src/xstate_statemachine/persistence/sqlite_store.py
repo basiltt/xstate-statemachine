@@ -233,11 +233,8 @@ class SQLiteStore(BaseStore):
             #    mode the file already has rather than fail to open.
             current = str(conn.execute("PRAGMA journal_mode").fetchone()[0])
             if current.upper() != self.journal_mode:
-                try:
-                    conn.execute(f"PRAGMA journal_mode = {self.journal_mode}")
-                except sqlite3.OperationalError as exc:
-                    if not _is_locked_error(exc):
-                        raise
+                current = self._switch_journal_mode(conn, current)
+                if current.upper() != self.journal_mode:
                     warnings.warn(
                         f"SQLiteStore({self.path}): could not switch "
                         f"journal_mode {current} -> {self.journal_mode} "
@@ -248,6 +245,43 @@ class SQLiteStore(BaseStore):
                     )
             conn.execute("PRAGMA synchronous = NORMAL")
         return conn
+
+    def _switch_journal_mode(
+        self, conn: sqlite3.Connection, current: str
+    ) -> str:
+        """Switch to `journal_mode`, retrying a lock for `busy_timeout`.
+
+        🔥 battle #277-a: `uvicorn --workers 4` on an empty file (no
+        `--role init`) had workers race the switch; a loser got `database
+        is locked` at once and silently ran in rollback-journal mode for
+        its lifetime (2 of 10 fleets) -- its writers then block readers.
+        The racer switches the file within milliseconds, so re-read the
+        mode and retry until the busy timeout. Returns the mode the file
+        is in afterwards.
+        """
+        deadline = time.monotonic() + self.busy_timeout
+        while True:
+            try:
+                row = conn.execute(
+                    f"PRAGMA journal_mode = {self.journal_mode}"
+                ).fetchone()
+                return str(row[0]) if row else current
+            except sqlite3.OperationalError as exc:
+                if not _is_locked_error(exc):
+                    raise
+            try:
+                current = str(
+                    conn.execute("PRAGMA journal_mode").fetchone()[0]
+                )
+            except sqlite3.OperationalError as exc:  # review L2: the
+                if not _is_locked_error(exc):  # re-read can be locked too
+                    raise
+            if (
+                current.upper() == self.journal_mode
+                or time.monotonic() >= deadline
+            ):
+                return current
+            time.sleep(0.02)
 
     def _conn(self) -> sqlite3.Connection:
         if self._memory:

@@ -144,3 +144,21 @@ def test_example_suite_passes(example):
         timeout=600,
     )
     assert proc.returncode == 0, proc.stdout[-4000:] + proc.stderr[-2000:]
+
+
+def test_fastapi_orders_process_tests_are_reported():
+    """#277-b: the fleet and README tests spawn real uvicorn workers and
+    skip without `uvicorn`, inside the CHILD pytest above, where the skip
+    is invisible. Surface it here so a CI log says what did not run."""
+    pytest.importorskip("fastapi")
+    try:
+        import uvicorn  # noqa: F401
+    except ImportError:
+        pytest.skip(
+            "uvicorn not installed: fastapi_orders' process tests "
+            "(test_battle_277_fleet.py, test_battle_277_readme.py "
+            "multi-worker/loadtest/scheduler cases) did not run"
+        )
+    suite = INTEGRATIONS / "fastapi_orders" / "tests"
+    assert (suite / "test_battle_277_fleet.py").is_file()
+    assert (suite / "test_battle_277_readme.py").is_file()

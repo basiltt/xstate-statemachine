@@ -1450,6 +1450,47 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **Multi-worker deployment, as battle-tested (#277).** The guide's and
+  the `fastapi_orders` README's claims, run against REAL `uvicorn
+  --workers 4` processes plus a separate `--role scheduler` process
+  sharing only the store: 200 concurrent `PAY`s charge exactly once with
+  or without a shared `Idempotency-Key` (the fake gateway logs every call
+  across processes: one line); 100 `ADD_ITEM`s from 4 workers converge
+  after client 409 retries and the stored version equals the successful
+  sends; web workers never fire timers -- the scheduler process fires
+  the payment timeout exactly once, and two schedulers started by
+  accident still fire each deadline once; a rolling restart leaves the
+  store consistent; the README's load test reruns green. Found and
+  fixed: **the Docker image could not start** (`app.py` imports
+  `migrations`; the Dockerfile copied neither `migrations.py` nor
+  `machine_v2.json`), its healthcheck probed `/_xsm/health` instead of
+  `/_xsm/ready`, and nothing pinned the scheduler to one replica; the
+  guide's "54 `409`s" and the README's "Redis" load-test rows were one
+  run's number and SQLite numbers respectively (`loadtest.py` dropped
+  `XSM_REDIS_URL` silently) -- replaced by measured ranges over 3–5 runs
+  per worker count, a `--redis URL` flag, `--json` output with the
+  `conflict_retries` the issue asked for; a request whose client sent
+  headers and then stalled held a handler forever -- new
+  `StatechartRegistry(body_timeout_s=30)` → `408` `RequestTimeoutError`
+  (the example sets `XSM_BODY_TIMEOUT_S`); **N workers racing an empty
+  SQLite file to switch it to WAL**: the loser's `database is locked`
+  was instant (SQLite's busy handler does not wait for that lock) and
+  the worker silently kept rollback-journal mode for its whole life --
+  `SQLiteStore` retries for `busy_timeout` and re-reads the mode another
+  process set; the issue's promised `/metrics` endpoint was missing
+  (added; `PROMETHEUS_MULTIPROC_DIR` combines workers); the `[testing]`
+  "TestClient fixtures" and the cookie-keyed wizard block in the guide
+  were a promise and a fragment (corrected, executable). **Diagnosed,
+  not ours:** on Windows, `uvicorn --workers N` sometimes freezes a
+  worker inside `accept()` on the shared listening socket until the next
+  connection arrives -- one request in a burst stalls for the whole
+  client timeout while p95 is ~0.3 s; reproduced with a do-nothing ASGI
+  app (7 of 25 fleets, never with one process), so no server-side
+  timeout can bound it; documented in the Troubleshooting table with the
+  recommendation (Linux / Docker for multi-worker; N single-worker
+  processes behind a proxy on Windows), and the process-spawning fleet
+  tests skip their stall-sensitive assertions on win32 and run on the
+  Linux / macOS cells.
 - **FastAPI integration, as battle-tested (#276).** The order service's
   FastAPI surface under misuse. Pinned on `fastapi_orders`: an
   `Idempotency-Key` dedups across retries with an inbox (replay

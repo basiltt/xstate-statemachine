@@ -77,9 +77,13 @@ python app.py --role scheduler       # in another terminal -- exactly ONE
 **Redis** (multi-host): set `XSM_REDIS_URL=redis://localhost:6379/0` for the
 web workers and for the scheduler. `RedisStore` and `RedisInbox` are then
 used instead of SQLite. Redis is imported only when this variable is set.
+The example's Redis tests use `fakeredis`; only Compose uses a real Redis.
 
-**Docker Compose** (one web container with `--workers 4`, the scheduler and
-Redis; built from this checkout):
+**Docker Compose** (one web container with `--workers 4`, ONE scheduler
+(`deploy.replicas: 1`) and a real Redis; built from this checkout. Redis
+needs no `--role init`. The image's healthcheck probes `/_xsm/ready`.
+`loadtest.py` starts its own SQLite server and does not target the
+compose stack):
 
 ```bash
 docker compose up --build
@@ -135,9 +139,11 @@ A Python launcher runs `app.py --role init` and then starts
 fork, so it also works on Windows, where uvicorn spawns its workers. It polls
 `/_xsm/health` until the server answers. It then fires 200 concurrent `POST
 /orders/{id}/events/PAY` at **one** order, in two rounds: without an
-`Idempotency-Key`, and with one shared key. It exits non-zero unless each
+`Idempotency-Key`, and with one shared key. It exits `1` unless each
 round has **exactly one** `changed=True` receipt, only `200`/`409`
-responses, and a final state of `paid`.
+responses, and a final state of `paid` (`2` for bad arguments). `--json`
+prints the rows as JSON instead of the table, with the server's logs on
+stderr.
 
 Exactly one payment succeeds because of **two independent guards**:
 
@@ -151,24 +157,35 @@ Exactly one payment succeeds because of **two independent guards**:
   saves. A replay that arrives while the original is still running gets
   `409 IdempotencyInFlightError`.
 
-Measured on an 11th Gen Intel Core i7-11850H (8 cores, 32 GB RAM), Windows 11,
-Python 3.14, SQLite on a local NVMe disk. The client and the server were on
-the same machine:
+Measured on Windows 11 / Python 3.14 / SQLite (an 11th Gen Intel Core
+i7-11850H laptop, 8 cores / 16 threads, local NVMe; client and server on
+the same machine), 200 requests per round. Each worker count ran several
+times (`python loadtest.py --workers N --json`). Every run passed. The
+table gives the **range** over those runs:
 
-| Workers | Round | changed | unchanged | duplicate | 409 | p50 ms | p95 ms |
-|--:|:--|--:|--:|--:|--:|--:|--:|
-| 1 | no key | 1 | 123 | 0 | 76 | 1000 | 2574 |
-| 1 | with key | 1 | 0 | 199 | 0 | 1052 | 2692 |
-| 2 | no key | 1 | 145 | 0 | 54 | 712 | 1512 |
-| 2 | with key | 1 | 0 | 143 | 56 | 467 | 972 |
-| 4 | no key | 1 | 145 | 0 | 54 | 545 | 1036 |
-| 4 | with key | 1 | 0 | 199 | 0 | 402 | 749 |
-| 4 (compose, Redis) | no key | 1 | 135 | 0 | 64 | 909 | 1601 |
-| 4 (compose, Redis) | with key | 1 | 0 | 199 | 0 | 476 | 1182 |
+| Workers | Runs | Round | changed | unchanged | duplicate | 409 (conflict retries) | p50 ms | p95 ms |
+|--:|--:|:--|--:|--:|--:|--:|--:|--:|
+| 1 | 3 | no key | 1 | 199 | 0 | 0 | 339–347 | 770–802 |
+| 1 | 3 | with key | 1 | 0 | 199 | 0 | 222–256 | 460–512 |
+| 2 | 3 | no key | 1 | 199 | 0 | 0 | 252–423 | 525–770 |
+| 2 | 3 | with key | 1 | 0 | 199 | 0 | 177–242 | 325–426 |
+| 4 | 5 | no key | 1 | 199 | 0 | 0 | 188–210 | 348–406 |
+| 4 | 5 | with key | 1 | 0 | 199 | 0 | 152–177 | 286–326 |
+
+Only the **changed = 1** column is a guarantee. The split of the other
+199 between `unchanged`, `duplicate` and `409` depends on timing: on this
+machine every loser loaded the snapshot after the winner saved, so none
+lost the version check. An earlier version of this
+README reported 54–76 `409`s per no-key round from an older revision
+(those runs could not be reproduced). Treat `409` as normal and be
+ready to retry it. Your numbers will
+differ. Regenerate them with `--json`.
 
 Latency is the time for the whole 200-request burst on one hot key, so every
 request queues behind the others. It is not the latency of a single request.
-The **conflict count** is the 409 column. Nothing retries a 409 for you.
+The **conflict-retry count** is the 409 column (`conflict_retries` in
+`--json`): the requests a client would have to retry. Nothing retries a
+409 for you.
 With a key, a client can safely retry with the same key and gets either the
 duplicate receipt or the result of its own request. How many requests end
 up `in flight` versus `duplicate` depends on timing: requests arriving while
@@ -347,17 +364,24 @@ its own memory, nothing shared but Redis. What the test pins:
 
 Offline by default: one `fakeredis.FakeServer` shared by every worker. Set
 `XSM_REDIS_URL=redis://localhost:6379/15` to run it against a live Redis.
-The multi-**process** proof is the load test with the same variable set:
+The multi-**process** proof is the load test with `--redis` (it ignores
+`XSM_REDIS_URL` in your shell, so a stray variable never switches the
+store; before #277-b it always ran SQLite):
 
 ```bash
 docker run -d --rm -p 6379:6379 redis:7-alpine
-XSM_REDIS_URL=redis://localhost:6379/3 python loadtest.py --workers 4 --requests 200
+python loadtest.py --workers 4 --requests 200 --redis redis://localhost:6379/3
 ```
 
 | Workers | Round | changed | unchanged | duplicate | 409 | p50 ms | p95 ms |
 |--:|:--|--:|--:|--:|--:|--:|--:|
 | 4 (Redis, local) | no key | 1 | 154 | 0 | 45 | 192 | 344 |
 | 4 (Redis, local) | with key | 1 | 0 | 199 | 0 | 192 | 339 |
+
+⚠️ These two rows are **not Redis numbers**. Before #277-b, `loadtest.py`
+dropped `XSM_REDIS_URL` from the workers' environment, so this run used
+SQLite. No live-Redis load test has been measured for this README. Run the
+`--redis` command above and record the result here.
 
 One library defect this scenario found: a Redis connection error escaped
 the store as a raw `redis.exceptions.ConnectionError` -- past
