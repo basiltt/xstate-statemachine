@@ -219,7 +219,10 @@ jobs:
           #    the generated document. [litestar]'s typed bodies need pydantic.
           case "${{ matrix.extra }}" in
             starlette) python -m pip install "httpx>=0.24" ;;
-            fastapi) python -m pip install "httpx>=0.24" "openapi-spec-validator>=0.7" ;;
+            # 🚀 #277: uvicorn so the fastapi_orders fleet tests spawn REAL
+            #    worker processes on the Linux / macOS cells (they skip their
+            #    stall-sensitive assertions on Windows -- see the guide).
+            fastapi) python -m pip install "httpx>=0.24" "openapi-spec-validator>=0.7" "uvicorn>=0.23" ;;
             litestar) python -m pip install "httpx>=0.24" "openapi-spec-validator>=0.7" "pydantic>=2.5" ;;
             # 🤖 #288/#289: soft-import interop (never pinned in pyproject)
             #    so the LangGraph / pydantic-ai / instructor tests run here.
