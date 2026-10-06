@@ -576,7 +576,14 @@ def _handle_interactive_hierarchy(
                 f"  {i + 1}. {display_id} (looks like child, score: {score})"
             )
 
-    answer = input("Is this correct? [Y/n] ").strip().lower()
+    # 🔥 battle #279: a non-interactive run (CI, a wrapper with stdin at
+    #    EOF) hung on this prompt forever. An EOF answers "yes" to the
+    #    heuristic; `-jp/-jc` is the explicit, prompt-free path.
+    try:
+        answer = input("Is this correct? [Y/n] ").strip().lower()
+    except EOFError:
+        print("(no input: accepting the detected parent; use -jp/-jc)")
+        answer = ""
 
     if answer in ("", "y", "yes"):
         final_parent_path = parent_path
