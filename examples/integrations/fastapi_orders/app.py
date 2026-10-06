@@ -71,6 +71,13 @@ def build_machine(
     version: Optional[str] = None, *, breaker: Any = None
 ) -> Any:
     config = json.loads(chart_path(version).read_text("utf-8"))
+    # ⏱️ `XSM_PAYMENT_TIMEOUT_MS` shortens the 15-minute payment timeout
+    #    (the fleet tests wait for the scheduler process to fire it).
+    override = os.environ.get("XSM_PAYMENT_TIMEOUT_MS")
+    if override:
+        after = config["states"]["awaitingPayment"]["after"]
+        (old_key,) = after
+        after[str(int(override))] = after.pop(old_key)
     return create_machine(
         config,
         logic=build_logic(breaker),
