@@ -454,7 +454,7 @@ def create_statechart_controller(
             continue
         attr = f"event_{op_ids[etype]}"
         ns[attr] = post(
-    title = _title(name)
+            f"/{kp}/events/{etype}",
             operation_id=op_ids[etype],
             status_code=200,
             summary=f"Send {etype}",
@@ -463,8 +463,7 @@ def create_statechart_controller(
                 **_problem_responses(*_SEND_STATUSES),
             },
         )(_event_handler(etype, by_type.get(etype), do_send))
-    title = "".join(p[:1].upper() + p[1:] for p in name.split("_"))
-    return type(f"{title}StatechartController", (Controller,), ns)
+    return type(f"{_title(name)}StatechartController", (Controller,), ns)
 
 
 def _event_handler(
