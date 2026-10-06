@@ -93,12 +93,15 @@ For a complete, runnable service — Docker Compose with four workers, a schedul
 |:--|:--|:--|
 | One host, any number of workers | `SQLiteStore(path)` — WAL, one file | `SQLiteInbox(store)` — shares the connection, so a mark commits with the snapshot |
 | Several hosts | `RedisStore(url, prefix=...)` ([#306](../persistence/)) | `RedisInbox(url, prefix=...)` |
+| An existing SQL database | `SQLAlchemyStore` ([SQLAlchemy](../integration-sqlalchemy/)) | — see that guide |
+
+The `fastapi_orders` example's `build_store()` supports only the first two rows: SQLite by default, Redis when `XSM_REDIS_URL` is set. Its Docker Compose file uses a real Redis; the example's Redis tests use `fakeredis` unless you point `XSM_REDIS_URL` at a live server. `SQLAlchemyStore` works with the same registry but is not wired into the example.
 
 With SQLite, create the schema **once** before starting the workers, for example with an `init` step or your migration job. Switching an empty file to WAL mode is a write, and N processes racing to do it see `database is locked`.
 
-**Optimistic vs pessimistic under load.** The default `OptimisticLock` takes no lock. The second writer's save fails its version check, and the API answers `409`. Nothing retries a `409` for you, because the client decides whether to retry. This is the right choice when conflicts on one key are rare, which is the usual case with one order per customer. When one key is hot and every request should be *applied* in turn rather than refused, use `StatechartRegistry(store, lock=PessimisticLock())`: requests to that key queue on the store's lock instead of failing. Measured in the example, 200 concurrent `PAY`s to one order under four workers produce **exactly one** changed receipt and 54 `409`s without a key. With a shared `Idempotency-Key` the result is still one changed receipt, and the replays come back as duplicates.
+**Optimistic vs pessimistic under load.** The default `OptimisticLock` takes no lock, and it is what the `fastapi_orders` example uses (`build_registry()` passes no `lock=`). The second writer's save fails its version check, and the API answers `409`. Nothing retries a `409` for you, because the client decides whether to retry. This is the right choice when conflicts on one key are rare, which is the usual case with one order per customer. When one key is hot and every request should be *applied* in turn rather than refused, use `StatechartRegistry(store, lock=PessimisticLock())`: requests to that key queue on the store's lock instead of failing. In the example's load test, 200 concurrent `PAY`s to one order under four workers produce **exactly one** changed receipt, with or without a shared `Idempotency-Key`. That is the invariant. How many of the other 199 come back as `409` rather than `200 unchanged` / `duplicate` depends on timing and hardware: on one Windows 11 laptop it was 0 in 11 runs at 1, 2 and 4 workers, while earlier runs on the same machine saw dozens. Treat it as a measured range, not a constant. The [example README](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/fastapi_orders#load-test) has the numbers, and `python loadtest.py --json` regenerates them.
 
-**Timers run in exactly one process.** `after` deadlines are saved with the snapshot. A `DueTimerScanner` wakes the orders whose deadlines have passed. Do **not** pass `run_timers=True` to a registry that runs in every web worker, because each worker would scan the same keys. Run the scanner in its own process instead:
+**Timers run in exactly one process.** `after` deadlines are saved with the snapshot. A `DueTimerScanner` wakes the orders whose deadlines have passed. Web workers **never** fire a timer: a registry runs a scanner only with `run_timers=True`, and the example's web workers do not pass it. Its fleet test runs real worker processes without a scheduler and no deadline fires. Do **not** pass `run_timers=True` to a registry that runs in every web worker, because each worker would scan the same keys. Run the scanner in its own process instead:
 
 <!-- doc-fragment -->
 ```python
@@ -112,7 +115,7 @@ def run_scheduler(interval_s: float = 1.0) -> None:
     scanner.run_forever(interval_s)      # stop() from a signal handler
 ```
 
-The scanner re-checks each deadline under the lock strategy and saves with the version check, so a second scanner would not fire a timer twice. It would only waste work and produce conflicts.
+The contract is **exactly one** scheduler. Two by accident are safe but wasteful: the scanner re-checks each deadline under the lock strategy and saves with the version check, so each deadline fires once, and the second scheduler only wastes scans and produces conflicts. In Docker Compose, give the scheduler service `deploy: replicas: 1` and never scale it.
 
 ## Side effects
 
@@ -202,14 +205,40 @@ The document is generated from the chart, so it is deterministic for a given cha
 
 A multi-step form (shipping → payment → review) is a chart with one instance per *visitor*. Take the instance key from a session cookie rather than a path parameter, and let `authorize` compare the two:
 
-<!-- doc-fragment -->
+<!-- doc-requires: fastapi, httpx -->
 ```python
+from fastapi import FastAPI, Request
+from fastapi.testclient import TestClient
+
+from xstate_statemachine import create_machine
+from xstate_statemachine.contrib.fastapi import (
+    ReceiptResponse, StatechartRegistry, allow_all, get_interpreter,
+    instrument_app,
+)
+from xstate_statemachine.persistence import MemoryStore
+
+registry = StatechartRegistry(MemoryStore(),
+                              principal=lambda conn: conn.cookies["session"])
+registry.register("checkout", create_machine(
+    {"id": "checkout", "initial": "shipping", "states": {
+        "shipping": {"on": {"NEXT": "payment"}},
+        "payment": {"on": {"NEXT": "review"}}, "review": {}}}),
+    authorize=allow_all)
+app = instrument_app(FastAPI(), registry)
+
 def wizard_key(request: Request) -> str:
     return request.cookies["session"]            # set by your session middleware
 
 @app.post("/checkout/next")
 async def next_step(wizard=get_interpreter(registry, "checkout", key=wizard_key)):
     return ReceiptResponse(wizard, await wizard.send("NEXT", wait=True))
+
+with TestClient(app) as ann, TestClient(app) as bob:
+    ann.cookies.set("session", "s-ann")
+    bob.cookies.set("session", "s-bob")
+    ann.post("/checkout/next")
+    assert ann.post("/checkout/next").json()["state"] == "review"
+    assert bob.post("/checkout/next").json()["state"] == "payment"
 ```
 
 The key never appears in the URL, so one visitor cannot drive another visitor's wizard by editing a path. Use a session id that you signed or that is stored server-side, not a raw user id. Expired wizards stay in the store until you delete them. Give the store a `ttl_s=` (Redis), or delete finished keys in a scheduled job.
@@ -250,7 +279,7 @@ winners = [r for r in results if r.status_code == 200 and r.json()["changed"]]
 assert len(winners) == 1                         # the rest: 409 or unchanged
 ```
 
-Drive timers with `DueTimerScanner(store, ...).scan(now=time.time() + 901)`, which passes an explicit `now`, instead of sleeping. Ready-made pytest fixtures arrive with the `[testing]` extra ([#268](https://github.com/basiltt/xstate-statemachine/issues/268)).
+Drive timers with `DueTimerScanner(store, ...).scan(now=time.time() + 901)`, which passes an explicit `now`, instead of sleeping. The `[testing]` extra's pytest plugin ([#268](https://github.com/basiltt/xstate-statemachine/issues/268)) provides machine-level fixtures (`xsm_machine`, `xsm_interp`, `xsm_store`, `xsm_clock`, …). It has no `TestClient` fixture, so build the client yourself as above; the example's `tests/test_orders_app.py` wraps one in a fixture over a per-test SQLite file.
 
 ### Generate a router you own
 
@@ -345,14 +374,49 @@ The Pydantic models that describe the wire shapes in OpenAPI. Every 4xx/5xx is d
 | Event reachable through another router despite `per_event_dependencies` | the gate is per router | enforce it in `authorize` |
 | `UserWarning: Duplicate Operation ID` on an older release | two event names folded to the same id | upgrade; ids are now suffixed `_2`, `_3` |
 | A guard's side effect fires on `GET /{id}/events` | `available` runs guards | keep guards pure |
-| Every POST is `409` under load | optimistic conflicts on a hot key | retry on 409, or `lock=PessimisticLock()` |
+| Every POST is `409` under load | optimistic conflicts on a hot key | retry on 409 with jitter (below), or `lock=PessimisticLock()` |
+<!-- #277-A: one request stalls / `database is locked` under N workers -- cause + fix row goes here -->
 | A `get_interpreter` save conflict is logged, response already 200 | FastAPI older than 0.121 (no dependency `scope`) | upgrade FastAPI, or use `registry.act()` inside the handler |
 
 ### 409 storms
 
 A burst of `409 Conflict` responses on one key means many requests loaded the same version and only one could save. This is the lock working as designed, not a fault. Things to check:
 
-* **Clients retrying immediately.** Each retry lands in the same race again. Retry with jittered backoff, and send an `Idempotency-Key` so a retry of a request that actually succeeded returns the original receipt (`duplicate`) instead of running again.
+* **Clients retrying immediately.** Each retry lands in the same race again. Retry with jittered backoff, and send an `Idempotency-Key` so a retry of a request that actually succeeded returns the original receipt (`duplicate`) instead of running again:
+
+<!-- doc-requires: httpx -->
+```python
+import asyncio
+import random
+
+import httpx
+
+from xstate_statemachine import __version__  # noqa: F401 (client: httpx only)
+
+async def post_with_retry(client, url, json, *, key, attempts=5, base_s=0.05):
+    """Retry 409s with full jitter; the same Idempotency-Key every time."""
+    for attempt in range(attempts):
+        r = await client.post(url, json=json, headers={"Idempotency-Key": key})
+        if r.status_code != 409:
+            return r
+        await asyncio.sleep(random.uniform(0, base_s * 2 ** attempt))
+    return r
+
+calls = []
+
+def handler(request):                            # stands in for the API
+    calls.append(request.headers["Idempotency-Key"])
+    return httpx.Response(409 if len(calls) < 3 else 200, json={})
+
+async def main():
+    transport = httpx.MockTransport(handler)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+        r = await post_with_retry(c, "/orders/1/events/PAY", {}, key="pay-1")
+    assert r.status_code == 200 and calls == ["pay-1"] * 3
+
+asyncio.run(main())
+```
+
 * **`409` with `error: IdempotencyInFlightError`.** The same key is still being processed by another worker. Retry after a short delay. It is a different condition from a version conflict (`ConflictError`).
 * **A key that is always hot**, such as a shared counter or a flash-sale inventory item. Use `lock=PessimisticLock()` so requests queue instead of failing, or split the key.
 

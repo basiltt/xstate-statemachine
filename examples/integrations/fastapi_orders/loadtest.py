@@ -233,6 +233,7 @@ def as_json(
             }
         )
     return {
+        "store": "redis" if args.redis else "sqlite",
         "workers": args.workers,
         "requests": args.requests,
         "rows": out,
@@ -248,7 +249,11 @@ def run_all(
     args: argparse.Namespace, port: int, base: str, tmp: str
 ) -> List[Dict[str, Any]]:
     env = dict(os.environ)
+    # 📝 SQLite unless `--redis URL`: a stray XSM_REDIS_URL in the shell
+    #    must not silently switch the store under test.
     env.pop("XSM_REDIS_URL", None)
+    if args.redis:
+        env["XSM_REDIS_URL"] = args.redis
     env["XSM_ORDERS_DB"] = str(Path(tmp) / "orders.db")
     # 🧱 Schema + WAL switch once, before N workers open the file.
     subprocess.run(
@@ -277,6 +282,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--requests", type=int, default=200)
     ap.add_argument("--port", type=int, default=0)
+    ap.add_argument(
+        "--redis",
+        metavar="URL",
+        help="run the workers on RedisStore at URL (default: SQLite)",
+    )
     ap.add_argument(
         "--json", action="store_true", help="print the rows as JSON"
     )

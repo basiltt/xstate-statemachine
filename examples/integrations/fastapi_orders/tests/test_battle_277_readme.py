@@ -269,3 +269,36 @@ def test_compose_one_scheduler_and_the_env_var_app_reads():
     assert svcs["scheduler"]["deploy"]["replicas"] == 1
     assert svcs["scheduler"]["command"][-2:] == ["--role", "scheduler"]
     assert "8000:8000" in svcs["web"]["ports"]
+
+
+def test_loadtest_redis_flag_reaches_the_workers(monkeypatch, tmp_path):
+    """Before #277-b the launcher popped XSM_REDIS_URL, so the README's
+    "Redis" load test silently ran SQLite."""
+    import argparse
+
+    import loadtest
+
+    seen = []
+
+    class Stop(Exception):
+        pass
+
+    def fake_run(cmd, **kw):
+        seen.append(kw["env"])
+
+    def fake_start(port, workers, env):
+        seen.append(env)
+        raise Stop
+
+    monkeypatch.setattr(loadtest.subprocess, "run", fake_run)
+    monkeypatch.setattr(loadtest, "start_server", fake_start)
+    monkeypatch.setenv("XSM_REDIS_URL", "redis://stray:1/0")
+    for redis, want in (
+        (None, None),
+        ("redis://h:6379/3", "redis://h:6379/3"),
+    ):
+        seen.clear()
+        args = argparse.Namespace(workers=1, requests=1, redis=redis)
+        with pytest.raises(Stop):
+            loadtest.run_all(args, 1, "http://x", str(tmp_path))
+        assert [e.get("XSM_REDIS_URL") for e in seen] == [want, want]
