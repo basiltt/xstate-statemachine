@@ -143,7 +143,21 @@ def test_example_suite_passes(example):
         env=_env(),
         timeout=600,
     )
-    assert proc.returncode == 0, proc.stdout[-4000:] + proc.stderr[-2000:]
+    if proc.returncode != 0:
+        # 📝 #278 battle: a failing child printed a 20 KB Prometheus scrape
+        #    as its assertion message and the LAST 4 KB held none of the
+        #    test ids -- CI logs said "failed" without saying what. Surface
+        #    the FAILED lines and the summary first, then the tail.
+        lines = proc.stdout.splitlines()
+        heads = [
+            ln
+            for ln in lines
+            if ln.startswith(("FAILED", "ERROR"))
+            or " failed" in ln
+            or ln.startswith("E   assert")
+        ]
+        detail = "\n".join(heads[-30:]) + "\n...\n" + proc.stdout[-2500:]
+        raise AssertionError(detail + proc.stderr[-1500:])
 
 
 def test_fastapi_orders_process_tests_are_reported():

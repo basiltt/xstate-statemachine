@@ -19,7 +19,6 @@
 """`StatechartRouter` and `get_interpreter`."""
 
 import inspect
-import unicodedata
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 from fastapi import APIRouter, Body, Depends, Path, Request
@@ -29,6 +28,9 @@ from fastapi.routing import APIRoute
 from starlette.responses import JSONResponse, PlainTextResponse, Response
 
 from ...persistence.helpers import KeyNotFoundError
+from .._openapi import FIXED_OPS as _FIXED_OPS  # noqa: F401
+from .._openapi import ident as _ident
+from .._openapi import operation_ids as _operation_ids
 from ..pydantic.events import models_of
 from ..starlette._http import (
     DEFAULT_BODY_TIMEOUT_S,
@@ -395,6 +397,13 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
         return PlainTextResponse(machine.to_mermaid())
 
     async def stream(request: Request, key: str = KeyPath) -> Response:
+        # 🔥 battle #278 (parity): with create_if_missing=False `/stream`
+        #    opened an endless SSE for a key that does not exist while
+        #    every other route answered 404.
+        try:
+            await _guard_read(request, key)
+        except Exception as exc:  # noqa: BLE001 -- mapped, never leaked
+            return problem_for_exception(exc)
         return await transition_stream(registry, name, key, request)
 
     reads = problem_responses(400, 401, 403, 404, 500, 503)
@@ -460,57 +469,22 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
         summary="Server-Sent Events: snapshot, then each transition",
     )
     # 📝 Starlette's plain route: FastAPI's include_router re-prefixes it.
-    router.add_websocket_route(
-        f"{base}/{kp}/ws",
-        websocket_endpoint(registry, name, key_param=key_param),
-    )
+    ws_cls = websocket_endpoint(registry, name, key_param=key_param)
+    if not create_if_missing:
+
+        async def ws_guarded(websocket: Any) -> None:
+            # 🔥 battle #278 (parity): a missing key must not open a socket
+            #    (a send would CREATE the instance). Refused like a denied.
+            key = str(websocket.path_params[key_param])
+            if not await registry.exists(name, key):
+                await websocket.close(code=1008)
+                return
+            await ws_cls(websocket.scope, websocket.receive, websocket.send)
+
+        router.add_websocket_route(f"{base}/{kp}/ws", ws_guarded)
+    else:
+        router.add_websocket_route(f"{base}/{kp}/ws", ws_cls)
     return router
-
-
-def _ident(etype: str) -> str:
-    """ASCII ``[a-z0-9_]`` spelling of *etype* (operationIds feed SDK
-    generators: ``éclair`` → ``eclair``, ``pay-now`` → ``pay_now``)."""
-    ascii_ = (
-        unicodedata.normalize("NFKD", etype)
-        .encode("ascii", "ignore")
-        .decode("ascii")
-    )
-    return "".join(c if c.isalnum() else "_" for c in ascii_).lower() or "e"
-
-
-#: Suffixes of the fixed routes' operationIds (``<op>_get`` ...).
-_FIXED_OPS = frozenset({"get", "send", "events", "diagram", "stream"})
-
-
-def _operation_ids(op: str, events: Sequence[str]) -> Dict[str, str]:
-    """A UNIQUE and STABLE operationId per event route.
-
-    🔥 battle #276-b: ``ORDER.PAID`` and ``ORDER_PAID`` both became
-    ``order_order_paid`` and an event named ``GET``/``send`` reused a
-    fixed route's id -- a duplicate operationId is an invalid OpenAPI
-    document and silently merges two methods in generated SDKs.
-
-    📝 review (H1): ids must not move when an event is ADDED later -- a
-    generated SDK pins them. Two passes: events whose name already IS the
-    folded identifier (``ORDER_PAID``) claim the plain id first, in
-    declaration order; names that had to be folded (``ORDER.PAID``,
-    ``pay-now``) come second and take a ``_2`` ... suffix only when the
-    plain id is taken. Adding ``ORDER.PAID`` to a chart that declares
-    ``ORDER_PAID`` therefore leaves ``order_order_paid`` where it was.
-    """
-    taken = {f"{op}_{f}" for f in _FIXED_OPS}
-    out: Dict[str, str] = {}
-    plain = [e for e in events if _ident(e) == e.lower()]
-    folded = [e for e in events if _ident(e) != e.lower()]
-    for etype in plain + folded:
-        base = f"{op}_{_ident(etype)}"
-        cand, n = base, 1
-        while cand in taken:
-            n += 1
-            cand = f"{base}_{n}"
-        taken.add(cand)
-        out[etype] = cand
-    return out
 
 
 def _event_handler(
