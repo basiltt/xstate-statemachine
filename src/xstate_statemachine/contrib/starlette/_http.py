@@ -161,9 +161,9 @@ async def read_body(
     """The request body, at most *max_body_bytes* (413), within
     *timeout_s* seconds (408).
 
-    🔥 battle #277-a: an accepted connection whose body never arrived
-    (uvicorn's Windows worker loop) held the handler -- and the client --
-    forever: nothing bounded `request.stream()`.
+    🔥 battle #277-a: a connection whose body never arrived (a slow or
+    stalled client) held the handler forever: nothing bounded
+    `request.stream()`.
     """
 
     async def _read() -> bytes:

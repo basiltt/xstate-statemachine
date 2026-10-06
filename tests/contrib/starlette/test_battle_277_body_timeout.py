@@ -1,10 +1,8 @@
 """#277 battle (A): a request body that never arrives is a bounded 408.
 
-Root cause of the multi-worker load-test stall on Windows: uvicorn's
-default worker loop there occasionally accepted a connection and never
-delivered its body, and nothing in the registry or the FastAPI route
-class bounded the body read -- the handler (and the client) waited
-forever. `body_timeout_s` bounds it: a 408 problem, the worker moves on.
+Nothing bounded the body read in `send_event` / the FastAPI route class:
+a client that sent headers and then stalled held a handler forever.
+`body_timeout_s` bounds it -- a 408 problem, and the worker moves on.
 """
 
 from __future__ import annotations

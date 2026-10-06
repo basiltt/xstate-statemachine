@@ -197,6 +197,11 @@ def build_registry(
     plugins = list(kw.pop("plugins", ()))
     if dlq is not None:
         plugins.append(DeadLetterPlugin(dlq))
+    # ⏱️ battle #277-a: bound the body read -- a slow / stalled client
+    #    gets a 408 it can retry instead of holding a handler forever.
+    kw.setdefault(
+        "body_timeout_s", float(os.environ.get("XSM_BODY_TIMEOUT_S", "5"))
+    )
     registry = StatechartRegistry(
         store, inbox=inbox, principal=customer_of, plugins=plugins, **kw
     )
@@ -298,6 +303,43 @@ def add_pay_route(
     app.include_router(extra)
 
 
+def add_metrics_route(app: FastAPI, registry: StatechartRegistry) -> bool:
+    """``GET /metrics`` via `PrometheusPlugin` on the registry (#277).
+
+    Skipped (returns False) without the ``[observability]`` extra.
+
+    ⚠️ Multi-worker: each uvicorn worker has its OWN metrics, and a
+    scrape reaches whichever worker accepts it. Set
+    ``PROMETHEUS_MULTIPROC_DIR`` (an empty directory, the same for every
+    worker) and the endpoint aggregates every worker's samples with
+    `MultiProcessCollector`.
+    """
+    try:
+        import prometheus_client as prom
+
+        from xstate_statemachine.contrib.observability import (
+            PrometheusPlugin,
+        )
+    except ImportError:
+        return False
+    if not any(isinstance(p, PrometheusPlugin) for p in registry.plugins):
+        registry.plugins.append(PrometheusPlugin())
+
+    @app.get("/metrics", include_in_schema=False)
+    async def metrics() -> Response:
+        if os.environ.get("PROMETHEUS_MULTIPROC_DIR"):
+            from prometheus_client import multiprocess
+
+            reg = prom.CollectorRegistry()
+            multiprocess.MultiProcessCollector(reg)
+            data = prom.generate_latest(reg)
+        else:
+            data = prom.generate_latest()
+        return Response(data, media_type=prom.CONTENT_TYPE_LATEST)
+
+    return True
+
+
 def create_app(
     registry: Optional[StatechartRegistry] = None,
     *,
@@ -307,6 +349,7 @@ def create_app(
     registry = registry or build_registry()
     app = FastAPI(title="Orders (xstate-statemachine)")
     add_pay_route(app, registry, email)
+    add_metrics_route(app, registry)
     app.include_router(
         StatechartRouter(
             registry,
