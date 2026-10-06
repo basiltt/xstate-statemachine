@@ -403,3 +403,35 @@ def test_custom_route_with_header_dedups_without_handler_help():
             ]["n"]
             == 2
         )
+
+
+def test_create_if_missing_false_guards_stream_and_websocket():
+    """#278 parity: Litestar's controller refused `/stream` (404) and the
+    WebSocket (1008) for a missing key under `create_if_missing=False`;
+    the FastAPI router opened both."""
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from starlette.websockets import WebSocketDisconnect
+
+    from src.xstate_statemachine.contrib.fastapi import (
+        StatechartRegistry,
+        StatechartRouter,
+        allow_all,
+        instrument_app,
+    )
+    from src.xstate_statemachine.persistence import MemoryStore
+    from tests.contrib.starlette._support import counter_machine
+
+    reg = StatechartRegistry(MemoryStore())
+    reg.register("c", counter_machine(), authorize=allow_all)
+    app = FastAPI()
+    app.include_router(
+        StatechartRouter(reg, "c", prefix="/c", create_if_missing=False)
+    )
+    instrument_app(app, reg)
+    with TestClient(app) as c:
+        assert c.get("/c/nope/stream").status_code == 404
+        with pytest.raises(WebSocketDisconnect) as ei:
+            with c.websocket_connect("/c/nope/ws"):
+                pass
+        assert ei.value.code == 1008

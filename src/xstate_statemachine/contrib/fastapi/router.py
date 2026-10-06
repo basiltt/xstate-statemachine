@@ -397,6 +397,13 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
         return PlainTextResponse(machine.to_mermaid())
 
     async def stream(request: Request, key: str = KeyPath) -> Response:
+        # 🔥 battle #278 (parity): with create_if_missing=False `/stream`
+        #    opened an endless SSE for a key that does not exist while
+        #    every other route answered 404.
+        try:
+            await _guard_read(request, key)
+        except Exception as exc:  # noqa: BLE001 -- mapped, never leaked
+            return problem_for_exception(exc)
         return await transition_stream(registry, name, key, request)
 
     reads = problem_responses(400, 401, 403, 404, 500, 503)
@@ -462,10 +469,21 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
         summary="Server-Sent Events: snapshot, then each transition",
     )
     # 📝 Starlette's plain route: FastAPI's include_router re-prefixes it.
-    router.add_websocket_route(
-        f"{base}/{kp}/ws",
-        websocket_endpoint(registry, name, key_param=key_param),
-    )
+    ws_cls = websocket_endpoint(registry, name, key_param=key_param)
+    if not create_if_missing:
+
+        async def ws_guarded(websocket: Any) -> None:
+            # 🔥 battle #278 (parity): a missing key must not open a socket
+            #    (a send would CREATE the instance). Refused like a denied.
+            key = str(websocket.path_params[key_param])
+            if not await registry.exists(name, key):
+                await websocket.close(code=1008)
+                return
+            await ws_cls(websocket.scope, websocket.receive, websocket.send)
+
+        router.add_websocket_route(f"{base}/{kp}/ws", ws_guarded)
+    else:
+        router.add_websocket_route(f"{base}/{kp}/ws", ws_cls)
     return router
 
 

@@ -1450,6 +1450,50 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **Litestar integration, as battle-tested (#278).** The orders chart
+  served through `create_statechart_controller` + `XStatePlugin`, driven
+  the way the #275 / #276 battles drove the FastAPI surface, so every
+  hardening of the shared registry is pinned here too (honest
+  idempotency, gates on `authorize`, body rules that never echo, 50
+  concurrent `PAY`s charge once, streams over a raw ASGI driver). Found
+  and fixed: **`contrib.litestar` re-exported Starlette's
+  `ReceiptResponse`, which a Litestar handler cannot return -- the
+  documented `Provide` recipe answered 500** (a Litestar-native
+  `ReceiptResponse` now); **`get_interpreter` answered 500 whenever it
+  sat next to another dependency** -- Litestar resolves and cleans up
+  generator dependencies in separate tasks, so `act()` was entered in
+  one task and exited in another and the commit-scope `ContextVar`
+  reset raised "Token was created in a different Context" (the whole
+  `act()` now runs in one owning task; the save happens when the handler
+  finishes, the change is discarded when it raises); two `Provide`s for
+  one key opened two `act()`s (one interpreter per key per request, as
+  in FastAPI); `Idempotency-Key` was ignored on `Provide` routes (400 /
+  501 / stamped on the first send, as in FastAPI); `to_starlette` lost a
+  body Litestar had already read -- `send_event` without a payload hung
+  on the spent stream (the cached body is copied); `_json_guard` read a
+  chunked body with no `content-length` fully into memory before 413
+  (streams and stops past the limit); with `create_if_missing=False`
+  `/stream` opened an endless SSE and the WebSocket accepted a missing
+  key -- 404 / 1008 now, and the same gap fixed in the FastAPI router;
+  registering `XStatePlugin` twice ran the registry lifespan twice;
+  `dependencies=True` silently replaced a user dependency of the same
+  name (`ValueError`); Litestar refuses two handlers on one path, so an
+  app could not own a per-event route (the payment hook) -- new
+  `exclude_events=` / `guards=` / `dependencies=` on the controller,
+  with `/send` refusing excluded events; **the served OpenAPI document
+  changed on every start** (random msgspec examples in `Problem`) and
+  listed only 200 / 400 for every route; colliding event names
+  (`ORDER.PAID` / `ORDER_PAID` / `get`) made `/schema/openapi.json`
+  answer **500** and one handler overwrote the other -- the FastAPI
+  battle's stable `operationId` rule now lives in `contrib/_openapi.py`
+  and both routers use it; aliased event fields were 422; every 200 was
+  `schema: {}` (typed `StateBody` / `ReceiptBody` / `EventsBody`); two
+  machines named `a_b` / `aB` shared one body schema; 422 problems named
+  the whole body instead of the unknown key and were uncapped (50 +
+  `errors_total`). Parity table: the same requests through the FastAPI
+  router and the Litestar controller over one registry give identical
+  status codes and problem titles. `TestClient.stream` buffers SSE
+  (documented: use a raw ASGI driver or `httpx.ASGITransport`).
 - **Multi-worker deployment, as battle-tested (#277).** The guide's and
   the `fastapi_orders` README's claims, run against REAL `uvicorn
   --workers 4` processes plus a separate `--role scheduler` process
