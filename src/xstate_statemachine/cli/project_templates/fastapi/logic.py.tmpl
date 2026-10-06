@@ -56,9 +56,15 @@ class _Gateway:
         self.calls: int = 0  # how many times the real gateway was hit
         self._lock = threading.Lock()
 
-    def hit(self) -> None:
+    def hit(self, charge_key: str = "") -> None:
         with self._lock:
             self.calls += 1
+            log = os.environ.get("XSM_GATEWAY_LOG")
+            if log:
+                # 📝 battle #277-a: workers are separate processes; the
+                #    fleet tests count gateway calls through this file.
+                with open(log, "a", encoding="utf-8") as f:
+                    f.write(f"{os.getpid()} {charge_key}\n")
 
 
 GATEWAY = _Gateway()
@@ -146,7 +152,7 @@ def charge_card(
     attempt = int(ctx.get("attempt", 0))
 
     def hit_gateway() -> Dict[str, Any]:
-        GATEWAY.hit()
+        GATEWAY.hit(f"{getattr(i, 'store_key', '')}")
         if not GATEWAY.up or token == OUTAGE_TOKEN:
             raise GatewayDown("gateway unreachable")
         if token == DECLINED_TOKEN:
