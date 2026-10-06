@@ -504,3 +504,42 @@ def test_bare_json_schema_object_payload_is_permissive(
     assert code == 0, text  # not "a field named `type`"
     m = _import(tmp_path, "bare_models")
     assert m.GoEvent.model_validate({"type": "GO", "x": 1}).x == 1
+
+
+# --- independent review (#279) ----------------------------------------------
+@pytest.mark.parametrize(
+    "schema, ok",
+    [
+        ({"type": "object"}, True),
+        ({"type": ["object", "null"]}, True),
+        ({"type": "object", "properties": {}}, True),
+        ({"type": "object", "additionalProperties": True}, True),
+        ({"type": "string"}, False),  # a payload must be an object
+        (
+            {"type": "object", "properties": {"type": {"type": "string"}}},
+            False,
+        ),
+    ],
+)
+def test_json_schema_roots_are_not_mistaken_for_a_field_called_type(
+    schema, ok
+):
+    """H1: `{"type": ["object", "null"]}` (a legal JSON-Schema root) was
+    read as a flat field map with a field named `type` and refused; a
+    non-object root is refused for the right reason; a real property
+    named `type` under `properties` is still refused."""
+    from src.xstate_statemachine.cli.strategies._web import collect_events
+    from src.xstate_statemachine.exceptions import InvalidConfigError
+
+    cfg = {
+        "id": "s",
+        "initial": "a",
+        "meta": {"eventSchemas": {"GO": schema}},
+        "states": {"a": {"on": {"GO": "a"}}},
+    }
+    if ok:
+        [spec] = collect_events(cfg)
+        assert spec.payload in (None, [])
+    else:
+        with pytest.raises(InvalidConfigError):
+            collect_events(cfg)

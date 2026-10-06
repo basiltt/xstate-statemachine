@@ -240,8 +240,19 @@ def parse_payload(schema: Any) -> Optional[List[PayloadField]]:
     """
     if not isinstance(schema, dict):
         return None
-    if schema.get("type") == "object" and "properties" not in schema:
-        return None  # JSON Schema "any object", not a field named `type`
+    if _is_json_schema_root(schema):
+        # 📝 review H1 (#279): a JSON-Schema ROOT (`{"type": "object"}`,
+        #    `{"type": ["object", "null"]}`, ...) with no `properties` is
+        #    "any object" -- never a field map with a field called `type`.
+        #    A non-object root is refused as such, with its type named.
+        kinds = schema["type"]
+        kinds = kinds if isinstance(kinds, list) else [kinds]
+        if "object" not in kinds:
+            raise InvalidConfigError(
+                f"an event payload schema must describe an object, got "
+                f"type {schema['type']!r}"
+            )
+        return None
     required: Set[str] = set()
     props: Dict[str, Any] = schema
     if isinstance(schema.get("properties"), dict):
@@ -271,6 +282,29 @@ def parse_payload(schema: Any) -> Optional[List[PayloadField]]:
     return fields
 
 
+def _is_json_schema_root(schema: Dict[str, Any]) -> bool:
+    """``{"type": <json type or list of them>, ...}`` with no `properties`
+    is a JSON-Schema root, not a flat field map (whose values are field
+    specs: strings naming a type or dicts)."""
+    if "properties" in schema:
+        return False
+    kind = schema.get("type")
+    names = {
+        "object",
+        "string",
+        "number",
+        "integer",
+        "boolean",
+        "array",
+        "null",
+    }
+    if isinstance(kind, str):
+        return kind in names
+    if isinstance(kind, list) and kind:
+        return all(isinstance(k, str) and k in names for k in kind)
+    return False
+
+
 #: Payload names no client can send: `send()` options (the registry
 #: refuses them with 422) and `type`, which IS the event's own type on
 #: the wire (an aliased field silently received the event name).
@@ -295,7 +329,8 @@ def collect_events(config: Dict[str, Any]) -> List[EventSpec]:
 
     Raises:
         InvalidConfigError: a declared payload field names a `send()`
-            option (``wait`` / ``priority``).
+            option (``wait`` / ``priority``) or the discriminator
+            ``type``; or a payload schema's root type is not an object.
     """
     found: Dict[str, EventSpec] = {}
     _walk_on(config, "", found)

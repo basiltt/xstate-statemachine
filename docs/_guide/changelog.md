@@ -1486,9 +1486,12 @@ _No unreleased changes yet._
   refusal reached only the logger; `--check` / `--diff` stopped at a
   stale logic file and never reported stale companions; `--check` /
   `--diff` CREATED the output directory and imported + mounted every web
-  companion (a FastAPI build per chart -- it compares text now, 20
-  corpus charts in well under a minute, and writes nothing, pinned by an
-  mtime/bytes comparison); `-o FILE` crashed with a traceback (exit 2,
+  companion (a FastAPI build per chart -- it compares text now and
+  writes nothing, pinned by an mtime/bytes comparison and by a test that
+  makes the web verification raise); a payload schema whose root type is
+  a list (`{"type": ["object", "null"]}`) was read as a field map with a
+  field named `type` and refused (a JSON-Schema root is recognised by its
+  type keyword; a non-object root is refused for the right reason); `-o FILE` crashed with a traceback (exit 2,
   one line); an unrequested leftover companion (`--with-api` dropped)
   was invisible to `--check` (named in a warning); two charts with the
   same `id` silently overwrote each other's output (a warning names the

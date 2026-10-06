@@ -425,6 +425,10 @@ jobs:
         #    Loopback is allowed for the CLI's local servers and subprocess
         #    tests; anything else fails the test that attempted it.
         run: pytest -qq --no-header --disable-socket --allow-hosts=127.0.0.1,::1
+        env:
+          # 🧪 #279: the whole 104-chart codegen corpus (~2.5 min) runs on
+          #    ONE cell; the others take a deterministic 12-chart sample.
+          XSM_FULL_CORPUS: ${{ (matrix.os == 'ubuntu-latest' && matrix.python-version == '3.14') && '1' || '0' }}
 
       - name: 📖 Run doctests
         # 🐛 Regression guard: exceptions.py shipped doctests asserting error

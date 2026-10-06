@@ -132,11 +132,31 @@ def _import_fresh(out: pathlib.Path, name: str) -> Any:
 def test_whole_corpus_generates_parses_imports_mounts(
     tmp_path: pathlib.Path,
 ) -> None:
+    """Every corpus chart (~2.5 min in-process) when ``XSM_FULL_CORPUS=1``
+    (the Linux 3.14 CI cell and the battle gates); a deterministic
+    12-chart sample -- including the id-colliding and the refused ones --
+    on every other run (review M1: the full pass added 2.5 min to every
+    cell of the matrix)."""
+    import os
+
     from fastapi import FastAPI
 
+    charts = sorted(CORPUS.glob("*.json"))
+    if os.environ.get("XSM_FULL_CORPUS") != "1":
+        must = {"emailProcessing.json", "debt.json", "APA_Logic.json"}
+        picked = [c for c in charts if c.name in must]
+        picked += [c for c in charts if c.name not in must][::9]
+        charts = sorted(set(picked))[:12]
+        # keep one id collision in the sample
+        debt = [
+            c
+            for c in sorted(CORPUS.glob("*.json"))
+            if "debt" in c.name.lower()
+        ]
+        charts = sorted(set(charts) | set(debt[:2]))
     refused: Dict[str, str] = {}
     by_module: Dict[str, List[str]] = {}
-    for src in sorted(CORPUS.glob("*.json")):
+    for src in charts:
         out = tmp_path / src.stem
         out.mkdir()
         code, text = _gen(src, out, "-f")
@@ -170,7 +190,7 @@ def test_whole_corpus_generates_parses_imports_mounts(
         assert reason, name
     # charts whose ids collide produce the same filename
     collisions = {m: v for m, v in by_module.items() if len(v) > 1}
-    assert collisions, "the corpus has id collisions by construction"
+    assert collisions, "the sample must contain an id collision"
 
 
 def test_colliding_module_names_are_reported_by_check(

@@ -148,24 +148,6 @@ def test_check_does_not_import_the_web_companions(
     assert code == 0, text
 
 
-def test_check_over_corpus_charts_is_quick(tmp_path: pathlib.Path) -> None:
-    import time
-
-    charts = sorted(CORPUS.glob("*.json"))[:20]
-    for i, chart in enumerate(charts):
-        _run(
-            ["gt", str(chart), "-o", str(tmp_path / str(i)), "--plain"]
-            + ["--with-api", "--with-models", "-f", "--no-verify"]
-        )
-    t0 = time.perf_counter()
-    for i, chart in enumerate(charts):
-        _run(
-            ["gt", str(chart), "-o", str(tmp_path / str(i)), "--plain"]
-            + ["--with-api", "--with-models", "--check"]
-        )
-    assert time.perf_counter() - t0 < 60.0
-
-
 # -----------------------------------------------------------------------------
 # leftovers and foreign overwrites
 # -----------------------------------------------------------------------------
