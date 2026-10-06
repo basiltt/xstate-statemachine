@@ -566,7 +566,7 @@ Rules of the registry:
 - **Constructed after, not before.** A global plugin is attached to interpreters built *after* `register_global` — both engines, `from_snapshot`, and spawned children. Interpreters that already exist are not touched (their lifecycle hooks have already started firing).
 - **Same containment as `.use()`.** A raising global plugin is reported through `on_plugin_error` and never breaks the machine.
 - **Thread-safe.** Registration and removal take a lock; `global_plugins()` returns a copy. Registering the same object twice is a no-op. Battle-tested with 100 threads registering while 100 threads construct interpreters: every interpreter's plugin set is a snapshot of the registry at *its* construction time.
-- **Not de-duplicated against `.use()`.** A plugin registered globally **and** attached with `.use()` receives every hook twice. Pick one route per plugin.
+- **De-duplicated against `.use()` by identity (0.11.0, #273 battle).** The same plugin *instance* registered globally **and** attached with `.use()` (or `.use()`-d twice) receives every hook once. Two distinct instances of the same class are two observers.
 - **`unregister_global()` of a plugin that was never registered** returns `False` and does nothing.
 - **Leave it as you found it.** A pytest fixture should `unregister_global` (or `xstate_statemachine.plugins.clear_global_plugins()`) in teardown.
 

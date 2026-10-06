@@ -1274,6 +1274,22 @@ class BaseInterpreter(Generic[TContext]):
             The interpreter instance (`self`) with the correct subclass type
             to allow for convenient and type-safe method chaining.
         """
+        # 🔥 battle #273: a plugin that is already attached (registered
+        #    globally via `plugins.register_global` AND passed to `use()`,
+        #    or `use()`-d twice) fired every hook twice -- every metric
+        #    doubled. `_SafePlugin` hides identity from `in`, so compare
+        #    the wrapped objects explicitly. Same instance == same observer.
+        if any(
+            (p.wrapped if isinstance(p, _SafePlugin) else p) is plugin
+            for p in self._plugins
+        ):
+            logger.debug(
+                "🔌 Plugin '%s' already attached to interpreter '%s'; "
+                "use() is a no-op for the same instance.",
+                type(plugin).__name__,
+                self.id,
+            )
+            return self
         self._plugins.append(
             cast(PluginBase["BaseInterpreter[Any]"], _SafePlugin(plugin))
         )

@@ -73,7 +73,7 @@ Each flag is `False`, `True` (a default-configured plugin) or a ready plugin ins
 | `interp_or_app` | Effect |
 |:--|:--|
 | `None` (default) | `plugins.register_global()` — every interpreter constructed **afterwards**: both engines, spawned/invoked children, `from_snapshot` restores. Existing interpreters are not touched. |
-| an interpreter | `.use()` each plugin. Already **running**? `on_interpreter_start` is replayed so its gauges/registrations see it. A plugin already attached to it (e.g. globally) is skipped -- attaching twice doubles every metric. |
+| an interpreter | `.use()` each plugin. Already **running**? `on_interpreter_start` is replayed so its gauges/registrations see it. A plugin instance already attached to it (e.g. globally) is skipped -- `use()` itself dedupes by identity since 0.11.0, so nothing can double a metric. |
 | an object with a `plugins` list (e.g. the `[starlette]` `StatechartRegistry`) | appended; the registry attaches them to every interpreter it builds. |
 
 `discovered=True` also attaches entry-point plugins through `plugins.attach_discovered()` ([#296](https://github.com/basiltt/xstate-statemachine/issues/296)); `allow=` narrows them by name. Returns the plugins attached. Anything else raises `TypeError`.
@@ -169,7 +169,7 @@ The hygiene primitives the plugins share, exported for your own exporters.
 | structlog lines lack `machine_id` | `merge_contextvars` missing from processors | add `structlog.contextvars.merge_contextvars` |
 | `"other"` in labels that are real states | the per-label cardinality cap tripped | see the series count; labels are first-come |
 | `active_interpreters` stays at 0 for an interpreter | it is not `running` (done, error, stopped or not started) | expected: the gauge counts `status == "running"` at scrape time |
-| Every counter is doubled | the same plugin instance is both global and `.use()`-d | attach it once (`instrument_all(interp)` skips duplicates) |
+| Every counter is doubled | two *different* plugin instances on one registry (e.g. `PrometheusPlugin()` in two modules both pointed at the global `REGISTRY`) | construct one instance and share it; the same instance attached twice is deduped by `use()` |
 | `MissingExtraError … pip install sentry-sdk` at `SentryPlugin()` | soft dependency missing (not at import time) | install the named package |
 | Two traces per order across a broker hop | spans are per event; context does not cross the wire on its own | carry `traceparent` in the message envelope and restore it on the consumer |
 | `SentryPlugin: sentry_sdk raised … reported once` | transport / DSN misconfiguration | fix the SDK setup; build a new plugin instance |

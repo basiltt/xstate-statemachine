@@ -274,22 +274,42 @@ def test_instrument_running_interpreter_prometheus_polls_it():
     assert v == 1
 
 
-def test_global_and_use_same_plugin_fires_twice_documented():
-    """The ENGINE does not dedupe (reported to the integrator): global AND
-    `.use()` of one instance doubles every hook. `instrument_all(interp)`
-    must not add the second copy."""
+def test_global_and_use_same_plugin_fires_once():
+    """🔥 battle #273: global AND `.use()` of one instance (or `.use()`
+    twice) doubled every hook -- every metric doubled. The engine now
+    dedupes by identity in `use()`, both engines."""
     base = _Count()
     SyncInterpreter(_toggle()).use(base).start().send("T")
     c = _Count()
     plugins.register_global(c)
     try:
-        SyncInterpreter(_toggle()).use(c).start().send("T")
+        SyncInterpreter(_toggle()).use(c).use(c).start().send("T")
+        assert c.n == base.n
         it = SyncInterpreter(_toggle())
         instrument_all(it, otel=c)
         c.n = 0
         it.start().send("T")
     finally:
         plugins.unregister_global(c)
+    assert c.n == base.n
+
+
+def test_use_twice_is_once_on_the_async_engine():
+    import asyncio
+
+    from src.xstate_statemachine import Interpreter
+
+    base = _Count()
+    SyncInterpreter(_toggle()).use(base).start().send("T")
+    c = _Count()
+
+    async def go():
+        i = await Interpreter(_toggle()).use(c).use(c).start()
+        await i.send("T")
+        await asyncio.sleep(0.02)
+        await i.stop()
+
+    asyncio.run(go())
     assert c.n == base.n
 
 
