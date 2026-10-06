@@ -50,7 +50,7 @@ from starlette.responses import JSONResponse, Response
 from starlette.routing import Route
 
 from ...events import Receipt
-from ...exceptions import StoreUnavailableError
+from ...exceptions import InvalidKeyError, StoreUnavailableError
 from ...interpreter import Interpreter
 from ...models import MachineNode
 from ...persistence.async_store import as_async
@@ -67,9 +67,12 @@ from ...persistence.locking import (
 )
 from ...persistence.store import validate_key
 from ...plugins import PluginBase
+from ._act_helpers import _comparable, _Recorder, _SkipSave
 from ._fanout import _Subscribers
+from ._probes import _ProbesMixin
 from ._http import (
     ForbiddenError,
+    ShuttingDownError,
     idempotency_key_from,
     json_body,
     principal_or_401,
@@ -119,29 +122,6 @@ class _Registration:
     strict: Optional[bool]
 
 
-class _Recorder(PluginBase):  # type: ignore[type-arg]
-    """Collect the changed USER receipts of one `act()` for fan-out."""
-
-    def __init__(self) -> None:
-        self.changed: List[Receipt] = []
-
-    def on_event_processed(
-        self, interpreter: Any, event: Any, receipt: Receipt
-    ) -> None:
-        etype = str(getattr(event, "type", ""))
-        if receipt.changed and not etype.startswith(_INTERNAL_PREFIXES):
-            self.changed.append(receipt)
-
-
-class _SkipSave(Exception):
-    """Raised inside `act()` to leave without persisting (duplicates)."""
-
-    def __init__(self, receipt: Receipt, body: Dict[str, Any]) -> None:
-        super().__init__("skip save")
-        self.receipt = receipt
-        self.body = body
-
-
 class _Resident:
     __slots__ = ("interp", "version", "last_used")
 
@@ -151,7 +131,7 @@ class _Resident:
         self.last_used = now
 
 
-class StatechartRegistry:
+class StatechartRegistry(_ProbesMixin):
     """Named machines over one store, exposed to an ASGI app.
 
     Args:
@@ -214,6 +194,13 @@ class StatechartRegistry:
             raise ValueError("max_connections_per_key must be >= 1")
         self.store = store
         is_async = inspect.iscoroutinefunction(getattr(store, "load", None))
+        if run_timers and is_async:
+            # ⏰ Battle #275-a: this used to surface only at STARTUP, from
+            #    inside the lifespan -- a deploy that boots and then dies.
+            raise TypeError(
+                "run_timers=True needs a sync StateStore (the scanner runs "
+                "in a thread); pass the sync store to the registry."
+            )
         self._sync_store = None if is_async else store
         self._astore = store if is_async else as_async(store)
         self.lock = lock
@@ -311,6 +298,11 @@ class StatechartRegistry:
     def store_key(self, name: str, key: str) -> str:
         """The store key an instance lives under: ``"<name>.<key>"``."""
         self._reg(name)
+        if not isinstance(key, str) or not key:
+            # 🔑 Battle #275-a: ``"<name>."`` is a valid STORE key, so an
+            #    empty instance key used to be accepted and every caller
+            #    with an empty path segment shared one instance.
+            raise InvalidKeyError("Instance key must be a non-empty str.")
         return validate_key(f"{name}{KEY_SEP}{key}")
 
     def machine_for_store_key(self, store_key: str) -> MachineNode[Any]:
@@ -399,6 +391,18 @@ class StatechartRegistry:
         if bodies:
             self.subscribers.publish(name, str(key), bodies)
 
+    async def _stored_is_current(
+        self, name: str, key: str, reg: _Registration
+    ) -> bool:
+        """Whether the stored blob needs no rewrite: it exists and was
+        written by this machine version. A lazily MIGRATED (or brand-new)
+        instance must be saved even by a no-op event."""
+        rec = await self._astore.load(self.store_key(name, key))
+        if rec is None:
+            return False
+        stored = getattr(rec, "machine_version", "") or ""
+        return bool(stored == (reg.machine.version or ""))
+
     async def exists(self, name: str, key: str) -> bool:
         """Whether instance *key* of *name* has a stored snapshot."""
         return await self._astore.load(self.store_key(name, key)) is not None
@@ -425,12 +429,18 @@ class StatechartRegistry:
             )
             body = state_body(interp, reg.context_serializer)
         else:
-            interp = Interpreter(reg.machine, clock=self.clock)
-            await interp.start()
-            try:
-                body = state_body(interp, reg.context_serializer)
-            finally:
-                await interp.stop()
+            # 🔍 Battle #275-a: this used to START a real `Interpreter`, so
+            #    every GET / SSE connect on a missing instance ran the
+            #    initial state's entry actions (and invokes) as a side
+            #    effect of a read. The pure-transition probe computes the
+            #    initial configuration with actions recorded, not run.
+            #    Synchronous, so the per-thread cached probe is not shared
+            #    across an `await`.
+            from ...helpers import _build_probe
+
+            probe, _ = _build_probe(reg.machine, None)
+            probe.start()
+            body = state_body(probe, reg.context_serializer)
         return body
 
     # -- one-call HTTP helper -------------------------------------------------
@@ -469,6 +479,7 @@ class StatechartRegistry:
             reg = self._reg(name)
             try:
                 async with self.act(name, key, principal=principal) as interp:
+                    before = _comparable(interp)
                     receipt = await interp.send(
                         event_type, wait=True, **payload
                     )
@@ -488,6 +499,18 @@ class StatechartRegistry:
                         #    make the ORIGINAL request's save lose with a
                         #    409 -- under a burst of retries with one key,
                         #    nobody would win (#277 load test).
+                        raise _SkipSave(receipt, body)
+                    if (
+                        idem is None
+                        and _comparable(interp) == before
+                        and await self._stored_is_current(name, key, reg)
+                    ):
+                        # 💤 Battle #275-a: a refused / no-op send (an
+                        #    undeclared event, a finished instance) changed
+                        #    NOTHING, yet the save bumped the version -- and
+                        #    a concurrent real writer then lost with 409.
+                        #    Not with an idempotency key: its claim must be
+                        #    recorded even for a no-op (side-effect actions).
                         raise _SkipSave(receipt, body)
             except _SkipSave as skip:
                 receipt, body = skip.receipt, skip.body
@@ -562,7 +585,7 @@ class StatechartRegistry:
                 self._residents.move_to_end(topic)
                 return res.interp
             if self.draining:
-                raise RuntimeError("registry is shutting down")
+                raise ShuttingDownError("registry is shutting down")
             skey = self.store_key(name, key)
             rec = await self._astore.load(skey)
             if rec is None:
@@ -590,11 +613,21 @@ class StatechartRegistry:
             return interp
 
     async def release_resident(self, name: str, key: str) -> None:
-        """Save and stop the resident for *key* (no-op if none)."""
+        """Save and stop the resident for *key* (no-op if none).
+
+        Raises:
+            ConflictError: another writer (an `act()`, another worker)
+                saved *key* since the resident loaded it; the resident's
+                work is NOT saved. It is stopped and dropped either way.
+        """
         async with self._lock():
             res = self._residents.pop((name, str(key)), None)
             if res is not None:
-                await self._retire((name, str(key)), res)
+                # 🔥 Battle #275-a: a fenced save used to be logged and
+                #    swallowed here too -- the one caller who could react
+                #    to "your work was lost" never heard of it. Background
+                #    eviction (LRU / TTL / shutdown) has no caller and logs.
+                await self._retire((name, str(key)), res, reraise=True)
 
     async def evict_idle(self) -> int:
         """Retire residents idle longer than `resident_idle_ttl_s`."""
@@ -608,7 +641,13 @@ class StatechartRegistry:
             await self._retire(topic, self._residents.pop(topic))
         return len(stale)
 
-    async def _retire(self, topic: Tuple[str, str], res: _Resident) -> None:
+    async def _retire(
+        self,
+        topic: Tuple[str, str],
+        res: _Resident,
+        *,
+        reraise: bool = False,
+    ) -> None:
         interp = res.interp
         try:
             if interp.status == "running":
@@ -623,6 +662,8 @@ class StatechartRegistry:
             logger.exception(
                 "🔥 resident %s/%s: save on retire failed", *topic
             )
+            if reraise:
+                raise
         finally:
             with contextlib.suppress(Exception):
                 await interp.stop()
@@ -735,47 +776,18 @@ class StatechartRegistry:
                     self.drain_timeout_s,
                     len(self._residents),
                 )
+                # 🧹 Battle #275-a: abandoned residents were dropped while
+                #    still RUNNING -- their timers/invokes kept firing into
+                #    a dead registry. Unsaved, but stopped.
+                abandoned = [r.interp for r in self._residents.values()]
                 self._residents.clear()
+                for interp in abandoned:
+                    with contextlib.suppress(Exception):
+                        await interp.stop()
             left = max(0.0, deadline - time.monotonic())
             await asyncio.get_running_loop().run_in_executor(
                 None, self._stop_scanner, left
             )
-
-    # -- probes ----------------------------------------------------------------
-    def health_route(self, path: str = "/_xsm/health") -> Route:
-        """Liveness: 200 while the process can answer."""
-
-        async def health(request: Request) -> Response:
-            return JSONResponse({"status": "ok"})
-
-        return Route(path, health, methods=["GET"])
-
-    def ready_route(self, path: str = "/_xsm/ready") -> Route:
-        """Readiness: 200 once `lifespan` started, the store answers and we
-        are not draining; else a 503 problem."""
-
-        async def ready(request: Request) -> Response:
-            if not self.started or self.draining:
-                return problem(503, "Not Ready")
-            probe = getattr(self._astore, "health", None)
-            if probe is not None:
-                try:
-                    info = await probe()
-                except Exception as exc:  # noqa: BLE001
-                    return problem(
-                        503, "Store unavailable", error=type(exc).__name__
-                    )
-                if isinstance(info, dict) and info.get("ok") is False:
-                    return problem(503, "Store unavailable")
-            return JSONResponse(
-                {
-                    "status": "ready",
-                    "residents": self.residents,
-                    "timers": self.scanner is not None,
-                }
-            )
-
-        return Route(path, ready, methods=["GET"])
 
 
 def receipt_to_status_is_server_error(exc: BaseException) -> bool:
