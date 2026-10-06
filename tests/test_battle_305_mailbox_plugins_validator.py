@@ -639,17 +639,17 @@ class TestGlobalRegistryBattle(_QuietLogs):
         self.assertEqual(rec.started.count("m"), 2)
         self.assertTrue(any(s != "m" for s in rec.started))
 
-    def test_global_and_use_attach_twice_documented(self) -> None:
-        # 📝 Documented: `.use()` does not deduplicate against the
-        # registry -- the same object registered both ways sees each hook
-        # TWICE. Register globally OR per instance, not both.
+    def test_global_and_use_attach_once(self) -> None:
+        # 🔥 battle #273: the same object registered globally AND attached
+        # with `.use()` used to see each hook TWICE (every metric doubled);
+        # `use()` now dedupes by identity. Documented in plugins.md.
         rec = Recorder()
         register_global(rec)
         try:
-            SyncInterpreter(machine()).use(rec).start().stop()
+            SyncInterpreter(machine()).use(rec).use(rec).start().stop()
         finally:
             unregister_global(rec)
-        self.assertEqual(rec.started, ["m", "m"])
+        self.assertEqual(rec.started, ["m"])
 
     def test_unregister_never_registered_is_false_noop(self) -> None:
         self.assertFalse(unregister_global(Recorder()))

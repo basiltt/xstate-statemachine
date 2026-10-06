@@ -73,7 +73,7 @@ Each flag is `False`, `True` (a default-configured plugin) or a ready plugin ins
 | `interp_or_app` | Effect |
 |:--|:--|
 | `None` (default) | `plugins.register_global()` — every interpreter constructed **afterwards**: both engines, spawned/invoked children, `from_snapshot` restores. Existing interpreters are not touched. |
-| an interpreter | `.use()` each plugin. |
+| an interpreter | `.use()` each plugin. Already **running**? `on_interpreter_start` is replayed so its gauges/registrations see it. A plugin instance already attached to it (e.g. globally) is skipped -- `use()` itself dedupes by identity since 0.11.0, so nothing can double a metric. |
 | an object with a `plugins` list (e.g. the `[starlette]` `StatechartRegistry`) | appended; the registry attaches them to every interpreter it builds. |
 
 `discovered=True` also attaches entry-point plugins through `plugins.attach_discovered()` ([#296](https://github.com/basiltt/xstate-statemachine/issues/296)); `allow=` narrows them by name. Returns the plugins attached. Anything else raises `TypeError`.
@@ -113,21 +113,21 @@ An `on_span` callable for the `[agents]` `AgentTracePlugin`: each trace record b
 | `xstatemachine_guard_evaluations_total` | counter | `machine, guard, result` |
 | `xstatemachine_guard_errors_total` | counter | `machine, guard` |
 | `xstatemachine_action_errors_total` | counter | `machine, action` |
-| `xstatemachine_service_duration_seconds` | histogram | `machine, service` |
+| `xstatemachine_service_duration_seconds` | histogram | `machine, service` — completed and failed services only; a service **cancelled** because its state was exited is not observed (no sample, no error count; its OTel span ends with `statechart.cancelled=true`) |
 | `xstatemachine_service_errors_total` | counter | `machine, service` |
 | `xstatemachine_chain_trips_total` | counter | `machine` |
-| `xstatemachine_active_interpreters` | gauge | `machine` |
+| `xstatemachine_active_interpreters` | gauge (polled at scrape) | `machine` — interpreters whose `status` is `running` |
 | `xstatemachine_queue_depth` | gauge (polled at scrape) | `machine` |
 
-Metric objects are created once per `CollectorRegistry` and shared, so several plugins on one registry never collide. `labels=()` drops the `machine` label. `queue_depth` has no hook — it is a collector that reads `interpreter.queue_depth` from live interpreters at scrape time.
+Metric objects are created once per `CollectorRegistry` **and label set** and shared, so several plugins on one registry never collide; a second plugin with a *different* `labels=` on the same registry is a `ValueError`. `labels=()` drops the `machine` label. `queue_depth` has no hook — it is a collector that reads `interpreter.queue_depth` from live interpreters at scrape time.
 
 ### `StructlogPlugin()` / `LoguruPlugin(logger=None)`
 
-Bind `machine_id`, `state` (sorted leaf ids), `event` and — when the event payload carries one — `correlation_id` from `on_event_received` until `on_event_processed`, so any log line your **actions** emit carries them. structlog: through `structlog.contextvars` (keep `merge_contextvars` in your processors); loguru: `logger.contextualize()` → `record["extra"]`. Unbound afterwards.
+Bind `machine_id`, `state` (sorted leaf ids), `event` and — when the event payload carries one — `correlation_id` from `on_event_received` until `on_event_processed`, so any log line your **actions** emit carries them. structlog: through `structlog.contextvars` (keep `merge_contextvars` in your processors); loguru: `logger.contextualize()` → `record["extra"]`. Unbound afterwards. The in-flight stack is per thread **and** per asyncio task, so several async interpreters on one loop never unwind each other's fields. `correlation_id` is truncated to 128 characters. `LoguruPlugin(logger=...)` raises `TypeError` for an object without `.contextualize()`.
 
 ### `SentryPlugin(level="info", *, capture_errors=False, sdk=None)`
 
-A `statechart` breadcrumb per transition (`door.closed -> door.open (OPEN)`). With `capture_errors=True`, action / guard / service errors and chain trips are sent with `capture_exception` and `statechart.*` tags. Works with sentry-sdk 1.x and 2.x.
+A `statechart` breadcrumb per transition (`door.closed -> door.open (OPEN)`). With `capture_errors=True`, action / guard / service errors and chain trips are sent with `capture_exception` and `statechart.*` tags. Works with sentry-sdk 1.x (`push_scope`) and 2.x (`new_scope`). Each failure is captured **once** (the action error, not also its `on_error`). Breadcrumb `data` is only `machine_id` and `event` -- never payloads or context. If an `sdk` call raises, the plugin logs one warning and goes inert (same as `OpenTelemetryPlugin` with a raising tracer); the chart keeps running.
 
 ### `LabelGuard(max_label_values)`, `event_label(machine, event_type)`, `UNKNOWN`, `OTHER`
 
@@ -137,7 +137,7 @@ The hygiene primitives the plugins share, exported for your own exporters.
 
 > **What this does:** observes every hook without changing behaviour — every plugin is wrapped by the engine's `_SafePlugin`, so an exporter that raises is reported via `on_plugin_error` and the machine keeps running. `instrument_all()` covers every interpreter constructed after the call, on both engines, including children and restores. The hot path pays for `on_event_processed` only when a plugin overrides it (all of these do, by design: it carries the outcome).
 >
-> **What this does not do:** configure an OTel SDK or exporter; retro-instrument interpreters that already exist; guarantee delivery of telemetry (exporters are best-effort); emit OTel messaging spans for brokers (those arrive with the EDA broker adapters). Per-event overhead is measured in the [performance budgets](../production-characteristics/).
+> **What this does not do:** configure an OTel SDK or exporter; retro-instrument interpreters that already exist; guarantee delivery of telemetry (exporters are best-effort); emit OTel messaging spans for brokers (those arrive with the EDA broker adapters). Per-event overhead was measured once, on a two-state chart (Windows, CPython 3.14): roughly 3× with `PrometheusPlugin`, 4–5× with `OpenTelemetryPlugin` (SDK, no exporter), about 40 % of it the engine's per-event receipt. It is not a budgeted benchmark; measure on your chart.
 >
 > See the programme-wide [Guarantees](../guarantees/) and [Security](../security/) pages ([#303](https://github.com/basiltt/xstate-statemachine/issues/303)).
 
@@ -167,3 +167,9 @@ The hygiene primitives the plugins share, exported for your own exporters.
 | `event="unknown"` everywhere | events not declared in the chart | declare them in `on:` (or it is traffic you did not expect) |
 | Series ending in `"other"` | `max_label_values` reached | raise it deliberately, or reduce label spread |
 | structlog lines lack `machine_id` | `merge_contextvars` missing from processors | add `structlog.contextvars.merge_contextvars` |
+| `"other"` in labels that are real states | the per-label cardinality cap tripped | see the series count; labels are first-come |
+| `active_interpreters` stays at 0 for an interpreter | it is not `running` (done, error, stopped or not started) | expected: the gauge counts `status == "running"` at scrape time |
+| Every counter is doubled | two *different* plugin instances on one registry (e.g. `PrometheusPlugin()` in two modules both pointed at the global `REGISTRY`) | construct one instance and share it; the same instance attached twice is deduped by `use()` |
+| `MissingExtraError … pip install sentry-sdk` at `SentryPlugin()` | soft dependency missing (not at import time) | install the named package |
+| Two traces per order across a broker hop | spans are per event; context does not cross the wire on its own | carry `traceparent` in the message envelope and restore it on the consumer |
+| `SentryPlugin: sentry_sdk raised … reported once` | transport / DSN misconfiguration | fix the SDK setup; build a new plugin instance |

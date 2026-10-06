@@ -20,7 +20,14 @@ from __future__ import annotations
 import threading
 from typing import Any, Dict, Optional, Set
 
-__all__ = ["LabelGuard", "UNKNOWN", "OTHER", "event_label", "INIT_EVENT"]
+__all__ = [
+    "LabelGuard",
+    "UNKNOWN",
+    "OTHER",
+    "event_label",
+    "INIT_EVENT",
+    "active_with_ancestors",
+]
 
 #: Fallback for a value outside the chart's allow-list.
 UNKNOWN = "unknown"
@@ -75,3 +82,14 @@ class LabelGuard:
                 return OTHER
             seen.add(text)
             return text
+
+
+def active_with_ancestors(interpreter: Any) -> Set[str]:
+    """The active leaf ids plus every ancestor id -- the set an invoke's
+    owning state must be in to still be live (battle #273)."""
+    out: Set[str] = set()
+    for sid in interpreter.current_state_ids:
+        parts = str(sid).split(".")
+        for n in range(1, len(parts) + 1):
+            out.add(".".join(parts[:n]))
+    return out

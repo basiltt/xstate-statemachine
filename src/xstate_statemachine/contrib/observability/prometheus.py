@@ -13,7 +13,11 @@
 #
 # ⏱️ `queue_depth` has no hook (the inbox is engine-private), so it is a
 #    POLLING collector: at scrape time it reads `interpreter.queue_depth`
-#    from a weak set of live interpreters.
+#    from a weak set of live interpreters. Battle #273: `active_interpreters`
+#    is polled the same way (count of `status == "running"`) -- a counter
+#    decremented only in `on_interpreter_stop` drifted upward forever for
+#    machines that finished (`done`) or failed (`error`) without `stop()`,
+#    and for interpreters garbage-collected while running.
 # -----------------------------------------------------------------------------
 """Prometheus metrics plugin."""
 
@@ -24,32 +28,39 @@ import time
 import weakref
 from typing import Any, Dict, Iterator, Optional, Sequence, Tuple
 
-from prometheus_client import REGISTRY, Counter, Gauge, Histogram
+from prometheus_client import REGISTRY, Counter, Histogram
 from prometheus_client.core import GaugeMetricFamily
 
 from ...plugins import PluginBase
-from ._hygiene import LabelGuard, event_label
+from ._hygiene import LabelGuard, active_with_ancestors, event_label
 
 __all__ = ["PrometheusPlugin", "METRIC_PREFIX"]
 
 METRIC_PREFIX = "xstatemachine"
 
-_METRICS: "weakref.WeakKeyDictionary[Any, Dict[str, Any]]" = (
+_METRICS: "weakref.WeakKeyDictionary[Any, Dict[bool, Dict[str, Any]]]" = (
     weakref.WeakKeyDictionary()
 )
 _METRICS_LOCK = threading.Lock()
 
 
 class _QueueDepthCollector:
-    """Scrape-time collector: sum of ``queue_depth`` per machine."""
+    """Scrape-time collector: ``queue_depth`` (sum) and
+    ``active_interpreters`` (count of running) per machine, from a weak
+    set of every interpreter that ever started under this registry."""
 
     def __init__(self, machine_label: bool) -> None:
         self.machine_label = machine_label
         self.interpreters: "weakref.WeakSet[Any]" = weakref.WeakSet()
+        # 🔥 battle #273 (3.9 CI): a scrape iterating the WeakSet while a
+        #    thread starts an interpreter raised "Set changed size during
+        #    iteration"; snapshot and add under one lock.
+        self._lock = threading.Lock()
         self.guard: Optional[LabelGuard] = None
 
     def describe(self) -> Iterator[Any]:
         yield self._family()
+        yield self._active_family()
 
     def _family(self) -> GaugeMetricFamily:
         return GaugeMetricFamily(
@@ -58,21 +69,40 @@ class _QueueDepthCollector:
             labels=["machine"] if self.machine_label else [],
         )
 
+    def _active_family(self) -> GaugeMetricFamily:
+        return GaugeMetricFamily(
+            f"{METRIC_PREFIX}_active_interpreters",
+            "Interpreters currently running (polled at scrape time).",
+            labels=["machine"] if self.machine_label else [],
+        )
+
     def collect(self) -> Iterator[Any]:
         fam = self._family()
+        act = self._active_family()
         totals: Dict[str, int] = {}
-        for interp in list(self.interpreters):
-            if getattr(interp, "status", None) != "running":
-                continue
+        running: Dict[str, int] = {}
+        # every machine id ever seen keeps a (possibly 0) sample so a
+        # dashboard sees the series drop, not vanish
+        seen: Dict[str, None] = {}
+        with self._lock:
+            live = list(self.interpreters)
+        for interp in live:
             try:
+                key = str(interp.machine.id) if self.machine_label else ""
+                seen.setdefault(key)
+                if getattr(interp, "status", None) != "running":
+                    continue
+                running[key] = running.get(key, 0) + 1
                 depth = int(interp.queue_depth)
             except Exception:  # noqa: BLE001 -- a scrape never raises
                 continue
-            key = str(interp.machine.id) if self.machine_label else ""
             totals[key] = totals.get(key, 0) + depth
-        for key, depth in sorted(totals.items()):
-            fam.add_metric([key] if self.machine_label else [], depth)
+        for key in sorted(seen):
+            labels = [key] if self.machine_label else []
+            fam.add_metric(labels, totals.get(key, 0))
+            act.add_metric(labels, running.get(key, 0))
         yield fam
+        yield act
 
 
 def _build(registry: Any, machine_label: bool) -> Dict[str, Any]:
@@ -127,12 +157,6 @@ def _build(registry: Any, machine_label: bool) -> Dict[str, Any]:
         "chain_trips": Counter(
             f"{p}_chain_trips", "Runaway-chain budget trips.", m, **kw
         ),
-        "active": Gauge(
-            f"{p}_active_interpreters",
-            "Interpreters currently started and not stopped.",
-            m,
-            **kw,
-        ),
         "queue_depth": qd,
     }
 
@@ -165,19 +189,30 @@ class PrometheusPlugin(PluginBase[Any]):
         self.guard = LabelGuard(max_label_values)
         self.clock = clock or time.perf_counter
         with _METRICS_LOCK:
-            key = self.registry
-            metrics = _METRICS.get(key)
-            if metrics is None or (
-                metrics["queue_depth"].machine_label != self.machine_label
-            ):
-                metrics = _build(self.registry, self.machine_label)
-                _METRICS[key] = metrics
+            per_registry = _METRICS.setdefault(self.registry, {})
+            if self.machine_label not in per_registry:
+                # 🔥 battle #273: two plugins with DIFFERENT base label
+                #    sets on one registry cannot share metric names
+                #    (`DuplicateTimeseries` on the second). Refuse with
+                #    a message instead of a prometheus_client error.
+                if per_registry:
+                    other = next(iter(per_registry))
+                    raise ValueError(
+                        "PrometheusPlugin: this registry already has "
+                        f"metrics with labels={('machine',) if other else ()}; "
+                        "one label set per registry (pass another "
+                        "CollectorRegistry)"
+                    )
+                per_registry[self.machine_label] = _build(
+                    self.registry, self.machine_label
+                )
+            metrics = per_registry[self.machine_label]
         self.m = metrics
         self._lock = threading.Lock()
         self._started: Dict[int, float] = {}
         self._unhandled: Dict[int, bool] = {}
-        self._services: Dict[Tuple[int, str], float] = {}
-        self._active: "weakref.WeakSet[Any]" = weakref.WeakSet()
+        #: (id(interp), invoke id) -> (started, owning state id)
+        self._services: Dict[Tuple[int, str], Tuple[float, str]] = {}
 
     # -- helpers ----------------------------------------------------------
     def _base(self, interp: Any) -> Tuple[str, ...]:
@@ -190,19 +225,30 @@ class PrometheusPlugin(PluginBase[Any]):
 
     # -- lifecycle --------------------------------------------------------
     def on_interpreter_start(self, interpreter: Any) -> None:
-        self.m["queue_depth"].interpreters.add(interpreter)
-        with self._lock:
-            if interpreter in self._active:
-                return
-            self._active.add(interpreter)
-        self.m["active"].labels(*self._base(interpreter)).inc()
+        # the collector polls `status` at scrape time (see header)
+        qd = self.m["queue_depth"]
+        with qd._lock:
+            qd.interpreters.add(interpreter)
 
     def on_interpreter_stop(self, interpreter: Any) -> None:
+        self._forget(interpreter)
+
+    def on_done(self, interpreter: Any, output: Any) -> None:
+        self._forget(interpreter)
+
+    def on_error(self, interpreter: Any, error: BaseException) -> None:
+        self._forget(interpreter)
+
+    def _forget(self, interpreter: Any) -> None:
+        """Drop per-interpreter bookkeeping on any terminal status
+        (battle #273: `done` / `error` reap without `on_interpreter_stop`,
+        so timers for in-flight events / services were left behind)."""
+        key = id(interpreter)
         with self._lock:
-            if interpreter not in self._active:
-                return
-            self._active.discard(interpreter)
-        self.m["active"].labels(*self._base(interpreter)).dec()
+            self._started.pop(key, None)
+            self._unhandled.pop(key, None)
+            for k in [k for k in self._services if k[0] == key]:
+                self._services.pop(k, None)
 
     # -- events -----------------------------------------------------------
     def on_event_received(self, interpreter: Any, event: Any) -> None:
@@ -217,6 +263,7 @@ class PrometheusPlugin(PluginBase[Any]):
         self, interpreter: Any, event: Any, receipt: Any
     ) -> None:
         key = id(interpreter)
+        self._drop_cancelled_services(interpreter)
         started = self._started.pop(key, None)
         unhandled = self._unhandled.pop(key, False)
         base = self._base(interpreter)
@@ -295,18 +342,39 @@ class PrometheusPlugin(PluginBase[Any]):
 
     # -- services ---------------------------------------------------------
     def on_service_start(self, interpreter: Any, invocation: Any) -> None:
-        self._services[(id(interpreter), str(invocation.id))] = self.clock()
+        owner = str(getattr(getattr(invocation, "source", None), "id", ""))
+        with self._lock:
+            self._services[(id(interpreter), str(invocation.id))] = (
+                self.clock(),
+                owner,
+            )
 
     def _service_end(self, interpreter: Any, invocation: Any) -> None:
-        started = self._services.pop(
-            (id(interpreter), str(invocation.id)), None
-        )
-        if started is None:
+        with self._lock:
+            entry = self._services.pop(
+                (id(interpreter), str(invocation.id)), None
+            )
+        if entry is None:
             return
         self.m["service_duration"].labels(
             *self._base(interpreter),
             self._l("service", getattr(invocation, "src", "")),
-        ).observe(max(0.0, self.clock() - started))
+        ).observe(max(0.0, self.clock() - entry[0]))
+
+    def _drop_cancelled_services(self, interpreter: Any) -> None:
+        """battle #273: a service whose owning state was exited is
+        cancelled with no hook; drop its timer (a cancelled service is
+        neither a completion nor a failure -- it is simply not observed)."""
+        key = id(interpreter)
+        with self._lock:
+            mine = [(k, v) for k, v in self._services.items() if k[0] == key]
+        if not mine:
+            return
+        active = active_with_ancestors(interpreter)
+        with self._lock:
+            for k, (_t, owner) in mine:
+                if owner and owner not in active:
+                    self._services.pop(k, None)
 
     def on_service_done(
         self, interpreter: Any, invocation: Any, result: Any
