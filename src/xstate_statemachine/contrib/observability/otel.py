@@ -73,6 +73,17 @@ def _incoming_traceparent(event: Any) -> Optional[str]:
     return None
 
 
+def _opaque(value: Any) -> str:
+    """JSON fallback for ``record_context``: a type tag, never ``str()``.
+
+    battle #273: ``default=str`` exported ``repr()`` of arbitrary objects
+    (``Session(password=...)``) and the text of ``bytes`` values --
+    ``redact()`` only sees mapping KEYS, so anything hidden inside an
+    opaque value bypassed it (X0.6).
+    """
+    return f"<{type(value).__name__}>"
+
+
 def _leaf_ids(states: Any) -> List[str]:
     return sorted(str(getattr(s, "id", s)) for s in states or ())
 
@@ -238,6 +249,16 @@ class OpenTelemetryPlugin(PluginBase[Any]):
             _, span, actions = stack.pop(idx)
             if not stack:
                 self._events.pop(id(interpreter), None)
+        try:
+            self._finish_event_span(interpreter, span, actions, receipt)
+        finally:
+            # battle #273: a span popped off the stack MUST end, even when
+            # building an attribute raised -- otherwise it is never exported
+            span.end()
+
+    def _finish_event_span(
+        self, interpreter: Any, span: Any, actions: List[str], receipt: Any
+    ) -> None:
         span.set_attribute("statechart.to", sorted(receipt.state_ids))
         span.set_attribute("statechart.changed", bool(receipt.changed))
         span.set_attribute("statechart.denied", bool(receipt.denied))
@@ -245,19 +266,22 @@ class OpenTelemetryPlugin(PluginBase[Any]):
         span.set_attribute("statechart.actions", actions)
         if self.record_context:
             span.set_attribute(
-                "statechart.context",
-                json.dumps(
-                    redact(interpreter.context, self.redact_keys),
-                    default=str,
-                    sort_keys=True,
-                ),
+                "statechart.context", self._context_json(interpreter)
             )
         if receipt.error is not None:
             span.record_exception(receipt.error)
             span.set_status(
                 Status(StatusCode.ERROR, type(receipt.error).__name__)
             )
-        span.end()
+
+    def _context_json(self, interpreter: Any) -> str:
+        clean = redact(interpreter.context, self.redact_keys)
+        try:
+            return json.dumps(clean, default=_opaque, sort_keys=True)
+        except TypeError:
+            # battle #273: mixed-type dict keys ({1: .., "k": ..}) cannot
+            # be sorted; emit unsorted rather than lose the span
+            return json.dumps(clean, default=_opaque)
 
     # -- errors -----------------------------------------------------------
     def on_action_error(
