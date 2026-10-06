@@ -2,6 +2,7 @@
 #   docker compose up --build
 # One web container running 4 uvicorn workers, ONE scheduler (timers run in
 # exactly one process), and Redis as the shared store + idempotency inbox.
+# No `--role init` step: RedisStore needs no schema (SQLite does).
 services:
   redis:
     image: redis:7-alpine
@@ -30,6 +31,13 @@ services:
     environment:
       XSM_REDIS_URL: redis://redis:6379/0
     command: ["python", "app.py", "--role", "scheduler"]
+    # Exactly ONE scheduler. A second one is safe (each deadline still
+    # fires once) but wastes scans -- never scale this service.
+    deploy:
+      replicas: 1
+    # The image's HEALTHCHECK probes HTTP; the scheduler serves none.
+    healthcheck:
+      disable: true
     depends_on:
       redis:
         condition: service_healthy
