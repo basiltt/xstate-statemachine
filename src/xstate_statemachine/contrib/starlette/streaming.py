@@ -181,6 +181,78 @@ class _SSEResponse(StreamingResponse):
                     pass
 
 
+def _decode_frame(message: Any, max_body_bytes: int) -> Any:
+    """🔥 battle #275: Starlette's json decoding closed the socket (1003)
+    and raised on a non-JSON text frame, and a non-UTF-8 binary frame
+    crashed `dispatch` outright. A bad frame becomes an error frame; the
+    session survives. Returns the parsed JSON, `_TOO_BIG` or `_BAD_FRAME`."""
+    raw = message.get("text")
+    if raw is None:
+        raw = message.get("bytes") or b""
+    if len(raw) > max_body_bytes:
+        return _TOO_BIG
+    try:
+        return json.loads(raw)
+    except ValueError:  # JSONDecodeError + UnicodeDecodeError
+        return _BAD_FRAME
+
+
+def _frame_error(data: Any) -> Optional[Dict[str, Any]]:
+    """The error frame for a malformed inbound message, or ``None``."""
+    if data is _BAD_FRAME:
+        return {"kind": "error", "status": 400, "title": "Malformed JSON"}
+    if (
+        not isinstance(data, dict)
+        or not isinstance(data.get("type"), str)
+        or not isinstance(data.get("payload", {}), dict)
+    ):
+        return {"kind": "error", "status": 422, "title": "Bad message"}
+    return None
+
+
+async def _push_loop(
+    registry: Any, websocket: WebSocket, sub: Any, key: str
+) -> None:
+    """Forward committed transitions (and pings) to one WebSocket client
+    until the subscriber is closed or the socket goes away."""
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(
+                    sub.queue.get(), timeout=registry.heartbeat_s
+                )
+            except asyncio.TimeoutError:
+                await websocket.send_json({"kind": "ping"})
+                continue
+            if item is CLOSED:
+                # 1001 on shutdown; 1013 when cut for lagging.
+                await websocket.close(
+                    code=(
+                        WS_GOING_AWAY
+                        if registry.draining
+                        else WS_TRY_AGAIN_LATER
+                    )
+                )
+                return
+            seq, data = item
+            await websocket.send_json(
+                {"kind": "transition", "seq": seq, **data}
+            )
+    except asyncio.CancelledError:
+        raise
+    except (TypeError, ValueError):
+        # 🔥 battle #275: an unserialisable frame ended the pump SILENTLY
+        #    -- the socket stayed open, receipts still flowed, pushes
+        #    never came again. Close it loudly.
+        logger.exception("📡 websocket frame for %r not JSON", key)
+        try:
+            await websocket.close(code=WS_INTERNAL_ERROR)
+        except Exception:  # noqa: BLE001 -- already closed
+            pass
+    except Exception:  # noqa: BLE001 -- socket gone
+        return
+
+
 def websocket_endpoint(
     registry: Any, name: str, *, key_param: str = "key"
 ) -> Type[WebSocketEndpoint]:
@@ -240,19 +312,7 @@ def websocket_endpoint(
             self._pump = asyncio.ensure_future(self._push(websocket))
 
         async def decode(self, websocket: WebSocket, message: Any) -> Any:
-            # 🔥 battle #275: Starlette's json decoding closed the socket
-            #    (1003) and raised on a non-JSON text frame, and a
-            #    non-UTF-8 binary frame crashed `dispatch` outright. A bad
-            #    frame is an error frame; the session survives.
-            raw = message.get("text")
-            if raw is None:
-                raw = message.get("bytes") or b""
-            if len(raw) > registry.max_body_bytes:
-                return _TOO_BIG
-            try:
-                return json.loads(raw)
-            except ValueError:  # JSONDecodeError + UnicodeDecodeError
-                return _BAD_FRAME
+            return _decode_frame(message, registry.max_body_bytes)
 
         async def _reply(self, websocket: WebSocket, frame: Any) -> None:
             try:
@@ -261,67 +321,15 @@ def websocket_endpoint(
                 logger.debug("📡 websocket reply dropped (peer gone)")
 
         async def _push(self, websocket: WebSocket) -> None:
-            key = self._key
-            try:
-                while True:
-                    try:
-                        item = await asyncio.wait_for(
-                            self._sub.queue.get(), timeout=registry.heartbeat_s
-                        )
-                    except asyncio.TimeoutError:
-                        await websocket.send_json({"kind": "ping"})
-                        continue
-                    if item is CLOSED:
-                        # 1001 on shutdown; 1013 when cut for lagging.
-                        await websocket.close(
-                            code=(
-                                WS_GOING_AWAY
-                                if registry.draining
-                                else WS_TRY_AGAIN_LATER
-                            )
-                        )
-                        return
-                    seq, data = item
-                    await websocket.send_json(
-                        {"kind": "transition", "seq": seq, **data}
-                    )
-            except asyncio.CancelledError:
-                raise
-            except (TypeError, ValueError):
-                # 🔥 battle #275: an unserialisable frame ended the pump
-                #    SILENTLY -- the socket stayed open, receipts still
-                #    flowed, pushes never came again. Close it loudly.
-                logger.exception("📡 websocket frame for %r not JSON", key)
-                try:
-                    await websocket.close(code=WS_INTERNAL_ERROR)
-                except Exception:  # noqa: BLE001 -- already closed
-                    pass
-            except Exception:  # noqa: BLE001 -- socket gone
-                return
+            await _push_loop(registry, websocket, self._sub, self._key)
 
         async def on_receive(self, websocket: WebSocket, data: Any) -> None:
             if data is _TOO_BIG:
                 await websocket.close(code=WS_MESSAGE_TOO_BIG)
                 return
-            if data is _BAD_FRAME:
-                await self._reply(
-                    websocket,
-                    {
-                        "kind": "error",
-                        "status": 400,
-                        "title": "Malformed JSON",
-                    },
-                )
-                return
-            if (
-                not isinstance(data, dict)
-                or not isinstance(data.get("type"), str)
-                or not isinstance(data.get("payload", {}), dict)
-            ):
-                await self._reply(
-                    websocket,
-                    {"kind": "error", "status": 422, "title": "Bad message"},
-                )
+            error = _frame_error(data)
+            if error is not None:
+                await self._reply(websocket, error)
                 return
             etype = data["type"]
             try:
