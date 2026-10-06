@@ -4,10 +4,14 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List
+from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Union
 
 from ...events import Receipt
+from ...models import MachineNode
 from ...plugins import PluginBase
+
+Authorizer = Callable[..., Union[bool, Awaitable[bool]]]
 
 _INTERNAL_PREFIXES = ("done.", "error.", "after.", "xstate.")
 
@@ -77,3 +81,21 @@ class _StampIdempotencyKey(PluginBase):  # type: ignore[type-arg]
             payload["idempotency_key"] = self.key
         self._done = True
         return None
+
+
+@dataclass
+class _Registration:
+    name: str
+    machine: MachineNode[Any]
+    authorize: Authorizer
+    context_serializer: Optional[Callable[[Any], Any]]
+    strict: Optional[bool]
+
+
+class _Resident:
+    __slots__ = ("interp", "version", "last_used")
+
+    def __init__(self, interp: Any, version: int, now: float) -> None:
+        self.interp = interp
+        self.version = version
+        self.last_used = now

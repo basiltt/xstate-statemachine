@@ -31,7 +31,6 @@ import math
 import threading
 import time
 from collections import OrderedDict
-from dataclasses import dataclass
 from typing import (
     Any,
     AsyncIterator,
@@ -70,7 +69,10 @@ from ...persistence.store import validate_key
 from ...plugins import PluginBase
 from ._act_helpers import (
     _comparable,
+    Authorizer,
     _Recorder,
+    _Registration,
+    _Resident,
     _SkipSave,
     _StampIdempotencyKey,
 )
@@ -97,7 +99,6 @@ logger = logging.getLogger(__name__)
 
 __all__ = ["Authorizer", "StatechartRegistry", "allow_all"]
 
-Authorizer = Callable[..., Union[bool, Awaitable[bool]]]
 #: Separator between machine name and instance key in the STORE key.
 #: Names may not contain it; keys may (the split is on the first one).
 KEY_SEP = "."
@@ -120,24 +121,6 @@ def allow_all(
             name,
         )
     return True
-
-
-@dataclass
-class _Registration:
-    name: str
-    machine: MachineNode[Any]
-    authorize: Authorizer
-    context_serializer: Optional[Callable[[Any], Any]]
-    strict: Optional[bool]
-
-
-class _Resident:
-    __slots__ = ("interp", "version", "last_used")
-
-    def __init__(self, interp: Any, version: int, now: float) -> None:
-        self.interp = interp
-        self.version = version
-        self.last_used = now
 
 
 class StatechartRegistry(_ProbesMixin, _ScannerMixin):
