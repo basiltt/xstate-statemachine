@@ -1450,6 +1450,52 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **Observability, as battle-tested (#273).** The fulfilment pipeline on a
+  dashboard an SRE can trust: Prometheus + OpenTelemetry on every
+  interpreter the choreography router builds. Pinned on `eda_fulfilment`:
+  every counter equals the audit log after clean orders, a cancel
+  mid-flight and a dead-lettered poison command; 1 000 undeclared event
+  types × 1 000 subjects mint one `unknown` series and the scrape stays
+  under 64 KB with no order id / payload / envelope id as a label or span
+  attribute; a span exporter that is down never reaches the machine and
+  spans flow again when it recovers; service spans are children of the
+  transition span that entered the invoking state; 8 router threads over
+  one registry / one tracer sum exactly; 700 orders leave the plugins'
+  bookkeeping empty. Defects found and fixed: `xstatemachine_active_interpreters`
+  only decremented in `on_interpreter_stop`, so machines that finished
+  (`done`), failed (`error`) or were garbage-collected pinned it forever
+  (30 shipped orders → gauge 30) -- it is now **polled at scrape time**
+  (count of `status == "running"`, like `queue_depth`; the two polled
+  gauges are per-process and do not appear in prometheus_client
+  multiprocess mode); a **cancelled invocation** (state exited while the
+  service ran) fired no hook, so its OTel span never ended and a
+  re-entered state restarting the same invoke `id` lost the earlier span
+  until process exit -- spans of services whose owning state left the
+  configuration are ended after each event (and on `on_done` /
+  `on_error`) with `statechart.cancelled=true`; a tracer / Sentry SDK
+  that raised produced one contained error per event -- both plugins now
+  go inert after one warning; two `PrometheusPlugin`s with different
+  base label sets on one registry hit `DuplicateTimeseries` --
+  `ValueError` naming the conflict; `record_context=True` wrote the
+  `repr()` / bytes of non-JSON context values into the span (a
+  `Session(password=...)` repr leaked past `redact()`, which matches
+  keys) -- opaque values are written as type tags; a context dict with
+  mixed key types made the sorted dump raise after the span left the
+  stack, so the event's span was never exported -- ended in `finally`;
+  `StructlogPlugin` / `LoguruPlugin` kept the in-flight stack in a
+  `threading.local`, which every asyncio task on one loop shares -- two
+  interpreters interleaving corrupted and leaked each other's fields;
+  the stack is a per-task `ContextVar`; `correlation_id` had no size cap
+  (128 chars now); `LoguruPlugin(logger=<stdlib logger>)` was accepted
+  and failed on every event (`TypeError` at construction);
+  `instrument_all(interp)` on a running interpreter missed
+  `on_interpreter_start` (replayed). **Engine:** a plugin instance
+  registered globally *and* attached with `.use()` (or `.use()`-d twice)
+  fired every hook twice -- the limitation documented in #305 -- and
+  every metric doubled; `use()` now dedupes by identity on both engines.
+  Measured on a two-state chart: ≈3× slowdown with `PrometheusPlugin`,
+  ≈4–5× with `OpenTelemetryPlugin` (SDK, no exporter), ~40 % of it the
+  engine's per-event receipt; documented, no budget.
 - **Test doubles, as battle-tested (#272).** The fulfilment team runs its
   two-chart EDA pipeline with no broker. The #272 acceptance criteria
   promised `given(machine).in_state(...).when(...).then_state(...)` and
