@@ -93,6 +93,17 @@ def test_flask_template_is_the_example_verbatim(tmp_path: Path) -> None:
         assert got == (FLASK_EXAMPLE / rel).read_text("utf-8").splitlines()
     req = (tmp_path / "requirements.txt").read_text("utf-8")
     assert "xstate-statemachine[flask]>=" in req
+    # 📝 review #309 M4: the OTHER direction -- a file added to the example
+    #    later and missing from the template must fail here, not drift
+    example = {
+        f.relative_to(FLASK_EXAMPLE).as_posix()
+        for f in FLASK_EXAMPLE.rglob("*")
+        if f.is_file()
+        and "__pycache__" not in f.parts
+        and f.name != "README.md"
+        and not f.name.endswith((".pyc", ".db", ".sqlite"))
+    }
+    assert example <= rels, sorted(example - rels)
 
 
 def test_flask_scaffold_tests_pass(tmp_path: Path) -> None:

@@ -47,4 +47,11 @@ Coverage is a repository rule: the suite must keep **at least 90%** line and bra
 3.  Fill out the pull request template with a clear description of your changes.
 4.  Ensure all automated CI checks pass.
 
+## 🏷️ Cutting a release (maintainers)
+
+1. Move the `## [Unreleased]` entries in **both** `CHANGELOG.md` and `docs/_guide/changelog.md` under the new version heading (the two copies must stay identical).
+2. Bump `__version__` in `src/xstate_statemachine/__init__.py` (and `pyproject.toml`).
+3. Tag and push **`v<version>`** — `git tag v0.11.0 && git push origin v0.11.0`. The `xsm-check` GitHub Action (`uses: basiltt/xstate-statemachine@v<version>`) and the pre-commit hooks (`rev: v<version>`) documented in the CLI guide resolve through this tag; `tests/test_battle_309_docs_truth.py` keeps the documented pins equal to `__version__`, so a release without its tag leaves every copy-paste snippet dead.
+4. `python -m build && twine check dist/*`, then publish and create the GitHub release from the tag.
+
 Thank you for your contribution!

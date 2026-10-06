@@ -41,7 +41,6 @@ import pathlib
 import re
 import subprocess
 import sys
-import tempfile
 import textwrap
 from typing import Dict, List, Optional, Tuple
 
@@ -51,7 +50,6 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 JOURNEY = ROOT / "docs" / "_guide" / "integrations.md"
 EXAMPLE = ROOT / "examples" / "integrations" / "fastapi_orders"
 
-pytestmark = pytest.mark.timeout(1200)
 needs_venv = pytest.mark.skipif(
     os.environ.get("XSM_ADOPTION_VENV") != "1",
     reason="set XSM_ADOPTION_VENV=1: builds a wheel and a venv (~2 min)",
@@ -80,9 +78,12 @@ def _run(
 
 
 @pytest.fixture(scope="module")
-def venv() -> Dict[str, pathlib.Path]:
-    """A fresh venv with the wheel built from THIS checkout installed."""
-    work = pathlib.Path(tempfile.mkdtemp(prefix="xsm-adoption-"))
+def venv(tmp_path_factory) -> Dict[str, pathlib.Path]:
+    """A fresh venv with the wheel built from THIS checkout installed.
+
+    Under pytest's own temp root so the venvs are reclaimed (review M5:
+    `mkdtemp` left a few hundred MB behind per run)."""
+    work = tmp_path_factory.mktemp("xsm-adoption")
     dist = work / "dist"
     r = _run(
         [
@@ -168,19 +169,45 @@ def test_plain_fakeredis_error_names_the_cure(venv) -> None:
     `unknown command 'evalsha'`; the error must say what to install."""
     py = str(venv["py"])
     code = textwrap.dedent("""
-        import fakeredis, sys
+        import sys
+        # plain `fakeredis` == no `lupa`: make the import fail like it does
+        # for a newcomer who skipped the [lua] extra
+        sys.modules["lupa"] = None
+        import fakeredis
         from xstate_statemachine.contrib.redis import RedisStore
         try:
-            RedisStore(fakeredis.FakeRedis(lua_modules=None), prefix="x")
+            # the constructor runs the schema script -- the first EVALSHA
+            store = RedisStore(fakeredis.FakeRedis(), prefix="x")
+            store.save("k", "{}")
         except Exception as exc:
             msg = str(exc)
             assert "Lua" in msg and "fakeredis[lua]" in msg, msg
+            assert exc.__cause__ is not None, "cause dropped"
             sys.exit(0)
         print("no error: this fakeredis has Lua", file=sys.stderr)
-        sys.exit(0)
+        sys.exit(3)
         """)
     r = _run([py, "-c", code])
+    # 📝 review M3: exit 3 means the store did not touch Lua at
+    #    construction (or `lua_modules=None` does not disable it) -- the
+    #    cure message was never exercised; that is a failure, not a pass
     assert r.returncode == 0, r.stderr[-2000:]
+
+
+def test_typed_names_the_lua_cure_and_keeps_the_cause() -> None:
+    """In-process: the mapping itself, incl. that unrelated unknown
+    commands are NOT given the Lua cure (review L8)."""
+    redis = pytest.importorskip("redis")
+    from src.xstate_statemachine.contrib.redis._errors import typed
+
+    exc = redis.ResponseError(
+        "unknown command 'evalsha', with args beginning with: 'abc'"
+    )
+    msg = str(typed(exc))
+    assert "Lua" in msg and "fakeredis[lua]" in msg and "evalsha" in msg
+    other = typed(redis.ResponseError("unknown command 'FOO', 'evaluate'"))
+    assert "Lua" not in str(other)
+    assert "FOO" in str(other)
 
 
 # -----------------------------------------------------------------------------

@@ -45,7 +45,12 @@ class TestVersionLabels(unittest.TestCase):
         bad = []
         pages = list(GUIDE.rglob("*.md")) + [ROOT / "docs/api/index.md"]
         for p in pages + [ROOT / "README.md"]:
-            for m in re.finditer(r"\*\*\[(\d+)\.(\d+)\.(\d+)\]\*\*", _read(p)):
+            # 📝 the changelog RECORDS such labels being fixed (review #309
+            #    H1); inline code is quoted text, never a feature tag
+            text = re.sub(r"`[^`\n]*`", "", _read(p))
+            if p.name == "changelog.md":
+                continue
+            for m in re.finditer(r"\*\*\[(\d+)\.(\d+)\.(\d+)\]\*\*", text):
                 if tuple(int(x) for x in m.groups()) > current:
                     bad.append(f"{p.name}: {m.group(0)}")
         self.assertEqual(bad, [])

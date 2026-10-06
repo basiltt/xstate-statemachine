@@ -960,7 +960,7 @@ overwrite confirmation, so they are safe in a non-interactive pipeline.
 
 ### The `xsm-check` GitHub Action
 
-The repository is itself a composite action. It installs the library, runs `xsm validate --plain` on every file matching `files`, and — when `generated-dir` is set — `xsm gt --check` against that directory:
+The repository is itself a composite action. It installs the library, runs `xsm validate --plain` on every file matching `files`, and — when `generated-dir` is set — `xsm gt --check` against that directory. The `@v0.11.0` / `rev: v0.11.0` pins below name the release this guide documents; the tag exists from that release onward (pin `@main` or a commit SHA to track an unreleased tree):
 
 ```yaml
 - uses: actions/checkout@v4

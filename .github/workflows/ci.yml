@@ -280,6 +280,11 @@ jobs:
             # 🧭 #309: the adoption kit -- a fresh venv with the built wheel
             #    runs the journey page, the scaffold and the action/hook
             #    command lines (the [fastapi] cell installs build+jsonschema).
+            #    ⚠️ it builds a wheel and pip-installs into a child venv:
+            #    `--disable-socket` below patches THIS pytest process only,
+            #    subprocesses reach PyPI (review #309 L7). Runs on all three
+            #    fastapi cells on purpose -- Windows and 3.9 are the
+            #    newcomer environments that found real defects.
             fastapi)
               export XSM_ADOPTION_VENV=1
               targets="$targets tests/test_battle_309_adoption.py" ;;

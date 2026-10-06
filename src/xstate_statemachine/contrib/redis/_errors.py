@@ -13,6 +13,7 @@ backend now has the same shape, for the sync and the asyncio client.
 from __future__ import annotations
 
 import functools
+import re
 from typing import Any, Callable, TypeVar
 
 import redis
@@ -30,6 +31,9 @@ _UNAVAILABLE = (
     redis.BusyLoadingError,
 )
 
+#: "unknown command 'evalsha'" -- the server has no Lua scripting.
+_NO_LUA = re.compile(r"unknown command '?(evalsha|eval|script)(?![a-z])", re.I)
+
 
 def typed(exc: redis.RedisError, backend: str = "RedisStore") -> StoreError:
     """The `StoreError` for a raw *exc* (connection-class →
@@ -39,9 +43,7 @@ def typed(exc: redis.RedisError, backend: str = "RedisStore") -> StoreError:
             f"{backend}: backend unavailable ({type(exc).__name__}: {exc})"
         )
     text = str(exc)
-    if "unknown command" in text and (
-        "evalsha" in text.lower() or "eval" in text.lower()
-    ):
+    if _NO_LUA.search(text):
         # 🔥 battle #309: a newcomer following the journey page installed
         #    plain `fakeredis` and got a raw "unknown command 'evalsha'".
         #    The store needs Lua scripting: name the cure.
