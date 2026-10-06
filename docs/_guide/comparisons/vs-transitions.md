@@ -107,3 +107,5 @@ The `after` deadline is part of `snapshot`. With a store and `DueTimerScanner`, 
 - You want **typed, validated context and events** (the `[pydantic]` extra) instead of free attributes on a model.
 
 See [Integration extras](../integrations-extras/) for the web and database integrations.
+
+New to the library? Start with the [integrations journey](../integrations/): pick your path, then a fifteen-minute tutorial.

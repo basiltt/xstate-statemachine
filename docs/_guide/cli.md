@@ -732,7 +732,7 @@ Feature support
 
 ## 📡 Live inspector
 
-**[0.12.0]** Watch a machine live in the browser — in the Stately Inspector or the built-in fallback page — speaking the `@statelyai/inspect` protocol ([guide](../integration-inspector/), [#274](https://github.com/basiltt/xstate-statemachine/issues/274)).
+**[0.11.0]** Watch a machine live in the browser — in the Stately Inspector or the built-in fallback page — speaking the `@statelyai/inspect` protocol ([guide](../integration-inspector/), [#274](https://github.com/basiltt/xstate-statemachine/issues/274)).
 
 ```bash
 xsm inspect machine.json --live --open               # serve + interactive simulator

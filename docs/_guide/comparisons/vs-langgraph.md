@@ -63,3 +63,5 @@ assert res.waiting and res.final_state == "toolLoop.awaiting_human"   # durable:
 ```
 
 See [LLM agents](../integration-agents/) for the full reference, including the [LangGraph interop](../integration-agents/#langgraph-interop) and [pydantic-ai](../integration-agents/#pydantic-ai) adapters.
+
+New to the library? Start with the [integrations journey](../integrations/): pick your path, then a fifteen-minute tutorial.
