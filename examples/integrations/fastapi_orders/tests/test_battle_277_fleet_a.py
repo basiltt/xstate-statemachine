@@ -51,6 +51,12 @@ pytestmark = [
 HERE = Path(__file__).resolve().parents[1]
 WORKERS = int(os.environ.get("XSM_BATTLE_277_WORKERS", "4"))
 CUSTOMER = {"x-customer": "battle-a"}
+# see test_battle_277_fleet.WINDOWS_UVICORN_STALL: a 200-request burst at
+# N Windows workers can park one request on a frozen accept() -- not ours
+WINDOWS_UVICORN_STALL = pytest.mark.skipif(
+    sys.platform == "win32" and WORKERS > 1,
+    reason="uvicorn --workers N on Windows: shared-socket accept() stall",
+)
 STALL_S = 5.0
 
 
@@ -156,6 +162,7 @@ async def _pay_burst(
 # -----------------------------------------------------------------------------
 # 1. exactly one gateway call across processes
 # -----------------------------------------------------------------------------
+@WINDOWS_UVICORN_STALL
 @pytest.mark.parametrize("with_key", [False, True])
 def test_one_gateway_call_across_worker_processes(
     fleet: Fleet, with_key: bool
@@ -222,6 +229,7 @@ def test_two_scheduler_processes_fire_the_deadline_once(fleet: Fleet) -> None:
 # -----------------------------------------------------------------------------
 # 3. no `--role init`
 # -----------------------------------------------------------------------------
+@WINDOWS_UVICORN_STALL
 def test_workers_without_init_all_serve_and_the_file_is_wal(
     fleet: Fleet,
 ) -> None:
