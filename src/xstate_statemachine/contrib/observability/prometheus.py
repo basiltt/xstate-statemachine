@@ -52,6 +52,10 @@ class _QueueDepthCollector:
     def __init__(self, machine_label: bool) -> None:
         self.machine_label = machine_label
         self.interpreters: "weakref.WeakSet[Any]" = weakref.WeakSet()
+        # 🔥 battle #273 (3.9 CI): a scrape iterating the WeakSet while a
+        #    thread starts an interpreter raised "Set changed size during
+        #    iteration"; snapshot and add under one lock.
+        self._lock = threading.Lock()
         self.guard: Optional[LabelGuard] = None
 
     def describe(self) -> Iterator[Any]:
@@ -80,7 +84,9 @@ class _QueueDepthCollector:
         # every machine id ever seen keeps a (possibly 0) sample so a
         # dashboard sees the series drop, not vanish
         seen: Dict[str, None] = {}
-        for interp in list(self.interpreters):
+        with self._lock:
+            live = list(self.interpreters)
+        for interp in live:
             try:
                 key = str(interp.machine.id) if self.machine_label else ""
                 seen.setdefault(key)
@@ -220,7 +226,9 @@ class PrometheusPlugin(PluginBase[Any]):
     # -- lifecycle --------------------------------------------------------
     def on_interpreter_start(self, interpreter: Any) -> None:
         # the collector polls `status` at scrape time (see header)
-        self.m["queue_depth"].interpreters.add(interpreter)
+        qd = self.m["queue_depth"]
+        with qd._lock:
+            qd.interpreters.add(interpreter)
 
     def on_interpreter_stop(self, interpreter: Any) -> None:
         self._forget(interpreter)

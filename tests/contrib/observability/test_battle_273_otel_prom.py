@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 
 import pytest
 
@@ -177,6 +178,9 @@ def test_sixteen_threads_share_plugins_exactly_and_scrapes_never_raise():
                 list(prom.m["queue_depth"].collect())
             except Exception as exc:  # pragma: no cover
                 errors.append(exc)
+            # 📝 yield: a hot scrape loop starved the 16 workers of the
+            #    GIL on 3.9 (one run took 110 s instead of 1 s)
+            time.sleep(0.0005)
 
     s = threading.Thread(target=scraper)
     s.start()
