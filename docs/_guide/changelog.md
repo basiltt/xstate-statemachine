@@ -1456,6 +1456,29 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **Adoption kit, as battle-tested (#309).** The first fifteen minutes
+  as a newcomer has them -- the built wheel installed into a FRESH venv
+  (3.9 and current), the journey page's blocks run in order against the
+  installed package, `xsm new` scaffolds tested, the GitHub Action's and
+  pre-commit hooks' exact command lines executed (incl. drift and a
+  broken chart), the decision tree's leaves resolved, the schema and
+  PyPI metadata checked (`tests/test_battle_309_adoption.py`,
+  `tests/test_battle_309_docs_truth.py`; CI's `[fastapi]` cell runs the
+  venv test). Found and fixed: the journey's install line omitted
+  `fakeredis[lua]`, so step 5 died with a raw `unknown command 'evalsha'`
+  -- the page says so and `RedisStore` now names the cure; `xsm new
+  --template flask` ships (the `flask_wizard` example, file-for-file)
+  and `--template django` points at the `django_approvals` example
+  instead of a closed issue; the `Next: cd ...` hint quotes a path with
+  spaces; `action.yml`, `.pre-commit-hooks.yaml` and the CLI guide
+  pinned a `v0.14.0` that does not exist (now the shipped version, pinned
+  by test); PyPI metadata gained Documentation / Changelog / Source links
+  and the README's relative links are absolute; eleven stale docs
+  claims corrected (the coverage gate, `meta.tools`, `meta.publish` and
+  the SQLAlchemy outbox are shipped; `**[0.12.0]**` labels are 0.11.0;
+  residents are ASGI-only; the Celery leaf of the tree continues; the
+  operational limits box names real limits) and no guide page is an
+  orphan.
 - **Codegen companions, as battle-tested (#279).** `xsm gt --with-api
   --with-models` across the whole 104-chart corpus, in-process: every
   chart that generates yields a router and models that parse, import,

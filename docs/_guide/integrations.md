@@ -77,7 +77,7 @@ pip install "xstate-statemachine[fastapi,redis]" httpx "fakeredis[lua]"
 
 `fakeredis[lua]` is only for step 5, which runs the Redis step in-process so the tutorial works without a server; the `[lua]` extra matters -- the store's atomic saves are Lua scripts and plain `fakeredis` has no Lua engine (you would see `the Redis server has no Lua scripting`).
 
-Want the finished result instead? `xsm new --template fastapi my_service` scaffolds the complete [`fastapi_orders` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/fastapi_orders) with its tests (see [CLI](../cli/#new-project)).
+Want the finished result instead? `xsm new --template fastapi my_service` scaffolds the complete [`fastapi_orders` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/fastapi_orders) with its tests; `--template flask` does the same for the [`flask_wizard` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/flask_wizard) (see [CLI](../cli/#new-project)).
 
 ### 1. Export the chart
 
