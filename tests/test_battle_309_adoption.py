@@ -368,3 +368,135 @@ def test_wheel_metadata_has_the_promised_classifiers_and_keywords(
         "llm-agents",
     ):
         assert word in kw, (word, kw)
+    # battle #309-a: PyPI showed only Homepage + Bug Tracker
+    urls = dict(
+        ln[len("Project-URL: ") :].split(", ", 1)
+        for ln in text.splitlines()
+        if ln.startswith("Project-URL: ")
+    )
+    for key in ("Documentation", "Changelog", "Source", "Bug Tracker"):
+        assert urls.get(key, "").startswith("https://"), (key, urls)
+
+
+def test_vscode_file_match_covers_the_journey_and_corpus_charts() -> None:
+    """The documented `json.schemas` fileMatch must match the file the
+    journey writes, and the schema must accept the shipped examples."""
+    import fnmatch
+
+    jsonschema = pytest.importorskip("jsonschema")
+    page = (ROOT / "docs" / "_guide" / "stately-export.md").read_text("utf-8")
+    [pattern] = re.findall(r'"fileMatch":\s*\["([^"]+)"\]', page)
+    assert fnmatch.fnmatch("order.machine.json", pattern)
+    assert "order.machine.json" in JOURNEY.read_text("utf-8")
+    schema = json.loads(
+        (ROOT / "schemas" / "xstate-machine.schema.json").read_text("utf-8")
+    )
+    assert schema.get("$id") and schema.get("title")
+    for name in ("fastapi_orders", "flask_wizard", "django_approvals"):
+        chart = json.loads(
+            (
+                ROOT / "examples" / "integrations" / name / "machine.json"
+            ).read_text("utf-8")
+        )
+        jsonschema.validate(chart, schema)
+
+
+# -----------------------------------------------------------------------------
+# 7. battle #309-a: the oldest interpreter, and a core-only install
+# -----------------------------------------------------------------------------
+def _py39() -> Optional[pathlib.Path]:
+    env = os.environ.get("XSM_PY39")
+    cand = pathlib.Path(env) if env else ROOT.parents[2] / ".venv39"
+    if not env and not cand.is_dir():
+        cand = ROOT / ".venv39"
+    exe = cand / (
+        "Scripts/python.exe" if sys.platform == "win32" else "bin/python"
+    )
+    if cand.is_file():
+        return cand
+    return exe if exe.is_file() else None
+
+
+def _child_venv(base: str, work: pathlib.Path, name: str) -> pathlib.Path:
+    r = _run([base, "-m", "venv", str(work / name)])
+    assert r.returncode == 0, r.stderr[-2000:]
+    scripts = "Scripts" if sys.platform == "win32" else "bin"
+    exe = "python.exe" if sys.platform == "win32" else "python"
+    return work / name / scripts / exe
+
+
+@needs_venv
+def test_journey_and_scaffolds_on_python_3_9(venv) -> None:
+    base = _py39()
+    if base is None:
+        pytest.skip("no 3.9 interpreter (.venv39 or XSM_PY39)")
+    py = _child_venv(str(base), venv["work"], "venv39")
+    r = _run(
+        [str(py), "-m", "pip", "install", "-q", "--disable-pip-version-check"]
+        + [f"{venv['wheel']}[fastapi,redis,flask,testing]", "httpx"]
+        + ["fakeredis[lua]"]
+    )
+    assert r.returncode == 0, r.stderr[-3000:]
+    home = venv["work"] / "journey39"
+    home.mkdir()
+    for i, (reqs, code) in enumerate(_blocks(JOURNEY.read_text("utf-8")), 1):
+        src = code.replace(
+            "os.chdir(tempfile.mkdtemp())", f"os.chdir({str(home)!r})"
+        )
+        r = _run([str(py), "-c", src], cwd=home)
+        assert r.returncode == 0, f"3.9 block {i}:\n{r.stderr[-3000:]}"
+    for template in ("fastapi", "flask"):
+        target = venv["work"] / f"{template} 39 é"
+        r = _run(
+            [str(py), "-m", "xstate_statemachine", "--plain", "new"]
+            + ["--template", template, str(target)]
+        )
+        assert r.returncode == 0, r.stdout + r.stderr
+        r = _run(
+            [str(py), "-m", "pytest", "tests", "-q", "-p", "no:cacheprovider"],
+            cwd=target,
+        )
+        assert r.returncode == 0 and "passed" in r.stdout, r.stdout[-3000:]
+
+
+@needs_venv
+def test_core_only_install_degrades_with_notes_not_tracebacks(venv) -> None:
+    """No extras, cp1252 stdout (the Windows console default): every
+    journey command still works; --with-api/--with-models say what was
+    skipped and how to get the full check."""
+    py = _child_venv(sys.executable, venv["work"], "core")
+    r = _run([str(py), "-m", "pip", "install", "-q", str(venv["wheel"])])
+    assert r.returncode == 0, r.stderr[-3000:]
+    chart = str(EXAMPLE / "machine.json")
+    out = venv["work"] / "core_out"
+    env = {"PYTHONUTF8": "0", "PYTHONIOENCODING": "cp1252"}
+    for argv in (
+        ["validate", chart],
+        ["inspect", chart],
+        ["gt", chart, "--with-api", "--with-models", "-o", str(out)],
+        [
+            "gt",
+            "--check",
+            chart,
+            "--with-api",
+            "--with-models",
+            "-o",
+            str(out),
+        ],
+        ["new", "--list"],
+    ):
+        base = {**os.environ, **env}
+        base.pop("PYTHONPATH", None)
+        r = subprocess.run(
+            [str(py), "-m", "xstate_statemachine", *argv],
+            env=base,
+            capture_output=True,
+            encoding="cp1252",  # what the console would have to render
+            timeout=300,
+        )
+        both = r.stdout + r.stderr
+        assert r.returncode == 0, (argv, both[-2000:])
+        assert "Traceback" not in both, (argv, both[-2000:])
+        if argv[0] == "gt" and "--check" not in argv:
+            assert "xstate-statemachine[fastapi]" in both, both
+    assert (out / "order_api.py").is_file()

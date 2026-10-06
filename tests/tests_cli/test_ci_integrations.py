@@ -122,7 +122,7 @@ def test_pinned_examples_name_the_version_this_tree_ships() -> None:
         text = path.read_text("utf-8")
         if path.suffix == ".md":
             text = text[text.index("xsm-check") :]
-        found = {
-            v for v in pins.findall(text) if v.startswith("0.1")
-        } - {"0.10.5"}
+        found = {v for v in pins.findall(text) if v.startswith("0.1")} - {
+            "0.10.5"
+        }
         assert found <= {__version__}, (path.name, found)

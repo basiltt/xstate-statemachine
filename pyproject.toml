@@ -144,6 +144,9 @@ all           = [  # every SHIPPED extra; grows as issues land
 
 [project.urls]
 Homepage = "https://github.com/basiltt/xstate-statemachine"
+Documentation = "https://basiltt.github.io/xstate-statemachine/"
+Changelog = "https://github.com/basiltt/xstate-statemachine/blob/main/CHANGELOG.md"
+Source = "https://github.com/basiltt/xstate-statemachine"
 "Bug Tracker" = "https://github.com/basiltt/xstate-statemachine/issues"
 
 [project.scripts]
