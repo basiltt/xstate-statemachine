@@ -266,12 +266,11 @@ class TestPluginAndDependency:
 
         @post("/orders/{order_id:str}/pay", dependencies=dep)
         async def pay(order: Any) -> Any:
-            from litestar import Response
-
-            r = ReceiptResponse(
+            # 📝 #278 battle: `contrib.litestar.ReceiptResponse` IS a
+            #    Litestar response now (the Starlette one answered 500)
+            return ReceiptResponse(
                 order, await order.send("PAY", wait=True, amount=1)
             )
-            return Response(bytes(r.body), status_code=r.status_code)
 
         @post("/orders/{order_id:str}/fail", dependencies=dep)
         async def fail(order: Any) -> None:
