@@ -75,6 +75,7 @@ from ._scanner import _ScannerMixin
 from ._http import (
     ForbiddenError,
     ShuttingDownError,
+    IdempotencyNotConfiguredError,
     idempotency_key_from,
     json_body,
     principal_or_401,
@@ -488,6 +489,8 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
             refuse_reserved_send_keys(payload)
             idem = idempotency_key_from(request)
             if idem is not None:
+                if self.inbox is None:
+                    raise IdempotencyNotConfiguredError()
                 payload["idempotency_key"] = idem
             if principal is None:
                 principal = self._principal_of(request)

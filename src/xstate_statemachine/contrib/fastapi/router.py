@@ -31,8 +31,10 @@ from ...persistence.helpers import KeyNotFoundError
 from ..pydantic.events import models_of
 from ..starlette._http import (
     HTTPProblemError,
+    IdempotencyNotConfiguredError,
     PayloadTooLargeError,
     UnsupportedMediaTypeError,
+    idempotency_key_from,
     problem,
     problem_for_exception,
 )
@@ -189,6 +191,16 @@ def get_interpreter(
     ) -> Any:
         k = str(key_of(request))
         await registry.authorize(request, name, k, None)
+        # 🔥 battle #276: the dependency never looked at `Idempotency-Key`
+        #    -- a client sending it on a custom route got no dedup and no
+        #    error. The header is validated here (400 malformed, 501 with
+        #    no inbox); the HANDLER still has to pass it to `send(...,
+        #    idempotency_key=request.state.xsm_idempotency_key)` -- it
+        #    is exposed on `request.state` for that.
+        idem = idempotency_key_from(request)
+        if idem is not None and registry.inbox is None:
+            raise IdempotencyNotConfiguredError()
+        request.state.xsm_idempotency_key = idem
         if not create_if_missing and not await registry.exists(name, k):
             raise KeyNotFoundError(k)
         async with registry.act(name, k, principal=principal) as interp:
