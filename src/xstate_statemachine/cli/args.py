@@ -276,7 +276,9 @@ def _add_live_args(
     parser.add_argument(
         "--token",
         default=None,
-        help="Access token (default: a fresh random one per run).",
+        help="Access token (default: a fresh random one per run). It is "
+        "accepted in the URL once; the page swaps it for an HttpOnly "
+        "cookie. API clients send X-XSM-Token or Authorization: Bearer.",
     )
     parser.add_argument(
         "--open", action="store_true", help="Open the page in a browser."
@@ -682,7 +684,8 @@ examples:
         "--speed",
         type=float,
         default=0.0,
-        help="With --live: 1.0 replays at recorded pace, 0 (default) at once.",
+        help="With --live: 1.0 replays at recorded pace, 2.0 twice as fast, "
+        "0 (default) at once. Negative is refused.",
     )
     rep_parser.add_argument(
         "--duration",
@@ -747,7 +750,13 @@ examples:
         "--record",
         metavar="PATH",
         help="Write the session as inspector protocol messages to a JSON "
-        "Lines file (mode 0600); stream it later with `xsm replay`.",
+        "Lines file (mode 0600); stream it later with `xsm replay`. An "
+        "existing non-empty file is refused unless --append.",
+    )
+    sim_parser.add_argument(
+        "--append",
+        action="store_true",
+        help="With --record: add to an existing recording.",
     )
     sim_parser.add_argument(
         "--context",

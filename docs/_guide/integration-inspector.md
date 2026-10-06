@@ -62,7 +62,7 @@ Three message kinds, shaped exactly like `@statelyai/inspect`'s `StatelyInspecti
 
 Every message also has `_version`, `createdAt` (epoch ms, string) and `id: null`. The startup is reported as `xstate.init`, as in XState.
 
-### `InspectorPlugin(sink, *, context_allowlist=(), include_payloads=False, redact_keys=DEFAULT_REDACT_KEYS, clock=None)`
+### `InspectorPlugin(sink, *, context_allowlist=(), include_payloads=False, payload_allowlist=(), redact_keys=DEFAULT_REDACT_KEYS, clock=None)`
 
 `sink` is anything with `send(message)` or a callable. `install()` registers the plugin globally so **child actors** and restored interpreters are followed too (`interp.use(plugin)` sees only that one interpreter); `uninstall()` undoes it. `sourceId` comes from the core hook `on_event_sent(interp, target_id, event)` (see [Plugins](../plugins/)).
 
@@ -70,12 +70,12 @@ Every message also has `_version`, `createdAt` (epoch ms, string) and `id: null`
 
 | Sink | What |
 |:--|:--|
-| `MemorySink()` | `.messages` list |
-| `JsonLinesSink(path)` | one message per line; the file is created **0600**; context manager |
-| `SseSink(host="127.0.0.1", port=0, *, token=None, allowed_origins=(), history=1000)` | stdlib HTTP server: `/` page, `/app.js`, `/events` (SSE, backlog replayed to late clients, 15 s keep-alives), `/messages` (JSON). `.url` is the first-load URL, `.port`, `.token`, `.start()` / `.close()` / context manager |
-| `contrib.starlette.WebSocketSink` | WebSocket fan-out; created by `mount_inspector()` |
+| `MemorySink(maxlen=None)` | `.messages` list; `maxlen` keeps only the newest, `.dropped` counts the rest |
+| `JsonLinesSink(path)` | one ASCII-only message per line; the file is created **0600** (POSIX; on Windows the directory ACL applies), an existing file is appended to; `send()` after `close()` raises; context manager |
+| `SseSink(host="127.0.0.1", port=0, *, token=None, allowed_origins=(), history=1000, max_queue=10_000)` | stdlib HTTP server: `/` page, `/app.js`, `/events` (SSE, backlog replayed to late clients, 15 s keep-alives), `/messages` (JSON). `.url` is the first-load URL, `.port`, `.token`, `.start()` / `.close()` / context manager. A client `max_queue` frames behind is disconnected; `.dropped`, `.sent`, `.clients` |
+| `contrib.starlette.WebSocketSink(*, token=None, history=1000, max_queue=10_000)` | WebSocket fan-out; created by `mount_inspector()`; a lagging client is closed with 1013, `.dropped` |
 
-`read_jsonl(path)` yields a recording's messages; `replay_messages(source, sink, *, speed=0.0)` streams them (non-protocol lines are skipped). The protocol builders `actor_message`, `event_message`, `snapshot_message`, and `PROTOCOL_VERSION`, `MESSAGE_TYPES`, `COOKIE_NAME` are exported for custom sinks.
+`read_jsonl(path)` is a generator over a recording (a truncated *last* line is ignored, a corrupt middle line raises). `replay_messages(source, sink, *, speed=0.0)` streams a path (`str` or `os.PathLike`, never loaded whole) or an iterable of dicts into a sink and returns how many it sent; non-protocol lines are skipped (not counted), a negative `speed` raises `ValueError`, a recorded clock that steps backwards never sleeps, and a sink that raises stops the replay with that exception. `session_id_of(interp)` returns the session id the plugin uses for an interpreter (the `store_key` of a persisted instance). The protocol builders `actor_message`, `event_message`, `snapshot_message`, and `PROTOCOL_VERSION`, `MESSAGE_TYPES`, `COOKIE_NAME` are exported for custom sinks.
 
 ### The page
 
@@ -107,6 +107,16 @@ Refuses unless `debug=True`. Appends an `InspectorPlugin` to `registry.plugins` 
 >
 > **You must configure:** `context_allowlist` for anything you want to see; a strong `--token` if you ever bind beyond loopback; `debug=True` only in development builds.
 
+## XState parity
+
+| XState / `@statelyai/inspect` | Here |
+|:--|:--|
+| `createBrowserInspector()` | `SseSink` + the shipped page (Stately iframe + fallback) |
+| `createWebSocketInspector()` / `createWebSocketReceiver()` | `mount_inspector()` + `WebSocketSink` (`[starlette]`) |
+| `inspect` option on `createActor` | `InspectorPlugin(sink).install()` (or `interp.use(plugin)`) |
+| `createSkyInspector()` (hosted relay) | not provided -- nothing leaves your machine |
+| Sending events *from* the UI | not provided -- the stream is one-way |
+
 ## Compatibility
 
 | Component | Python | Tested in CI |
@@ -125,3 +135,8 @@ Refuses unless `debug=True`. Appends an `InspectorPlugin` to `registry.plugins` 
 | Child actors missing | plugin attached with `.use()` | use `plugin.install()` |
 | Snapshot `context` is `{}` | deny-by-default | add keys with `context_allowlist` / `--context` |
 | Stately pane stays blank | the hosted UI is unreachable or changed | the fallback list on the left still works |
+| One actor for all my orders | instances share an id | give each a `store_key`; it becomes the session id |
+| Browser tab froze and the process grew | a stalled client | bounded by `max_queue`; the client is cut and reconnects |
+| Recording stops silently | the sink raised (disk full, closed file) | the plugin logs one warning and disables itself -- check the logs |
+| A card number appears in an event | a free-text payload field | `include_payloads=True` with `payload_allowlist` naming only safe fields |
+| `xsm sim --record` exits 2 | the file already holds a recording | another path, or `--append` |

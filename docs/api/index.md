@@ -2333,7 +2333,7 @@ Everything above is importable from the package root (`from xstate_statemachine 
 | `clock` | `Clock`, `RealClock`, `SimulatedClock` | — |
 | `plugins` | `PluginBase`, `LoggingInspector`, `DEFAULT_REDACT_KEYS`, `redact()`, entry-point `discover()` / `attach_discovered()` | `discover`, `attach_discovered`, `DiscoveredPlugin` |
 | `plugin_discovery` | The implementation behind `plugins.discover` (3.9 shim, `XSM_DISABLE_PLUGIN_DISCOVERY`) | — |
-| `inspect` | **[0.12.0]** Live inspector (#274), stdlib only: `InspectorPlugin`, `MemorySink`, `JsonLinesSink`, `SseSink`, `read_jsonl`, `replay_messages`, `actor_message` / `event_message` / `snapshot_message`, `PROTOCOL_VERSION`, `MESSAGE_TYPES`, `COOKIE_NAME` | [Live inspector](../guide/integration-inspector/) |
+| `inspect` | **[0.12.0]** Live inspector (#274), stdlib only: `InspectorPlugin` (`payload_allowlist=`), `session_id_of`, `MemorySink` (`maxlen=`, `dropped`), `JsonLinesSink`, `SseSink` (`max_queue=`, `dropped`, `sent`, `clients`), `read_jsonl`, `replay_messages`, `actor_message` / `event_message` / `snapshot_message`, `PROTOCOL_VERSION`, `MESSAGE_TYPES`, `COOKIE_NAME` | [Live inspector](../guide/integration-inspector/) |
 | `deprecations` | `deprecated()`, the `deprecations()` registry | Policy tooling |
 | `helpers` | The pure API (`PureSnapshot`, `initial_transition`, `pure_transition`, `get_*_snapshot`) and the waiting helpers | — |
 | `pythonic` | `State`, `StateMachine`, `MachineBuilder`, `Transition`, `build_machine` | — |

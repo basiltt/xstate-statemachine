@@ -723,7 +723,10 @@ xsm replay session.jsonl --live --speed 1             # stream it at recorded pa
 | `--open` | open the printed URL in a browser |
 | `--context a,b` | context keys the page may see — **none by default** (also on `sim --record`) |
 | `-e / --duration` | with `--live`: run a scripted session and serve for N seconds |
-| `--speed` | `replay --live`: `1.0` = recorded pace, `0` = all at once |
+| `--speed` | `replay --live`: `1.0` = recorded pace, `2.0` = twice as fast, `0` = all at once; negative is refused (exit 2) |
+| `--append` | `sim --record`: add to an existing recording (without it, a non-empty file is refused with exit 2) |
+
+Exit codes: `2` for a refused option (non-loopback `--host` without `--token`, negative `--speed`, existing recording without `--append`), `1` for a missing or corrupt file or a port that cannot be bound, `130` on Ctrl-C. `xsm replay` streams the file, so a large recording prints from the first line. `--open` on a machine without a browser only warns.
 
 The printed URL carries the token **once**: the first load answers with an `HttpOnly; SameSite=Strict` cookie and redirects to `/`, so the token does not stay in the address bar. `curl` works with `-H "X-XSM-Token: …"`:
 

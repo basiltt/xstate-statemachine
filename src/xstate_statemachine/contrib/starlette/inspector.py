@@ -45,6 +45,8 @@ from ._http import problem
 __all__ = ["mount_inspector", "WebSocketSink"]
 
 WS_POLICY_VIOLATION = 1008
+WS_TRY_AGAIN = 1013
+_CUT = object()  # sentinel: this client fell `max_queue` behind
 _LOOPBACK = ("127.0.0.1", "localhost", "::1", "testserver")
 
 
@@ -60,11 +62,25 @@ class WebSocketSink:
     ``send()`` is thread-safe (the sync engine may call it from a timer
     thread); each connection owns an ``asyncio.Queue`` on its own loop.
     New connections replay the last *history* messages first.
+
+    battle #274: each client's queue was unbounded -- a stalled socket
+    grew memory for as long as the machine ran. A client that falls
+    *max_queue* messages behind is closed (it reconnects and replays
+    `history`); `dropped` counts them. The producer never blocks.
     """
 
     def __init__(
-        self, *, token: Optional[str] = None, history: int = 1000
+        self,
+        *,
+        token: Optional[str] = None,
+        history: int = 1000,
+        max_queue: int = 10_000,
     ) -> None:
+        if max_queue < 1:
+            raise ValueError("max_queue must be >= 1")
+        self.max_queue = max_queue
+        #: clients closed because they fell `max_queue` behind
+        self.dropped = 0
         self.token = token or secrets.token_urlsafe(32)
         self._history: Deque[Dict[str, Any]] = deque(maxlen=history)
         self._clients: List[
@@ -78,9 +94,28 @@ class WebSocketSink:
             clients = list(self._clients)
         for loop, q in clients:
             try:
-                loop.call_soon_threadsafe(q.put_nowait, message)
+                loop.call_soon_threadsafe(self._offer, loop, q, message)
             except RuntimeError:  # loop closed -- client is gone
                 continue
+
+    def _offer(
+        self,
+        loop: asyncio.AbstractEventLoop,
+        q: "asyncio.Queue[Any]",
+        message: Any,
+    ) -> None:
+        """On the client's loop: enqueue, or cut a client that lags."""
+        with self._lock:
+            if (loop, q) not in self._clients:
+                return  # already cut; offers scheduled before that
+            if q.qsize() < self.max_queue:
+                q.put_nowait(message)
+                return
+            self._clients.remove((loop, q))
+            self.dropped += 1
+        while not q.empty():
+            q.get_nowait()
+        q.put_nowait(_CUT)
 
     @property
     def messages(self) -> List[Dict[str, Any]]:
@@ -122,7 +157,12 @@ class WebSocketSink:
                         return
                     recv = asyncio.ensure_future(websocket.receive())
                     continue
-                await websocket.send_json(get.result())
+                msg = get.result()
+                if msg is _CUT:
+                    recv.cancel()
+                    await websocket.close(code=WS_TRY_AGAIN)
+                    return
+                await websocket.send_json(msg)
         except (WebSocketDisconnect, RuntimeError):
             return
         finally:

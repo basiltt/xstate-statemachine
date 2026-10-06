@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import webbrowser
 from pathlib import Path
 from typing import Any, Callable, List, Optional
@@ -31,6 +32,9 @@ from ...inspect import (
 from . import get_console
 
 __all__ = ["run_inspect_live", "run_replay", "recording_plugin"]
+
+
+_SLICE = 0.25
 
 
 def _allowlist(context: Optional[str]) -> List[str]:
@@ -62,14 +66,29 @@ def _serve(
         )
     )
     if open_browser:
-        webbrowser.open(sink.url)
+        # battle #274: a headless box has no browser; that is not a
+        #    reason to tear down a server whose URL was just printed.
+        try:
+            opened = webbrowser.open(sink.url)
+        except Exception:  # noqa: BLE001 -- any browser failure
+            opened = False
+        if not opened:
+            c.warn("could not open a browser; open the URL above")
     return sink
 
 
 def _block(stop: Optional[threading.Event], seconds: Optional[float]) -> None:
+    # battle #274: one long `Event.wait(None)` is not interruptible by
+    #    Ctrl-C on Windows (the lock acquire ignores SIGINT); short slices
+    #    let KeyboardInterrupt land so the server shuts down cleanly.
     ev = stop or threading.Event()
+    deadline = None if seconds is None else time.monotonic() + seconds
     try:
-        ev.wait(seconds)
+        while not ev.is_set():
+            left = _SLICE if deadline is None else deadline - time.monotonic()
+            if left <= 0:
+                return
+            ev.wait(min(left, _SLICE))
     except KeyboardInterrupt:  # pragma: no cover -- interactive
         pass
 
@@ -127,9 +146,21 @@ def run_inspect_live(
 
 
 def recording_plugin(
-    path: str, *, context: Optional[str] = None
+    path: str, *, context: Optional[str] = None, append: bool = False
 ) -> "tuple[InspectorPlugin, JsonLinesSink]":
-    """A globally-installed `InspectorPlugin` writing to *path* (0600)."""
+    """A globally-installed `InspectorPlugin` writing to *path* (0600).
+
+    battle #274: a second `--record` to the same file used to APPEND
+    silently -- `xsm replay` then showed two unrelated sessions as one.
+    A non-empty existing file is refused (`FileExistsError`) unless
+    *append*.
+    """
+    p = Path(path)
+    if not append and p.is_file() and p.stat().st_size > 0:
+        raise FileExistsError(
+            f"{path} already holds a recording; pass --append to add "
+            "to it, or choose another file"
+        )
     sink = JsonLinesSink(path)
     plugin = InspectorPlugin(
         sink, context_allowlist=_allowlist(context)
@@ -152,28 +183,38 @@ def run_replay(
 ) -> None:
     """`xsm replay session.jsonl [--live]`."""
     c = get_console()
+    if not speed >= 0:
+        c.error(f"--speed must be >= 0, got {speed!r}")
+        raise SystemExit(2)
     if not Path(path).is_file():
         c.error(f"{path}: no such file")
         raise SystemExit(1)
-    try:
-        messages = list(read_jsonl(path))
-    except (ValueError, OSError) as exc:
-        c.error(f"{path}: {type(exc).__name__}: {exc}")
-        raise SystemExit(1)
+    # battle #274: the recording used to be `list()`-ed whole before the
+    #    first line printed; a multi-GB flight recording is now streamed.
+    #    A corrupt middle line still fails loudly (exit 1) -- after the
+    #    lines before it were shown.
     if not live:
-        for m in messages:
-            ev = (m.get("event") or {}).get("type", "")
-            snap = m.get("snapshot") or {}
-            c.print(
-                f"{m.get('type', '?'):<17} {m.get('sessionId', '')}  "
-                f"{ev}  {json.dumps(snap.get('value', ''))}"
-            )
+        try:
+            for m in read_jsonl(path):
+                ev = (m.get("event") or {}).get("type", "")
+                snap = m.get("snapshot") or {}
+                c.print(
+                    f"{m.get('type', '?'):<17} {m.get('sessionId', '')}  "
+                    f"{ev}  {json.dumps(snap.get('value', ''))}"
+                )
+        except (ValueError, OSError) as exc:
+            c.error(f"{path}: {type(exc).__name__}: {exc}")
+            raise SystemExit(1)
         return
     sink = _serve(host=host, port=port, token=token, open_browser=open_browser)
     try:
         if on_ready is not None:
             on_ready(sink)
-        n = replay_messages(messages, sink, speed=speed)
+        try:
+            n = replay_messages(path, sink, speed=speed)
+        except (ValueError, OSError) as exc:
+            c.error(f"{path}: {type(exc).__name__}: {exc}")
+            raise SystemExit(1)
         c.info(f"replayed {n} messages")
         _block(stop, duration)
     finally:

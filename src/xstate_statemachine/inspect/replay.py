@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import os
 import time
 from typing import Any, Callable, Dict, Iterable, Optional, Union
 
@@ -16,7 +17,7 @@ __all__ = ["replay_messages"]
 
 
 def replay_messages(
-    source: Union[str, Iterable[Dict[str, Any]]],
+    source: Union[str, "os.PathLike[str]", Iterable[Dict[str, Any]]],
     sink: Any,
     *,
     speed: float = 0.0,
@@ -25,19 +26,32 @@ def replay_messages(
     """Send every protocol message from *source* to *sink*.
 
     Args:
-        source: A `.jsonl` path or an iterable of message dicts.
+        source: A `.jsonl` path (``str`` or ``os.PathLike``; streamed,
+            never loaded whole) or an iterable of message dicts.
         sink: Anything with ``send(dict)`` (or a callable).
         speed: ``0`` (default) sends as fast as possible; ``1.0`` honours
             the recorded ``createdAt`` gaps; ``2.0`` is twice as fast.
         sleep: Injected ``time.sleep`` (tests).
 
+    Raises:
+        ValueError: *speed* is negative (or NaN).
+
     Returns:
         The number of messages sent. Lines that are not protocol messages
         are skipped, never forwarded.
     """
+    # battle #274: a negative speed used to be accepted and silently
+    #    treated as 0; a `pathlib.Path` source died with "'WindowsPath'
+    #    object is not iterable".
+    if not speed >= 0:
+        raise ValueError(f"speed must be >= 0, got {speed!r}")
     send = sink.send if hasattr(sink, "send") else sink
     doze = sleep or time.sleep
-    messages = read_jsonl(source) if isinstance(source, str) else source
+    messages = (
+        read_jsonl(source)
+        if isinstance(source, (str, os.PathLike))
+        else source
+    )
     sent = 0
     last: Optional[int] = None
     for msg in messages:
