@@ -19,6 +19,7 @@
 """`StatechartRouter` and `get_interpreter`."""
 
 import inspect
+import unicodedata
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 from fastapi import APIRouter, Body, Depends, Path, Request
@@ -54,7 +55,10 @@ _HAS_DEP_SCOPE = "scope" in inspect.signature(DependsParam.__init__).parameters
 _SEND_RESPONSES: Dict[Any, Any] = {
     200: {"model": ReceiptModel, "description": "Receipt"},
     202: {"model": ReceiptModel, "description": "Deferred"},
-    **problem_responses(403, 404, 409, 413, 415, 422, 500),
+    # 🔥 battle #276-b: 400 (bad key / malformed Idempotency-Key), 401
+    #    (unauthenticated), 501 (Idempotency-Key without an inbox) and 503
+    #    (store down / shutting down) are all returned but were undocumented.
+    **problem_responses(400, 401, 403, 404, 409, 413, 415, 422, 500, 501, 503),
 }
 
 
@@ -342,7 +346,12 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
         if etype in gated:
             return problem(403, "Use this event's dedicated route")
         if models:
-            payload = body.model_dump(mode="python", exclude={"type"})
+            # 🔥 battle #276-b: by_alias -- the engine re-validates the
+            #    payload with the same model, which only knows the ALIAS
+            #    (an aliased field was a 422 on a valid body).
+            payload = body.model_dump(
+                mode="python", by_alias=True, exclude={"type"}
+            )
         else:
             payload = dict(body.payload)
         return await _send(request, key, etype, payload, principal)
@@ -377,7 +386,8 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
     async def stream(request: Request, key: str = KeyPath) -> Response:
         return await transition_stream(registry, name, key, request)
 
-    reads = problem_responses(403, 404, 500)
+    reads = problem_responses(400, 401, 403, 404, 500, 503)
+    op_ids = _operation_ids(op, user_events(machine))
     router.add_api_route(
         f"/{kp}",
         get_state,
@@ -401,7 +411,7 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
             f"/{kp}/events/{etype}",
             _event_handler(etype, by_type.get(etype), _send, KeyPath, Actor),
             methods=["POST"],
-            operation_id=f"{op}_{_ident(etype)}",
+            operation_id=op_ids[etype],
             response_model=None,
             responses=_SEND_RESPONSES,
             dependencies=list(gated.get(etype, ())),
@@ -423,7 +433,7 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
             methods=["GET"],
             operation_id=f"{op}_diagram",
             response_class=PlainTextResponse,
-            responses=problem_responses(403),
+            responses=problem_responses(401, 403),
             summary="Mermaid diagram of the chart",
         )
     router.add_api_route(
@@ -434,7 +444,7 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
         response_model=None,
         responses={
             200: {"content": {"text/event-stream": {}}},
-            **problem_responses(403, 429, 503),
+            **problem_responses(400, 401, 403, 404, 429, 503),
         },
         summary="Server-Sent Events: snapshot, then each transition",
     )
@@ -447,7 +457,40 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
 
 
 def _ident(etype: str) -> str:
-    return "".join(c if c.isalnum() else "_" for c in etype).lower()
+    """ASCII ``[a-z0-9_]`` spelling of *etype* (operationIds feed SDK
+    generators: ``éclair`` → ``eclair``, ``pay-now`` → ``pay_now``)."""
+    ascii_ = (
+        unicodedata.normalize("NFKD", etype)
+        .encode("ascii", "ignore")
+        .decode("ascii")
+    )
+    return "".join(c if c.isalnum() else "_" for c in ascii_).lower() or "e"
+
+
+#: Suffixes of the fixed routes' operationIds (``<op>_get`` ...).
+_FIXED_OPS = frozenset({"get", "send", "events", "diagram", "stream"})
+
+
+def _operation_ids(op: str, events: Sequence[str]) -> Dict[str, str]:
+    """A UNIQUE operationId per event route.
+
+    🔥 battle #276-b: ``ORDER.PAID`` and ``ORDER_PAID`` both became
+    ``order_order_paid`` and an event named ``GET``/``send`` reused a
+    fixed route's id -- a duplicate operationId is an invalid OpenAPI
+    document and silently merges two methods in generated SDKs. Events are
+    visited sorted, so the suffixes (``_2`` ...) are deterministic.
+    """
+    taken = {f"{op}_{f}" for f in _FIXED_OPS}
+    out: Dict[str, str] = {}
+    for etype in sorted(events):
+        base = f"{op}_{_ident(etype)}"
+        cand, n = base, 1
+        while cand in taken:
+            n += 1
+            cand = f"{base}_{n}"
+        taken.add(cand)
+        out[etype] = cand
+    return out
 
 
 def _event_handler(
@@ -469,7 +512,9 @@ def _event_handler(
             payload: Dict[str, Any] = (
                 {}
                 if body is None
-                else body.model_dump(mode="python", exclude={"type"})
+                else body.model_dump(
+                    mode="python", by_alias=True, exclude={"type"}
+                )
             )
             return await send(request, key, etype, payload, principal)
 
