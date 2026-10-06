@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import re
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -120,7 +121,14 @@ def emit_companions(
         problems = verify_generated(
             ctx.configs[0], code, template=template, strict=False
         )
-        if not problems and not getattr(args, "no_verify", False):
+        # 📝 battle #279-b: --check compares TEXT; importing and mounting
+        #    every web companion made a CI drift check pay for a full
+        #    FastAPI build per chart. Verification guards what is WRITTEN.
+        if (
+            not problems
+            and not check_mode
+            and not getattr(args, "no_verify", False)
+        ):
             problems = _verify_web(template, code, ctx, rendered, base_name)
         if problems and not getattr(args, "no_verify", False):
             for p in problems:
@@ -140,12 +148,74 @@ def emit_companions(
             else:
                 c.ok(f"{path.name} is up to date")
             continue
+        warn_foreign_overwrite(path, json_paths)
         path.write_text(code, encoding="utf-8")
         c.ok(f"Generated {template} file: {c.style(str(path), 'path')}")
         written.append(path)
+    _warn_leftover_companions(wanted, out_dir, base_name, json_paths)
     if stale:
         raise SystemExit(1)
     return written
+
+
+def _banner_field(path: Path, field: str) -> Optional[str]:
+    """``Source:`` / ``Template:`` from a generated file's banner, if any."""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            head = fh.read(2048)
+    except OSError:
+        return None
+    m = re.search(rf"^{field}:\s+(.+)$", head, re.MULTILINE)
+    return m.group(1).strip() if m else None
+
+
+def _sources(json_paths: List[str]) -> str:
+    return ", ".join(Path(p).name for p in json_paths)
+
+
+def warn_foreign_overwrite(path: Path, json_paths: List[str]) -> None:
+    """Warn before overwriting a generated file from a DIFFERENT chart.
+
+    🔥 battle #279-b: two charts sharing an ``id`` into one ``-o`` produce
+    the same module names; the second run silently replaced the first
+    chart's code. The banner records the source file, so say so.
+    """
+    if not path.exists():
+        return
+    previous = _banner_field(path, "Source")
+    if previous is not None and previous != _sources(json_paths):
+        get_console().warn(
+            f"{path.name} was generated from {previous}; overwriting it "
+            f"with code for {_sources(json_paths)} (same machine id? use "
+            "distinct ids or a separate -o per chart)"
+        )
+
+
+def _warn_leftover_companions(
+    wanted: List[str], out_dir: Path, base_name: str, json_paths: List[str]
+) -> None:
+    """Name companion files of THIS chart that this run did not request.
+
+    🔥 battle #279-b: dropping ``--with-api`` left ``<name>_api.py`` on disk
+    and ``--check`` said "up to date" -- the stale router was invisible.
+    A warning, not a failure: the file may come from a separate
+    ``-t fastapi-router`` invocation. Nothing is ever deleted.
+    """
+    for template in COMPANIONS:
+        if template in wanted:
+            continue
+        path = companion_path(template, out_dir, base_name)
+        if not path.exists():
+            continue
+        if _banner_field(path, "Template") != template:
+            continue
+        if _banner_field(path, "Source") != _sources(json_paths):
+            continue
+        get_console().warn(
+            f"{path.name} ({template}) exists but was not requested by "
+            f"this run; it is not checked or updated. Add "
+            f"--{COMPANIONS[template][0].replace('_', '-')} or delete it."
+        )
 
 
 def _verify_web(
