@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% from "_forms.html" import csrf with context %}
+{% block body %}
+<h1>Welcome aboard, {{ ctx.name }}!</h1>
+<p>You are on the <strong>{{ ctx.plan }}</strong> plan.</p>
+<form method="post" action="{{ url_for('restart') }}">{{ csrf() }}<button>Start again</button></form>
+{% endblock %}

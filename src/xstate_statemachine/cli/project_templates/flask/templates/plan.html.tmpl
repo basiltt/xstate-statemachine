@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% from "_forms.html" import csrf, back with context %}
+{% block body %}
+<h1>Step 3: pick a plan</h1>
+<form method="post" action="{{ url_for('step', action='next') }}">
+  {{ csrf() }}
+  {% for p in plans %}
+    <label><input type="radio" name="plan" value="{{ p }}"{% if ctx.plan == p %} checked{% endif %}> {{ p }}</label>
+  {% endfor %}
+  <button>Next</button>
+</form>
+{{ back() }}
+{% endblock %}

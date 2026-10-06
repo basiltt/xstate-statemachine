@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% from "_forms.html" import csrf, back with context %}
+{% block body %}
+<h1>Step 2: your work</h1>
+<form method="post" action="{{ url_for('step', action='next') }}">
+  {{ csrf() }}
+  <label>Company <input name="company" value="{{ ctx.company }}"></label>
+  <label>About you <textarea name="bio">{{ ctx.bio }}</textarea></label>
+  <button>Next</button>
+</form>
+{{ back() }}
+{% endblock %}

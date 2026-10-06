@@ -1,0 +1,16 @@
+# ${name} -- Flask onboarding wizard
+
+Scaffolded by `xsm new --template flask` from the
+[`flask_wizard` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/flask_wizard):
+a 4-step wizard where NEXT / BACK / SUBMIT are statechart events, one
+machine per browser session.
+
+```bash
+pip install -r requirements.txt     # add flask-wtf for CSRF protection
+flask --app app run                 # http://127.0.0.1:5000/
+WIZARD_STORE=sqlite flask --app app run
+flask --app app xsm inspect wizard
+python -m pytest tests -q
+```
+
+Edit `machine.json` (the chart) and the actions/guards in `app.py`.

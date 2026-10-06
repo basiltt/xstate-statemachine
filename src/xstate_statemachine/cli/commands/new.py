@@ -29,9 +29,19 @@ TEMPLATES: Dict[str, Tuple[str, str]] = {
         "shipped",
         "FastAPI order service: StatechartRouter, SQLite/Redis, tests",
     ),
-    "django": ("#280", "Django app with StatechartField"),
-    "flask": ("#285", "Flask app with the XState extension"),
+    "flask": (
+        "shipped",
+        "Flask onboarding wizard: XState extension, session store, tests",
+    ),
+    "django": ("#309", "Django app with StatechartField"),
 }
+
+#: Where a not-yet-templated project can be copied from today.
+EXAMPLES_URL = (
+    "https://github.com/basiltt/xstate-statemachine/tree/main/"
+    "examples/integrations/"
+)
+_PLANNED_EXAMPLE = {"django": "django_approvals"}
 
 _NAME = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 
@@ -78,8 +88,11 @@ def scaffold(
         )
     status = TEMPLATES[template][0]
     if status != "shipped":
+        example = _PLANNED_EXAMPLE.get(template, "")
         raise NewProjectError(
-            f"the {template!r} template is planned and arrives with {status}"
+            f"the {template!r} template is not shipped yet (tracked in "
+            f"{status}); copy the example app instead: "
+            f"{EXAMPLES_URL}{example}"
         )
     _check_name(name)
     _check_target(target, force)
@@ -131,7 +144,10 @@ def run_new(
     c.print(f"Created {len(files)} files in {target}:")
     for f in files:
         c.print(f"  {f.relative_to(Path(target)).as_posix()}")
+    # 📝 battle #309-a: a pasted `cd my dir` fails; quote when needed
+    #    (double quotes work in POSIX shells, cmd and PowerShell alike).
+    shown = f'"{target}"' if re.search(r"\s", target) else target
     c.print(
-        f"Next: cd {target} && pip install -r requirements.txt "
+        f"Next: cd {shown} && pip install -r requirements.txt "
         "&& python -m pytest tests -q"
     )

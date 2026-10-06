@@ -1,0 +1,8 @@
+{#- CSRF token field: present only when Flask-WTF is installed. -#}
+{% macro csrf() -%}
+  {% if config.CSRF_ENABLED %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+{%- endmacro %}
+
+{% macro back() -%}
+  <form method="post" action="{{ url_for('step', action='back') }}">{{ csrf() }}<button>Back</button></form>
+{%- endmacro %}
