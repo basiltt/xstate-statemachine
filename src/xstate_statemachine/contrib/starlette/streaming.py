@@ -69,6 +69,11 @@ async def transition_stream(
         snapshot = await registry.peek(name, key)
     except Exception as exc:  # noqa: BLE001 -- mapped, never leaked
         return problem_for_exception(exc)
+    if registry.draining:
+        # 🔥 battle #275: a server in shutdown answered 429 ("too many
+        #    connections") -- a client would back off and retry THIS
+        #    instance; 503 tells the balancer to go elsewhere.
+        return problem(503, "Shutting down")
     if not registry.try_open_connection(name, key):
         return problem(429, "Too many connections for this instance")
     sub = registry.subscribers.subscribe(name, str(key))

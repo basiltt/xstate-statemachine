@@ -50,6 +50,13 @@ class _Subscribers:
         subs.discard(sub)
         if not subs:
             del self._subs[sub.topic]
+            # 🔥 battle #275: the per-topic `seq` lived forever -- one int
+            #    per instance key ever acted on (5 000 orders → 5 000
+            #    entries, with or without a subscriber). The sequence is
+            #    only meaningful to a connected client; forget it with
+            #    the last one. A reconnecting client starts from the
+            #    `snapshot` frame anyway.
+            self._seq.pop(sub.topic, None)
 
     def count(
         self, name: Optional[str] = None, key: Optional[str] = None
@@ -66,11 +73,14 @@ class _Subscribers:
     ) -> None:
         """Stamp each body with the next ``seq`` and enqueue it."""
         topic = (name, key)
+        subs = self._subs.get(topic)
+        if not subs:
+            return  # nobody listening: no sequence to advance, no state
         for body in bodies:
             seq = self._seq.get(topic, 0) + 1
             self._seq[topic] = seq
             item = (seq, body)
-            for sub in list(self._subs.get(topic, ())):
+            for sub in list(subs):
                 if sub.queue.qsize() >= MAX_BACKLOG:
                     # 🔥 Slow consumer: cut it off, never block the writer.
                     self.unsubscribe(sub)
@@ -85,3 +95,4 @@ class _Subscribers:
                 if with_room:
                     sub.queue.put_nowait(CLOSED)
         self._subs.clear()
+        self._seq.clear()
