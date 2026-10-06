@@ -1450,6 +1450,50 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **Live inspector, as battle-tested (#274).** The fulfilment team
+  watches the pipeline in the Stately Inspector and records sessions for
+  post-mortems. Pinned on `eda_fulfilment`: 20 orders are 20 distinct
+  sessions each ending in its own `shipped` snapshot; only allow-listed
+  context leaves and the chart `definition`'s initial context is
+  filtered the same way; a browser tab that never reads is bounded, cut
+  and counted while a reading tab keeps receiving; a sink that raises
+  never reaches the machine; a recording survives a crash mid-write; 3
+  readers over 300 orders see every frame in the same order; 8 router
+  threads over one sink. Defects found and fixed: the session id was
+  `interp.id` -- the **chart** id -- so every persisted instance of one
+  chart shared a session and the Inspector drew one actor named `order`
+  with 20 orders' snapshots interleaved -- `session_id_of()` uses the
+  persisted `store_key` (children re-rooted under the parent's session);
+  `SseSink` kept an **unbounded** per-client queue (≈11 MB per 20 000
+  events for a stalled tab) -- `max_queue=10_000`, a lagging client is
+  cut (reconnect replays `history`), `dropped` / `sent` / `clients`
+  exposed, `send()` never blocks; the same for the `[starlette]`
+  `WebSocketSink` (`max_queue=`, close code 1013); the loopback `Host`
+  check accepted `127.0.0.1.evil.com` (`startswith("127.")`) -- the
+  DNS-rebinding guard now parses `host[:port]` / `[v6][:port]` strictly
+  with `ipaddress`; a sink that raised produced one contained error per
+  message -- reported once, then inert; `read_jsonl` raised on a
+  recording whose last line was cut by a crash -- the truncated last
+  line is skipped (a corrupt line in the middle still raises);
+  `include_payloads=True` sent free-text payload fields through
+  key-name redaction -- a card number in `PAYMENT_FAILED.reason` left
+  the process -- `payload_allowlist=` (deny by default, like
+  `context_allowlist`; `include_payloads=True` without it sends only
+  `type` and warns once); `MemorySink(maxlen=)`; the
+  pending-sends table grew with unique target ids (capped at 1 024);
+  `replay_messages(Path(...))` raised `TypeError` (`os.PathLike`
+  accepted); a negative / NaN `speed` was accepted (`ValueError`; the
+  CLI exits 2); **`xsm sim --record` appended to an existing file** --
+  two unrelated sessions replayed as one; it now refuses a non-empty
+  file unless `--append` (behaviour change); `xsm replay` loaded the
+  whole recording before printing (streams); `--open` on a headless box
+  crashed the server (warns); Ctrl-C during `--live` could not interrupt
+  the wait on Windows (slices); `JsonLinesSink.send()` after `close()`
+  raised an opaque I/O error (clear `ValueError`); `SseSink(keepalive=)`
+  is injectable. Documented gaps: `historyValue` is always `{}`, a
+  not-started run reports `active`, no `Secure` cookie flag over http,
+  HEAD/POST/OPTIONS answer 501; a `store_key` shared by two different
+  charts shares a session -- keys must be unique across charts.
 - **Observability, as battle-tested (#273).** The fulfilment pipeline on a
   dashboard an SRE can trust: Prometheus + OpenTelemetry on every
   interpreter the choreography router builds. Pinned on `eda_fulfilment`:

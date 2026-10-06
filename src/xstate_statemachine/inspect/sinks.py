@@ -25,7 +25,9 @@
 from __future__ import annotations
 
 import hmac
+import ipaddress
 import json
+import math
 import os
 import queue
 import secrets
@@ -60,15 +62,34 @@ _CSP = (
 
 
 class MemorySink:
-    """Collects messages in ``messages``."""
+    """Collects messages in ``messages``.
 
-    def __init__(self) -> None:
+    Args:
+        maxlen: Keep only the newest *maxlen* messages (a long debug
+            session must not grow without bound); ``dropped`` counts
+            what fell off. ``None`` (default) keeps everything -- the
+            fit for a test asserting on the whole recording.
+    """
+
+    def __init__(self, maxlen: Optional[int] = None) -> None:
+        if maxlen is not None and maxlen < 1:
+            raise ValueError("maxlen must be >= 1 or None")
         self.messages: List[Dict[str, Any]] = []
+        self.maxlen = maxlen
+        self.dropped = 0
         self._lock = threading.Lock()
 
     def send(self, message: Dict[str, Any]) -> None:
         with self._lock:
             self.messages.append(message)
+            if self.maxlen is not None and len(self.messages) > self.maxlen:
+                excess = len(self.messages) - self.maxlen
+                del self.messages[:excess]
+                self.dropped += excess
+
+    def clear(self) -> None:
+        with self._lock:
+            self.messages.clear()
 
 
 class JsonLinesSink:
@@ -76,7 +97,11 @@ class JsonLinesSink:
 
     The file is created with mode ``0o600`` (owner read/write only) --
     it holds every event the machine saw. An existing file is appended to
-    and its mode is left alone.
+    and its mode is left alone. On Windows the mode is not enforced (the
+    file inherits the directory's ACL). Lines are pure ASCII
+    (``ensure_ascii``), so a lone surrogate in an event cannot abort the
+    write. `send()` after `close()` raises ``ValueError`` -- through an
+    `InspectorPlugin` that is one logged warning, then the plugin stops.
     """
 
     def __init__(self, path: Union[str, "os.PathLike[str]"]) -> None:
@@ -87,8 +112,12 @@ class JsonLinesSink:
         self._lock = threading.Lock()
 
     def send(self, message: Dict[str, Any]) -> None:
-        line = json.dumps(message, default=str, separators=(",", ":"))
+        line = json.dumps(
+            message, default=str, separators=(",", ":"), ensure_ascii=True
+        )
         with self._lock:
+            if self._fh.closed:
+                raise ValueError(f"JsonLinesSink({self.path}) is closed")
             self._fh.write(line + "\n")
             self._fh.flush()
 
@@ -109,16 +138,39 @@ def read_jsonl(path: Union[str, "os.PathLike[str]"]) -> Iterator[Dict]:
     non-object lines are skipped)."""
     with open(path, encoding="utf-8") as fh:
         for line in fh:
-            line = line.strip()
-            if not line:
+            stripped = line.strip()
+            if not stripped:
                 continue
-            obj = json.loads(line)
+            try:
+                obj = json.loads(stripped)
+            except ValueError:
+                # battle #274: a process that died mid-write leaves a
+                # truncated LAST line (no trailing newline); the readable
+                # part of a post-mortem recording must stay readable. A
+                # corrupt line in the middle is real damage: it raises.
+                if line.endswith("\n"):
+                    raise
+                return
             if isinstance(obj, dict):
                 yield obj
 
 
 def _is_loopback(host: str) -> bool:
-    return host in LOOPBACK_HOSTS or host.startswith("127.")
+    """True for ``localhost`` or a literal loopback IP -- parsed strictly.
+
+    battle #274: the old ``host.startswith("127.")`` accepted a ``Host:
+    127.0.0.1.evil.com`` header -- an attacker-controlled DNS name, i.e.
+    exactly the DNS-rebinding request the Host check exists to refuse.
+    """
+    name = host.strip().lower().rstrip(".")
+    if name.startswith("[") and name.endswith("]"):
+        name = name[1:-1]
+    if name == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(name).is_loopback
+    except ValueError:
+        return False
 
 
 class SseSink:
@@ -132,6 +184,14 @@ class SseSink:
         allowed_origins: Extra ``Origin`` values accepted besides
             same-origin (e.g. a dev UI on another port).
         history: How many past messages a newly connected client replays.
+        max_queue: Per-client backlog of frames not yet written to the
+            socket. battle #274: a browser tab that stalls (lid closed,
+            frozen devtools) grew an unbounded queue -- 11 MB per 20 000
+            events -- while the machine kept producing. A client that
+            falls *max_queue* frames behind is disconnected (it
+            reconnects and replays `history`); `dropped` counts them.
+            The producing machine never blocks on a client.
+        keepalive: Seconds between keep-alive comments on an idle stream.
     """
 
     def __init__(
@@ -142,7 +202,15 @@ class SseSink:
         token: Optional[str] = None,
         allowed_origins: Iterable[str] = (),
         history: int = 1000,
+        max_queue: int = 10_000,
+        keepalive: float = 15.0,
     ) -> None:
+        if not (keepalive > 0 and math.isfinite(keepalive)):
+            raise ValueError("keepalive must be a finite number > 0")
+        #: seconds between ``: keep-alive`` comments on an idle stream
+        self.keepalive = keepalive
+        if max_queue < 1:
+            raise ValueError("max_queue must be >= 1")
         if not _is_loopback(host) and not token:
             raise ValueError(
                 f"refusing to serve the inspector on non-loopback host "
@@ -153,6 +221,11 @@ class SseSink:
         self.allowed_origins = frozenset(allowed_origins)
         self._history: Deque[Dict[str, Any]] = deque(maxlen=history)
         self._clients: List["queue.Queue[Optional[str]]"] = []
+        self.max_queue = max_queue
+        #: clients disconnected because they fell `max_queue` behind
+        self.dropped = 0
+        #: messages accepted by `send()`
+        self.sent = 0
         self._lock = threading.Lock()
         self._server = ThreadingHTTPServer((host, port), self._handler())
         self._server.daemon_threads = True
@@ -204,8 +277,34 @@ class SseSink:
                 f"data: {json.dumps(message, default=str)}\n\n"
             )
             clients = list(self._clients)
+            self.sent += 1
         for q in clients:
-            q.put(frame)
+            try:
+                q.put_nowait(frame)
+            except queue.Full:
+                self._cut(q)  # the stalled client; see `max_queue`
+
+    def _cut(self, q: Any) -> None:
+        with self._lock:
+            if q not in self._clients:
+                return
+            self._clients.remove(q)
+            self.dropped += 1
+        # drain one slot so the sentinel fits and the handler exits
+        try:
+            q.get_nowait()
+        except queue.Empty:
+            pass
+        try:
+            q.put_nowait(None)
+        except queue.Full:
+            pass
+
+    @property
+    def clients(self) -> List[Any]:
+        """Connected SSE clients (opaque; `len()` is the count)."""
+        with self._lock:
+            return list(self._clients)
 
     @property
     def messages(self) -> List[Dict[str, Any]]:
@@ -225,11 +324,21 @@ class SseSink:
             return True  # the token is the control on a public bind
         if not host_header:
             return False
-        name = (
-            host_header.rsplit(":", 1)[0]
-            if "]" not in host_header
-            else (host_header.split("]")[0].lstrip("["))
-        )
+        hdr = host_header.strip()
+        if hdr.startswith("["):
+            name, sep, rest = hdr[1:].partition("]")
+            if not sep or (rest and not rest[1:].isdigit()):
+                return False
+            if rest and not rest.startswith(":"):
+                return False
+        elif hdr.count(":") == 1:
+            name, _, port = hdr.partition(":")
+            if not port.isdigit():
+                return False
+        elif ":" in hdr:
+            return False  # a bare IPv6 literal is not a valid Host value
+        else:
+            name = hdr
         return _is_loopback(name)
 
     def origin_ok(self, origin: Optional[str], host: Optional[str]) -> bool:
@@ -327,7 +436,9 @@ class SseSink:
                 self.wfile.write(body)
 
             def _stream(self) -> None:
-                q: "queue.Queue[Optional[str]]" = queue.Queue()
+                q: "queue.Queue[Optional[str]]" = queue.Queue(
+                    maxsize=sink.max_queue
+                )
                 with sink._lock:
                     backlog = list(sink._history)
                     sink._clients.append(q)
@@ -344,7 +455,7 @@ class SseSink:
                     self.wfile.flush()
                     while True:
                         try:
-                            frame = q.get(timeout=15)
+                            frame = q.get(timeout=sink.keepalive)
                         except queue.Empty:
                             frame = ": keep-alive\n\n"
                         if frame is None:

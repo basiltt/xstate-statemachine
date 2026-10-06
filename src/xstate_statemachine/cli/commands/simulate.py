@@ -570,6 +570,7 @@ def run_simulate(
     source: Optional[K.KeySource] = None,
     record: Optional[str] = None,
     record_context: Optional[str] = None,
+    record_append: bool = False,
 ) -> None:
     """Entry for `xsm simulate`. *source* injects a key reader for the live
     loop (the launcher passes its own so the whole flow is one keyboard
@@ -584,11 +585,13 @@ def run_simulate(
         from .live import recording_plugin
 
         try:
-            recorder = recording_plugin(record, context=record_context)
+            recorder = recording_plugin(
+                record, context=record_context, append=record_append
+            )
         except OSError as exc:
             c.error(f"--record {record}: {exc}")
             logging.disable(logging.NOTSET)
-            raise SystemExit(1)
+            raise SystemExit(2 if isinstance(exc, FileExistsError) else 1)
     try:
         config = json.loads(Path(path).read_text(encoding="utf-8"))
         guards = {

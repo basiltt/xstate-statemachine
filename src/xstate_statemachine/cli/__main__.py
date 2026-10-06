@@ -1183,6 +1183,7 @@ def _dispatch() -> None:
             guards_false=args.guards_false,
             record=getattr(args, "record", None),
             record_context=getattr(args, "context", None),
+            record_append=bool(getattr(args, "append", False)),
         )
         return
 
