@@ -282,7 +282,10 @@ def test_every_shipped_template_is_parametrised_above() -> None:
     from src.xstate_statemachine.cli.commands import new as N
 
     shipped = [k for k, (s, _) in N.TEMPLATES.items() if s == "shipped"]
-    assert shipped == ["fastapi", "flask"], "add the new template to the test above"
+    assert shipped == [
+        "fastapi",
+        "flask",
+    ], "add the new template to the test above"
 
 
 def test_force_writes_into_non_empty_dir_keeping_other_files(
