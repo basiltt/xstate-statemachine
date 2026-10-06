@@ -1298,10 +1298,9 @@ async def send_submit(
     request: Request,
     instance_id: str = INSTANCE_ID,
     body: Optional[SubmitEvent] = Body(None),
-    interp: Any = get_interpreter(registry, MACHINE_NAME, key="id"),
 ) -> Response:
     """Accepted in: cart."""
-    return await _send(request, interp, "SUBMIT", _payload(body))
+    return await _send(request, instance_id, "SUBMIT", _payload(body))
 
 
 # 📝 Declared LAST: the literal routes above win; anything else is

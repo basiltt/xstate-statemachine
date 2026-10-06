@@ -22,6 +22,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
+from ...exceptions import InvalidConfigError
 from ..naming import docstring_safe
 
 #: Event prefixes the engine raises itself; a client never sends them.
@@ -239,6 +240,8 @@ def parse_payload(schema: Any) -> Optional[List[PayloadField]]:
     """
     if not isinstance(schema, dict):
         return None
+    if schema.get("type") == "object" and "properties" not in schema:
+        return None  # JSON Schema "any object", not a field named `type`
     required: Set[str] = set()
     props: Dict[str, Any] = schema
     if isinstance(schema.get("properties"), dict):
@@ -268,13 +271,39 @@ def parse_payload(schema: Any) -> Optional[List[PayloadField]]:
     return fields
 
 
+#: Payload names no client can send: `send()` options (the registry
+#: refuses them with 422) and `type`, which IS the event's own type on
+#: the wire (an aliased field silently received the event name).
+SEND_OPTIONS = ("wait", "priority", "type")
+
+
+def _refuse_send_options(spec: EventSpec) -> None:
+    bad = sorted({f.name for f in spec.payload or []} & set(SEND_OPTIONS))
+    if bad:
+        # 🔥 #279 battle: the model declared `wait`, the registry then
+        #    refused every request carrying it (a reserved `send()` option)
+        #    -- a field no client could ever send. Loud, at generation.
+        raise InvalidConfigError(
+            f"event {spec.type!r} declares payload field(s) {bad}: they "
+            "name `send()` options or the event type and cannot be sent; "
+            "rename them"
+        )
+
+
 def collect_events(config: Dict[str, Any]) -> List[EventSpec]:
-    """Every client-sendable event, sorted, with unique names assigned."""
+    """Every client-sendable event, sorted, with unique names assigned.
+
+    Raises:
+        InvalidConfigError: a declared payload field names a `send()`
+            option (``wait`` / ``priority``).
+    """
     found: Dict[str, EventSpec] = {}
     _walk_on(config, "", found)
     for etype, schema in _root_payloads(config).items():
         if etype in found and found[etype].payload is None:
             found[etype].payload = parse_payload(schema)
+    for spec in found.values():
+        _refuse_send_options(spec)
     classes: Set[str] = set()
     idents: Set[str] = set()
     paths: Set[str] = set()

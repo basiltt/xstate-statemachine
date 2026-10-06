@@ -75,11 +75,16 @@ def render_companion(
             f"{ctx.machine_name!r}: the engine rejects the chart: {exc}"
         ) from exc
     sources = [Path(p).name for p in json_paths]
+    # 📝 #279 battle: a source name with a space was unquoted, and the
+    #    router's command omitted `--with-models` -- following it emitted
+    #    an UNTYPED router that differs from the file it is printed in.
     command = (
         "xsm generate-template "
-        + " ".join(sources)
+        + " ".join(f'"{s}"' if " " in s else s for s in sources)
         + f" --template {template}"
     )
+    if template == "fastapi-router" and "pydantic-models" in ctx.companions:
+        command += " --with-models"
     if template == "pytest" and getattr(ctx, "fixtures", False):
         command += " --fixtures"  # #268
     header = build_provenance_header(
