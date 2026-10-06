@@ -123,6 +123,14 @@ class _ActOwner:
     ) -> None:
         self.args = (registry, name, key, principal, idem)
         self.ready = ready
+        # 📝 review M1: if a SIBLING dependency raises, Litestar never
+        #    resumes our generator, so `finish()` never runs -- the owner
+        #    would wait forever holding the key's act / lock, released
+        #    only by garbage collection. Bound the wait: past it the act
+        #    is discarded (nothing saved), never committed half-done.
+        self.wait_s = float(
+            getattr(registry, "settle_timeout", None) or 30.0
+        ) + float(getattr(registry, "body_timeout_s", None) or 30.0)
         self.done: "asyncio.Future[Optional[BaseException]]" = (
             asyncio.get_running_loop().create_future()
         )
@@ -135,7 +143,20 @@ class _ActOwner:
                 name, key, principal=principal, idempotency_key=idem
             ) as interp:
                 self.ready.set_result(interp)
-                failure = await self.done
+                try:
+                    failure = await asyncio.wait_for(
+                        asyncio.shield(self.done), self.wait_s
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "get_interpreter(%s/%s): the request never released "
+                        "its interpreter within %.0fs (a sibling dependency "
+                        "failed?); discarding the act, nothing saved",
+                        name,
+                        key,
+                        self.wait_s,
+                    )
+                    raise _Discard()
                 if failure is not None:
                     raise _Discard()
         except _Discard:
@@ -152,12 +173,15 @@ class _ActOwner:
             return await asyncio.shield(self.ready)
         except asyncio.CancelledError:
             self.task.cancel()
+            # review L1: observe the cancellation of act() too
+            await asyncio.gather(self.task, return_exceptions=True)
             raise
 
     async def finish(self, failure: Optional[BaseException]) -> None:
         if not self.done.done():
             self.done.set_result(failure)
-        assert self.task is not None
+        if self.task is None:  # review L2: not an `assert`
+            return
         await self.task  # ✅ the save (or a ConflictError) lands here
 
 

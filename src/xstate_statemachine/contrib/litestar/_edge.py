@@ -24,6 +24,12 @@ def to_starlette(request: Any) -> StarletteRequest:
 
     The registry's helpers only read headers, path params and -- when no
     payload is passed -- the body stream, so the view is lossless.
+
+    📝 review L3: a body Litestar has ALREADY read is copied over (via the
+    frameworks' ``_body`` cache -- Starlette 0.27+ / Litestar 2.x; pinned
+    by a test). Call this AFTER Litestar read the body (the controller's
+    guard always does); if the Starlette view reads the stream first, a
+    later Litestar ``request.body()`` sees nothing.
     """
     conn = StarletteRequest(request.scope, request.receive)
     # 🔥 battle #278-a: once Litestar had read the body (`request.json()`

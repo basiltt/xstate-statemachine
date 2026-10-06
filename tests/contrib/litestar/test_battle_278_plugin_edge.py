@@ -581,3 +581,78 @@ def test_parity_with_fastapi() -> None:
     got = {r[0]: r[1] for r in rows}
     assert got["unknown"] == 422 and got["404-send"] == 404
     assert got["duplicate"] == 200 and got["501"] == 501
+
+
+# --- independent review (#278) ----------------------------------------------
+def test_sibling_dependency_failure_does_not_strand_the_act_owner():
+    """M1: when ANOTHER dependency in the batch raises, Litestar never
+    resumes our generator, so `finish()` never ran -- the owner task sat
+    on the key forever (until GC). It is bounded now: the act is
+    discarded, nothing saved, and the next request on the key works."""
+    import asyncio
+    import gc
+
+    from litestar import Litestar, Response, post
+    from litestar.di import Provide
+    from litestar.testing import TestClient
+
+    from src.xstate_statemachine.contrib.litestar import (
+        ReceiptResponse,
+        StatechartRegistry,
+        XStatePlugin,
+        allow_all,
+        get_interpreter,
+    )
+    from src.xstate_statemachine.contrib.litestar import plugin as plugin_mod
+    from src.xstate_statemachine.persistence import MemoryStore
+    from tests.contrib.starlette._support import counter_machine
+
+    reg = StatechartRegistry(MemoryStore(), settle_timeout=0.2)
+    reg.register("c", counter_machine(), authorize=allow_all)
+
+    async def bad() -> int:
+        raise RuntimeError("sibling failed")
+
+    @post(
+        "/c/{id:str}/both",
+        dependencies={"order": get_interpreter(reg, "c"), "b": Provide(bad)},
+    )
+    async def both(order: Any, b: Any) -> Response:  # pragma: no cover
+        return ReceiptResponse(order, await order.send("INC", wait=True))
+
+    @post("/c/{id:str}/inc", dependencies={"order": get_interpreter(reg, "c")})
+    async def inc(order: Any) -> Response:
+        return ReceiptResponse(order, await order.send("INC", wait=True))
+
+    app = Litestar(
+        route_handlers=[both, inc],
+        plugins=[XStatePlugin(reg)],
+        logging_config=None,
+    )
+    assert hasattr(plugin_mod, "_ActOwner")
+    with TestClient(app, raise_server_exceptions=False) as c:
+        assert c.post("/c/k/both").status_code == 500
+        # the owner is bounded by settle_timeout + body_timeout; shorten
+        # the body timeout for the test by waiting a little over the sum
+        deadline = __import__("time").monotonic() + 3.0
+        while __import__("time").monotonic() < deadline:
+            gc.collect()
+            # the next request on the key must not be blocked by the owner
+            r = c.post("/c/k/inc")
+            if r.status_code == 200:
+                break
+            __import__("time").sleep(0.05)
+        assert r.status_code == 200, r.text
+    assert reg.residents == 0
+
+
+def test_body_cache_attributes_exist_on_pinned_frameworks():
+    """M2: `to_starlette` and the body guard rely on the frameworks'
+    private `_body` cache. Fail loudly on a version that renamed it."""
+    import inspect
+
+    import litestar.connection.request as lr
+    import starlette.requests as sr
+
+    assert "_body" in inspect.getsource(lr.Request.body)
+    assert "_body" in inspect.getsource(sr.Request.body)
