@@ -31,6 +31,7 @@ from starlette.responses import JSONResponse, PlainTextResponse, Response
 from ...persistence.helpers import KeyNotFoundError
 from ..pydantic.events import models_of
 from ..starlette._http import (
+    DEFAULT_BODY_TIMEOUT_S,
     HTTPProblemError,
     IdempotencyNotConfiguredError,
     PayloadTooLargeError,
@@ -38,6 +39,7 @@ from ..starlette._http import (
     idempotency_key_from,
     problem,
     problem_for_exception,
+    read_body,
 )
 from ..starlette.streaming import transition_stream, websocket_endpoint
 from ._models import (
@@ -81,10 +83,14 @@ def bounded_route_class(registry: Any) -> type:
     📝 #266 battle (B): found by posting 1 MB to every POST route of the
     orders app's OpenAPI document.
     """
-    return _problem_route_class(registry.max_body_bytes)
+    return _problem_route_class(
+        registry.max_body_bytes, registry.body_timeout_s
+    )
 
 
-def _problem_route_class(max_body_bytes: int) -> type:
+def _problem_route_class(
+    max_body_bytes: int, body_timeout_s: float = DEFAULT_BODY_TIMEOUT_S
+) -> type:
     class StatechartRoute(APIRoute):
         def get_route_handler(self) -> Callable[[Request], Any]:
             handler = super().get_route_handler()
@@ -92,7 +98,9 @@ def _problem_route_class(max_body_bytes: int) -> type:
             async def route(request: Request) -> Response:
                 try:
                     if request.method in ("POST", "PUT", "PATCH"):
-                        await _bounded_json(request, max_body_bytes)
+                        await _bounded_json(
+                            request, max_body_bytes, body_timeout_s
+                        )
                     return await handler(request)
                 except RequestValidationError as exc:
                     return _validation_problem(exc)
@@ -104,19 +112,17 @@ def _problem_route_class(max_body_bytes: int) -> type:
     return StatechartRoute
 
 
-async def _bounded_json(request: Request, limit: int) -> None:
-    """Pre-read the body (cached on the request) enforcing X0.7."""
+async def _bounded_json(
+    request: Request,
+    limit: int,
+    timeout_s: float = DEFAULT_BODY_TIMEOUT_S,
+) -> None:
+    """Pre-read the body (cached on the request) enforcing X0.7, within
+    *timeout_s* (408 -- battle #277-a)."""
     declared = request.headers.get("content-length")
     if declared is not None and declared.isdigit() and int(declared) > limit:
         raise PayloadTooLargeError()
-    chunks: List[bytes] = []
-    size = 0
-    async for chunk in request.stream():
-        size += len(chunk)
-        if size > limit:
-            raise PayloadTooLargeError()
-        chunks.append(chunk)
-    raw = b"".join(chunks)
+    raw = await read_body(request, max_body_bytes=limit, timeout_s=timeout_s)
     request._body = raw  # starlette's own cache: FastAPI reads it back
     if raw.strip():
         ctype = request.headers.get("content-type", "")
@@ -303,7 +309,9 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
         prefix=base,
         tags=list(tags) if tags else None,
         dependencies=list(dependencies),
-        route_class=_problem_route_class(registry.max_body_bytes),
+        route_class=_problem_route_class(
+            registry.max_body_bytes, registry.body_timeout_s
+        ),
     )
     KeyPath = Path(..., alias=key_param)  # noqa: N806
     Actor = Depends(actor_dep)  # noqa: N806

@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Any, Callable, Dict, List, Optional
 
@@ -137,6 +138,48 @@ class ShuttingDownError(HTTPProblemError, RuntimeError):
 class PayloadTooLargeError(HTTPProblemError):
     status = 413
     title = "Payload Too Large"
+
+
+class RequestTimeoutError(HTTPProblemError):
+    """The request body did not arrive within ``body_timeout_s``
+    (battle #277-a): 408, safe to retry."""
+
+    status = 408
+    title = "Request Timeout"
+
+
+#: Default upper bound on reading one request body.
+DEFAULT_BODY_TIMEOUT_S = 30.0
+
+
+async def read_body(
+    request: Request,
+    *,
+    max_body_bytes: int,
+    timeout_s: float = DEFAULT_BODY_TIMEOUT_S,
+) -> bytes:
+    """The request body, at most *max_body_bytes* (413), within
+    *timeout_s* seconds (408).
+
+    🔥 battle #277-a: an accepted connection whose body never arrived
+    (uvicorn's Windows worker loop) held the handler -- and the client --
+    forever: nothing bounded `request.stream()`.
+    """
+
+    async def _read() -> bytes:
+        chunks: List[bytes] = []
+        size = 0
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > max_body_bytes:
+                raise PayloadTooLargeError()
+            chunks.append(chunk)
+        return b"".join(chunks)
+
+    try:
+        return await asyncio.wait_for(_read(), timeout_s)
+    except asyncio.TimeoutError:
+        raise RequestTimeoutError() from None
 
 
 class UnsupportedMediaTypeError(HTTPProblemError):
@@ -394,12 +437,16 @@ def idempotency_key_from(conn: HTTPConnection) -> Optional[str]:
 
 
 async def json_body(
-    request: Request, *, max_body_bytes: int = DEFAULT_MAX_SNAPSHOT_BYTES
+    request: Request,
+    *,
+    max_body_bytes: int = DEFAULT_MAX_SNAPSHOT_BYTES,
+    timeout_s: float = DEFAULT_BODY_TIMEOUT_S,
 ) -> Dict[str, Any]:
     """Read a bounded ``application/json`` object body (X0.7).
 
     An empty body is ``{}``. Raises `UnsupportedMediaTypeError` (415),
-    `PayloadTooLargeError` (413) or `UnprocessableBodyError` (422).
+    `PayloadTooLargeError` (413), `RequestTimeoutError` (408: the body
+    did not arrive within *timeout_s*) or `UnprocessableBodyError` (422).
     """
     declared = request.headers.get("content-length")
     if declared is not None and declared.isdigit():
@@ -412,14 +459,9 @@ async def json_body(
         raise UnsupportedMediaTypeError(
             "Request body must be application/json"
         )
-    chunks: List[bytes] = []
-    size = 0
-    async for chunk in request.stream():
-        size += len(chunk)
-        if size > max_body_bytes:
-            raise PayloadTooLargeError()
-        chunks.append(chunk)
-    raw = b"".join(chunks)
+    raw = await read_body(
+        request, max_body_bytes=max_body_bytes, timeout_s=timeout_s
+    )
     if not raw.strip():
         return {}
     try:

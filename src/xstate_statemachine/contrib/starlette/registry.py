@@ -78,6 +78,7 @@ from ._fanout import _Subscribers
 from ._probes import _ProbesMixin
 from ._scanner import _ScannerMixin
 from ._http import (
+    DEFAULT_BODY_TIMEOUT_S,
     ForbiddenError,
     ShuttingDownError,
     IdempotencyNotConfiguredError,
@@ -168,6 +169,9 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
         allowed_origins: Extra ``Origin`` values accepted on SSE/WS besides
             same-origin (X0.7).
         max_body_bytes: `json_body` cap for `send_event`.
+        body_timeout_s: battle #277-a -- longest a request body may take
+            to arrive; beyond it the request is a 408 problem instead of
+            a handler (and its client) waiting forever.
         settle_timeout: #263 battle -- how long a request waits, after
             its event's receipt, for engine completions still in flight
             (a chain of plain ``def`` invokes) before responding and
@@ -195,6 +199,7 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
         allowed_origins: Iterable[str] = (),
         max_body_bytes: Optional[int] = None,
         settle_timeout: float = DEFAULT_SETTLE_TIMEOUT,
+        body_timeout_s: float = DEFAULT_BODY_TIMEOUT_S,
     ) -> None:
         if max_residents < 1:
             raise ValueError("max_residents must be >= 1")
@@ -231,6 +236,11 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
         if not (self.heartbeat_s > 0 and math.isfinite(self.heartbeat_s)):
             raise ValueError("heartbeat_s must be a finite number > 0")
         self.allowed_origins = frozenset(allowed_origins)
+        self.body_timeout_s = float(body_timeout_s)
+        if not (
+            self.body_timeout_s > 0 and math.isfinite(self.body_timeout_s)
+        ):
+            raise ValueError("body_timeout_s must be a finite number > 0")
         from ...persistence.store import DEFAULT_MAX_SNAPSHOT_BYTES
 
         self.max_body_bytes = (
@@ -500,7 +510,9 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
             await self.authorize(request, name, key, event_type)
             if payload is None:
                 payload = await json_body(
-                    request, max_body_bytes=self.max_body_bytes
+                    request,
+                    max_body_bytes=self.max_body_bytes,
+                    timeout_s=self.body_timeout_s,
                 )
             payload = dict(payload)
             refuse_reserved_send_keys(payload)

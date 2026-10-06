@@ -67,6 +67,12 @@ def start_server(
     if workers > 1:
         # 💡 Windows: uvicorn's multiprocess supervisor uses spawn -- fine.
         cmd += ["--workers", str(workers)]
+        if sys.platform == "win32":
+            # 🔥 battle #277-a: uvicorn's default worker loop on Windows
+            #    (Selector) loses an accepted connection's body in ~1 of
+            #    4 fleets -- a request stalls to the client timeout. See
+            #    `app.worker_loop`.
+            cmd += ["--loop", "asyncio:ProactorEventLoop"]
     return subprocess.Popen(cmd, cwd=str(HERE), env=env)
 
 
