@@ -25,6 +25,7 @@
 from __future__ import annotations
 
 import hmac
+import ipaddress
 import json
 import os
 import queue
@@ -146,7 +147,21 @@ def read_jsonl(path: Union[str, "os.PathLike[str]"]) -> Iterator[Dict]:
 
 
 def _is_loopback(host: str) -> bool:
-    return host in LOOPBACK_HOSTS or host.startswith("127.")
+    """True for ``localhost`` or a literal loopback IP -- parsed strictly.
+
+    battle #274: the old ``host.startswith("127.")`` accepted a ``Host:
+    127.0.0.1.evil.com`` header -- an attacker-controlled DNS name, i.e.
+    exactly the DNS-rebinding request the Host check exists to refuse.
+    """
+    name = host.strip().lower().rstrip(".")
+    if name.startswith("[") and name.endswith("]"):
+        name = name[1:-1]
+    if name == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(name).is_loopback
+    except ValueError:
+        return False
 
 
 class SseSink:
@@ -167,6 +182,7 @@ class SseSink:
             falls *max_queue* frames behind is disconnected (it
             reconnects and replays `history`); `dropped` counts them.
             The producing machine never blocks on a client.
+        keepalive: Seconds between keep-alive comments on an idle stream.
     """
 
     def __init__(
@@ -178,7 +194,12 @@ class SseSink:
         allowed_origins: Iterable[str] = (),
         history: int = 1000,
         max_queue: int = 10_000,
+        keepalive: float = 15.0,
     ) -> None:
+        if keepalive <= 0:
+            raise ValueError("keepalive must be > 0")
+        #: seconds between ``: keep-alive`` comments on an idle stream
+        self.keepalive = keepalive
         if max_queue < 1:
             raise ValueError("max_queue must be >= 1")
         if not _is_loopback(host) and not token:
@@ -294,11 +315,21 @@ class SseSink:
             return True  # the token is the control on a public bind
         if not host_header:
             return False
-        name = (
-            host_header.rsplit(":", 1)[0]
-            if "]" not in host_header
-            else (host_header.split("]")[0].lstrip("["))
-        )
+        hdr = host_header.strip()
+        if hdr.startswith("["):
+            name, sep, rest = hdr[1:].partition("]")
+            if not sep or (rest and not rest[1:].isdigit()):
+                return False
+            if rest and not rest.startswith(":"):
+                return False
+        elif hdr.count(":") == 1:
+            name, _, port = hdr.partition(":")
+            if not port.isdigit():
+                return False
+        elif ":" in hdr:
+            return False  # a bare IPv6 literal is not a valid Host value
+        else:
+            name = hdr
         return _is_loopback(name)
 
     def origin_ok(self, origin: Optional[str], host: Optional[str]) -> bool:
@@ -415,7 +446,7 @@ class SseSink:
                     self.wfile.flush()
                     while True:
                         try:
-                            frame = q.get(timeout=15)
+                            frame = q.get(timeout=sink.keepalive)
                         except queue.Empty:
                             frame = ": keep-alive\n\n"
                         if frame is None:

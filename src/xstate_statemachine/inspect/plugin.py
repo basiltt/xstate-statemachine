@@ -42,6 +42,7 @@ from .protocol import (
 
 __all__ = ["InspectorPlugin", "session_id_of"]
 
+_MAX_TARGETS = 1024
 _INIT = "___xstate_statemachine_init___"
 logger = logging.getLogger("xstate_statemachine.inspect")
 
@@ -231,7 +232,15 @@ class InspectorPlugin(PluginBase[Any]):
         self, interpreter: Any, target_id: str, event: Any
     ) -> None:
         with self._lock:
-            q = self._sent.setdefault(str(target_id), deque(maxlen=256))
+            key = str(target_id)
+            q = self._sent.get(key)
+            if q is None:
+                # battle #274: a send whose target never receives (stopped
+                # actor, unique ids) left a dict entry forever -- bound
+                # the number of tracked targets, evicting the oldest.
+                while len(self._sent) >= _MAX_TARGETS:
+                    del self._sent[next(iter(self._sent))]
+                q = self._sent[key] = deque(maxlen=256)
             q.append(
                 (
                     getattr(event, "type", ""),
