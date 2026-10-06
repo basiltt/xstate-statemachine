@@ -71,8 +71,10 @@ flowchart LR
 From a chart drawn in the Stately editor to a FastAPI service that runs on SQLite, deduplicates retries, and moves to Redis with one line. Every code block below runs in CI (the FastAPI and Redis blocks in the cells that install those extras).
 
 ```bash
-pip install "xstate-statemachine[fastapi,redis]" httpx
+pip install "xstate-statemachine[fastapi,redis]" httpx "fakeredis[lua]"
 ```
+
+`fakeredis[lua]` is only for step 5, which runs the Redis step in-process so the tutorial works without a server; the `[lua]` extra matters -- the store's atomic saves are Lua scripts and plain `fakeredis` has no Lua engine (you would see `the Redis server has no Lua scripting`).
 
 Want the finished result instead? `xsm new --template fastapi my_service` scaffolds the complete [`fastapi_orders` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/fastapi_orders) with its tests (see [CLI](../cli/#new-project)).
 
@@ -220,7 +222,7 @@ assert store.load("order.o1").version == 1            # acted once
 
 ### 5. Switch the store to Redis
 
-For several hosts, replace the two store lines. In production pass a URL — `RedisStore("redis://redis:6379/0", prefix="orders")` and `RedisInbox(...)` with the same arguments; here `fakeredis` stands in so the block runs anywhere. Nothing else changes.
+For several hosts, replace the two store lines. In production pass a URL — `RedisStore("redis://redis:6379/0", prefix="orders")` and `RedisInbox(...)` with the same arguments; here `fakeredis[lua]` stands in so the block runs anywhere (the `[lua]` extra is required: the store's saves are Lua scripts). Nothing else changes.
 
 <!-- doc-requires: fastapi, httpx, redis, fakeredis -->
 ```python

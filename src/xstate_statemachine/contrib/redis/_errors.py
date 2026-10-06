@@ -38,7 +38,20 @@ def typed(exc: redis.RedisError, backend: str = "RedisStore") -> StoreError:
         return StoreUnavailableError(
             f"{backend}: backend unavailable ({type(exc).__name__}: {exc})"
         )
-    return StoreError(f"{backend}: {type(exc).__name__}: {exc}")
+    text = str(exc)
+    if "unknown command" in text and (
+        "evalsha" in text.lower() or "eval" in text.lower()
+    ):
+        # 🔥 battle #309: a newcomer following the journey page installed
+        #    plain `fakeredis` and got a raw "unknown command 'evalsha'".
+        #    The store needs Lua scripting: name the cure.
+        return StoreError(
+            f"{backend}: the Redis server has no Lua scripting (EVALSHA "
+            f"unknown). The store needs Redis >= 7 or, for tests, "
+            f'`pip install "fakeredis[lua]"` -- plain `fakeredis` does not '
+            f"ship a Lua engine. ({type(exc).__name__}: {text})"
+        )
+    return StoreError(f"{backend}: {type(exc).__name__}: {text}")
 
 
 def redis_errors_typed(fn: _F) -> _F:
