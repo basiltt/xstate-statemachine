@@ -16,6 +16,7 @@
 # -----------------------------------------------------------------------------
 """`create_statechart_controller()`."""
 
+import re
 from typing import Any, Callable, Dict, List, Literal, Optional, Sequence
 
 import msgspec
@@ -23,6 +24,8 @@ from litestar import Controller, Request, Response, get, post, websocket
 from litestar.connection import WebSocket
 from litestar.exceptions import ValidationException
 
+from .._openapi import ident as _ident
+from .._openapi import operation_ids
 from ..starlette._http import (
     HTTPProblemError,
     PayloadTooLargeError,
@@ -37,8 +40,9 @@ from ._edge import to_litestar, to_starlette
 __all__ = ["create_statechart_controller"]
 
 
-def _ident(etype: str) -> str:
-    return "".join(c if c.isalnum() else "_" for c in etype).lower()
+#: Most validation errors listed in one 422 problem body (as `[fastapi]`).
+MAX_VALIDATION_ERRORS = 50
+_UNKNOWN_FIELD = re.compile(r"unknown field `([^`]{1,64})`")
 
 
 class Problem(msgspec.Struct, kw_only=True):
@@ -47,7 +51,58 @@ class Problem(msgspec.Struct, kw_only=True):
     type: str = "about:blank"
     title: str
     status: int
+    detail: Optional[str] = None
     error: Optional[str] = None
+    errors: Optional[List[Dict[str, str]]] = None
+    errors_total: Optional[int] = None
+
+
+class StateBody(msgspec.Struct, kw_only=True):
+    """``GET /{id}`` -- state only; ``context`` exists only when the
+    registry has a `context_serializer` (X0.1: never promised fields)."""
+
+    state: Any
+    state_ids: List[str]
+    available_events: List[str]
+    machine_version: Optional[str] = None
+    context: Optional[Any] = None
+
+
+class ReceiptBody(StateBody, kw_only=True):
+    """The `ReceiptResponse` body of both POST routes."""
+
+    changed: bool
+    denied: bool
+    deferred: bool
+    duplicate: bool
+    error: Optional[str] = None
+
+
+class DeclaredEvent(msgspec.Struct):
+    type: str
+    schema: Optional[Dict[str, Any]] = None
+
+
+class EventsBody(msgspec.Struct):
+    """``GET /{id}/events``."""
+
+    available: List[str]
+    declared: List[DeclaredEvent]
+
+
+def _ok(container: Any) -> Dict[int, Any]:
+    """🔥 battle #278-b: the handlers return a bare `Response`, so 200 was
+    documented as ``schema: {}`` -- an SDK got no types. Typed like the
+    `[fastapi]` router's StateModel / ReceiptModel / EventsModel."""
+    from litestar.openapi.datastructures import ResponseSpec
+
+    return {
+        200: ResponseSpec(
+            data_container=container,
+            description="OK",
+            generate_examples=False,
+        )
+    }
 
 
 def _problem_responses(*statuses: int) -> Dict[int, Any]:
@@ -62,6 +117,10 @@ def _problem_responses(*statuses: int) -> Dict[int, Any]:
             data_container=Problem,
             description=_REASONS.get(code, "Problem"),
             media_type="application/problem+json",
+            # 🔥 battle #278-b: Litestar generated RANDOM msgspec examples
+            #    for `Problem` (``"title": "JIgNZYFc..."``) -- the served
+            #    document changed on every start. The example is pinned.
+            generate_examples=False,
             examples=[
                 Example(
                     summary="problem",
@@ -104,8 +163,17 @@ def _models_for(machine: Any, event_models: Optional[Sequence[Any]]) -> List:
     return list(models_of(machine.event_schemas))
 
 
+def _title(name: str) -> str:
+    """🔥 battle #278-b: ``a_b`` and ``aB`` both became ``AB`` -- two
+    controllers' ``/send`` bodies shared ONE component (``ABEvent``), so
+    one route documented the other machine's events. Same rule as the
+    `[fastapi]` fallback: keep every alnum char, spell the rest ``_``."""
+    safe = "".join(c if c.isalnum() else "_" for c in name)
+    return safe[:1].upper() + safe[1:]
+
+
 def _body_type(name: str, machine: Any, models: List[Any]) -> Any:
-    title = "".join(p[:1].upper() + p[1:] for p in name.split("_"))
+    title = _title(name)
     if models:
         from typing import Annotated, Union
 
@@ -137,19 +205,37 @@ def _split(body: Any) -> "tuple[str, Dict[str, Any]]":
     """``(event_type, payload)`` from either body flavour."""
     root = getattr(body, "root", None)
     if root is not None:
-        return str(root.type), root.model_dump(mode="python", exclude={"type"})
+        # 🔥 battle #278-b: by_alias -- the engine re-validates with the
+        #    same model, which only knows the ALIAS (an aliased field was
+        #    a 422 on a valid body; the #276 fix, ported).
+        return str(root.type), root.model_dump(
+            mode="python", by_alias=True, exclude={"type"}
+        )
     return str(body.type), dict(body.payload)
 
 
 def _validation_problem(request: Any, exc: ValidationException) -> Any:
-    extra = exc.extra if isinstance(exc.extra, list) else []
-    errors = [
-        {"key": str(e.get("key", "")), "source": str(e.get("source", ""))}
-        for e in extra
-        if isinstance(e, dict)
-    ]
+    """422 problem listing WHERE the body is wrong, never a value.
+
+    🔥 battle #278-b: an unknown top-level key was reported as
+    ``{"key": "data"}`` (msgspec names the whole body); the offending key
+    is now named. Litestar's ``message`` is dropped -- it can quote input.
+    At most `MAX_VALIDATION_ERRORS` entries, plus ``errors_total``.
+    """
+    raw = exc.extra if isinstance(exc.extra, list) else []
+    raw = [e for e in raw if isinstance(e, dict)]
+    errors = []
+    for e in raw[:MAX_VALIDATION_ERRORS]:
+        key = str(e.get("key", ""))
+        hit = _UNKNOWN_FIELD.search(str(e.get("message", "")))
+        if hit:
+            key = hit.group(1)
+        errors.append({"key": key, "source": str(e.get("source", ""))})
+    extra: Dict[str, Any] = {}
+    if len(raw) > MAX_VALIDATION_ERRORS:
+        extra["errors_total"] = len(raw)
     return to_litestar(
-        problem(422, "Request validation failed", errors=errors)
+        problem(422, "Request validation failed", errors=errors, **extra)
     )
 
 
@@ -315,20 +401,29 @@ def create_statechart_controller(
             f"/{kp}",
             operation_id=f"{op}_get",
             summary=f"Current {name}",
-            responses=_problem_responses(*_READ_STATUSES),
+            responses={
+                **_ok(StateBody),
+                **_problem_responses(*_READ_STATUSES),
+            },
         )(get_state),
         "send": post(
             f"/{kp}/send",
             operation_id=f"{op}_send",
             status_code=200,
             summary=f"Send any event to a {name}",
-            responses=_problem_responses(*_SEND_STATUSES),
+            responses={
+                **_ok(ReceiptBody),
+                **_problem_responses(*_SEND_STATUSES),
+            },
         )(send),
         "list_events": get(
             f"/{kp}/events",
             operation_id=f"{op}_events",
             summary="Events",
-            responses=_problem_responses(*_READ_STATUSES),
+            responses={
+                **_ok(EventsBody),
+                **_problem_responses(*_READ_STATUSES),
+            },
         )(list_events),
         "stream": get(
             f"/{kp}/stream",
@@ -350,16 +445,23 @@ def create_statechart_controller(
         ns["guards"] = list(guards)
     if dependencies:
         ns["dependencies"] = dict(dependencies)
+    # 🔥 battle #278-b: ids (and attribute names) were `_ident(etype)`:
+    #    ``ORDER.PAID``/``ORDER_PAID`` overwrote each other's handler and
+    #    an event ``get`` duplicated ``<op>_get`` -- /schema answered 500.
+    op_ids = operation_ids(op, declared_events(machine))
     for etype in declared_events(machine):
         if etype in excluded:
             continue
-        attr = f"send_{_ident(etype)}"
+        attr = f"event_{op_ids[etype]}"
         ns[attr] = post(
-            f"/{kp}/events/{etype}",
-            operation_id=f"{op}_{_ident(etype)}",
+    title = _title(name)
+            operation_id=op_ids[etype],
             status_code=200,
             summary=f"Send {etype}",
-            responses=_problem_responses(*_SEND_STATUSES),
+            responses={
+                **_ok(ReceiptBody),
+                **_problem_responses(*_SEND_STATUSES),
+            },
         )(_event_handler(etype, by_type.get(etype), do_send))
     title = "".join(p[:1].upper() + p[1:] for p in name.split("_"))
     return type(f"{title}StatechartController", (Controller,), ns)
@@ -374,7 +476,9 @@ def _event_handler(
         if data is None:
             payload: Dict[str, Any] = {}
         elif model is not None:
-            payload = data.model_dump(mode="python", exclude={"type"})
+            payload = data.model_dump(
+                mode="python", by_alias=True, exclude={"type"}
+            )
         else:
             payload = dict(data)
         return await do_send(request, etype, payload)  # type: ignore

@@ -19,7 +19,6 @@
 """`StatechartRouter` and `get_interpreter`."""
 
 import inspect
-import unicodedata
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
 
 from fastapi import APIRouter, Body, Depends, Path, Request
@@ -29,6 +28,9 @@ from fastapi.routing import APIRoute
 from starlette.responses import JSONResponse, PlainTextResponse, Response
 
 from ...persistence.helpers import KeyNotFoundError
+from .._openapi import FIXED_OPS as _FIXED_OPS  # noqa: F401
+from .._openapi import ident as _ident
+from .._openapi import operation_ids as _operation_ids
 from ..pydantic.events import models_of
 from ..starlette._http import (
     HTTPProblemError,
@@ -457,52 +459,6 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
         websocket_endpoint(registry, name, key_param=key_param),
     )
     return router
-
-
-def _ident(etype: str) -> str:
-    """ASCII ``[a-z0-9_]`` spelling of *etype* (operationIds feed SDK
-    generators: ``éclair`` → ``eclair``, ``pay-now`` → ``pay_now``)."""
-    ascii_ = (
-        unicodedata.normalize("NFKD", etype)
-        .encode("ascii", "ignore")
-        .decode("ascii")
-    )
-    return "".join(c if c.isalnum() else "_" for c in ascii_).lower() or "e"
-
-
-#: Suffixes of the fixed routes' operationIds (``<op>_get`` ...).
-_FIXED_OPS = frozenset({"get", "send", "events", "diagram", "stream"})
-
-
-def _operation_ids(op: str, events: Sequence[str]) -> Dict[str, str]:
-    """A UNIQUE and STABLE operationId per event route.
-
-    🔥 battle #276-b: ``ORDER.PAID`` and ``ORDER_PAID`` both became
-    ``order_order_paid`` and an event named ``GET``/``send`` reused a
-    fixed route's id -- a duplicate operationId is an invalid OpenAPI
-    document and silently merges two methods in generated SDKs.
-
-    📝 review (H1): ids must not move when an event is ADDED later -- a
-    generated SDK pins them. Two passes: events whose name already IS the
-    folded identifier (``ORDER_PAID``) claim the plain id first, in
-    declaration order; names that had to be folded (``ORDER.PAID``,
-    ``pay-now``) come second and take a ``_2`` ... suffix only when the
-    plain id is taken. Adding ``ORDER.PAID`` to a chart that declares
-    ``ORDER_PAID`` therefore leaves ``order_order_paid`` where it was.
-    """
-    taken = {f"{op}_{f}" for f in _FIXED_OPS}
-    out: Dict[str, str] = {}
-    plain = [e for e in events if _ident(e) == e.lower()]
-    folded = [e for e in events if _ident(e) != e.lower()]
-    for etype in plain + folded:
-        base = f"{op}_{_ident(etype)}"
-        cand, n = base, 1
-        while cand in taken:
-            n += 1
-            cand = f"{base}_{n}"
-        taken.add(cand)
-        out[etype] = cand
-    return out
 
 
 def _event_handler(
