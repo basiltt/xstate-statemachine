@@ -95,7 +95,11 @@ class JsonLinesSink:
 
     The file is created with mode ``0o600`` (owner read/write only) --
     it holds every event the machine saw. An existing file is appended to
-    and its mode is left alone.
+    and its mode is left alone. On Windows the mode is not enforced (the
+    file inherits the directory's ACL). Lines are pure ASCII
+    (``ensure_ascii``), so a lone surrogate in an event cannot abort the
+    write. `send()` after `close()` raises ``ValueError`` -- through an
+    `InspectorPlugin` that is one logged warning, then the plugin stops.
     """
 
     def __init__(self, path: Union[str, "os.PathLike[str]"]) -> None:
@@ -106,8 +110,12 @@ class JsonLinesSink:
         self._lock = threading.Lock()
 
     def send(self, message: Dict[str, Any]) -> None:
-        line = json.dumps(message, default=str, separators=(",", ":"))
+        line = json.dumps(
+            message, default=str, separators=(",", ":"), ensure_ascii=True
+        )
         with self._lock:
+            if self._fh.closed:
+                raise ValueError(f"JsonLinesSink({self.path}) is closed")
             self._fh.write(line + "\n")
             self._fh.flush()
 
