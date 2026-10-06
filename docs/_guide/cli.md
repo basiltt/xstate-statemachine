@@ -964,13 +964,13 @@ The repository is itself a composite action. It installs the library, runs `xsm 
 
 ```yaml
 - uses: actions/checkout@v4
-- uses: basiltt/xstate-statemachine@v0.14.0   # pin a tag (or a commit SHA)
+- uses: basiltt/xstate-statemachine@v0.11.0   # pin a tag (or a commit SHA)
   with:
     files: "machines/**/*.machine.json"       # bash globstar pattern
     generated-dir: src/machines               # optional
     gt-args: "-t pythonic-builder"            # the flags you generated with
     python-version: "3.13"                    # optional
-    package: "xstate-statemachine==0.14.0"    # optional: pin the CLI too
+    package: "xstate-statemachine==0.11.0"    # optional: pin the CLI too
 ```
 
 The action fails when no file matches, when any machine has an error, or when the generated code is stale. The repository runs it on the `fastapi_orders` example in `.github/workflows/xsm-check-selftest.yml`.
@@ -987,7 +987,7 @@ The action fails when no file matches, when any machine has an error, or when th
 ```yaml
 repos:
   - repo: https://github.com/basiltt/xstate-statemachine
-    rev: v0.14.0
+    rev: v0.11.0
     hooks:
       - id: xsm-validate
       - id: xsm-gt-check

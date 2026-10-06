@@ -2,7 +2,7 @@
 #
 #   repos:
 #     - repo: https://github.com/basiltt/xstate-statemachine
-#       rev: v0.14.0            # any tag that ships this file
+#       rev: v0.11.0            # any tag that ships this file
 #       hooks:
 #         - id: xsm-validate
 #         - id: xsm-gt-check
