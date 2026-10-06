@@ -1450,6 +1450,45 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **FastAPI integration, as battle-tested (#276).** The order service's
+  FastAPI surface under misuse. Pinned on `fastapi_orders`: an
+  `Idempotency-Key` dedups across retries with an inbox (replay
+  `duplicate`, a different body 422 with no echoed value); a handler
+  that raises after a send persists nothing and leaks no exception
+  text; a `BackgroundTasks` closure holding the request's interpreter
+  finds it stopped (open a fresh `act()`); `PAY` is gated on the
+  registry's `authorize`, so `/send` is 403 and a second router on
+  another prefix is no backdoor to the email hook; body rules (422 /
+  413 / 415) never echo the value; the OpenAPI document generates in
+  bounded time with unique `operationId`s and no response schema
+  promising `card_token`; 50 concurrent `PAY`s under one key charge
+  once. Defects found and fixed: **an `Idempotency-Key` on a registry
+  without an inbox was silently ignored** -- 200, `duplicate: false`,
+  three retries ran the event three times (`IdempotencyNotConfiguredError`
+  → 501 on `send_event` and `get_interpreter`, which now validates the
+  header and exposes it on `request.state.xsm_idempotency_key`); two
+  `get_interpreter` parameters on the same key in one route gave a
+  self-inflicted 409 (one interpreter per (machine, key) per request);
+  `instrument_app` called twice duplicated the probe routes and nested
+  the lifespan (idempotent); a `per_event_dependencies` entry for an
+  event the machine does not declare was silently dropped -- a typo
+  left an event ungated (`ValueError` at router build); a 10 000-item
+  validation failure produced a 499 KB 422 (at most 50 errors +
+  `errors_total`); **duplicate `operationId`s made the document
+  invalid** (`ORDER.PAID` / `ORDER_PAID`, an event named `GET` /
+  `send`; non-ASCII ids) -- ASCII-folded with deterministic suffixes;
+  an `EventModel` field with an `alias` was 422 on a valid body on
+  `/send`, `/events/X` and `send(Model(...))` (`by_alias=True`);
+  fallback body schema names collided for machines named `a_b` / `aB`;
+  400 / 401 / 501 / 503 problem responses were undocumented. Added: an
+  OpenAPI golden (`tests/contrib/fastapi/openapi_golden.json`,
+  regenerate with `XSM_UPDATE_GOLDEN=1`). Confirmed: the save commits
+  BEFORE the response is sent (no acknowledged-but-lost write);
+  `GET /{id}/events` evaluates guards against the live instance --
+  guards must be pure (documented). Deferred from the issue, documented:
+  `GET /{id}/history` (needs a log store on the registry) and the
+  `/schema/*` routes (covered by `/{id}/diagram.mmd`, `/{id}/events`
+  and `/openapi.json`).
 - **Starlette integration, as battle-tested (#275).** The order service's
   `StatechartRegistry` under real web load. Pinned on `fastapi_orders`:
   50 concurrent `ADD_ITEM` POSTs to one order on SQLite lose nothing
