@@ -25,6 +25,7 @@
 
 from __future__ import annotations
 
+import logging
 import threading
 from collections import deque
 from typing import Any, Callable, Deque, Dict, Iterable, Optional, Tuple
@@ -39,9 +40,35 @@ from .protocol import (
     status_of,
 )
 
-__all__ = ["InspectorPlugin"]
+__all__ = ["InspectorPlugin", "session_id_of"]
 
 _INIT = "___xstate_statemachine_init___"
+logger = logging.getLogger("xstate_statemachine.inspect")
+
+
+def session_id_of(interp: Any) -> str:
+    """The inspector session id of *interp*.
+
+    battle #274: ``interp.id`` is the CHART id for every top-level
+    interpreter, so every persisted instance of one chart (one per
+    order) shared a session and the Inspector drew one actor whose
+    snapshots interleaved. A persisted instance (`persisted()`, the EDA
+    dispatcher, the choreography router) carries ``store_key`` -- that
+    is the instance identity and it becomes the session id. Children
+    keep their runtime id (``<parent>:<invoke id>``) re-rooted under
+    the parent's session so two orders' children do not collide.
+    """
+    key = getattr(interp, "store_key", None)
+    if key:
+        return str(key)
+    parent = getattr(interp, "parent", None)
+    if parent is not None:
+        own = str(interp.id)
+        pid = str(parent.id)
+        psid = session_id_of(parent)
+        if psid != pid and own.startswith(pid + ":"):
+            return psid + own[len(pid) :]
+    return str(interp.id)
 
 
 def _root(interp: Any) -> Any:
@@ -62,6 +89,10 @@ class InspectorPlugin(PluginBase[Any]):
             (default) → every snapshot carries ``context: {}``.
         include_payloads: Send event payload fields (redacted). Default
             ``False``: events carry only ``type``.
+        payload_allowlist: With ``include_payloads=True``, send ONLY these
+            payload keys (battle #274: a free-text ``reason`` carried a
+            card number past `redact()`, which matches key names). Empty
+            (default) keeps the 0.11 behaviour: every key, redacted.
         redact_keys: Key substrings redacted inside allowed values.
         clock: ``() -> float`` epoch seconds for ``createdAt``.
     """
@@ -72,6 +103,7 @@ class InspectorPlugin(PluginBase[Any]):
         *,
         context_allowlist: Iterable[str] = (),
         include_payloads: bool = False,
+        payload_allowlist: Iterable[str] = (),
         redact_keys: Tuple[str, ...] = DEFAULT_REDACT_KEYS,
         clock: Optional[Callable[[], float]] = None,
     ) -> None:
@@ -81,11 +113,16 @@ class InspectorPlugin(PluginBase[Any]):
         self.sink = sink
         self.context_allowlist = frozenset(context_allowlist)
         self.include_payloads = include_payloads
+        self.payload_allowlist = frozenset(payload_allowlist)
         self.redact_keys = redact_keys
         self.clock = clock
         self._lock = threading.Lock()
-        #: target session id -> FIFO of (event type, event id, source id)
+        #: target actor address -> FIFO of (event type, event id, source)
         self._sent: Dict[str, Deque[Tuple[str, int, str]]] = {}
+        #: battle #274: a sink that raises (UI gone, disk full) is
+        #: reported ONCE, then the plugin goes inert -- not one contained
+        #: error with a traceback per message.
+        self._disabled = False
 
     # -- attach helpers ---------------------------------------------------
     def install(self) -> "InspectorPlugin":
@@ -129,9 +166,11 @@ class InspectorPlugin(PluginBase[Any]):
         out: Dict[str, Any] = {"type": etype}
         payload = getattr(event, "payload", None)
         if self.include_payloads and isinstance(payload, dict):
+            allowed = self.payload_allowlist
             for k, v in redact(payload, self.redact_keys).items():
-                if k != "type":
-                    out[k] = v
+                if k == "type" or (allowed and k not in allowed):
+                    continue
+                out[k] = v
         return out
 
     def _snapshot(self, interp: Any) -> Dict[str, Any]:
@@ -153,11 +192,22 @@ class InspectorPlugin(PluginBase[Any]):
         )
 
     def _emit(self, msg: Dict[str, Any]) -> None:
-        self._send(msg)
+        if self._disabled:
+            return
+        try:
+            self._send(msg)
+        except Exception as exc:  # noqa: BLE001 -- never the machine's
+            self._disabled = True
+            logger.warning(
+                "InspectorPlugin: inspector sink %r raised %r; inspection "
+                "disabled for this plugin instance (reported once)",
+                type(self.sink).__name__,
+                exc,
+            )
 
     @staticmethod
     def _ids(interp: Any) -> Tuple[str, str]:
-        return str(interp.id), str(_root(interp).id)
+        return session_id_of(interp), session_id_of(_root(interp))
 
     # -- hooks ------------------------------------------------------------
     def on_interpreter_start(self, interpreter: Any) -> None:
@@ -170,7 +220,7 @@ class InspectorPlugin(PluginBase[Any]):
                 session_id=sid,
                 name=name,
                 root_id=root,
-                parent_id=None if parent is None else str(parent.id),
+                parent_id=(None if parent is None else session_id_of(parent)),
                 definition=self._definition(machine),
                 snapshot=self._snapshot(interpreter),
                 clock=self.clock,
@@ -183,7 +233,11 @@ class InspectorPlugin(PluginBase[Any]):
         with self._lock:
             q = self._sent.setdefault(str(target_id), deque(maxlen=256))
             q.append(
-                (getattr(event, "type", ""), id(event), str(interpreter.id))
+                (
+                    getattr(event, "type", ""),
+                    id(event),
+                    session_id_of(interpreter),
+                )
             )
 
     def _source_for(self, target: str, event: Any) -> Optional[str]:
@@ -236,11 +290,14 @@ class InspectorPlugin(PluginBase[Any]):
         parent = getattr(interpreter, "parent", None)
         init = type("Init", (), {"type": _INIT, "payload": {}})()
         self._event_msg(
-            interpreter, init, None if parent is None else str(parent.id)
+            interpreter,
+            init,
+            None if parent is None else session_id_of(parent),
         )
         self._snapshot_msg(interpreter, init)
 
     def on_event_received(self, interpreter: Any, event: Any) -> None:
+        # the sender addressed the engine's actor address (runtime id)
         self._event_msg(
             interpreter, event, self._source_for(str(interpreter.id), event)
         )

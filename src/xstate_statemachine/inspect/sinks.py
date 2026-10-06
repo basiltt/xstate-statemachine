@@ -60,15 +60,34 @@ _CSP = (
 
 
 class MemorySink:
-    """Collects messages in ``messages``."""
+    """Collects messages in ``messages``.
 
-    def __init__(self) -> None:
+    Args:
+        maxlen: Keep only the newest *maxlen* messages (a long debug
+            session must not grow without bound); ``dropped`` counts
+            what fell off. ``None`` (default) keeps everything -- the
+            fit for a test asserting on the whole recording.
+    """
+
+    def __init__(self, maxlen: Optional[int] = None) -> None:
+        if maxlen is not None and maxlen < 1:
+            raise ValueError("maxlen must be >= 1 or None")
         self.messages: List[Dict[str, Any]] = []
+        self.maxlen = maxlen
+        self.dropped = 0
         self._lock = threading.Lock()
 
     def send(self, message: Dict[str, Any]) -> None:
         with self._lock:
             self.messages.append(message)
+            if self.maxlen is not None and len(self.messages) > self.maxlen:
+                excess = len(self.messages) - self.maxlen
+                del self.messages[:excess]
+                self.dropped += excess
+
+    def clear(self) -> None:
+        with self._lock:
+            self.messages.clear()
 
 
 class JsonLinesSink:
@@ -109,10 +128,19 @@ def read_jsonl(path: Union[str, "os.PathLike[str]"]) -> Iterator[Dict]:
     non-object lines are skipped)."""
     with open(path, encoding="utf-8") as fh:
         for line in fh:
-            line = line.strip()
-            if not line:
+            stripped = line.strip()
+            if not stripped:
                 continue
-            obj = json.loads(line)
+            try:
+                obj = json.loads(stripped)
+            except ValueError:
+                # battle #274: a process that died mid-write leaves a
+                # truncated LAST line (no trailing newline); the readable
+                # part of a post-mortem recording must stay readable. A
+                # corrupt line in the middle is real damage: it raises.
+                if line.endswith("\n"):
+                    raise
+                return
             if isinstance(obj, dict):
                 yield obj
 
@@ -132,6 +160,13 @@ class SseSink:
         allowed_origins: Extra ``Origin`` values accepted besides
             same-origin (e.g. a dev UI on another port).
         history: How many past messages a newly connected client replays.
+        max_queue: Per-client backlog of frames not yet written to the
+            socket. battle #274: a browser tab that stalls (lid closed,
+            frozen devtools) grew an unbounded queue -- 11 MB per 20 000
+            events -- while the machine kept producing. A client that
+            falls *max_queue* frames behind is disconnected (it
+            reconnects and replays `history`); `dropped` counts them.
+            The producing machine never blocks on a client.
     """
 
     def __init__(
@@ -142,7 +177,10 @@ class SseSink:
         token: Optional[str] = None,
         allowed_origins: Iterable[str] = (),
         history: int = 1000,
+        max_queue: int = 10_000,
     ) -> None:
+        if max_queue < 1:
+            raise ValueError("max_queue must be >= 1")
         if not _is_loopback(host) and not token:
             raise ValueError(
                 f"refusing to serve the inspector on non-loopback host "
@@ -153,6 +191,11 @@ class SseSink:
         self.allowed_origins = frozenset(allowed_origins)
         self._history: Deque[Dict[str, Any]] = deque(maxlen=history)
         self._clients: List["queue.Queue[Optional[str]]"] = []
+        self.max_queue = max_queue
+        #: clients disconnected because they fell `max_queue` behind
+        self.dropped = 0
+        #: messages accepted by `send()`
+        self.sent = 0
         self._lock = threading.Lock()
         self._server = ThreadingHTTPServer((host, port), self._handler())
         self._server.daemon_threads = True
@@ -204,8 +247,34 @@ class SseSink:
                 f"data: {json.dumps(message, default=str)}\n\n"
             )
             clients = list(self._clients)
+        self.sent += 1
         for q in clients:
-            q.put(frame)
+            try:
+                q.put_nowait(frame)
+            except queue.Full:
+                self._cut(q)  # the stalled client; see `max_queue`
+
+    def _cut(self, q: Any) -> None:
+        with self._lock:
+            if q not in self._clients:
+                return
+            self._clients.remove(q)
+            self.dropped += 1
+        # drain one slot so the sentinel fits and the handler exits
+        try:
+            q.get_nowait()
+        except queue.Empty:
+            pass
+        try:
+            q.put_nowait(None)
+        except queue.Full:
+            pass
+
+    @property
+    def clients(self) -> List[Any]:
+        """Connected SSE clients (opaque; `len()` is the count)."""
+        with self._lock:
+            return list(self._clients)
 
     @property
     def messages(self) -> List[Dict[str, Any]]:
@@ -327,7 +396,9 @@ class SseSink:
                 self.wfile.write(body)
 
             def _stream(self) -> None:
-                q: "queue.Queue[Optional[str]]" = queue.Queue()
+                q: "queue.Queue[Optional[str]]" = queue.Queue(
+                    maxsize=sink.max_queue
+                )
                 with sink._lock:
                     backlog = list(sink._history)
                     sink._clients.append(q)

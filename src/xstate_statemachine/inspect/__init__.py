@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-from .plugin import InspectorPlugin
+from .plugin import InspectorPlugin, session_id_of
 from .protocol import (
     MESSAGE_TYPES,
     PROTOCOL_VERSION,
@@ -40,5 +40,6 @@ __all__ = [
     "event_message",
     "read_jsonl",
     "replay_messages",
+    "session_id_of",
     "snapshot_message",
 ]

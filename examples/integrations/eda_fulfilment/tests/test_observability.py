@@ -65,7 +65,7 @@ def test_inspector_messages_replay_to_the_same_state(fulfilment):
         m["event"]
         for m in msgs
         if m["type"] == "@xstate.event"
-        and m["sessionId"] == "order"
+        and m["sessionId"] == "order:o-1"  # #274: one session per order
         and not m["event"]["type"].startswith(("xstate.", "done.invoke"))
     ]
     import app
@@ -81,7 +81,7 @@ def test_inspector_messages_replay_to_the_same_state(fulfilment):
     final = [
         m["snapshot"]["value"]
         for m in msgs
-        if m["type"] == "@xstate.snapshot" and m["sessionId"] == "order"
+        if m["type"] == "@xstate.snapshot" and m["sessionId"] == "order:o-1"
     ][-1]
     assert last == ["order.shipped"] and final == "shipped"
     interp.stop()

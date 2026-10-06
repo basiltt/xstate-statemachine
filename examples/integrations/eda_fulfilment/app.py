@@ -362,6 +362,9 @@ def instrument() -> Instruments:
             out.inspector,
             context_allowlist=("orderId", "total", "trackingId"),
             include_payloads=True,
+            # 🔐 battle #274: `PAYMENT_FAILED.reason` is free text from the
+            #    gateway -- it carried a card number past key redaction
+            payload_allowlist=("orderId", "total", "trackingId"),
         )
     )
     return out
