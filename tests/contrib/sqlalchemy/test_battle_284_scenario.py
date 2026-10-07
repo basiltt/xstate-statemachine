@@ -193,30 +193,26 @@ def _count(eng: Any, table: Any, **where: Any) -> int:
         return int(s.execute(q).scalar_one())
 
 
-def _example_modules() -> Any:
-    """Import the example's ``logic`` / ``models`` / ``sync_app`` from ITS
-    directory, evicting any same-named modules another example suite
-    left in ``sys.modules`` (fastapi_orders / flask_wizard ship their own
-    `models.py` and `logic.py` -- CI's Coverage job runs them all in one
-    process)."""
+@pytest.fixture
+def example_modules() -> Iterator[Any]:
+    """The example's ``logic`` / ``models`` / ``sync_app`` imported from
+    ITS directory and kept in ``sys.modules`` for the test (Alembic's
+    env.py does ``from models import Base`` and must get the same module);
+    same-named modules another example suite left behind (fastapi_orders,
+    flask_wizard -- CI's Coverage job runs them all in one process) are
+    set aside and restored afterwards."""
     import importlib
 
-    saved = {
-        k: sys.modules.pop(k)
-        for k in ("logic", "models", "sync_app")
-        if k in sys.modules
-    }
+    names = ("logic", "models", "sync_app")
+    saved = {k: sys.modules.pop(k) for k in names if k in sys.modules}
     sys.path.insert(0, str(EXAMPLE))
     try:
-        mods = tuple(
-            importlib.import_module(n) for n in ("logic", "models", "sync_app")
-        )
+        yield tuple(importlib.import_module(n) for n in names)
     finally:
         sys.path.remove(str(EXAMPLE))
-        for k in ("logic", "models", "sync_app"):
+        for k in names:
             sys.modules.pop(k, None)
         sys.modules.update(saved)
-    return mods
 
 
 # -----------------------------------------------------------------------------
@@ -425,7 +421,7 @@ def test_forget_removes_deadlines_and_audit_rows(engine: Any) -> None:
 # 5. Alembic from scratch, demo on it, downgrade to nothing
 # -----------------------------------------------------------------------------
 def test_alembic_upgrade_demo_no_diff_downgrade(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, example_modules: Any
 ) -> None:
     pytest.importorskip("alembic")
     from alembic import command
@@ -434,7 +430,7 @@ def test_alembic_upgrade_demo_no_diff_downgrade(
     from alembic.migration import MigrationContext
     from sqlalchemy import inspect
 
-    _logic, ex_models, sync_app = _example_modules()
+    _logic, ex_models, sync_app = example_modules
     url = f"sqlite:///{(tmp_path / 'fresh.db').as_posix()}"
     monkeypatch.setenv("ORDERS_DB_URL", url)
     cfg = Config(str(EXAMPLE / "alembic.ini"))
