@@ -196,13 +196,6 @@ class TestMigrations:
             ):
                 assert getattr(g, attr) == getattr(f, attr), (kw, attr)
 
-    @pytest.mark.xfail(
-        strict=True,
-        reason="Adversary A (fields.py): deconstruct() drops null=False / "
-        "blank=False (the parent omits them as Field defaults) and the "
-        "constructor defaults them back to True, so makemigrations writes "
-        "a nullable column for a NOT NULL field",
-    )
     def test_deconstruct_keeps_null_false(self) -> None:
         from xstate_statemachine.contrib.django.fields import StatechartField
 

@@ -1456,6 +1456,44 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **Django integration (field, mixin, store), as battle-tested (#280).**
+  The approvals app under a finance team's load -- 200 expenses with
+  legal and finance racing from separate connections (pessimistic and
+  optimistic), 16 simultaneous identical approvals applying once, a
+  rollback that undoes snapshot + columns + deadline + audit row + the
+  `on_commit` signal together, 200 escalations woken once by two
+  concurrent `xsm_deadlines` runs, `migrate` from zero +
+  `makemigrations --check`, two reviewers posting the admin form at once
+  -- on SQLite and on Postgres 16 (a testcontainer; CI's Linux `[django]`
+  cell runs it) (`examples/integrations/django_approvals/tests/
+  test_battle_280_scenario.py`, `tests/contrib/django/test_battle_280_
+  {postgres,a,b}.py`). Found and fixed: lock errors were any message
+  containing "locked"/"busy" (a table named `locked_orders` became a
+  retryable `LockTimeoutError`) -- now the SQLSTATE (55P03 / 40P01 /
+  40001) or an anchored phrase, so a Postgres deadlock is retried by
+  `send_with_retry` and `LockTimeoutError.timeout` reports Postgres'
+  `lock_timeout`; a row deleted mid-`send()` raised `ConflictError` and
+  was retried to exhaustion (now `DoesNotExist`); `lock="none"` could
+  move `<field>_version` BACKWARDS from a stale instance (reopening the
+  optimistic fence); `StatechartField(null=False)` / `blank=False` did
+  not round-trip `deconstruct()` (the column always came out nullable);
+  `refresh_statechart_columns` lost `migrate=` edits made in place and
+  rewrote every row (deep copy, unchanged rows skipped, `dry_run=`;
+  `refresh_statechart_columns_op(batch=, migrate=)`); new
+  `manage.py xsm_refresh_columns app.Model [--batch N] [--dry-run]`;
+  `xsm_deadlines --forever` stops cleanly on SIGINT/SIGTERM and an
+  unmigrated database / bad `--limit` / `--interval` are `CommandError`s,
+  not tracebacks; an admin transition POST from a user without change
+  permission is 403 (was a friendly redirect) and the history inline is
+  visible to anyone who may view the row (it asked for a permission
+  nobody grants) and capped at `TransitionLogInline.max_rows` (50; a
+  1000-row history made a 1.9 MB page). The example honours
+  `DATABASE_URL` / `APPROVALS_DB`, its test database is a file (Django's
+  shared-cache `:memory:` made threads hit "database table is locked"),
+  its README commands run as written from a fresh copy, and the guide
+  documents lock errors by SQLSTATE, `DoesNotExist` on a deleted row,
+  the `QuerySet.update()` footgun, renaming a `StatechartField` (five
+  `RenameField`s) and the real deadline table name.
 - **Flask integration, as battle-tested (#285).** The onboarding wizard
   as browsers use it -- a 50-POST double-click on one wizard, fifty
   browsers walking every step at once on one SQLite file, two apps from
