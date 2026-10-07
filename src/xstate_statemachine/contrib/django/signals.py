@@ -95,10 +95,19 @@ class PostTransitionSignal(Signal):
         dispatch_uid: Any = None,
         on_commit: bool = False,
     ) -> bool:
-        if on_commit:
-            uid = dispatch_uid or ("xsm_on_commit", id(receiver))
+        # 📝 #281 battle: `disconnect(fn)` after `connect(fn, on_commit=
+        #    True)` silently did nothing (the wrapper, not `fn`, was the
+        #    receiver) -- the receiver kept firing for the rest of the
+        #    process. Either spelling now disconnects it.
+        uid = dispatch_uid or ("xsm_on_commit", id(receiver))
+        if on_commit or uid in self._wrappers:
             self._wrappers.pop(uid, None)
-            return super().disconnect(None, sender, uid)
+            removed = super().disconnect(None, sender, uid)
+            if on_commit:
+                return removed
+            return (
+                super().disconnect(receiver, sender, dispatch_uid) or removed
+            )
         return super().disconnect(receiver, sender, dispatch_uid)
 
 
