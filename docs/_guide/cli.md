@@ -1025,6 +1025,39 @@ xsm new my_service --name shop_orders --force   # write into a non-empty dir
 cd my_service && pip install -r requirements.txt && python -m pytest tests -q
 ```
 
+For the Flask scaffold (`--name` only fills the README title; the machine stays `wizard`):
+
+```bash
+xsm new --template flask my_wizard
+cd my_wizard && pip install -r requirements.txt
+flask --app app run                       # http://127.0.0.1:5000/
+python -m pytest tests -q
+```
+
+## `flask xsm` (Flask apps)
+
+With `[flask]` installed, `XState.init_app(app, ..., cli=True)` (the default) adds a `flask xsm` command group. `inspect`, `diagram`, `docs` and `simulate` take a **registered machine name** instead of a file path and accept the same flags as the `xsm` commands; the JSON comes from the registration (`source=` when you registered a `MachineNode`).
+
+```bash
+flask --app app xsm inspect wizard --plain
+flask --app app xsm diagram wizard -f mermaid
+flask --app app xsm simulate wizard -e NEXT -e BACK
+```
+
+From the `flask_wizard` example (an excerpt of `inspect --plain`; the test suite checks these lines):
+
+<!-- flask-xsm-transcript -->
+```text
++ wizard  initial=account
+|-- o account
+|-- o profile
+|-- o plan
+|-- o confirm
+`-- @ done
+| NEXT         | account    | profile    | hasAccount | saveAccount |
+| SUBMIT       | confirm    | done       |            |             |
+```
+
 ---
 
 ## Reading Generated Files
