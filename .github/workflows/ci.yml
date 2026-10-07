@@ -232,7 +232,10 @@ jobs:
             agents) python -m pip install langgraph langchain-core pydantic-ai-slim instructor "httpx>=0.24" ;;
             # 🗄️ #284: the async store runs on aiosqlite; alembic proves
             #    autogenerate sees no diff (X0.10).
-            sqlalchemy) python -m pip install "aiosqlite>=0.19" "alembic>=1.12" ;;
+            # 🐘 #284 battle: psycopg + testcontainers so the Linux cell runs
+            #    the Postgres parity tests on a throwaway container (the
+            #    Windows cell has no Docker and skips them).
+            sqlalchemy) python -m pip install "aiosqlite>=0.19" "alembic>=1.12" "psycopg[binary]>=3.1" "testcontainers>=4" ;;
             # 🧪 #285: the Quart shim cell (cheap) and Flask-WTF CSRF test.
             flask) python -m pip install "quart>=0.19" "flask-wtf>=1.2" ;;
             # 🧪 #268: the [testing] cell needs an async runner so the
@@ -287,7 +290,10 @@ jobs:
             #    newcomer environments that found real defects.
             fastapi)
               export XSM_ADOPTION_VENV=1
-              targets="$targets tests/test_battle_309_adoption.py" ;;
+              targets="$targets tests/test_battle_309_adoption.py" ;;&
+            # 🐘 #284: Postgres parity on the Linux cell (Docker present).
+            sqlalchemy)
+              if [ "$RUNNER_OS" = "Linux" ]; then export XSM_CONTAINERS=1; fi ;;
             # 📡 #294: the shared adapter core lives in tests/contrib/brokers.
             redis)
               targets="$targets tests/contrib/brokers" ;;
