@@ -294,3 +294,27 @@ def test_pg_deadlock_is_lock_timeout_and_retried() -> None:
         mixin.send_with_retry(row, "BUMP", lock="pessimistic")
     assert Counter.objects.get(pk=a.pk).machine.context["n"] == 2
     assert Counter.objects.get(pk=b.pk).machine.context["n"] == 2
+
+
+# -----------------------------------------------------------------------------
+# 10. deconstruct keeps null=False / blank=False (from adversary B)
+# -----------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "kw",
+    [
+        {"null": False},
+        {"blank": False},
+        {"null": False, "blank": False},
+        {"null": False, "max_snapshot_bytes": 99},
+    ],
+)
+def test_deconstruct_keeps_null_false(kw: Any) -> None:
+    from xstate_statemachine.contrib.django.fields import StatechartField
+
+    f = StatechartField(**kw)
+    _, _, args, out = f.deconstruct()
+    g = StatechartField(*args, **out)
+    assert (g.null, g.blank) == (f.null, f.blank)
+    assert g.deconstruct()[3] == out  # stable: a 2nd makemigrations is a no-op
+    assert out == kw
+    assert StatechartField().deconstruct()[3] == {}
