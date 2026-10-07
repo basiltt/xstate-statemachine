@@ -161,8 +161,12 @@ class TestMigrations:
             "_version",
             "_machine_version",
         ):
-            assert f'old_name="workflow{suffix}"' in rename, suffix
-            assert f'new_name="flow{suffix}"' in rename, suffix
+            assert re.search(
+                f"old_name=[\"']workflow{suffix}[\"']", rename
+            ), suffix
+            assert re.search(
+                f"new_name=[\"']flow{suffix}[\"']", rename
+            ), suffix
         proj.run("migrate", "-v0")
         proj.run("makemigrations", "--check", "--dry-run")
         out = proj.run(
