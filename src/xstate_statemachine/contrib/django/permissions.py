@@ -25,6 +25,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any, Iterable, List, Optional, Tuple
 
 from .mixin import current_actor, current_instance
@@ -36,7 +37,10 @@ __all__ = [
     "RoleGuard",
     "StatechartPermission",
     "has_event_permission",
+    "permitted_events",
 ]
+
+logger = logging.getLogger(__name__)
 
 
 def _actor(event: Any) -> Any:
@@ -163,19 +167,71 @@ def _guard_names(guard_def: Any) -> List[str]:
     return [guard_def.type]
 
 
-def permission_guards_for(instance: Any, event: str) -> List[Any]:
-    """The permission guards on *event*'s transitions from the row's
-    active states (the ones `has_event_permission` re-checks)."""
+def _candidates(instance: Any, event: str) -> List[Any]:
+    """*event*'s transitions from the row's active states (ancestors
+    included)."""
     interp = instance.machine
-    guards = interp.machine.logic.guards
     out: List[Any] = []
     for node in interp._active_state_nodes:
-        for t in node.on.get(event, []) if node.on else []:
-            for name in _guard_names(getattr(t, "guard_def", None)):
-                g = guards.get(name)
-                if isinstance(g, _PermissionGuardBase):
-                    out.append(g)
+        out += list((node.on or {}).get(event, []))
     return out
+
+
+def permission_guards_for(instance: Any, event: str) -> List[Any]:
+    """The permission guards on *event*'s transitions from the row's
+    active states."""
+    guards = instance.machine.machine.logic.guards
+    out: List[Any] = []
+    for t in _candidates(instance, event):
+        for name in _guard_names(getattr(t, "guard_def", None)):
+            g = guards.get(name)
+            if isinstance(g, _PermissionGuardBase):
+                out.append(g)
+    return out
+
+
+def _perm_verdict(
+    guard_def: Any, guards: Any, user: Any, obj: Any
+) -> Optional[bool]:
+    """Three-valued: a permission leaf is checked, any other guard is
+    ``None`` ("not a permission question") and composites combine
+    Kleene-style -- so ``or(canApprove, isManager)`` passes for either
+    role instead of requiring both (#281 battle)."""
+    if guard_def is None:
+        return None
+    kind = getattr(guard_def, "type", None)
+    if getattr(guard_def, "is_composite", False):
+        vals = [
+            _perm_verdict(c, guards, user, obj) for c in guard_def.children
+        ]
+        if kind == "not":
+            v = vals[0] if vals else None
+            return None if v is None else not v
+        if kind == "or":
+            if any(v is True for v in vals):
+                return True
+            return None if any(v is None for v in vals) else False
+        if any(v is False for v in vals):  # "and"
+            return False
+        return None if any(v is None for v in vals) else True
+    g = guards.get(kind)
+    if not isinstance(g, _PermissionGuardBase):
+        return None
+    return bool(g.check(user, obj))
+
+
+def _event_permitted(user: Any, instance: Any, event: str) -> bool:
+    """Some candidate transition's permission verdict is not ``False``
+    (no permission guard on it: nothing forbids it)."""
+    guards = instance.machine.machine.logic.guards
+    cands = _candidates(instance, event)
+    if not cands:
+        return True
+    return any(
+        _perm_verdict(getattr(t, "guard_def", None), guards, user, instance)
+        is not False
+        for t in cands
+    )
 
 
 def has_event_permission(
@@ -184,8 +240,10 @@ def has_event_permission(
     """May *user* send *event* to *instance* right now?
 
     ``instance.can(event, actor=user)`` -- guards run with *user* as the
-    actor -- AND every permission guard on the event's candidate
-    transitions passes for *user*. Anonymous / inactive users → ``False``.
+    actor -- AND some candidate transition's permission guards pass for
+    *user* (``or`` / alternative transitions: ANY role suffices).
+    Anonymous / inactive users -> ``False``; an auth backend that raises
+    -> ``False`` (logged), never an exception into the admin / API.
 
     ``require_enabled=False`` drops the ``can()`` half: "is this user
     ALLOWED to try" -- what an API answers 403 on, leaving a business
@@ -195,22 +253,25 @@ def has_event_permission(
         return False
     if not getattr(user, "is_active", True):
         return False
-    if require_enabled and not instance.can(event, actor=user):
-        return False
     token_a = current_actor.set(user)
     token_i = current_instance.set(instance)
     try:
-        return all(
-            g.check(user, instance)
-            for g in permission_guards_for(instance, event)
+        if require_enabled and not instance.can(event, actor=user):
+            return False
+        return _event_permitted(user, instance, event)
+    except Exception:  # noqa: BLE001 - a backend outage is a denial
+        logger.exception(
+            "permission check for %r on %r raised; denied", event, instance
         )
+        return False
     finally:
         current_instance.reset(token_i)
         current_actor.reset(token_a)
 
 
 def permitted_events(user: Any, instance: Any) -> List[str]:
-    """The declared events *user* may send to *instance* now."""
+    """The declared events *user* may send to *instance* now (parallel
+    charts: every region's events)."""
     from ._events import declared_events
 
     return [
