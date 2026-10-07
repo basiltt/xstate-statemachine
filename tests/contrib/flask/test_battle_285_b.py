@@ -153,9 +153,9 @@ class TestActInGet:
         xsm.register("c", COUNTER, authorize=allow_all)
         app = Flask(__name__)
         app.config["PROPAGATE_EXCEPTIONS"] = False
-        xsm.init_app(app, store=MemoryStore())
-        if handled:
-            app.register_error_handler(HTTPProblemError, problem_response)
+        # 📝 #285-a: init_app registers the handlers itself; `handled=False`
+        #    is the documented opt-out
+        xsm.init_app(app, store=MemoryStore(), error_handlers=handled)
 
         @app.get("/v")
         def v() -> Any:
@@ -164,10 +164,10 @@ class TestActInGet:
 
         return app
 
-    def test_act_in_get_is_500_without_a_handler(self) -> None:
+    def test_act_in_get_is_500_when_handlers_are_opted_out(self) -> None:
         assert self._get_app(False).test_client().get("/v").status_code == 500
 
-    def test_act_in_get_is_405_problem_with_the_handler(self) -> None:
+    def test_act_in_get_is_405_problem_by_default(self) -> None:
         r = self._get_app(True).test_client().get("/v")
         assert r.status_code == 405
         assert r.mimetype == "application/problem+json"

@@ -73,7 +73,7 @@ Binds a store and its policies to *app*. The state lives in `app.extensions["xst
 
 ### `act(name, key=None, *, principal=None)`
 
-A context manager that yields a started `SyncInterpreter` and saves on a clean exit. Nothing is written if the block raises. It is `persistence.persisted()` using the app's lock, plugins and inbox. Under the default optimistic lock, a concurrent writer causes `ConflictError` at exit. The blueprint turns it into a 409 problem; **in your own view it propagates**, and Flask answers 500 unless you catch it (see [Concurrent writers](#concurrent-writers-409-and-how-to-avoid-it)). `act()` **refuses to run inside a GET/HEAD/OPTIONS/TRACE request** and raises `MethodNotAllowedError`, an `HTTPProblemError` with `status = 405`. The blueprint renders it as a 405 problem; in your own view, render it with `problem_response(exc)` or register `app.register_error_handler(HTTPProblemError, problem_response)` -- otherwise Flask answers 500.
+A context manager that yields a started `SyncInterpreter` and saves on a clean exit. Nothing is written if the block raises. It is `persistence.persisted()` using the app's lock, plugins and inbox. Under the default optimistic lock, a concurrent writer causes `ConflictError` at exit. `init_app` registers error handlers for every exception the library maps to a status, so in the blueprint **and in your own views** a lost race is a **409** RFC 9457 problem (see [Concurrent writers](#concurrent-writers-409-and-how-to-avoid-it) for how to avoid it altogether). `act()` **refuses to run inside a GET/HEAD/OPTIONS/TRACE request** and raises `MethodNotAllowedError`, answered as a **405** problem; an oversized `SessionStore` save is a **413** problem. Pass `init_app(..., error_handlers=False)` to keep your own handling (the exceptions then propagate and Flask answers 500 unless you catch them).
 
 `g.xsm` (set before every request) exposes `act`, `peek`, `skip_save` and `registry`. `g.xsm.skip_save()` (or `xsm.skip_save()`) leaves the enclosing `act()` block **without saving** -- the version is not bumped and nothing is published to SSE. The `flask_wizard` example uses it to refuse a stale form under the lock.
 
@@ -188,7 +188,7 @@ Every route calls `authorize`. Write routes accept POST only, and a GET to them 
 
 ### `SessionStore(*, max_snapshot_bytes=3 KiB, codec=None)` and `SessionStoreTooLargeError`
 
-A `StateStore` over `flask.session`, which puts the snapshot in the **signed** cookie. It is meant for small wizard-style state that belongs to one browser. There is a hard cap on save and on load. The default is 3 KiB, which stays under the roughly 4 KiB browsers allow for a whole cookie. Going over it raises `SessionStoreTooLargeError`, a `SnapshotTooLargeError` whose message tells you to shrink the context or move to a server-side store.
+A `StateStore` over `flask.session`, which puts the snapshot in the **signed** cookie. It is meant for small wizard-style state that belongs to one browser. There is a hard cap on save and on load, and it covers **every machine stored in one session together** (all of them ride in the same cookie). The default is 3 KiB, which keeps the whole signed cookie under the roughly 4 KiB browsers allow (measured: a snapshot at the cap makes a `Set-Cookie` of about 3.4 KB); two wizards each at 2.5 KiB would have produced a cookie browsers silently drop. Going over it raises `SessionStoreTooLargeError`, a `SnapshotTooLargeError` whose message tells you to shrink the context or move to a server-side store.
 
 ```python
 xsm.register("wizard", wizard_machine, authorize=allow_all,
@@ -245,7 +245,7 @@ assert stranger.post("/o/2/send", json={"type": "GO"},
 
 ### Quart: `xstate_statemachine.contrib.quart`
 
-`QuartXState` offers the same `init_app` / `register`. Its `act` is **`async with xsm.act(name, key) as i: await i.send(...)`** and yields an async `Interpreter` through `apersisted()`. `create_quart_statechart_blueprint(xsm, name, url_prefix)` exposes the same route table, and authorizers may be `async`. Quart is a soft import, not a separate extra: install `[flask]` plus `quart`. The shim is best-effort, and the same tests run under Quart in CI.
+`QuartXState` offers the same `init_app` / `register`, with the same `init_app` options as Flask (`lock`, `plugins`, `inbox`/`principal`, `log`, `clock`, `migrator`, `allowed_origins`, `max_connections_per_key`, `error_handlers`); its `/stream` checks `Origin` the same way. Its `act` is **`async with xsm.act(name, key) as i: await i.send(...)`** and yields an async `Interpreter` through `apersisted()`. `create_quart_statechart_blueprint(xsm, name, url_prefix)` exposes the same route table, and authorizers may be `async`. Quart is a soft import, not a separate extra: install `[flask]` plus `quart`. The shim is best-effort, and the same tests run under Quart in CI.
 
 ## Guarantees
 
@@ -276,8 +276,10 @@ assert stranger.post("/o/2/send", json={"type": "GO"},
 | `MissingExtraError: … pip install "xstate-statemachine[flask]"` | extra not installed | run the command |
 | `TypeError: register(authorize=) is required` | no authorizer | pass one, or `allow_all` on purpose |
 | `RuntimeError: XState.init_app(app, store=...) was not called` | `act()` in an app that never ran `init_app` | call `init_app` in your factory |
-| 405 `State-changing request must not use a safe method` (500 in your own view without an error handler) | `act()` called from a GET view | make the route POST; use `peek()` for reads |
-| 500 `ConflictError` from your own view | two writers on one key, optimistic lock | `PessimisticLock()`, `persisted_retry`, or catch it and answer 409 |
+| 405 problem `State-changing request must not use a safe method` | `act()` called from a GET view | make the route POST; use `peek()` for reads |
+| 409 problem `Conflict` from your own view | two writers on one key, optimistic lock | `PessimisticLock()` or `persisted_retry`; the client may simply retry |
+| 413 problem `Snapshot too large` | the session cookie's cap (3 KiB across every machine in the session) | shrink the context, add a compression `codec`, or move to a server-side store |
+| 500 for one of the above | `init_app(error_handlers=False)` | register `app.register_error_handler(HTTPProblemError, problem_response)` yourself |
 | 400 `The CSRF token is missing.` | Flask-WTF `CSRFProtect` on a JSON route | exempt the blueprint, or send `X-CSRFToken` |
 | `SessionStoreTooLargeError` | the wizard's context outgrew the cookie | shrink the context or switch to `SQLiteStore` / `SQLAlchemyStore` |
 | The stream blocks other requests | single-threaded dev server | run a threaded/gevent server, or Quart |
