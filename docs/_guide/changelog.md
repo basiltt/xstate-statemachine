@@ -1478,7 +1478,11 @@ _No unreleased changes yet._
   the SQLAlchemy outbox are shipped; `**[0.12.0]**` labels are 0.11.0;
   residents are ASGI-only; the Celery leaf of the tree continues; the
   operational limits box names real limits) and no guide page is an
-  orphan.
+  orphan. Touching `pyproject.toml` (the project URLs) also ran the
+  weekly compat matrix on this PR, which was red on its oldest cells:
+  the FastAPI OpenAPI golden now normalises what FastAPI 0.106 /
+  pydantic 2.5 render differently, and the `[testing]` plugin tests
+  survive pytest-asyncio 0.23 and hypothesis 6.100.
 - **Codegen companions, as battle-tested (#279).** `xsm gt --with-api
   --with-models` across the whole 104-chart corpus, in-process: every
   chart that generates yields a router and models that parse, import,

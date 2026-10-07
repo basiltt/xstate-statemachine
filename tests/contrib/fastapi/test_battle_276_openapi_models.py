@@ -111,7 +111,34 @@ def normalise(doc: Dict[str, Any]) -> Dict[str, Any]:
                 for resp in op.get("responses", {}).values():
                     if isinstance(resp, dict):
                         resp.pop("description", None)
+                        # 📝 FastAPI 0.106 (the compat floor) ALSO lists
+                        #    the route's default media type (`text/plain`,
+                        #    `application/json`) for every declared
+                        #    Problem response; 0.11x lists only
+                        #    `application/problem+json`. Theirs.
+                        content = resp.get("content")
+                        if (
+                            isinstance(content, dict)
+                            and "application/problem+json" in content
+                        ):
+                            for media in list(content):
+                                if media != "application/problem+json":
+                                    content.pop(media)
+    # 📝 pydantic 2.5 (the compat floor) omits `additionalProperties:
+    #    true` on `Dict[str, Any]`; 2.1x emits it. Also theirs.
+    _drop_additional_properties_true(out)
     return out
+
+
+def _drop_additional_properties_true(node: Any) -> None:
+    if isinstance(node, dict):
+        if node.get("additionalProperties") is True:
+            node.pop("additionalProperties")
+        for v in node.values():
+            _drop_additional_properties_true(v)
+    elif isinstance(node, list):
+        for v in node:
+            _drop_additional_properties_true(v)
 
 
 # -----------------------------------------------------------------------------
