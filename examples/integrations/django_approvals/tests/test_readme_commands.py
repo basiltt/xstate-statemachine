@@ -118,6 +118,7 @@ def test_readme_has_the_commands_this_test_runs():
         "manage.py runserver",
         "xsm_deadlines --forever",
         "xsm_inspect approvals.Expense",
+        "manage.py relay_outbox",
         "python -m pytest tests",
     ):
         assert needle in cmds, needle
@@ -163,9 +164,13 @@ def test_run_it_literally(copy):
         assert p.returncode == 0, (cmd, p.stdout, p.stderr)
         ran.append(parts[2])
     assert ran.count("xsm_deadlines") == 1 and "forever" in ran
-    assert {"migrate", "createsuperuser", "xsm_inspect", "runserver"} <= set(
-        ran
-    )
+    assert {
+        "migrate",
+        "createsuperuser",
+        "xsm_inspect",
+        "relay_outbox",
+        "runserver",
+    } <= set(ran)
     _superuser_can_log_in(copy)
 
 

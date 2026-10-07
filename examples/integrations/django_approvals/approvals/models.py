@@ -42,7 +42,7 @@ class Expense(StatechartModelMixin, models.Model):
 
     # 📤 #281: `approved` is tagged `publish` -- the integration event is
     #    written to the outbox IN the send's transaction; `manage.py
-    #    xsm_relay`-style draining is the relay's job (see README).
+    #    relay_outbox` drains it (see README).
     statechart_plugins = staticmethod(
         lambda row: [
             OutboxPlugin(
