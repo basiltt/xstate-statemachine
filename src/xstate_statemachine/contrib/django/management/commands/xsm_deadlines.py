@@ -13,10 +13,13 @@
 
 from __future__ import annotations
 
-from typing import Any, List
+import signal
+import threading
+from typing import Any, List, Optional
 
 from django.apps import apps
-from django.core.management.base import BaseCommand
+from django.core.management.base import BaseCommand, CommandError
+from django.db import DatabaseError
 
 from ._resolve import model_from_label
 
@@ -52,6 +55,25 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args: Any, **opts: Any) -> None:
+        if opts["limit"] < 1:
+            raise CommandError("--limit must be >= 1")
+        if opts["interval"] <= 0:
+            raise CommandError("--interval must be > 0")
+        scanners = self._scanners(opts)
+        try:
+            if opts["forever"]:
+                self._forever(scanners, opts["interval"])
+                return
+            self._scan(scanners, opts["now"])
+        except DatabaseError as exc:
+            # 🔥 #280 battle: an unmigrated database was a raw driver
+            #    traceback; it is an operator error with a known fix.
+            raise CommandError(
+                f"{type(exc).__name__}: {exc} -- run `manage.py migrate` "
+                "(is xstate_statemachine.contrib.django in INSTALLED_APPS?)"
+            ) from None
+
+    def _scanners(self, opts: Any) -> List[Any]:
         from .....persistence.timers import DueTimerScanner
         from ...stores import DjangoModelStore
 
@@ -76,16 +98,33 @@ class Command(BaseCommand):
                     ),
                 )
             )
-        if opts["forever"]:  # pragma: no cover - loops until killed
-            import time
+        return scanners
 
-            while True:
+    def _forever(
+        self,
+        scanners: List[Any],
+        interval: float,
+        stop: Optional[threading.Event] = None,
+    ) -> None:
+        """Scan every *interval* seconds until SIGINT / SIGTERM (or
+        *stop*): the current pass finishes, then the command exits 0."""
+        stop = stop or threading.Event()
+        restore = _on_stop_signals(stop)
+        try:
+            while not stop.is_set():
                 for _model, s in scanners:
                     s.run_once()
-                time.sleep(opts["interval"])
+                stop.wait(interval)
+        except KeyboardInterrupt:  # pragma: no cover - platform timing
+            pass
+        finally:
+            restore()
+        self.stdout.write("xsm_deadlines: stopped")
+
+    def _scan(self, scanners: List[Any], now: Optional[float]) -> None:
         total = 0
         for model, s in scanners:
-            res = s.scan(opts["now"])
+            res = s.scan(now)
             total += res.woken
             self.stdout.write(
                 f"{model._meta.label}: woke {res.woken}/{res.due} due "
@@ -94,3 +133,21 @@ class Command(BaseCommand):
             for key, exc in res.errors:
                 self.stderr.write(f"  {key}: {type(exc).__name__}: {exc}")
         self.stdout.write(f"total woken: {total}")
+
+
+def _on_stop_signals(stop: threading.Event) -> Any:
+    """Route SIGTERM (and SIGINT) to *stop*; returns the undo callable.
+    Off the main thread signals cannot be installed -- a no-op then."""
+    if threading.current_thread() is not threading.main_thread():
+        return lambda: None
+    saved = {}
+    for name in ("SIGINT", "SIGTERM"):
+        sig = getattr(signal, name, None)
+        if sig is not None:
+            saved[sig] = signal.signal(sig, lambda *_: stop.set())
+
+    def restore() -> None:
+        for sig, handler in saved.items():
+            signal.signal(sig, handler)
+
+    return restore

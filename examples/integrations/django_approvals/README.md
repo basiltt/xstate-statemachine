@@ -29,12 +29,25 @@ draft ──SUBMIT──▶ review ═══════════════
 pip install "xstate-statemachine[django,drf,channels]" drf-spectacular daphne pytest-django
 cd examples/integrations/django_approvals
 python manage.py migrate
-python manage.py createsuperuser
-python manage.py runserver                         # daphne: HTTP + WebSocket
-python manage.py xsm_deadlines --forever           # in another shell: fires the 48 h escalation
+DJANGO_SUPERUSER_PASSWORD=change-me python manage.py createsuperuser --noinput --username admin --email admin@example.com
+python manage.py runserver 8000                    # daphne: HTTP + WebSocket; admin at http://127.0.0.1:8000/admin/
+python manage.py xsm_deadlines --forever           # in another shell: fires the 48 h escalation (Ctrl+C stops it)
+python manage.py xsm_deadlines                     # or one pass, from cron
 python manage.py xsm_inspect approvals.Expense     # the chart, same output as `xsm inspect`
 python -m pytest tests -q
 ```
+
+`createsuperuser` without `--noinput` asks for the password interactively
+instead. The commands above are run, literally, by
+`tests/test_readme_commands.py`.
+
+**Database.** SQLite by default (`approvals.sqlite3` next to `manage.py`;
+`APPROVALS_DB=/path/file.sqlite3` moves it). Set
+`DATABASE_URL=postgresql://user:password@host:5432/dbname` to use Postgres
+instead (install `psycopg`); every command above, the test suite included,
+then runs against it. On Postgres the default row lock is a real
+`SELECT ... FOR UPDATE`; on SQLite it serialises writers on the database
+write lock.
 
 In the admin, create the groups `legal` and `finance` and put a user in
 each. Open an expense as either user: you only see the buttons your role
@@ -54,3 +67,18 @@ can press. A request that forges another event is refused on POST. Watch
 - **Integration event**: `approved` is tagged `publish`. Attach an
   `OutboxPlugin(DjangoOutboxStore())` through `statechart_plugins` to emit
   it transactionally (#293).
+
+## What it does not do
+
+- **No production settings.** `DEBUG`, the hard-coded `SECRET_KEY`,
+  `ALLOWED_HOSTS` and the in-memory channel layer are for a laptop. Use
+  your own settings, and a Redis channel layer for more than one process.
+- **No outbox relay.** The `publish` tag is there, but nothing publishes
+  it until you wire `OutboxPlugin` + `OutboxRelay`.
+- **No service for the deadlines.** `xsm_deadlines --forever` is a
+  foreground loop; run it under your process manager (systemd, a
+  container, Celery beat with `xsm_deadlines_every`).
+- **No user or group setup.** The `legal` / `finance` groups and their
+  members are created by you in the admin (or by the tests).
+- **No login page of its own.** The status page and the API use the
+  admin's session login.

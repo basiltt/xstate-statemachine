@@ -88,6 +88,16 @@ if _DJANGO:
     STORE_FACTORIES["django"] = _django_store
 
 
+def _close_thread_db() -> None:
+    """A worker thread's Django connection is thread-local and nothing
+    closes it when the thread ends: a leaked Postgres session then blocks
+    the test-DB teardown ("being accessed by other users")."""
+    import sys
+
+    if "django.db" in sys.modules:
+        sys.modules["django.db"].connections.close_all()
+
+
 def _store_params() -> List[Any]:
     out: List[Any] = []
     for name in sorted(STORE_FACTORIES):
@@ -221,16 +231,22 @@ class TestContract:
         release = threading.Event()
 
         def holder() -> None:
-            with store.lock("k", timeout=5):
-                order.append("A-in")
-                entered.set()
-                release.wait(5)
-                order.append("A-out")
+            try:
+                with store.lock("k", timeout=5):
+                    order.append("A-in")
+                    entered.set()
+                    release.wait(5)
+                    order.append("A-out")
+            finally:
+                _close_thread_db()
 
         def waiter() -> None:
             entered.wait(5)
-            with store.lock("k", timeout=5):
-                order.append("B-in")
+            try:
+                with store.lock("k", timeout=5):
+                    order.append("B-in")
+            finally:
+                _close_thread_db()
 
         ta, tb = threading.Thread(target=holder), threading.Thread(
             target=waiter
@@ -250,9 +266,12 @@ class TestContract:
         release = threading.Event()
 
         def holder() -> None:
-            with store.lock("k", timeout=5):
-                entered.set()
-                release.wait(5)
+            try:
+                with store.lock("k", timeout=5):
+                    entered.set()
+                    release.wait(5)
+            finally:
+                _close_thread_db()
 
         t = threading.Thread(target=holder)
         t.start()
@@ -452,6 +471,8 @@ class TestOptimisticRetry:
                     _act_once(store, keys[(n + i) % len(keys)], m)
             except BaseException as exc:  # noqa: BLE001
                 errors.append(exc)
+            finally:
+                _close_thread_db()
 
         ts = [
             threading.Thread(target=worker, args=(n,)) for n in range(threads)

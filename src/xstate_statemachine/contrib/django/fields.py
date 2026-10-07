@@ -140,9 +140,14 @@ class StatechartField(models.JSONField):
     def deconstruct(self) -> Any:
         name, path, args, kwargs = super().deconstruct()
         path = "xstate_statemachine.contrib.django.fields.StatechartField"
-        for key, default in (("null", True), ("blank", True)):
-            if kwargs.get(key) == default:
-                kwargs.pop(key)
+        # 📝 Our defaults are null/blank=True, Django's are False: the base
+        #    class omits a False (its default), which __init__ would then
+        #    turn back into True -- a nullable column for null=False.
+        for key in ("null", "blank"):
+            if getattr(self, key):
+                kwargs.pop(key, None)
+            else:
+                kwargs[key] = False
         if kwargs.get("editable", True) is False:
             kwargs.pop("editable", None)
         else:
