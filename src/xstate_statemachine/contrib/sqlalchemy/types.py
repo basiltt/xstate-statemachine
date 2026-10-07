@@ -42,6 +42,11 @@ class _ColumnCorrupt(SnapshotCorruptError, DontWrapMixin):
     """A ``statechart`` value that is not a JSON object."""
 
 
+class _NotADict(TypeError, DontWrapMixin):
+    """Writing something other than a snapshot dict (a programming
+    error)."""
+
+
 class StatechartType(TypeDecorator):  # type: ignore[type-arg]
     """A statechart snapshot stored as JSON (``JSONB`` on Postgres).
 
@@ -85,7 +90,7 @@ class StatechartType(TypeDecorator):  # type: ignore[type-arg]
             #    means the row is corrupt.
             if reading:
                 raise _ColumnCorrupt(msg)
-            raise TypeError(msg)
+            raise _NotADict(msg)
         size = len(json.dumps(value, default=str).encode("utf-8"))
         if size > self.max_snapshot_bytes:
             raise _ColumnTooLarge(
@@ -99,6 +104,23 @@ class StatechartType(TypeDecorator):  # type: ignore[type-arg]
         if dialect.name == "postgresql":
             return isinstance(conn_type, JSONB)
         return isinstance(conn_type, JSON) or None
+
+    def result_processor(self, dialect: Any, coltype: Any) -> Any:
+        """The JSON impl decodes BEFORE `process_result_value` runs (on
+        SQLite, a text column), so invalid JSON must be caught here."""
+        inner = super().result_processor(dialect, coltype)
+        if inner is None:  # pragma: no cover - JSON always has one
+            return None
+
+        def process(value: Any) -> Any:
+            try:
+                return inner(value)
+            except ValueError as exc:
+                raise _ColumnCorrupt(
+                    f"statechart column holds invalid JSON: {exc}"
+                ) from exc
+
+        return process
 
     def process_bind_param(self, value: Any, dialect: Any) -> Optional[Any]:
         return self._check(value, reading=False)
