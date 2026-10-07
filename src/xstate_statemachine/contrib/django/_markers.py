@@ -65,9 +65,22 @@ def _leave(m: Any) -> None:
     with _open_lock:
         slot = _open[id(m)]
         slot[0] -= 1
-        if slot[0] == 0:
+        last = slot[0] == 0
+        if last:
             del _open[id(m)]
-            m.buffer_marks = slot[1]
+    # 📝 review #281: `IdempotencyPlugin.buffer_marks` is PER SESSION (its
+    #    setter adds / removes the current token) -- every exiting session
+    #    must clear its own token or the set grows for the process's life.
+    #    A plain-attribute flag (`OutboxPlugin`) is only restored by the
+    #    last session out, so overlapping sends keep buffering.
+    if last:
+        m.buffer_marks = slot[1]
+    elif _is_per_session(m):
+        m.buffer_marks = False
+
+
+def _is_per_session(m: Any) -> bool:
+    return isinstance(getattr(type(m), "buffer_marks", None), property)
 
 
 @contextlib.contextmanager

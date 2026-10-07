@@ -733,3 +733,36 @@ def test_send_to_a_finished_machine_is_on_the_record(order: Any) -> None:
     ]
     assert rows[1].reason == "too late"
     assert rows[1].from_states == rows[1].to_states == ["order.cancelled"]
+
+
+def test_shared_idempotency_plugin_does_not_leak_session_tokens() -> None:
+    """Review #281: `IdempotencyPlugin.buffer_marks` is per session; the
+    first of two overlapping sends to exit must clear ITS token."""
+    import threading
+
+    from xstate_statemachine.contrib.django._markers import _marker_session
+    from xstate_statemachine.persistence.idempotency import (
+        IdempotencyPlugin,
+        MemoryInbox,
+    )
+
+    plugin = IdempotencyPlugin(MemoryInbox(), principal="u1")
+    gate_a, gate_b = threading.Event(), threading.Event()
+
+    def first() -> None:
+        with _marker_session([plugin]):
+            gate_a.set()
+            gate_b.wait(5)
+
+    def second() -> None:
+        gate_a.wait(5)
+        with _marker_session([plugin]):
+            pass
+        gate_b.set()
+
+    ts = [threading.Thread(target=first), threading.Thread(target=second)]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join(10)
+    assert len(plugin._buffering) == 0, plugin._buffering
