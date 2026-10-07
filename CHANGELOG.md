@@ -1470,7 +1470,9 @@ _No unreleased changes yet._
   was retried to exhaustion (now `DoesNotExist`); `lock="none"` could
   move `<field>_version` BACKWARDS from a stale instance (reopening the
   optimistic fence); `StatechartField(null=False)` / `blank=False` did
-  not round-trip `deconstruct()` (the column always came out nullable);
+  not round-trip `deconstruct()` (the column always came out nullable;
+  a project that passed them explicitly should expect one `AlterField`
+  migration);
   `refresh_statechart_columns` lost `migrate=` edits made in place and
   rewrote every row (deep copy, unchanged rows skipped, `dry_run=`;
   `refresh_statechart_columns_op(batch=, migrate=)`); new
