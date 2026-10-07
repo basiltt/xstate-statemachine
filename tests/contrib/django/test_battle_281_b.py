@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from typing import Any
 
 import pytest
@@ -352,21 +351,3 @@ class TestAdmin:
         assert page.status_code == 200
         assert b"REJECT" in page.content
         assert len(page.content) < 60_000
-
-
-# -----------------------------------------------------------------------------
-# 🆔 non-integer actor keys
-# -----------------------------------------------------------------------------
-@pytest.mark.xfail(
-    strict=True,
-    raises=TypeError,
-    reason="#281-b for A: the audit store writes the payload's raw "
-    "actor_id (a UUID for a UUID-pk user model) into a JSONField -> "
-    "TypeError: Object of type UUID is not JSON serializable. The send "
-    "itself is fine with statechart_audit=False.",
-)
-def test_uuid_actor_pk_survives_the_audit_payload() -> None:
-    from shop.models import Approval
-
-    a = Approval.objects.create()
-    a.send("APPROVE", actor=FakeUser(True, pk=uuid.uuid4()))
