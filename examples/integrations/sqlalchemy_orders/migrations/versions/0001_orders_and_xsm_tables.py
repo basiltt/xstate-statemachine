@@ -26,7 +26,7 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), nullable=False),
         sa.Column("customer", sa.String(length=120), nullable=False),
         sa.Column("statechart", sa.JSON(), nullable=True),
-        sa.Column("statechart_state", sa.String(length=512), nullable=True),
+        sa.Column("statechart_state", sa.Text(), nullable=True),
         sa.Column("statechart_state_ids", sa.JSON(), nullable=True),
         sa.Column("statechart_version", sa.Integer(), nullable=False),
         sa.Column(
