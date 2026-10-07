@@ -7,7 +7,6 @@ import os
 import sys
 from logging.config import fileConfig
 from pathlib import Path
-from typing import Any
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
@@ -18,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from models import Base  # noqa: E402
 
 from xstate_statemachine.contrib.sqlalchemy import (  # noqa: E402
-    StatechartType,
+    render_statechart_type,
 )
 
 config = context.config
@@ -35,12 +34,11 @@ if url:
 target_metadata = Base.metadata
 
 
-def render_item(type_: str, obj: Any, autogen_context: Any) -> Any:
-    """Render `StatechartType` as plain ``sa.JSON()`` in migrations -- the
-    size cap is a Python-side guard, not a database type."""
-    if type_ == "type" and isinstance(obj, StatechartType):
-        return "sa.JSON()"
-    return False
+# 💡 `StatechartType` renders as ``sa.JSON().with_variant(postgresql.JSONB(),
+#    "postgresql")`` -- the DDL `create_all` emits -- so a migration made on
+#    SQLite creates JSONB on Postgres and autogenerate stays quiet on both.
+#    The size cap is a Python-side guard, not a database type.
+render_item = render_statechart_type
 
 
 def run_migrations_offline() -> None:

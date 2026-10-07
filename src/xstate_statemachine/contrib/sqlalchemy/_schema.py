@@ -42,6 +42,7 @@ __all__ = [
     "SCHEMA_VERSION",
     "XsmTables",
     "build_tables",
+    "check_schema",
     "ensure_schema",
     "xsm_sqlalchemy_ddl",
 ]
@@ -151,13 +152,53 @@ def xsm_sqlalchemy_ddl(
 
     Call it on your declarative ``Base.metadata`` so Alembic autogenerate
     sees ``xsm_deadlines`` / ``xsm_transitions`` / ``xsm_inbox`` /
-    ``xsm_locks`` / ``xsm_schema`` (and the `SQLAlchemyStore` snapshot
-    table) and does not propose dropping them::
+    ``xsm_locks`` / ``xsm_schema`` / ``xsm_outbox`` (and the
+    `SQLAlchemyStore` snapshot table) and does not propose dropping them::
 
         xsm_sqlalchemy_ddl(Base.metadata).create_all(engine)
+
+    📝 #284 battle: ``xsm_outbox`` is included. `SQLAlchemyOutboxStore`
+    creates it on first use, and a migration that does not know the table
+    is one whose autogenerate proposes DROPPING the pending events.
     """
+    from .outbox import outbox_table  # 📝 outbox -> store -> this module
+
     build_tables(metadata, snapshots_table)
+    outbox_table(metadata)
     return metadata
+
+
+def check_schema(connection: Any, tables: XsmTables) -> int:
+    """Verify an existing schema WITHOUT creating anything
+    (``create_tables=False``): a clear `StoreError` when tables are missing
+    (run your migrations) or were written by a newer release (X0.10)."""
+    from sqlalchemy import inspect
+
+    insp = inspect(connection)
+    missing = [t.name for t in tables.all() if not insp.has_table(t.name)]
+    if missing:
+        raise StoreError(
+            "xstate-statemachine [sqlalchemy] tables are missing: "
+            f"{', '.join(sorted(missing))}. Run your migrations (put "
+            "xsm_sqlalchemy_ddl(Base.metadata) on Alembic's "
+            "target_metadata) or pass create_tables=True."
+        )
+    sc = tables.schema
+    row = connection.execute(
+        select(sc.c.version).where(sc.c.component == _COMPONENT)
+    ).first()
+    current = SCHEMA_VERSION if row is None else int(row[0])
+    if current > SCHEMA_VERSION:
+        raise StoreError(_newer(current))
+    return current
+
+
+def _newer(current: int) -> str:
+    return (
+        f"xstate-statemachine [sqlalchemy] schema is version {current}, "
+        f"newer than this library supports ({SCHEMA_VERSION}). Upgrade "
+        f"xstate-statemachine."
+    )
 
 
 def ensure_schema(connection: Any, tables: XsmTables) -> int:
@@ -178,11 +219,7 @@ def ensure_schema(connection: Any, tables: XsmTables) -> int:
         return SCHEMA_VERSION
     current = int(row[0])
     if current > SCHEMA_VERSION:
-        raise StoreError(
-            f"xstate-statemachine [sqlalchemy] schema is version {current}, "
-            f"newer than this library supports ({SCHEMA_VERSION}). Upgrade "
-            f"xstate-statemachine."
-        )
+        raise StoreError(_newer(current))
     while current < SCHEMA_VERSION:  # pragma: no cover - no upgrades yet
         for step in _UPGRADES[current]:
             step(connection, tables)
