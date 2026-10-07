@@ -132,7 +132,9 @@ class TestMigrations:
         proj.run("makemigrations", "wf", "-v0")
         initial = proj.migration("0001")
         for col in ("workflow_state", "workflow_state_ids"):
-            assert f'"{col}"' in initial
+            # 📝 Django quotes field names with ' or " depending on the
+            #    installed version / formatter -- match either
+            assert f'"{col}"' in initial or f"'{col}'" in initial, initial
         assert "workflow_version" in initial
         assert "workflow_machine_version" in initial
         assert "legacy_state" not in initial  # denormalize=False
@@ -140,7 +142,7 @@ class TestMigrations:
         assert "state_max_length=100" in initial
         proj.run("makemigrations", "--check", "--dry-run")  # stable
         sql = proj.run("sqlmigrate", "wf", "0001")
-        assert re.search(r'CREATE INDEX .*\("workflow_state"\)', sql)
+        assert re.search(r'CREATE INDEX .*\(["`]?workflow_state["`]?\)', sql)
         proj.run("migrate", "-v0")
         proj.run(
             "shell", "-c", "from wf.models import Doc; Doc.objects.create()"

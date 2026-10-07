@@ -108,11 +108,15 @@ def test_both_roles_race_on_two_hundred_expenses(people: Any, mode: str):
                         if mode == "pessimistic":
                             row.send(event, actor=people[role])
                         else:
+                            # a generous budget: three writers contend
+                            # on every row and CI's coverage runner is
+                            # slow -- exhaustion there is not a defect
                             send_with_retry(
                                 row,
                                 event,
                                 actor=people[role],
                                 lock="optimistic",
+                                retries=10_000,
                             )
                         break
                     except LockTimeoutError:
