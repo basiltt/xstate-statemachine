@@ -24,6 +24,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import json
 import time
@@ -33,6 +34,7 @@ from typing import (
     ClassVar,
     Dict,
     Iterable,
+    Iterator,
     List,
     Optional,
     Sequence,
@@ -100,6 +102,28 @@ class _BufferLog:
 
     def forget(self, machine_id: str) -> int:  # pragma: no cover
         return 0
+
+
+@contextlib.contextmanager
+def _joined(plugins: Iterable[Any], session: Any) -> Iterator[None]:
+    """Bind every plugin sink's shared `SQLAlchemyStore` to *session*'s
+    connection for the block (see `SQLAlchemyStore.bound_to`)."""
+    from .store import SQLAlchemyStore
+
+    stores: List[Any] = []
+    for p in plugins:
+        sink = getattr(p, "sink", None)
+        shared = getattr(sink, "shares_connection_with", sink)
+        if isinstance(shared, SQLAlchemyStore) and shared not in stores:
+            stores.append(shared)
+    if not stores:
+        yield
+        return
+    with contextlib.ExitStack() as stack:
+        conn = session.connection()
+        for st in stores:
+            stack.enter_context(st.bound_to(conn))
+        yield
 
 
 def _identity(row: Any) -> Any:
@@ -241,13 +265,20 @@ class StatechartMixin:
             session.refresh(self, with_for_update=True)
         key = self._xsm_key()
         expected = self.statechart_version
-        receipt, snap, deadlines, records = self._xsm_run(
-            session, event_type, payload, plugins
-        )
-        self.statechart = snap
+        plugins = list(plugins)
         try:
-            session.flush()
-            self._xsm_write_aux(session.connection(), key, deadlines, records)
+            # 🔒 #284 battle: a plugin sink that lives in a `SQLAlchemyStore`
+            #    (outbox, inbox) joins THIS session's transaction, so a
+            #    rollback drops its rows with the state change (X0.3).
+            with _joined(plugins, session):
+                receipt, snap, deadlines, records = self._xsm_run(
+                    session, event_type, payload, plugins
+                )
+                self.statechart = snap
+                session.flush()
+                self._xsm_write_aux(
+                    session.connection(), key, deadlines, records
+                )
         except StaleDataError as exc:
             raise ConflictError(key, expected, None) from exc
         except OperationalError as exc:

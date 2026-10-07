@@ -136,6 +136,26 @@ class SQLAlchemyStore(BaseStore):
             yield conn
 
     @contextlib.contextmanager
+    def bound_to(self, connection: Any) -> Iterator[Any]:
+        """Make every call this thread makes through this store (and the
+        inbox / log / outbox that `shares_connection_with` it) run on
+        *connection* -- a `Session.connection()` whose transaction the
+        CALLER owns and commits. No-op inside an open `transaction()`.
+
+        🔥 #284 battle: `StatechartMixin.send(plugins=[OutboxPlugin(...)])`
+        wrote the outbox row on a connection of its own, so it committed
+        even when the caller's session rolled back the state change.
+        """
+        if getattr(self._local, "conn", None) is not None:
+            yield self._local.conn
+            return
+        self._local.conn = connection
+        try:
+            yield connection
+        finally:
+            self._local.conn = None
+
+    @contextlib.contextmanager
     def transaction(self) -> Iterator[Any]:
         """Group every store / inbox / log call this thread makes into ONE
         database transaction, committed on clean exit, rolled back on an
