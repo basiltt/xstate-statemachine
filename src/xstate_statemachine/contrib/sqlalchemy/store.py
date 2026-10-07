@@ -63,6 +63,7 @@ from ._schema import (
     XsmTables,
     build_tables,
     ensure_schema,
+    check_schema,
 )
 
 __all__ = ["AsyncSQLAlchemyStore", "SQLAlchemyStore"]
@@ -136,6 +137,39 @@ class SQLAlchemyStore(BaseStore):
             yield conn
 
     @contextlib.contextmanager
+    def bound_to(self, connection: Any) -> Iterator[Any]:
+        """Make every call this thread makes through this store (and the
+        inbox / log / outbox that `shares_connection_with` it) run on
+        *connection* -- a `Session.connection()` whose transaction the
+        CALLER owns and commits. Re-entrant for the SAME connection;
+        `RuntimeError` if this thread is already bound to a different one
+        (inside `transaction()`, or an outer send on another session).
+
+        🔥 #284 battle: `StatechartMixin.send(plugins=[OutboxPlugin(...)])`
+        wrote the outbox row on a connection of its own, so it committed
+        even when the caller's session rolled back the state change.
+        """
+        current = getattr(self._local, "conn", None)
+        if current is not None:
+            if current is not connection:
+                # 🔥 #284-a battle: a send inside ``store.transaction()``
+                #    (or a nested send on another session) silently wrote
+                #    the plugin rows into THAT transaction, not the row's.
+                raise RuntimeError(
+                    "this SQLAlchemyStore is already bound to another "
+                    "transaction on this thread (store.transaction() or "
+                    "an outer send on a different session); its writes "
+                    "cannot join the row's session as well."
+                )
+            yield current
+            return
+        self._local.conn = connection
+        try:
+            yield connection
+        finally:
+            self._local.conn = None
+
+    @contextlib.contextmanager
     def transaction(self) -> Iterator[Any]:
         """Group every store / inbox / log call this thread makes into ONE
         database transaction, committed on clean exit, rolled back on an
@@ -151,20 +185,12 @@ class SQLAlchemyStore(BaseStore):
                 self._local.conn = None
 
     def _check_version(self, conn: Any) -> None:
-        from ...exceptions import StoreError
+        # 🔥 #284 battle: ``create_tables=False`` on an EMPTY database
+        #    failed with a driver error ("no such table: xsm_schema" /
+        #    UndefinedTable) instead of saying what to do. One check, in
+        #    `_schema.check_schema`.
+        check_schema(conn, self.tables)
 
-        sc = self.tables.schema
-        row = conn.execute(
-            select(sc.c.version).where(sc.c.component == "sqlalchemy")
-        ).first()
-        if row is not None and int(row[0]) > SCHEMA_VERSION:
-            raise StoreError(
-                f"xstate-statemachine [sqlalchemy] schema is version "
-                f"{row[0]}, newer than this library supports "
-                f"({SCHEMA_VERSION}). Upgrade xstate-statemachine."
-            )
-
-    # -- primitives -------------------------------------------------------------
     def _load_raw(
         self, key: str
     ) -> Optional[Tuple[str, int, str, float, Sequence[Deadline]]]:
@@ -288,9 +314,42 @@ class SQLAlchemyStore(BaseStore):
             }
 
 
+#: SQLSTATEs that mean "another transaction holds what you need; retry":
+#: lock_not_available (PG ``lock_timeout`` / ``NOWAIT``), deadlock,
+#: serialization failure.
+_LOCK_SQLSTATES = frozenset({"55P03", "40P01", "40001"})
+#: Message phrases for drivers WITHOUT a SQLSTATE (SQLite, MySQL) --
+#: anchored to the engines' real wording (review #284: a bare "locked"
+#: matched "no such table: locked_orders" and turned a schema error into
+#: a retry loop).
+_LOCK_PHRASES = (
+    "database is locked",
+    "database table is locked",
+    "database schema is locked",
+    "database is busy",
+    "sqlite_busy",
+    "lock wait timeout exceeded",
+    "deadlock found when trying to get lock",
+    "canceling statement due to lock timeout",
+    "could not obtain lock",
+)
+
+
 def _is_locked(exc: BaseException) -> bool:
-    msg = str(getattr(exc, "orig", exc)).lower()
-    return "locked" in msg or "busy" in msg
+    """Is *exc* contention (map to `LockTimeoutError`, retryable)?
+
+    🔥 #284-a battle: only SQLite's "locked"/"busy" were recognised; a
+    Postgres ``lock_timeout`` ("canceling statement due to lock timeout")
+    or a deadlock leaked as a raw `OperationalError` that
+    `send_with_retry` does not retry. When the driver gives a SQLSTATE
+    it is the ONLY thing consulted; the phrase list is for drivers that
+    do not."""
+    orig = getattr(exc, "orig", exc)
+    code = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    if code:
+        return code in _LOCK_SQLSTATES
+    msg = str(orig).lower()
+    return any(w in msg for w in _LOCK_PHRASES)
 
 
 # -----------------------------------------------------------------------------

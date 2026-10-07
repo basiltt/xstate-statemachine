@@ -24,6 +24,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import json
 import time
@@ -33,13 +34,23 @@ from typing import (
     ClassVar,
     Dict,
     Iterable,
+    Iterator,
     List,
     Optional,
     Sequence,
     Tuple,
 )
 
-from sqlalchemy import JSON, Integer, String, event, insert, literal, or_
+from sqlalchemy import (
+    JSON,
+    Integer,
+    String,
+    Text,
+    event,
+    insert,
+    literal,
+    or_,
+)
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.hybrid import hybrid_property
@@ -55,6 +66,7 @@ from ...persistence.deadline import Deadline
 from ...persistence.log import AuditPlugin, TransitionRecord
 from . import _ops
 from ._schema import build_tables
+from .store import _is_locked
 
 __all__ = ["StatechartMixin", "send_with_retry", "state_string"]
 
@@ -102,6 +114,60 @@ class _BufferLog:
         return 0
 
 
+@contextlib.contextmanager
+def _joined(plugins: Iterable[Any], session: Any) -> Iterator[None]:
+    """Bind every plugin sink's shared `SQLAlchemyStore` to *session*'s
+    connection for the block (see `SQLAlchemyStore.bound_to`)."""
+    from .store import SQLAlchemyStore
+
+    stores: List[Any] = []
+    for p in plugins:
+        # 🔥 #284-a battle: `IdempotencyPlugin` keeps its sink in ``inbox``
+        #    and `AuditPlugin` in ``log`` -- only ``sink`` was looked at, so
+        #    the inbox mark committed on its own connection while the row
+        #    rolled back, and the redelivery came back ``duplicate=True``
+        #    for an event whose effect was never stored.
+        for attr in _SINK_ATTRS:
+            sink = getattr(p, attr, None)
+            shared = getattr(sink, "shares_connection_with", sink)
+            if isinstance(shared, SQLAlchemyStore) and shared not in stores:
+                stores.append(shared)
+    if not stores:
+        yield
+        return
+    with contextlib.ExitStack() as stack:
+        conn = session.connection()
+        for st in stores:
+            _check_same_database(st, conn)
+            stack.enter_context(st.bound_to(conn))
+        yield
+
+
+_SINK_ATTRS = ("sink", "inbox", "log")
+
+
+def _check_same_database(store: Any, conn: Any) -> None:
+    """Refuse a plugin store on ANOTHER database than the row's session:
+    binding it to the session's connection would write its rows into the
+    wrong database (or fail on a missing table) -- never silently."""
+    from sqlalchemy.exc import UnboundExecutionError
+
+    try:
+        with store.session_factory() as s:
+            theirs = s.get_bind().url
+    except UnboundExecutionError:  # pragma: no cover - per-mapper binds
+        return
+    ours = conn.engine.url
+    if theirs.render_as_string(False) != ours.render_as_string(False):
+        raise ValueError(
+            "a plugin's SQLAlchemyStore is bound to "
+            f"{theirs.render_as_string(True)!r} but the row's session "
+            f"uses {ours.render_as_string(True)!r}: its writes cannot "
+            "join the row's transaction. Build the store on the same "
+            "database as the model."
+        )
+
+
 def _identity(row: Any) -> Any:
     state: Any = sa_inspect(row)
     return state.identity
@@ -124,8 +190,11 @@ class StatechartMixin:
     __xsm_logic__: ClassVar[Any] = None
     __xsm_audit__: ClassVar[bool] = False
 
+    # 🔥 #284-a battle: was String(512) -- a wide parallel chart's sorted
+    #    leaf ids exceed that; Postgres raised StringDataRightTruncation
+    #    while SQLite silently stored it. Text is btree-indexable.
     statechart_state: Mapped[Optional[str]] = mapped_column(
-        String(512), index=True, nullable=True
+        Text, index=True, nullable=True
     )
     statechart_state_ids: Mapped[Optional[List[str]]] = mapped_column(
         JSON, nullable=True
@@ -237,22 +306,35 @@ class StatechartMixin:
             session.add(self)
         if _identity(self) is None:
             session.flush()  # a primary key for the deadline / log rows
-        if lock == "pessimistic":
-            session.refresh(self, with_for_update=True)
         key = self._xsm_key()
+        if lock == "pessimistic":
+            try:
+                session.refresh(self, with_for_update=True)
+            except OperationalError as exc:
+                # 🔥 #284-a: a Postgres ``lock_timeout`` / deadlock on the
+                #    FOR UPDATE leaked as a raw OperationalError.
+                if _is_locked(exc):
+                    raise LockTimeoutError(key, 0.0) from exc
+                raise
         expected = self.statechart_version
-        receipt, snap, deadlines, records = self._xsm_run(
-            session, event_type, payload, plugins
-        )
-        self.statechart = snap
+        plugins = list(plugins)
         try:
-            session.flush()
-            self._xsm_write_aux(session.connection(), key, deadlines, records)
+            # 🔒 #284 battle: a plugin sink that lives in a `SQLAlchemyStore`
+            #    (outbox, inbox) joins THIS session's transaction, so a
+            #    rollback drops its rows with the state change (X0.3).
+            with _joined(plugins, session):
+                receipt, snap, deadlines, records = self._xsm_run(
+                    session, event_type, payload, plugins
+                )
+                self.statechart = snap
+                session.flush()
+                self._xsm_write_aux(
+                    session.connection(), key, deadlines, records
+                )
         except StaleDataError as exc:
             raise ConflictError(key, expected, None) from exc
         except OperationalError as exc:
-            msg = str(getattr(exc, "orig", exc)).lower()
-            if "locked" in msg or "busy" in msg:
+            if _is_locked(exc):
                 raise LockTimeoutError(key, 0.0) from exc
             raise
         return receipt

@@ -11,10 +11,15 @@
 #    * `Order.statechart_store(...)` + `DueTimerScanner` fire the 15-minute
 #      payment timeout for orders nobody touches -- run exactly ONE
 #      scanner process (`python sync_app.py scan`).
+#    * PAY declares ``meta.publish`` (`machine.json`): `OutboxPlugin` on a
+#      `SQLAlchemyOutboxStore` writes an ``order.paid`` row into
+#      ``xsm_outbox`` IN THE SAME TRANSACTION as the state change, and
+#      `python sync_app.py relay` drains it to a broker (at-least-once).
 #
 #    Run:  alembic upgrade head          (creates orders.db)
 #          python sync_app.py demo
 #          python sync_app.py scan --at-offset 901
+#          python sync_app.py relay
 # -----------------------------------------------------------------------------
 """Order lifecycle on SQLAlchemy 2.0, synchronous ORM."""
 
@@ -30,7 +35,12 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from logic import order_machine
 from models import Base, Order
-from xstate_statemachine.contrib.sqlalchemy import send_with_retry
+from xstate_statemachine.contrib.sqlalchemy import (
+    SQLAlchemyOutboxStore,
+    SQLAlchemyStore,
+    send_with_retry,
+)
+from xstate_statemachine.eda import Envelope, OutboxPlugin, OutboxRelay
 from xstate_statemachine.persistence import DueTimerScanner
 
 DEFAULT_URL = "sqlite:///orders.db"
@@ -51,13 +61,30 @@ def create_order(engine: Any, customer: str) -> int:
         return order.id
 
 
+def outbox(engine: Any) -> SQLAlchemyOutboxStore:
+    """The ``xsm_outbox`` table of this database. The tables come from the
+    migrations (``create_tables=False``): a missing table is a loud error,
+    never a silent ``CREATE`` behind Alembic's back."""
+    store = SQLAlchemyStore(
+        sessionmaker(engine), metadata=Base.metadata, create_tables=False
+    )
+    return SQLAlchemyOutboxStore(store, create_table=False)
+
+
 def send(engine: Any, order_id: int, event: str, **payload: Any) -> Any:
-    """Apply one event with optimistic retry; returns the `Receipt`."""
+    """Apply one event with optimistic retry; returns the `Receipt`.
+
+    The `OutboxPlugin` joins the session's transaction: the ``order.paid``
+    row commits with the state change, or neither does (X0.3).
+    """
+    plugin = OutboxPlugin(outbox(engine), topic="orders")
     with Session(engine) as s:
         order = s.get(Order, order_id)
         if order is None:
             raise KeyError(order_id)
-        receipt = send_with_retry(order, event, session=s, **payload)
+        receipt = send_with_retry(
+            order, event, session=s, plugins=[plugin], **payload
+        )
         s.commit()
         return receipt
 
@@ -82,6 +109,23 @@ def scanner(engine: Any) -> DueTimerScanner:
     return DueTimerScanner(store, lambda key: machine)
 
 
+class PrintingBroker:
+    """A stand-in `SyncBrokerAdapter`: prints what it would publish. Swap
+    in `SyncFakeBrokerAdapter` (tests) or a real adapter (Kafka, ...)."""
+
+    def publish(self, topic: str, envelope: Envelope) -> None:
+        print(f"publish {topic}: {envelope.type} {envelope.data}")
+
+
+def relay(engine: Any, broker: Any = None) -> int:
+    """Drain pending outbox rows to *broker*; marks a row sent only after
+    the broker accepted it (a crash in between re-sends the SAME envelope
+    id next time -- consumers dedup on it)."""
+    return OutboxRelay(
+        outbox(engine), broker or PrintingBroker()
+    ).relay_once_sync()
+
+
 def demo(engine: Any) -> None:
     a = create_order(engine, "alice")
     send(engine, a, "ADD_ITEM", price_cents=450)
@@ -97,7 +141,7 @@ def demo(engine: Any) -> None:
 
 def main(argv: Optional[List[str]] = None) -> None:
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument("command", choices=["init", "demo", "scan"])
+    p.add_argument("command", choices=["init", "demo", "scan", "relay"])
     p.add_argument("--url", default=None)
     p.add_argument(
         "--at-offset",
@@ -111,6 +155,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         Base.metadata.create_all(engine)
     elif args.command == "demo":
         demo(engine)
+    elif args.command == "relay":
+        print(f"relayed {relay(engine)} event(s)")
     else:
         woken = scanner(engine).run_once(now=time.time() + args.at_offset)
         print(f"woke {woken} order(s)")

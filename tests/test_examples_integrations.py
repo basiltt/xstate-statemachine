@@ -57,6 +57,12 @@ def _env() -> dict:
     #    sets DJANGO_SETTINGS_MODULE; each example suite is its own
     #    process and must pick its own settings.
     env.pop("DJANGO_SETTINGS_MODULE", None)
+    # 📝 #284 battle: the Linux [sqlalchemy] cell sets XSM_CONTAINERS=1
+    #    for ITS Postgres container; eda_fulfilment's live-broker variant
+    #    (Redpanda, RabbitMQ, NATS, LocalStack) must not start from here
+    #    -- the dedicated "Live brokers" job runs that.
+    if os.environ.get("XSM_EXAMPLES_CONTAINERS") != "1":
+        env.pop("XSM_CONTAINERS", None)
     src = str(ROOT / "src")
     env["PYTHONPATH"] = os.pathsep.join(
         [src, str(ROOT)] + [p for p in [env.get("PYTHONPATH")] if p]
@@ -88,7 +94,11 @@ def test_sqlalchemy_orders_ships_its_alembic_migration():
     assert sorted((ex / "migrations" / "versions").glob("0001_*.py"))
     readme = (ex / "README.md").read_text("utf-8")
     assert "alembic upgrade head" in readme
-    assert "#293" in readme  # the outbox is not faked
+    # 📝 #284 battle: the example SHIPS the transactional outbox (PAY
+    #    publishes `order.paid`; `sync_app.py relay` drains it)
+    assert "transactional outbox" in readme.lower()
+    assert "sync_app.py relay" in readme
+    assert sorted((ex / "migrations" / "versions").glob("0002_*.py"))
 
 
 def _chart_id(p: Path) -> str:
