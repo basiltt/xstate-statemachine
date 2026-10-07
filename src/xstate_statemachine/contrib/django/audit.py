@@ -115,7 +115,11 @@ class DjangoTransitionLogStore:
         return len(batch)
 
     def _write(self, rec: TransitionRecord) -> None:
-        actor = self.actor
+        # 🐛 #281 battle (A): an ENGINE step (``done.state.*``, ``after``)
+        #    run inside a user's send is not that user's act -- its
+        #    record carries no actor, and the row must not borrow the
+        #    sender's. Only a record that names an actor gets the FK.
+        actor = self.actor if rec.actor is not None else None
         actor_pk = getattr(actor, "pk", None) if actor is not None else None
         _log_model().objects.using(self.using).create(
             content_type=self._ct,

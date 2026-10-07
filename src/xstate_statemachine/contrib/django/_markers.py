@@ -14,7 +14,8 @@
 from __future__ import annotations
 
 import contextlib
-from typing import Any, Iterator, List
+import threading
+from typing import Any, Dict, Iterator, List
 
 __all__ = ["_marker_plugins", "_marker_session"]
 
@@ -26,24 +27,56 @@ def _marker_plugins(plugins: List[Any]) -> List[Any]:
     return sorted(found, key=lambda p: getattr(p, "flush_priority", 0))
 
 
+#: Open `send()` sessions per marker plugin (by id) and the value of
+#: ``buffer_marks`` to restore when the LAST of them exits.
+_open: Dict[int, List[Any]] = {}
+_open_lock = threading.Lock()
+
+
+def _enter(m: Any) -> None:
+    with _open_lock:
+        slot = _open.get(id(m))
+        if slot is None:
+            _open[id(m)] = [1, getattr(m, "buffer_marks", False)]
+        else:
+            slot[0] += 1
+        m.buffer_marks = True
+
+
+def _leave(m: Any) -> None:
+    with _open_lock:
+        slot = _open[id(m)]
+        slot[0] -= 1
+        if slot[0] == 0:
+            del _open[id(m)]
+            m.buffer_marks = slot[1]
+
+
 @contextlib.contextmanager
 def _marker_session(markers: List[Any]) -> Iterator[None]:
     """A `persisted()`-style session for *markers*: `buffer_marks` on, a
     fresh `current_session` token so their buffers are keyed to THIS send;
-    restored on exit, and any leftover buffer discarded."""
+    restored on exit, and any leftover buffer discarded.
+
+    🐛 #281 battle (A): `OutboxPlugin.buffer_marks` is ONE flag per
+    instance, not per session. With a plugin shared by every row
+    (``statechart_plugins = lambda row: [shared]``) a concurrent send's
+    exit restored it to ``False`` mid-run, and this send's failing INSERT
+    was swallowed by the engine again. The flag is now reference-counted:
+    restored only when the last open send leaves.
+    """
     from ...persistence.locking import current_session
 
     token = current_session.set(object())
-    previous = [(m, getattr(m, "buffer_marks", False)) for m in markers]
     for m in markers:
-        m.buffer_marks = True
+        _enter(m)
     try:
         yield
     finally:
-        for m, was in previous:
+        for m in markers:
             try:
                 m.discard_marks()
             except Exception:  # pragma: no cover - best effort
                 pass
-            m.buffer_marks = was
+            _leave(m)
         current_session.reset(token)
