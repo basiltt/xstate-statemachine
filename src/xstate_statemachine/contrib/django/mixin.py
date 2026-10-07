@@ -56,6 +56,7 @@ from django.db.models import CharField, F, Q, Value
 from django.db.models.functions import Concat, StrIndex
 
 from ...events import Receipt
+from ._locking import _is_lock_error, _lock_timeout_s
 from ...exceptions import ConflictError, LockTimeoutError
 from ...models import MachineNode
 from ...patterns.retry import RetryPolicy
@@ -77,29 +78,6 @@ __all__ = [
 ]
 
 LOCK_MODES = ("pessimistic", "optimistic", "none")
-
-
-def _is_lock_error(exc: BaseException) -> bool:
-    """SQLite ``database is locked`` / ``busy``; Postgres ``lock timeout``
-    (55P03) and MySQL ``Lock wait timeout exceeded`` (1205)."""
-    msg = str(exc).lower()
-    return (
-        "locked" in msg
-        or "busy" in msg
-        or "lock timeout" in msg
-        or "lock wait timeout" in msg
-    )
-
-
-def _lock_timeout_s(using: str) -> float:
-    """Best-effort: SQLite's configured ``timeout`` (Django default 5 s)."""
-    from django.db import connections
-
-    opts = connections[using].settings_dict.get("OPTIONS") or {}
-    try:
-        return float(opts.get("timeout", 5.0))
-    except (TypeError, ValueError):  # pragma: no cover - odd settings
-        return 5.0
 
 
 #: Keys a CLIENT body may never carry (#361 H1/H2): framework options of
@@ -498,12 +476,26 @@ class StatechartModelMixin(models.Model):
         values[name] = new_snap
         values[vcol] = expected + 1
         q = mgr.filter(pk=self.pk)
-        if lock != "none":
+        if lock == "none":
+            # 📝 last writer wins on the SNAPSHOT, but the version only
+            #    moves forward: a stale instance must not reopen the
+            #    optimistic fence for writers that read a later version.
+            values[vcol] = F(vcol) + 1
+        else:
             q = q.filter(**{vcol: expected})
         if q.update(**values) != 1:
-            actual = mgr.filter(pk=self.pk).values_list(vcol, flat=True)
-            raise ConflictError(
-                self._xsm_key(), expected, next(iter(actual), None)
+            actual = list(mgr.filter(pk=self.pk).values_list(vcol, flat=True))
+            if not actual:
+                # 🔥 deleted under us: not a conflict -- a retry could
+                #    never win.
+                raise type(self).DoesNotExist(
+                    f"{type(self).__name__} pk={self.pk!r} was deleted "
+                    f"during send()"
+                )
+            raise ConflictError(self._xsm_key(), expected, actual[0])
+        if lock == "none":
+            values[vcol] = int(
+                mgr.filter(pk=self.pk).values_list(vcol, flat=True).get()
             )
         self._xsm_write_deadlines(using, deadlines)
         for k, v in values.items():

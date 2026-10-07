@@ -442,7 +442,9 @@ def test_busy_database_is_a_lock_timeout_not_a_driver_error(
     with pytest.raises(LockTimeoutError) as ei:
         o.send("SUBMIT")
     assert ei.value.key == o._xsm_key()
-    assert ei.value.timeout == 60.0  # the test project's OPTIONS.timeout
+    # the test project: SQLite OPTIONS.timeout=60; Postgres lock_timeout=0
+    expected = 0.0 if connection.vendor == "postgresql" else 60.0
+    assert ei.value.timeout == expected
     assert isinstance(ei.value.__cause__, OperationalError)
     # retried by the helper -> the second attempt succeeds
     r = mixin.send_with_retry(o, "SUBMIT", lock="pessimistic")
@@ -465,7 +467,18 @@ def test_asend_runs_the_locked_section_off_the_loop() -> None:
     from shop.models import Order
 
     o = Order.objects.create()
-    r = asyncio.run(o.asend("SUBMIT"))
+    from asgiref.sync import sync_to_async
+
+    async def main() -> Any:
+        try:
+            return await o.asend("SUBMIT")
+        finally:
+            # 📝 close the worker thread's connection (outside ASGI no
+            #    request_finished does): a leaked session blocks the
+            #    Postgres test-DB teardown.
+            await sync_to_async(connections.close_all, thread_sensitive=True)()
+
+    r = asyncio.run(main())
     assert r.changed
     connections.close_all()
     assert Order.objects.get(pk=o.pk).matches("order.review")
