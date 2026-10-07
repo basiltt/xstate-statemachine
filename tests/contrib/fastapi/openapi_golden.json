@@ -6,7 +6,6 @@
           "schema": {
             "anyOf": [
               {
-                "additionalProperties": true,
                 "type": "object"
               },
               {
@@ -68,7 +67,6 @@
         "additionalProperties": false,
         "properties": {
           "payload": {
-            "additionalProperties": true,
             "title": "Payload",
             "type": "object"
           },
@@ -90,7 +88,6 @@
         "type": "object"
       },
       "Problem": {
-        "additionalProperties": true,
         "description": "RFC 9457 ``application/problem+json`` (X0.7: no exception text).",
         "properties": {
           "detail": {
@@ -138,7 +135,6 @@
         "type": "object"
       },
       "ReceiptModel": {
-        "additionalProperties": true,
         "description": "The `ReceiptResponse` body of both POST routes.",
         "properties": {
           "available_events": {
@@ -219,7 +215,6 @@
         "type": "object"
       },
       "StateModel": {
-        "additionalProperties": true,
         "description": "``GET /{id}`` -- state only unless a `context_serializer` is set.",
         "properties": {
           "available_events": {
@@ -297,11 +292,6 @@
           },
           "400": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -311,11 +301,6 @@
           },
           "401": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -325,11 +310,6 @@
           },
           "403": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -339,11 +319,6 @@
           },
           "404": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -362,11 +337,6 @@
           },
           "500": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -376,11 +346,6 @@
           },
           "503": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -425,22 +390,12 @@
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
                 }
-              },
-              "text/plain": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
               }
             }
           },
           "403": {
             "content": {
               "application/problem+json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
-              "text/plain": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
                 }
@@ -489,11 +444,6 @@
           },
           "400": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -503,11 +453,6 @@
           },
           "401": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -517,11 +462,6 @@
           },
           "403": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -531,11 +471,6 @@
           },
           "404": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -554,11 +489,6 @@
           },
           "500": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -568,11 +498,6 @@
           },
           "503": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -607,7 +532,6 @@
               "schema": {
                 "anyOf": [
                   {
-                    "additionalProperties": true,
                     "type": "object"
                   },
                   {
@@ -640,11 +564,6 @@
           },
           "400": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -654,11 +573,6 @@
           },
           "401": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -668,11 +582,6 @@
           },
           "403": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -682,11 +591,6 @@
           },
           "404": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -696,11 +600,6 @@
           },
           "409": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -710,11 +609,6 @@
           },
           "413": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -724,11 +618,6 @@
           },
           "415": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -738,11 +627,6 @@
           },
           "422": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -752,11 +636,6 @@
           },
           "500": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -766,11 +645,6 @@
           },
           "501": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -780,11 +654,6 @@
           },
           "503": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -819,7 +688,6 @@
               "schema": {
                 "anyOf": [
                   {
-                    "additionalProperties": true,
                     "type": "object"
                   },
                   {
@@ -852,11 +720,6 @@
           },
           "400": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -866,11 +729,6 @@
           },
           "401": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -880,11 +738,6 @@
           },
           "403": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -894,11 +747,6 @@
           },
           "404": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -908,11 +756,6 @@
           },
           "409": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -922,11 +765,6 @@
           },
           "413": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -936,11 +774,6 @@
           },
           "415": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -950,11 +783,6 @@
           },
           "422": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -964,11 +792,6 @@
           },
           "500": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -978,11 +801,6 @@
           },
           "501": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -992,11 +810,6 @@
           },
           "503": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1031,7 +844,6 @@
               "schema": {
                 "anyOf": [
                   {
-                    "additionalProperties": true,
                     "type": "object"
                   },
                   {
@@ -1064,11 +876,6 @@
           },
           "400": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1078,11 +885,6 @@
           },
           "401": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1092,11 +894,6 @@
           },
           "403": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1106,11 +903,6 @@
           },
           "404": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1120,11 +912,6 @@
           },
           "409": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1134,11 +921,6 @@
           },
           "413": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1148,11 +930,6 @@
           },
           "415": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1162,11 +939,6 @@
           },
           "422": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1176,11 +948,6 @@
           },
           "500": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1190,11 +957,6 @@
           },
           "501": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1204,11 +966,6 @@
           },
           "503": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1243,7 +1000,6 @@
               "schema": {
                 "anyOf": [
                   {
-                    "additionalProperties": true,
                     "type": "object"
                   },
                   {
@@ -1276,11 +1032,6 @@
           },
           "400": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1290,11 +1041,6 @@
           },
           "401": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1304,11 +1050,6 @@
           },
           "403": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1318,11 +1059,6 @@
           },
           "404": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1332,11 +1068,6 @@
           },
           "409": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1346,11 +1077,6 @@
           },
           "413": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1360,11 +1086,6 @@
           },
           "415": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1374,11 +1095,6 @@
           },
           "422": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1388,11 +1104,6 @@
           },
           "500": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1402,11 +1113,6 @@
           },
           "501": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1416,11 +1122,6 @@
           },
           "503": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1480,11 +1181,6 @@
           },
           "400": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1494,11 +1190,6 @@
           },
           "401": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1508,11 +1199,6 @@
           },
           "403": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1522,11 +1208,6 @@
           },
           "404": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1536,11 +1217,6 @@
           },
           "409": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1550,11 +1226,6 @@
           },
           "413": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1564,11 +1235,6 @@
           },
           "415": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1578,11 +1244,6 @@
           },
           "422": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1592,11 +1253,6 @@
           },
           "500": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1606,11 +1262,6 @@
           },
           "501": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1620,11 +1271,6 @@
           },
           "503": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1664,11 +1310,6 @@
           },
           "400": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1678,11 +1319,6 @@
           },
           "401": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1692,11 +1328,6 @@
           },
           "403": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1706,11 +1337,6 @@
           },
           "404": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1729,11 +1355,6 @@
           },
           "429": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"
@@ -1743,11 +1364,6 @@
           },
           "503": {
             "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/Problem"
-                }
-              },
               "application/problem+json": {
                 "schema": {
                   "$ref": "#/components/schemas/Problem"

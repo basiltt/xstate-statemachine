@@ -68,7 +68,8 @@ def test_refuses_non_empty_dir_without_force(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(
-    "template,match", [("django", "#280"), ("flask", "#285"), ("x", "--list")]
+    "template,match",
+    [("django", "django_approvals"), ("x", "--list")],
 )
 def test_planned_and_unknown_templates_are_refused(
     tmp_path: Path, template: str, match: str
@@ -76,6 +77,50 @@ def test_planned_and_unknown_templates_are_refused(
     with pytest.raises(N.NewProjectError, match=match):
         N.scaffold(template, tmp_path / "p")
     assert not (tmp_path / "p").exists()
+
+
+FLASK_EXAMPLE = ROOT / "examples" / "integrations" / "flask_wizard"
+
+
+def test_flask_template_is_the_example_verbatim(tmp_path: Path) -> None:
+    """battle #309-a: #285 shipped, so `--template flask` scaffolds the
+    flask_wizard example (it used to refuse with "arrives with #285")."""
+    files = N.scaffold("flask", tmp_path)
+    rels = {f.relative_to(tmp_path).as_posix() for f in files}
+    assert {"requirements.txt", "README.md"} <= rels
+    for rel in rels - {"requirements.txt", "README.md"}:
+        got = (tmp_path / rel).read_text("utf-8").splitlines()
+        assert got == (FLASK_EXAMPLE / rel).read_text("utf-8").splitlines()
+    req = (tmp_path / "requirements.txt").read_text("utf-8")
+    assert "xstate-statemachine[flask]>=" in req
+    # 📝 review #309 M4: the OTHER direction -- a file added to the example
+    #    later and missing from the template must fail here, not drift
+    example = {
+        f.relative_to(FLASK_EXAMPLE).as_posix()
+        for f in FLASK_EXAMPLE.rglob("*")
+        if f.is_file()
+        and "__pycache__" not in f.parts
+        and f.name != "README.md"
+        and not f.name.endswith((".pyc", ".db", ".sqlite"))
+    }
+    assert example <= rels, sorted(example - rels)
+
+
+def test_flask_scaffold_tests_pass(tmp_path: Path) -> None:
+    pytest.importorskip("flask")
+    N.scaffold("flask", tmp_path / "w")
+    env = {**os.environ, "PYTHONPATH": str(ROOT / "src")}
+    proc = subprocess.run(
+        [sys.executable, "-m", "pytest", "tests", "-q", "-p"]
+        + ["no:cacheprovider", "-o", "addopts=", "--rootdir"]
+        + [str(tmp_path / "w")],
+        cwd=tmp_path / "w",
+        capture_output=True,
+        text=True,
+        env=env,
+        timeout=300,
+    )
+    assert proc.returncode == 0, proc.stdout[-3000:] + proc.stderr[-2000:]
 
 
 @pytest.mark.parametrize("bad", ["Orders", "1x", "class", "a-b", ""])
@@ -90,15 +135,24 @@ def test_run_new_list_and_errors(tmp_path: Path, capsys) -> None:
     reset_console()  # another test may have cached a console on old stdout
     N.run_new(None, list_only=True)
     out = capsys.readouterr().out
-    assert "fastapi" in out and "planned, #280" in out
+    assert "fastapi" in out and "flask" in out and "planned, #309" in out
     with pytest.raises(SystemExit) as exc:
-        N.run_new(str(tmp_path / "p"), template="flask")
+        N.run_new(str(tmp_path / "p"), template="django")
     assert exc.value.code == 2
     with pytest.raises(SystemExit) as exc:
         N.run_new(None)
     assert exc.value.code == 2
     N.run_new(str(tmp_path / "ok"))
     assert "Created 9 files" in capsys.readouterr().out
+
+
+def test_next_hint_quotes_a_path_with_spaces(tmp_path: Path, capsys) -> None:
+    from src.xstate_statemachine.cli.commands import reset_console
+
+    reset_console()
+    target = tmp_path / "my service"
+    N.run_new(str(target))
+    assert f'cd "{target}" &&' in capsys.readouterr().out
 
 
 def test_cli_entry_point(tmp_path: Path) -> None:

@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block body %}
+<h1>That is too much to keep in your session</h1>
+<p>This wizard keeps its answers in a signed cookie, which holds about 3 KiB.
+Please shorten your answers, or ask the operator to run the wizard with
+<code>WIZARD_STORE=sqlite</code>. Nothing was saved.</p>
+<p><a href="{{ url_for('show') }}">Back to the form</a></p>
+{% endblock %}

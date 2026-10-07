@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Onboarding: {{ step }}</title>
+</head>
+<body>
+  <nav aria-label="progress">
+    {% for s in ["account", "profile", "plan", "confirm"] %}
+      <span{% if s == step %} aria-current="step"{% endif %}>{{ loop.index }}. {{ s }}</span>
+    {% endfor %}
+  </nav>
+  {% for msg in get_flashed_messages() %}<p role="alert">{{ msg }}</p>{% endfor %}
+  <main data-step="{{ step }}">
+    {% block body %}{% endblock %}
+  </main>
+</body>
+</html>

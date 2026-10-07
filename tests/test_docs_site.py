@@ -338,7 +338,9 @@ class TestAdoptionKitPages(unittest.TestCase):
         text = _read(GUIDE / "stately-export.md")
         self.assertIn("meta.publish", text)
         self.assertIn("meta.tools", text)
-        self.assertIn("planned", text)
+        # 📝 #309 battle (adversary B): both conventions SHIP; the page
+        #    used to call them "planned" and this test pinned the lie.
+        self.assertNotIn("planned", text)
         self.assertIn(
             '"filematch": ["*.machine.json"]', text
         )  # _read lower-cases

@@ -1,0 +1,45 @@
+{
+  "id": "wizard",
+  "initial": "account",
+  "context": {
+    "name": "",
+    "email": "",
+    "company": "",
+    "bio": "",
+    "plan": ""
+  },
+  "states": {
+    "account": {
+      "description": "Step 1: who are you?",
+      "on": {
+        "NEXT": {
+          "target": "profile",
+          "guard": "hasAccount",
+          "actions": "saveAccount"
+        }
+      }
+    },
+    "profile": {
+      "description": "Step 2: tell us about your work.",
+      "on": {
+        "NEXT": { "target": "plan", "actions": "saveProfile" },
+        "BACK": "account"
+      }
+    },
+    "plan": {
+      "description": "Step 3: pick a plan.",
+      "on": {
+        "NEXT": { "target": "confirm", "guard": "validPlan", "actions": "savePlan" },
+        "BACK": "profile"
+      }
+    },
+    "confirm": {
+      "description": "Step 4: check and submit.",
+      "on": {
+        "SUBMIT": "done",
+        "BACK": "plan"
+      }
+    },
+    "done": { "type": "final" }
+  }
+}

@@ -43,12 +43,12 @@ assert machine.version == "3"          # coerced to str; None when absent
 | `tags` | Kept; queried with `interpreter.has_tag(...)`. |
 | `x-…` (any level) | Your own namespace: accepted without a warning, never interpreted. |
 
-One `meta` convention is read, one is **planned**:
+Two `meta` conventions are read (both shipped in 0.11.0); every other `meta` key is kept and ignored:
 
-- `meta.publish` (**shipped**) — on a transition, marks it as an integration event: `OutboxPlugin` publishes it and `xsm asyncapi` documents it ([Event-driven architecture](../integration-eda/#outbox), [#293](https://github.com/basiltt/xstate-statemachine/issues/293)). Brokers arrive with [#294](https://github.com/basiltt/xstate-statemachine/issues/294).
-- `meta.tools` — list the tools an LLM agent may call in a state, arriving with the `[agents]` extra ([#287](https://github.com/basiltt/xstate-statemachine/issues/287)).
+- `meta.publish` (**shipped**) — on a transition, marks it as an integration event: `OutboxPlugin` publishes it and `xsm asyncapi` documents it ([Event-driven architecture](../integration-eda/#outbox), [#293](https://github.com/basiltt/xstate-statemachine/issues/293)). Broker adapters publish the same transitions ([Brokers](../integration-brokers/), [#294](https://github.com/basiltt/xstate-statemachine/issues/294)).
+- `meta.tools` (**shipped**) — on a state, the tools an LLM agent may call there; `run_tool` enforces the allow-list ([LLM agents](../integration-agents/), `[agents]` extra, [#287](https://github.com/basiltt/xstate-statemachine/issues/287)).
 
-Putting a planned key in a chart now is harmless (it is kept and ignored), so a chart can be annotated ahead of the release that reads it.
+Any other `meta` key is harmless: kept verbatim and never interpreted.
 
 <!-- doc-fragment -->
 ```python

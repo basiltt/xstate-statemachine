@@ -143,3 +143,5 @@ The same file runs in CI with no Docker, no AWS credentials and no network. `xsm
 You can also use both. A statechart can own the entity's lifecycle while Step Functions runs a heavy batch job it invokes. The service call is an `invoke`, and the callback arrives as an event.
 
 Related: [Recipes](../recipes/), [APScheduler durable timers](../apscheduler-timers/), [Circuit breaker & retry](../circuit-breaker-retry/), [vs LangGraph](../vs-langgraph/).
+
+New to the library? Start with the [integrations journey](../integrations/): pick your path, then a fifteen-minute tutorial.

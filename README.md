@@ -9,10 +9,10 @@
 [![PyPI](https://img.shields.io/pypi/v/xstate-statemachine?style=flat-square&cacheSeconds=3600&logo=pypi&logoColor=white&color=3775A9)](https://pypi.org/project/xstate-statemachine/)
 [![Python](https://img.shields.io/pypi/pyversions/xstate-statemachine?style=flat-square&logo=python&logoColor=white&color=3776AB)](https://pypi.org/project/xstate-statemachine/)
 [![CI](https://img.shields.io/github/actions/workflow/status/basiltt/xstate-statemachine/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI)](https://github.com/basiltt/xstate-statemachine/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-3735_passing-3fb950?style=flat-square&logo=pytest&logoColor=white)](tests/)
+[![Tests](https://img.shields.io/badge/tests-3735_passing-3fb950?style=flat-square&logo=pytest&logoColor=white)](https://github.com/basiltt/xstate-statemachine/tree/main/tests/)
 [![Coverage](https://img.shields.io/badge/coverage-93%25-3fb950?style=flat-square&logo=codecov&logoColor=white)](.github/workflows/ci.yml)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-ff8c00?style=flat-square)](pyproject.toml)
-[![License](https://img.shields.io/pypi/l/xstate-statemachine?style=flat-square&color=yellow)](LICENSE)
+[![License](https://img.shields.io/pypi/l/xstate-statemachine?style=flat-square&color=yellow)](https://github.com/basiltt/xstate-statemachine/blob/main/LICENSE)
 
 <br>
 
@@ -949,10 +949,10 @@ state only unless you opt into a `context_serializer`, and error bodies never ca
 text. The multi-worker model (why an interpreter cannot live in a uvicorn worker, where timers
 run, how 4 workers × 200 concurrent `PAY` yields exactly one success) is the
 [FastAPI guide's](https://basiltt.github.io/xstate-statemachine/guide/integration-fastapi/) first section, with a runnable
-[`examples/integrations/fastapi_orders`](examples/integrations/fastapi_orders) app and load test.
+[`examples/integrations/fastapi_orders`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/integrations/fastapi_orders) app and load test.
 The event-driven pieces (outbox, dispatcher, dead letters, Redis Streams, the Celery bridge,
 metrics, traces and the inspector) run together, with no external service, in
-[`examples/integrations/eda_fulfilment`](examples/integrations/eda_fulfilment).
+[`examples/integrations/eda_fulfilment`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/integrations/eda_fulfilment).
 Every extra, with its status and tracking issue, is listed on the
 [Integrations overview](https://basiltt.github.io/xstate-statemachine/guide/integrations/).
 
@@ -1171,7 +1171,7 @@ by ~2.1×. The moment states nest or run in parallel it has to emulate the SCXML
 this library is 3.1–3.8× faster than the next library. Construction and fanning out to
 1,000 instances are a **tie** with `transitions` (within ±3 % across six interleaved runs) —
 while still running the full build-time validator on every `create_machine()`. Full table, method and caveats:
-[`benchmarks/competitors/`](benchmarks/competitors/README.md). The production numbers (throughput budget, `after` lateness under load) come from [`benchmarks/production_characteristics.py`](benchmarks/production_characteristics.py); run it with `--json` on your own hardware to gate CI on your figures.
+[`benchmarks/competitors/`](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/competitors/README.md). The production numbers (throughput budget, `after` lateness under load) come from [`benchmarks/production_characteristics.py`](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/production_characteristics.py); run it with `--json` on your own hardware to gate CI on your figures.
 
 ### When *not* to use this
 
@@ -1542,7 +1542,7 @@ the other two styles.
 
 > **Runnable examples** for all three styles — building the *same* machine, with
 > `invoke`, timers, guards, tags and meta — live in
-> [`examples/sync/easy/pythonic_approach/`](examples/sync/easy/pythonic_approach/).
+> [`examples/sync/easy/pythonic_approach/`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/sync/easy/pythonic_approach/).
 
 ---
 
@@ -2239,12 +2239,12 @@ Guides · API reference · [What's new and the upgrade notes](https://basiltt.gi
 
 ### Contributing
 
-Issues and PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md).
+Issues and PRs welcome — see [CONTRIBUTING.md](https://github.com/basiltt/xstate-statemachine/blob/main/CONTRIBUTING.md).
 Every PR runs the full matrix: lint, the full test suite, a coverage gate, and a packaging check.
 
 <br>
 
-**[MIT Licensed](LICENSE)** · Built with precision. Tested with rigour.
+**[MIT Licensed](https://github.com/basiltt/xstate-statemachine/blob/main/LICENSE)** · Built with precision. Tested with rigour.
 
 <br>
 

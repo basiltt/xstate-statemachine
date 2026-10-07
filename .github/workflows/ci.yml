@@ -222,7 +222,7 @@ jobs:
             # 🚀 #277: uvicorn so the fastapi_orders fleet tests spawn REAL
             #    worker processes on the Linux / macOS cells (they skip their
             #    stall-sensitive assertions on Windows -- see the guide).
-            fastapi) python -m pip install "httpx>=0.24" "openapi-spec-validator>=0.7" "uvicorn>=0.23" ;;
+            fastapi) python -m pip install "httpx>=0.24" "openapi-spec-validator>=0.7" "uvicorn>=0.23" "build>=1.0" "jsonschema>=4" "fakeredis[lua]>=2.20" ;;
             litestar) python -m pip install "httpx>=0.24" "openapi-spec-validator>=0.7" "pydantic>=2.5" ;;
             # 🤖 #288/#289: soft-import interop (never pinned in pyproject)
             #    so the LangGraph / pydantic-ai / instructor tests run here.
@@ -276,7 +276,18 @@ jobs:
           #    flask_wizard); the test skips suites whose extra is missing.
           case "${{ matrix.extra }}" in
             fastapi|sqlalchemy|flask|celery)
-              targets="$targets tests/test_examples_integrations.py" ;;
+              targets="$targets tests/test_examples_integrations.py" ;;&
+            # 🧭 #309: the adoption kit -- a fresh venv with the built wheel
+            #    runs the journey page, the scaffold and the action/hook
+            #    command lines (the [fastapi] cell installs build+jsonschema).
+            #    ⚠️ it builds a wheel and pip-installs into a child venv:
+            #    `--disable-socket` below patches THIS pytest process only,
+            #    subprocesses reach PyPI (review #309 L7). Runs on all three
+            #    fastapi cells on purpose -- Windows and 3.9 are the
+            #    newcomer environments that found real defects.
+            fastapi)
+              export XSM_ADOPTION_VENV=1
+              targets="$targets tests/test_battle_309_adoption.py" ;;
             # 📡 #294: the shared adapter core lives in tests/contrib/brokers.
             redis)
               targets="$targets tests/contrib/brokers" ;;

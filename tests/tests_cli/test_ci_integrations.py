@@ -110,3 +110,19 @@ def test_selftest_workflow_uses_the_action_on_the_example() -> None:
     assert "uses: ./" in text
     assert "examples/integrations/fastapi_orders/machine.json" in text
     assert "workflow_dispatch" in text and "pull_request" in text
+
+
+def test_pinned_examples_name_the_version_this_tree_ships() -> None:
+    """battle #309-a: the snippets said `@v0.14.0` / `==0.14.0` -- a tag
+    that does not exist; copy-pasting them failed. Pin to this release."""
+    from src.xstate_statemachine import __version__
+
+    pins = re.compile(r"(?:@v|rev: v|==)(\d+\.\d+\.\d+)")
+    for path in (ACTION, HOOKS, ROOT / "docs" / "_guide" / "cli.md"):
+        text = path.read_text("utf-8")
+        if path.suffix == ".md":
+            text = text[text.index("xsm-check") :]
+        found = {v for v in pins.findall(text) if v.startswith("0.1")} - {
+            "0.10.5"
+        }
+        assert found <= {__version__}, (path.name, found)

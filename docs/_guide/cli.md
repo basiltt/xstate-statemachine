@@ -732,7 +732,7 @@ Feature support
 
 ## 📡 Live inspector
 
-**[0.12.0]** Watch a machine live in the browser — in the Stately Inspector or the built-in fallback page — speaking the `@statelyai/inspect` protocol ([guide](../integration-inspector/), [#274](https://github.com/basiltt/xstate-statemachine/issues/274)).
+**[0.11.0]** Watch a machine live in the browser — in the Stately Inspector or the built-in fallback page — speaking the `@statelyai/inspect` protocol ([guide](../integration-inspector/), [#274](https://github.com/basiltt/xstate-statemachine/issues/274)).
 
 ```bash
 xsm inspect machine.json --live --open               # serve + interactive simulator
@@ -960,17 +960,17 @@ overwrite confirmation, so they are safe in a non-interactive pipeline.
 
 ### The `xsm-check` GitHub Action
 
-The repository is itself a composite action. It installs the library, runs `xsm validate --plain` on every file matching `files`, and — when `generated-dir` is set — `xsm gt --check` against that directory:
+The repository is itself a composite action. It installs the library, runs `xsm validate --plain` on every file matching `files`, and — when `generated-dir` is set — `xsm gt --check` against that directory. The `@v0.11.0` / `rev: v0.11.0` pins below name the release this guide documents; the tag exists from that release onward (pin `@main` or a commit SHA to track an unreleased tree):
 
 ```yaml
 - uses: actions/checkout@v4
-- uses: basiltt/xstate-statemachine@v0.14.0   # pin a tag (or a commit SHA)
+- uses: basiltt/xstate-statemachine@v0.11.0   # pin a tag (or a commit SHA)
   with:
     files: "machines/**/*.machine.json"       # bash globstar pattern
     generated-dir: src/machines               # optional
     gt-args: "-t pythonic-builder"            # the flags you generated with
     python-version: "3.13"                    # optional
-    package: "xstate-statemachine==0.14.0"    # optional: pin the CLI too
+    package: "xstate-statemachine==0.11.0"    # optional: pin the CLI too
 ```
 
 The action fails when no file matches, when any machine has an error, or when the generated code is stale. The repository runs it on the `fastapi_orders` example in `.github/workflows/xsm-check-selftest.yml`.
@@ -987,7 +987,7 @@ The action fails when no file matches, when any machine has an error, or when th
 ```yaml
 repos:
   - repo: https://github.com/basiltt/xstate-statemachine
-    rev: v0.14.0
+    rev: v0.11.0
     hooks:
       - id: xsm-validate
       - id: xsm-gt-check
@@ -1019,7 +1019,7 @@ xsm new my_service                              # --template fastapi, --name ord
 xsm new my_service --name shop_orders --force   # write into a non-empty dir
 ```
 
-`xsm new --template fastapi DIR` copies the [`fastapi_orders` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/fastapi_orders) into `DIR`: `machine.json`, `models.py`, `logic.py`, `app.py`, `static/`, `tests/`, a `README.md` and a `requirements.txt` pinning `xstate-statemachine[fastapi]`. `--name` (lower_snake_case, default `orders`) becomes the URL prefix, the store prefix and — camelCased — the machine id. Templating is the standard library's `string.Template`; there is no cookiecutter dependency. A non-empty `DIR` is refused unless you pass `--force`. `django` and `flask` are listed as planned and refused with their issue numbers ([#280](https://github.com/basiltt/xstate-statemachine/issues/280), [#285](https://github.com/basiltt/xstate-statemachine/issues/285)). Exit status 2 on any refusal.
+`xsm new --template fastapi DIR` copies the [`fastapi_orders` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/fastapi_orders) into `DIR`: `machine.json`, `models.py`, `logic.py`, `app.py`, `static/`, `tests/`, a `README.md` and a `requirements.txt` pinning `xstate-statemachine[fastapi]`. `--name` (lower_snake_case, default `orders`) becomes the URL prefix, the store prefix and — camelCased — the machine id. Templating is the standard library's `string.Template`; there is no cookiecutter dependency. A non-empty `DIR` is refused unless you pass `--force`. `xsm new --template flask DIR` does the same with the [`flask_wizard` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/flask_wizard) (pinning `xstate-statemachine[flask]`). There is no `django` template: the [`django_approvals` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/django_approvals) is a whole Django project -- copy it; `--template django` refuses and prints that URL. Exit status 2 on any refusal.
 
 ```bash
 cd my_service && pip install -r requirements.txt && python -m pytest tests -q

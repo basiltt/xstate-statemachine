@@ -65,10 +65,12 @@ def xsm_pytester(pytester: pytest.Pytester) -> pytest.Pytester:
     #    died with `PytestConfigWarning`. Emit them only when readable.
     ini = "[pytest]\n"
     if importlib.util.find_spec("pytest_asyncio") is not None:
-        ini += (
-            "asyncio_mode = strict\n"
-            "asyncio_default_fixture_loop_scope = function\n"
-        )
+        ini += "asyncio_mode = strict\n"
+        # 📝 compat floor (pytest-asyncio 0.23, #309 CI): the loop-scope
+        #    key arrived in 0.24; on 0.23 it is an UNKNOWN option and an
+        #    inner `-W error` session dies with PytestConfigWarning.
+        if _pytest_asyncio_at_least(0, 24):
+            ini += "asyncio_default_fixture_loop_scope = function\n"
     pytester.makeini(ini)
     return pytester
 
@@ -83,6 +85,16 @@ def run(pytester: pytest.Pytester, *args: str) -> pytest.RunResult:
     """
     extra = ("-p", "no:django") if _has_pytest_django() else ()
     return pytester.runpytest_inprocess(*PLUGIN_ARGS, *extra, "-q", *args)
+
+
+def _pytest_asyncio_at_least(*floor: int) -> bool:
+    from importlib.metadata import version
+
+    try:
+        parts = tuple(int(x) for x in version("pytest-asyncio").split(".")[:2])
+    except Exception:  # pragma: no cover - odd build strings
+        return True
+    return parts >= floor
 
 
 def _has_pytest_django() -> bool:

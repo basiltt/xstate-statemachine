@@ -118,7 +118,7 @@ Implements `AsyncStateStore` and runs the same statements through `AsyncSession.
 
 Behind `Model.statechart_store()`. Saves are a conditional Core `UPDATE` on `statechart_version`, the same fence the ORM applies. It never creates or deletes rows, and `forget()` erases only the auxiliary rows.
 
-### Transactional outbox — arrives with the EDA core ([#293](https://github.com/basiltt/xstate-statemachine/issues/293))
+### Transactional outbox (`SQLAlchemyOutboxStore`, [#293](https://github.com/basiltt/xstate-statemachine/issues/293))
 
 Part 3 of [#284](https://github.com/basiltt/xstate-statemachine/issues/284) adds an `xsm_outbox` table written in the same transaction as the state change, drained to a `BrokerAdapter` with at-least-once delivery. It depends on the EDA core's `BrokerAdapter` / `OutboxStore` protocols and ships with them. Nothing in this release pretends to publish events.
 

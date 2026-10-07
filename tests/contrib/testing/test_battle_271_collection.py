@@ -144,6 +144,18 @@ def test_hypothesis_missing_is_one_collection_error(xsm_pytester) -> None:
         for k in [m for m in sys.modules if m.split(".")[0] == "hypothesis"]:
             sys.modules.pop(k)
         sys.modules["hypothesis"] = None
+        # 📝 hypothesis <= 6.10x's pytest plugin (the compat floor) wraps
+        #    `FixtureFunctionMarker.__call__` and tests `"hypothesis" in
+        #    sys.modules` -- TRUE for our None sentinel -- then imports
+        #    `hypothesis.internal` and dies. Restore the original so the
+        #    simulated absence is the only thing under test.
+        try:
+            import _hypothesis_pytestplugin as _hp
+            from _pytest import fixtures as _fx
+            if getattr(_hp, "_orig_call", None) is not None:
+                _fx.FixtureFunctionMarker.__call__ = _hp._orig_call
+        except Exception:
+            pass
         """)
     _setup(
         xsm_pytester,

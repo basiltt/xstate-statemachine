@@ -1,6 +1,6 @@
 # xsm-check -- validate XState machine JSON and keep generated code current.
 #
-#   - uses: basiltt/xstate-statemachine@v0.14.0
+#   - uses: basiltt/xstate-statemachine@v0.11.0
 #     with:
 #       files: "machines/**/*.json"
 #       generated-dir: generated          # optional: runs `xsm gt --check`
@@ -35,7 +35,7 @@ inputs:
     required: false
     default: "3.13"
   package:
-    description: pip requirement to install (pin it, e.g. `xstate-statemachine==0.14.0`).
+    description: pip requirement to install (pin it, e.g. `xstate-statemachine==0.11.0`).
     required: false
     default: xstate-statemachine
 
