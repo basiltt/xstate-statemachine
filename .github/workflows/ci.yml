@@ -251,7 +251,9 @@ jobs:
             #    pytest-django; [django] also migrates a real django-fsm-2
             #    model, [drf] validates the drf-spectacular schema, and
             #    [channels]' WebsocketCommunicator needs daphne.
-            django) python -m pip install "pytest-django>=4.5" "django-fsm-2>=4" ;;
+            # 🦄 #280 battle: the example's full stack + psycopg/testcontainers
+            #    so the Linux cell runs the approvals scenario on Postgres too.
+            django) python -m pip install "pytest-django>=4.5" "django-fsm-2>=4" "djangorestframework>=3.14" "drf-spectacular>=0.26" "channels>=4" "daphne>=4" "psycopg[binary]>=3.1" "testcontainers>=4" ;;
             drf) python -m pip install "pytest-django>=4.5" "drf-spectacular>=0.26" ;;
             channels) python -m pip install "pytest-django>=4.5" "daphne>=4" ;;
             # 📦 eda_fulfilment example: Redis Streams on fakeredis, eager
@@ -311,7 +313,12 @@ jobs:
             #    [drf] + [channels] too, so it skips in the [django] cell
             #    unless they are present -- the [all] / coverage jobs run it).
             django)
-              targets="$targets tests/persistence/test_store_contract.py tests/test_examples_integrations.py" ;;
+              targets="$targets tests/persistence/test_store_contract.py tests/test_examples_integrations.py"
+              # 🐘 #280: Postgres parity for the approvals example (Linux has Docker)
+              if [ "$RUNNER_OS" = "Linux" ]; then
+                export XSM_CONTAINERS=1
+                socket_args="--disable-socket --allow-unix-socket --allow-hosts=127.0.0.1,::1,localhost"
+              fi ;;
           esac
           pytest $targets -q --no-header ${socket_args:---disable-socket --allow-hosts=127.0.0.1,::1}
 

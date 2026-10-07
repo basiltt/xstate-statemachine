@@ -50,12 +50,38 @@ TEMPLATES = [
     }
 ]
 
-DATABASES = {
-    "default": {
+
+def _database() -> dict:
+    """SQLite by default; ``DATABASE_URL=postgresql://u:p@host:5432/db``
+    switches to Postgres (the battle tests run both)."""
+    import os
+    from urllib.parse import urlparse
+
+    url = os.environ.get("DATABASE_URL", "")
+    if url.startswith("postgres"):
+        u = urlparse(url)
+        return {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": u.path.lstrip("/"),
+            "USER": u.username or "",
+            "PASSWORD": u.password or "",
+            "HOST": u.hostname or "",
+            "PORT": str(u.port or ""),
+        }
+    name = os.environ.get("APPROVALS_DB", str(BASE_DIR / "approvals.sqlite3"))
+    return {
         "ENGINE": "django.db.backends.sqlite3",
-        "NAME": BASE_DIR / "approvals.sqlite3",
+        "NAME": name,
+        # 📝 #280 battle: the test database is a FILE, not Django's default
+        #    shared-cache ":memory:" -- threads on a shared-cache memory
+        #    DB hit "database table is locked" instead of waiting on
+        #    busy_timeout, which no production deployment ever sees.
+        "OPTIONS": {"timeout": 60},
+        "TEST": {"NAME": f"{name}.test"},
     }
-}
+
+
+DATABASES = {"default": _database()}
 
 STATIC_URL = "/static/"
 
