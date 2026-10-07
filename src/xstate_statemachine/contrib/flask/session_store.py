@@ -54,8 +54,9 @@ class SessionStoreTooLargeError(SnapshotTooLargeError):
     def __init__(self, key: str, size: int, limit: int) -> None:
         super().__init__(key, size, limit)
         self.args = (
-            f"Snapshot for '{key}' is {size} bytes; SessionStore keeps "
-            f"snapshots in the session cookie and allows {limit} bytes. "
+            f"Snapshot for '{key}' brings the session to {size} bytes; "
+            f"SessionStore keeps every snapshot in the session cookie "
+            f"and allows {limit} bytes in total. "
             f"Shrink the context or use a server-side store (SQLiteStore, "
             f"SQLAlchemyStore).",
         )
@@ -68,7 +69,8 @@ class SessionStore(BaseStore):
     """`StateStore` over ``flask.session`` (needs a request context).
 
     Args:
-        max_snapshot_bytes: Hard cap per snapshot (default 3 KiB).
+        max_snapshot_bytes: Hard cap on ALL snapshots in one session
+            together (default 3 KiB) -- they share one cookie.
         codec: Optional ``str -> str`` codec (compression fits here).
     """
 
@@ -122,6 +124,18 @@ class SessionStore(BaseStore):
         if expected_version is not None and expected_version != current:
             raise ConflictError(
                 key, expected_version, current if rec else None
+            )
+        # 🍪 #285 battle (A): the cap bounds the WHOLE cookie, not each
+        #    snapshot -- two machines on one session at 2.4 KiB each made
+        #    a 4.3 KiB cookie that browsers drop silently.
+        total = sum(
+            len(str(r.get("s", "")).encode("utf-8"))
+            for k, r in bucket.items()
+            if k != key and isinstance(r, dict)
+        ) + len(data.encode("utf-8"))
+        if total > self.max_snapshot_bytes:
+            raise SessionStoreTooLargeError(
+                key, total, self.max_snapshot_bytes
             )
         bucket[key] = {
             "s": data,

@@ -208,13 +208,12 @@ class TestSafeMethods:
                 i.send("ADD")
             return "done"
 
-        from src.xstate_statemachine.contrib.flask import (
-            MethodNotAllowedError,
-        )
-
-        app.testing = True
-        with pytest.raises(MethodNotAllowedError):
-            app.test_client().get("/sneaky/1")
+        # 📝 #285 battle (A): the app-level handler answers a 405 problem
+        #    (was an HTML 500 outside testing mode).
+        r = app.test_client().get("/sneaky/1")
+        assert r.status_code == 405
+        assert r.content_type == "application/problem+json"
+        assert r.get_json()["error"] == "MethodNotAllowedError"
 
 
 class TestIdempotency:

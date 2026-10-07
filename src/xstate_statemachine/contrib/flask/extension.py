@@ -49,6 +49,7 @@ from ._http import (
     PROBLEM_MEDIA_TYPE,
     MethodNotAllowedError,
     is_idempotency_refusal,
+    mapped_exceptions,
     problem_for_exception,
     receipt_body,
     state_body,
@@ -240,6 +241,15 @@ class XState:
         @app.before_request
         def _bind_g() -> None:
             g.xsm = _Bound(ext)
+
+        # 🔐 #285 battle (A): `act()` in the APP'S OWN views raised a bare
+        #    `MethodNotAllowedError` (GET) / `ConflictError` (lost race)
+        #    that Flask answered as an HTML 500 -- the documented 405 / 409
+        #    only held inside the blueprint. App-level handlers for the
+        #    library's mapped exceptions only; an app's own handler for one
+        #    of them, registered after `init_app`, still wins.
+        for exc_cls in mapped_exceptions():
+            app.register_error_handler(exc_cls, problem_response)
 
         if cli:
             from .cli import xsm_cli

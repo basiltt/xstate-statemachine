@@ -24,6 +24,7 @@ from ...exceptions import (
     InvalidEventPayloadError,
     InvalidKeyError,
     LockTimeoutError,
+    SnapshotTooLargeError,
     StoreUnavailableError,
     SnapshotDriftError,
     UnknownEventError,
@@ -54,6 +55,7 @@ __all__ = [
     "UnsupportedMediaTypeError",
     "available_events",
     "declared_events",
+    "mapped_exceptions",
     "parse_json_body",
     "principal_or_401",
     "problem_body",
@@ -166,11 +168,20 @@ _STATUS_TABLE = (
     (IdempotencyInFlightError, 409, "Request in flight"),
     (ConflictError, 409, "Conflict"),
     (LockTimeoutError, 409, "Lock timeout"),
+    # 🍪 #285 battle (A): a context that outgrew its store (SessionStore's
+    #    cookie cap) is the request's payload problem, not a server crash.
+    (SnapshotTooLargeError, 413, "Snapshot too large"),
     # 🔌 #306 battle: the backend is down, not the request. Retryable.
     (StoreUnavailableError, 503, "Store unavailable"),
     (KeyNotFoundError, 404, "Not Found"),
     (InvalidKeyError, 400, "Invalid key"),
 )
+
+
+def mapped_exceptions() -> Tuple[type, ...]:
+    """Every exception class `problem_for_exception` maps to a non-500
+    status -- what the extensions register as app error handlers."""
+    return (HTTPProblemError,) + tuple(c for c, _s, _t in _STATUS_TABLE)
 
 
 def problem_body(

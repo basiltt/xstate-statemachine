@@ -53,6 +53,7 @@ from ._http import (  # noqa: E402
     MethodNotAllowedError,
     declared_events,
     is_idempotency_refusal,
+    mapped_exceptions,
     parse_json_body,
     principal_or_401,
     problem_body,
@@ -87,6 +88,10 @@ def problem_response(exc: BaseException) -> Any:
     return _json(body, status, PROBLEM_MEDIA_TYPE)
 
 
+async def _aproblem(exc: BaseException) -> Any:
+    return problem_response(exc)
+
+
 def receipt_response(
     interp: Any, receipt: Receipt, *, status: Optional[int] = None
 ) -> Any:
@@ -118,8 +123,12 @@ class QuartXState:
         inbox: Optional[Any] = None,
         principal: Optional[Callable[[Any], Any]] = None,
         log: Optional[Any] = None,
+        clock: Optional[Any] = None,
+        migrator: Optional[Any] = None,
         max_body_bytes: Optional[int] = None,
         heartbeat_s: float = 15.0,
+        max_connections_per_key: int = 16,
+        allowed_origins: Any = (),
     ) -> None:
         plugins = list(plugins)
         if log is not None:
@@ -135,11 +144,19 @@ class QuartXState:
             inbox=inbox,
             principal=principal,
             log=log,
+            clock=clock,
+            migrator=migrator,
             max_body_bytes=max_body_bytes,
             heartbeat_s=heartbeat_s,
+            max_connections_per_key=max_connections_per_key,
+            allowed_origins=allowed_origins,
         )
         reg.shared = self._declared
         app.extensions[EXTENSION_KEY] = reg
+        # 🔐 #285 battle (A): as in Flask -- a lost race / a GET `act()` in
+        #    the app's own views is a 409 / 405 problem, not an HTML 500.
+        for exc_cls in mapped_exceptions():
+            app.register_error_handler(exc_cls, _aproblem)
 
     def registry(self, app: Optional[Quart] = None) -> AppRegistry:
         app = app or current_app._get_current_object()  # type: ignore
@@ -186,13 +203,22 @@ class QuartXState:
         reg = r.reg(name)
         k = r.key_for(name, key)
         skey = r.store_key(name, k)
+        if principal is None and r.inbox is not None and has_request_context():
+            # 📝 #285 battle (A): parity with Flask's `act()`.
+            principal = r.principal(quart_request)  # type: ignore[misc]
         plugins = r.plugins_for(principal)
         recorder = _Recorder()
         plugins.append(recorder)
         bodies: List[Dict[str, Any]] = []
         try:
             async with apersisted(
-                r.store, skey, reg.machine, lock=r.lock, plugins=plugins
+                r.store,
+                skey,
+                reg.machine,
+                lock=r.lock,
+                clock=r.clock,
+                plugins=plugins,
+                migrator=r.migrator,
             ) as interp:
                 if reg.strict is not None:
                     interp.strict = reg.strict
@@ -356,6 +382,15 @@ def create_quart_statechart_blueprint(  # noqa: C901 -- one route table
     @mapped
     async def stream(key: str) -> Any:
         r = xsm.registry()
+        # 🔐 #285 battle (A): the Quart stream skipped the Origin check
+        #    (X0.7) the Flask one makes; any page could read it.
+        origin = quart_request.headers.get("Origin")
+        if not r.origin_allowed(origin, quart_request.host):
+            return _json(
+                problem_body(403, "Origin not allowed"),
+                403,
+                PROBLEM_MEDIA_TYPE,
+            )
         await guard(key, None)
         snapshot = await xsm.peek(name, key)
         q = r.fanout.subscribe(name, str(key))
