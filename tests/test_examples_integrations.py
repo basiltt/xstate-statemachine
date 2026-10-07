@@ -88,7 +88,11 @@ def test_sqlalchemy_orders_ships_its_alembic_migration():
     assert sorted((ex / "migrations" / "versions").glob("0001_*.py"))
     readme = (ex / "README.md").read_text("utf-8")
     assert "alembic upgrade head" in readme
-    assert "#293" in readme  # the outbox is not faked
+    # 📝 #284 battle: the example SHIPS the transactional outbox (PAY
+    #    publishes `order.paid`; `sync_app.py relay` drains it)
+    assert "transactional outbox" in readme.lower()
+    assert "sync_app.py relay" in readme
+    assert sorted((ex / "migrations" / "versions").glob("0002_*.py"))
 
 
 def _chart_id(p: Path) -> str:

@@ -63,6 +63,7 @@ from ._schema import (
     XsmTables,
     build_tables,
     ensure_schema,
+    check_schema,
 )
 
 __all__ = ["AsyncSQLAlchemyStore", "SQLAlchemyStore"]
@@ -184,36 +185,12 @@ class SQLAlchemyStore(BaseStore):
                 self._local.conn = None
 
     def _check_version(self, conn: Any) -> None:
-        from sqlalchemy import inspect as sa_inspect
-
-        from ...exceptions import StoreError
-
-        # 🔥 #284-a battle: ``create_tables=False`` on an EMPTY database
+        # 🔥 #284 battle: ``create_tables=False`` on an EMPTY database
         #    failed with a driver error ("no such table: xsm_schema" /
-        #    UndefinedTable) instead of saying what to do.
-        present = set(sa_inspect(conn).get_table_names())
-        missing = sorted(
-            t.name for t in self.tables.all() if t.name not in present
-        )
-        if missing:
-            raise StoreError(
-                "xstate-statemachine [sqlalchemy] tables are missing: "
-                f"{', '.join(missing)}. create_tables=False means your "
-                "migrations own the DDL -- run your migrations (see "
-                "xsm_sqlalchemy_ddl), or pass create_tables=True."
-            )
-        sc = self.tables.schema
-        row = conn.execute(
-            select(sc.c.version).where(sc.c.component == "sqlalchemy")
-        ).first()
-        if row is not None and int(row[0]) > SCHEMA_VERSION:
-            raise StoreError(
-                f"xstate-statemachine [sqlalchemy] schema is version "
-                f"{row[0]}, newer than this library supports "
-                f"({SCHEMA_VERSION}). Upgrade xstate-statemachine."
-            )
+        #    UndefinedTable) instead of saying what to do. One check, in
+        #    `_schema.check_schema`.
+        check_schema(conn, self.tables)
 
-    # -- primitives -------------------------------------------------------------
     def _load_raw(
         self, key: str
     ) -> Optional[Tuple[str, int, str, float, Sequence[Deadline]]]:

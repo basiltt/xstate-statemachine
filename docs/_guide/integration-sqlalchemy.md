@@ -78,13 +78,15 @@ Mix it into a declarative model that declares a `statechart` column of type `Sta
 | `__xsm_logic__` | Optional `MachineLogic` or `(row) -> MachineLogic`, applied to a shallow copy of the machine for each send |
 | `__xsm_audit__` | `True` writes one `xsm_transitions` row per processed event **in the same flush** (needs `xsm_sqlalchemy_ddl`) |
 
-The mixin adds four columns: `statechart_state` (`String`, indexed; the sorted leaf ids joined with `,`), `statechart_state_ids` (`JSON`; every leaf id, so parallel regions are all listed), `statechart_version` (`Integer`) and `statechart_machine_version` (`String`).
+The mixin adds four columns: `statechart_state` (`Text`, indexed -- it was `String(512)` before 0.11.0, which Postgres truncated with an error on wide parallel charts; existing schemas need an `ALTER COLUMN ... TYPE TEXT` migration; the sorted leaf ids joined with `,`), `statechart_state_ids` (`JSON`; every leaf id, so parallel regions are all listed), `statechart_version` (`Integer`) and `statechart_machine_version` (`String`).
 
 - `StatechartMixin.optimistic()` returns `{"version_id_col": statechart_version}` for `__mapper_args__`. Without it, the listener still increments the version whenever the snapshot changes. It just does not fence the write.
 - `.state` is a hybrid property. On an instance it returns the state string. In SQL it is the column.
 - `Model.in_state(*ids)` returns a `WHERE` clause that matches rows where any of the ids is active, either as a leaf or as an ancestor of one: `in_state("order.live")` matches `order.live.pay.due`. Ids match literally: `_` and `%` (legal in XState ids) are escaped, never `LIKE` wildcards, on every dialect.
 - `row.send(event, *, session=None, lock="optimistic", plugins=(), **payload) -> Receipt` restores a `SyncInterpreter` from the snapshot, sends the event, then **flushes** the snapshot, the denormalised columns, the deadline index and the audit rows. The caller commits. A stale `version_id_col` raises `ConflictError`, and the session must then be rolled back. `lock="pessimistic"` first re-selects the row with `FOR UPDATE` (Postgres/MySQL).
 - `row.send_with_retry(...)` and the module-level `send_with_retry(row, event, *, session, retries=10, backoff=None, lock=...)` catch `ConflictError`/`LockTimeoutError`, roll back the session, reload the row, back off and try again. ⚠️ **Actions may run once per attempt** (X0.3), so put side effects in services.
+- `plugins=` sinks that live in a `SQLAlchemyStore` (`SQLAlchemyOutboxStore`, `SQLAlchemyInbox`, `SQLAlchemyLog`) are bound to the row's session for the send, so their rows commit or roll back **with** the row. Two refusals keep that honest: a send inside an open `store.transaction()` on the same thread is a `RuntimeError` (its rows would have landed in the wrong transaction), and a plugin store whose engine points at a **different database** than the row's session is a `ValueError`.
+- On Postgres / MySQL a lock timeout, deadlock or serialization failure (SQLSTATE `55P03`, `40P01`, `40001`) from `send()` -- including the `FOR UPDATE` refresh of `lock="pessimistic"` -- is a `LockTimeoutError`, so `send_with_retry` retries it. Set Postgres `lock_timeout` **per connection** (`connect_args={"options": "-c lock_timeout=2000"}`): a `SET` inside the transaction is undone by the retry's rollback and the next attempt waits forever.
 - `row.machine` is a restored, not-started `SyncInterpreter`, for reading `.context`, `.can()` and `.value`.
 - `Model.statechart_store(session_factory)` returns a `ModelStore`, a `StateStore` view over the rows (key = the primary key as a string). Hand it to `DueTimerScanner` and `after` timers fire for rows nobody touches.
 - A `before_insert` / `before_update` mapper listener recomputes the columns from the snapshot on **every** flush, so they stay correct even when code edits `row.statechart` directly.
@@ -120,7 +122,7 @@ Implements `StateStore`. `session_factory` is a `sessionmaker`.
 
 ### `AsyncSQLAlchemyStore(async_session_factory, ...)`
 
-Implements `AsyncStateStore` and runs the same statements through `AsyncSession.run_sync`. Use it with `apersisted()`. Tables are created on first use. `lock()` is the same lease, but it does not open a shared transaction.
+Implements `AsyncStateStore` and runs the same statements through `AsyncSession.run_sync`. Use it with `apersisted()`. Tables are created on first use. `lock()` is the same lease, but it does not open a shared transaction -- so with the async store the outbox, inbox and audit writes of a plugin run **right after** the save on their own connection, not atomically with it. A block that raises before the save still leaves no outbox row (the rows are buffered until the save); a crash between the save and the plugin flush loses them. For the one-transaction guarantee use the sync `StatechartMixin.send(plugins=...)` or `SQLAlchemyStore` under `PessimisticLock`.
 
 ### `SQLAlchemyInbox(store)` / `SQLAlchemyLog(store)`
 
@@ -216,4 +218,7 @@ The relay marks a row sent only **after** the broker accepted it. A crash in bet
 | Alembic wants to drop `xsm_*` tables (incl. `xsm_outbox`) | the tables are not on `target_metadata` | call `xsm_sqlalchemy_ddl(Base.metadata)` where `env.py` imports your models |
 | Alembic proposes `modify_type` on `statechart` (Postgres), or a migration made on SQLite created `json`, not `jsonb` | `render_item` rendered `sa.JSON()` | use `render_item=render_statechart_type` |
 | `SnapshotCorruptError` loading a row | the `statechart` column holds invalid JSON or a non-object | repair it, or set it to `NULL` (= never sent) |
+| `RuntimeError: ... already bound to another transaction` from `row.send(plugins=...)` | the send ran inside `store.transaction()` on the same thread | send outside the store transaction (the row's session is the transaction) |
+| `ValueError: ... different database` from `row.send(plugins=...)` | the plugin's `SQLAlchemyStore` engine is not the row's database | build the store on the same engine as the session |
+| `StoreError: ... tables are missing ... run your migrations` | `create_tables=False` on a database without the `xsm_*` tables | run your Alembic migrations (with `xsm_sqlalchemy_ddl` on `target_metadata`) |
 | `LockTimeoutError` on SQLite under load | many writers on one file | raise the driver `timeout` (`connect_args={"timeout": 30}`) or use Postgres |

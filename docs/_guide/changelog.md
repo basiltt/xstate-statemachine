@@ -1456,6 +1456,48 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **SQLAlchemy integration, as battle-tested (#284).** An orders service
+  on SQLAlchemy 2.0 as a team runs it -- a 16x25 writer fleet on one row
+  (gapless audit `seq`), 200 orders with two concurrent `DueTimerScanner`s
+  (then 2000 rows / 4 scanners, one crashing: every key woken once), the
+  outbox transactional WITH the mixin row, a relay crashing mid-batch that
+  re-sends the same envelope id, `forget()` cascades, Alembic `upgrade
+  head` from empty / demo / autogenerate no-diff / a team's next migration
+  / `downgrade base` -- on SQLite always and on Postgres 16 (a
+  testcontainer; CI's Linux `[sqlalchemy]` cell runs it)
+  (`tests/contrib/sqlalchemy/test_battle_284_{scenario,a,b}.py`,
+  `examples/integrations/sqlalchemy_orders/tests/test_outbox_and_readme.py`).
+  Found and fixed: `StatechartMixin.send(plugins=[OutboxPlugin(
+  SQLAlchemyOutboxStore)])` -- and `IdempotencyPlugin(SQLAlchemyInbox)` /
+  `AuditPlugin(SQLAlchemyLog)` -- wrote their rows on a connection of
+  their OWN, so an outbox row (or an inbox mark that then answered the
+  redelivery as a duplicate) survived the caller's rollback; the sinks'
+  store is now bound to the row's session for the send
+  (`SQLAlchemyStore.bound_to`), a send inside an open
+  `store.transaction()` is refused (`RuntimeError`) and a plugin store on
+  another database is refused (`ValueError`). Postgres/MySQL lock
+  timeouts, deadlocks and serialization failures (SQLSTATE 55P03 / 40P01 /
+  40001), including on the `FOR UPDATE` refresh of `lock="pessimistic"`,
+  are `LockTimeoutError` and retried by `send_with_retry` (they escaped as
+  raw `OperationalError`). `statechart_state` is `Text` (was
+  `String(512)`: Postgres raised `StringDataRightTruncation` on a
+  12-region parallel chart while SQLite stored it silently; existing
+  schemas need an `ALTER COLUMN ... TYPE TEXT` migration). Alembic
+  autogenerate reported a permanent `statechart` type diff on Postgres
+  (`create_all` emits JSONB, the documented `render_item` wrote
+  `sa.JSON()`): `StatechartType.compare_against_backend` + the new
+  `render_statechart_type` hook render the JSONB variant. `xsm_outbox` is
+  part of `xsm_sqlalchemy_ddl()` (autogenerate wanted to DROP it with its
+  pending events). `StatechartType` raises `SnapshotTooLargeError`
+  unwrapped (not SQLAlchemy's `StatementError`) and a corrupt column is
+  `SnapshotCorruptError` (not a bare `JSONDecodeError`).
+  `SQLAlchemyStore(create_tables=False)` on an empty database says "run
+  your migrations" instead of "no such table: xsm_schema". The example
+  publishes `order.paid` through the outbox (`sync_app.py relay`,
+  migration `0002`), its README commands run literally on both dialects,
+  and the guide documents the outbox (at-least-once), the Alembic hook,
+  the async store's lack of a shared transaction, the refusals and
+  per-connection `lock_timeout`.
 - **Adoption kit, as battle-tested (#309).** The first fifteen minutes
   as a newcomer has them -- the built wheel installed into a FRESH venv
   (3.9 and current), the journey page's blocks run in order against the

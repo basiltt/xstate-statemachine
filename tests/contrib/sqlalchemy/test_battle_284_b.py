@@ -321,12 +321,6 @@ def test_check_schema_on_empty_db_is_a_clear_error(url: str) -> None:
         eng.dispose()
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="store.py (adversary A): create_tables=False runs a raw SELECT "
-    "on xsm_schema -> cryptic 'no such table'; should call "
-    "_schema.check_schema()",
-)
 def test_store_create_tables_false_on_empty_db(url: str) -> None:
     eng = create_engine(url)
     try:
