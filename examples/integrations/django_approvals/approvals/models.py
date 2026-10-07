@@ -9,10 +9,12 @@ from django.db import models
 from xstate_statemachine import MachineLogic
 from xstate_statemachine.contrib.django import (
     AnyOf,
+    DjangoOutboxStore,
     RoleGuard,
     StatechartField,
     StatechartModelMixin,
 )
+from xstate_statemachine.eda import OutboxPlugin
 
 #: The two reviewer roles (Django groups).
 LEGAL, FINANCE = "legal", "finance"
@@ -37,6 +39,18 @@ def approval_logic() -> MachineLogic:
 class Expense(StatechartModelMixin, models.Model):
     statechart_machine = "machine.json"  # the example's chart
     statechart_logic = "approvals.models:approval_logic"
+
+    # 📤 #281: `approved` is tagged `publish` -- the integration event is
+    #    written to the outbox IN the send's transaction; `manage.py
+    #    relay_outbox` drains it (see README).
+    statechart_plugins = staticmethod(
+        lambda row: [
+            OutboxPlugin(
+                DjangoOutboxStore(using=row._state.db or "default"),
+                topic="approvals",
+            )
+        ]
+    )
 
     title = models.CharField(max_length=120)
     amount = models.DecimalField(max_digits=10, decimal_places=2)

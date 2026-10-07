@@ -57,6 +57,7 @@ from django.db.models.functions import Concat, StrIndex
 
 from ...events import Receipt
 from ._locking import _is_lock_error, _lock_timeout_s
+from ._markers import _marker_plugins, _marker_session
 from ...exceptions import ConflictError, LockTimeoutError
 from ...models import MachineNode
 from ...patterns.retry import RetryPolicy
@@ -347,7 +348,10 @@ class StatechartModelMixin(models.Model):
         #    own "actor_id" / "reason" in the data can never forge it.
         payload.pop("actor_id", None)
         if actor is not None:
-            payload["actor_id"] = getattr(actor, "pk", actor)
+            # 📝 #281 battle (A): a UUID pk made the audit JSON insert
+            #    raise; anything but int/str travels as its str().
+            pk = getattr(actor, "pk", actor)
+            payload["actor_id"] = pk if isinstance(pk, (int, str)) else str(pk)
         if reason is not None:
             payload["reason"] = str(reason)
         return payload
@@ -464,14 +468,46 @@ class StatechartModelMixin(models.Model):
         early = self._xsm_before_run(ctx)
         if early is not None:
             return early
-        receipt, new_snap, deadlines = self._xsm_run(
-            snap, event_type, payload, plugins
-        )
-        if receipt.duplicate:
-            # 🔁 An idempotent replay (or an inbox refusal): nothing ran,
-            #    so nothing is written -- a write would bump the version
-            #    and make a concurrent original lose its fence.
-            return receipt
+        # 📤 #281 battle: marker plugins (`OutboxPlugin`, `IdempotencyPlugin`)
+        #    write from `on_event_processed`, which the engine wraps in
+        #    `_SafePlugin` -- a failing outbox INSERT was logged and
+        #    swallowed, and the approval committed WITHOUT its integration
+        #    event. Buffer their rows during the run and flush them after
+        #    the row's UPDATE, unwrapped: a failure now rolls the whole send
+        #    back, exactly like `persisted()`.
+        markers = _marker_plugins(plugins, using)
+        with _marker_session(markers):
+            receipt, new_snap, deadlines = self._xsm_run(
+                snap, event_type, payload, plugins
+            )
+            if receipt.duplicate:
+                # 🔁 An idempotent replay (or an inbox refusal): nothing
+                #    ran, so nothing is written -- a write would bump the
+                #    version and make a concurrent original lose its fence.
+                for m in markers:
+                    m.discard_marks()
+                return receipt
+            self._xsm_commit_row(
+                mgr, name, vcol, expected, lock, new_snap, using, deadlines
+            )
+            for m in markers:
+                m.flush_marks()
+        ctx.update(receipt=receipt, snapshot=new_snap)
+        self._xsm_after_write(ctx)
+        return receipt
+
+    def _xsm_commit_row(
+        self,
+        mgr: Any,
+        name: str,
+        vcol: str,
+        expected: int,
+        lock: str,
+        new_snap: Dict[str, Any],
+        using: str,
+        deadlines: Tuple[Any, ...],
+    ) -> None:
+        """The fenced UPDATE of the row + its deadline rows."""
         values = sibling_values(name, new_snap)
         values[name] = new_snap
         values[vcol] = expected + 1
@@ -500,9 +536,6 @@ class StatechartModelMixin(models.Model):
         self._xsm_write_deadlines(using, deadlines)
         for k, v in values.items():
             setattr(self, k, v)
-        ctx.update(receipt=receipt, snapshot=new_snap)
-        self._xsm_after_write(ctx)
-        return receipt
 
     def _xsm_run(
         self,
@@ -582,6 +615,9 @@ class StatechartModelMixin(models.Model):
 
         audit = ctx.get("audit_plugin")
         if audit is not None:
+            from .audit import record_refused_send
+
+            record_refused_send(audit, self, ctx)
             audit.store.flush()
         emit_post(self, ctx, ctx["signal_plugin"])
 

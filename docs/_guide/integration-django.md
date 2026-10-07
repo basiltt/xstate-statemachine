@@ -152,34 +152,160 @@ From the shell: `python manage.py xsm_refresh_columns shop.Order [--batch 1000] 
 
 ### Signals
 
-`from xstate_statemachine.contrib.django.signals import pre_transition, post_transition, statechart_error`
+`from xstate_statemachine.contrib.django.signals import pre_transition, post_transition, statechart_error` (all three are also re-exported from `xstate_statemachine.contrib.django`). **0.11.0.**
 
 | Signal | Arguments | Notes |
 |:--|:--|:--|
-| `pre_transition` | `instance, event, from_states, actor, using` | raise `TransitionVetoed` to answer `Receipt(denied=True)`: no state change, no audit row |
-| `post_transition` | `instance, event, receipt, from_states, to_states, actions, actor, using` | inside the transaction: a receiver that raises rolls back the state **and** its audit row. `post_transition.connect(fn, on_commit=True)` defers `fn` to `transaction.on_commit`, which is **the only safe place for external side effects** |
+| `pre_transition` | `instance, event, from_states, actor, using` | Raise `TransitionVetoed(reason)` to answer `Receipt(denied=True)`. Nothing changes and **no audit row** is written. Any other exception propagates and rolls back the send. |
+| `post_transition` | `instance, event, receipt, from_states, to_states, actions, actor, using` | Fires once per send, inside the transaction, after the row and its audit rows are written. A receiver that raises rolls back the state change **and** its audit and outbox rows. |
 | `statechart_error` | `instance, kind, error` | `kind` is `"action"`, `"service"` or `"chain_budget"` |
+
+`post_transition.connect(fn, on_commit=True)` defers `fn` to `transaction.on_commit(using=...)`. `on_commit` receivers follow Django's `weak=` rule (a bound method of a temporary object stops firing once the object is collected; pass `weak=False` to pin it) and every `disconnect()` spelling -- the function, a bound method, `sender=`, `dispatch_uid=` -- removes them. Because it never runs for a rolled-back send, it is **the only safe place for external side effects** (email, HTTP, a broker). An `on_commit` receiver that raises does so **after** the commit. The state change is kept, and the error reaches whatever runs the commit (Django's own `on_commit` semantics). `post_transition.disconnect(fn)` removes it however it was connected. Before the 0.11.0 fix, `disconnect(fn)` after an `on_commit=True` connect silently did nothing.
 
 ### Audit
 
-`TransitionLog` stores `content_type`/`object_id`, `seq`, `event`, a redacted `payload`, `from_states`, `to_states`, `actions`, `disposition` (`transition` / `denied` / `unhandled` / ...), an `actor` FK, `reason`, `correlation_id`, `machine_version` and `created`. `DjangoAuditPlugin` buffers records while the machine runs. The mixin writes them after the fenced `UPDATE` and before `post_transition`, so a failed insert cannot be swallowed by the engine's plugin containment. Refused attempts are recorded too.
+`TransitionLog` stores `content_type`/`object_id`, `seq`, `event`, a redacted `payload`, `from_states`, `to_states`, `actions`, `disposition`, an `actor` FK, `reason`, `correlation_id`, `machine_version` and `created`. `DjangoAuditPlugin` buffers records while the machine runs. The mixin writes them after the fenced `UPDATE` and before `post_transition`, so a failed insert fails the send instead of being swallowed by the engine's plugin containment. `seq` has no gaps within a row. `statechart_audit = False` turns auditing off for a model.
 
+| `disposition` | Meaning |
+|:--|:--|
+| `transition` | the state changed |
+| `denied` | a guard refused (e.g. a `PermissionGuard`) |
+| `unhandled` | no transition for the event in this state |
+| `error` | an action or service raised (also under `actionErrorPolicy: "continue"`) |
+| `duplicate` | an idempotency key that was already processed |
+| `deferred` | the event was deferred |
+
+A `pre_transition` veto is **not** recorded, because it happens before the machine runs. If you need it on the record, write it from the receiver.
+
+**Erasure (X0.5).** `instance.forget_statechart()` erases the snapshot and the deadlines and **redacts** the audit rows: `payload`, `actor`, `reason` and `correlation_id` are blanked. `seq`, `event`, `disposition` and the states stay, so the chain still has no gaps. `forget_log(instance, using=..., mode="delete")` (in `contrib.django.audit`) removes the rows instead.
+
+**In the admin** the rows are append-only. `TransitionLogAdmin` is registered automatically (`XSM_ADMIN_TRANSITIONLOG = False` opts out). It lists the rows with filters for disposition, event, model and actor, and shows the first 120 characters of the payload. Nobody can add, change or delete a row there, superusers included. Erasure goes through `forget_statechart`, never the delete button.
+
+
+Engine-generated rows (`done.state.*`, `after.*`) carry `actor=None`; a send against a **finished** machine is recorded as `unhandled` with its actor, reason and the `InterpreterStoppedError` -- the attempt is on the record. Redaction matches keys by **substring** (`auth` also redacts `meta.auth`). `forget_statechart()` touches the snapshot, deadlines and audit rows only: outbox envelopes are already-integrated messages and inbox entries are scoped and expire by TTL -- call `DjangoInbox().forget(scope)` for full erasure.
 ### Permissions
 
-```text
-guards={"canApprove": PermissionGuard("shop.approve_order"),
-        "isManager":  RoleGuard("managers"),
-        "either":     AnyOf(PermissionGuard("shop.approve_order"), RoleGuard("managers"))}
-```
-
-- **`PermissionGuard(*perms, object_level=True, fallback_global=True)`** checks `user.has_perm(perm, obj=row)`. Object-level permissions apply when the backend supports them, with a fallback to the global permission. With no actor the guard is `False`.
-- **`RoleGuard(*groups, allow_superuser=True)`**, **`AnyOf(...)`**, **`AllOf(...)`**.
-- **`has_event_permission(user, instance, event, *, require_enabled=True)`** means `can(event)` as *user* **and** every permission guard on the event passes. Anonymous and inactive users get `False`. The admin, DRF and Channels all call this. **`permitted_events(user, instance)`** lists the events it allows.
+- **`PermissionGuard(*perms, object_level=True, fallback_global=True)`** checks `user.has_perm(perm, obj=row)` against **the saved row being sent to**, then the global permission (unless `fallback_global=False`). Object-level backends (django-guardian, rules) work unchanged. With no actor the guard is `False`.
+- **`RoleGuard(*groups, allow_superuser=True)`** means membership of any of the named groups. A group that does not exist is simply `False`. **`AnyOf(...)` / `AllOf(...)`** nest to any depth.
+- **`has_event_permission(user, instance, event, *, require_enabled=True)`** is `True` when `can(event)` passes as *user* **and** some candidate transition's permission guards pass. Under `or` guards or alternative transitions, **either** role is enough, the same as for `send()`. Anonymous, inactive and `None` users get `False`. An auth backend that **raises** gives a logged `False`, never a 500. The admin, DRF and Channels all call this function.
+- **`permitted_events(user, instance)`** lists the declared events it allows, across every region of a parallel chart. `has_perm` results are cached on the user object, so the only extra queries are the `RoleGuard` group lookups.
 - **`StatechartPermission`** is a framework-neutral policy base to subclass.
+
+| `has_event_permission(..., require_enabled=False)` | `has_event_permission(...)` | Means | HTTP |
+|:--|:--|:--|:--|
+| `False` | `False` | **forbidden**: the user has no role for it | 403 |
+| `True` | `False` | allowed, but **not possible right now** (a business guard, or the wrong state) | 409 |
+| `True` | `True` | go | 200 |
 
 ### Outbox and idempotency
 
-`DjangoOutboxStore()` implements the EDA `OutboxStore` (#293). Its rows join the open `atomic()`, so if a transition rolls back, its outbox row goes with it. Wire it with `statechart_plugins = lambda row: [OutboxPlugin(DjangoOutboxStore())]` and publish with `OutboxRelay`. `DjangoInbox()` is the idempotency `InboxStore`: its claim and mark join the send's transaction.
+`DjangoOutboxStore()` implements the EDA `OutboxStore` (#293). Wire it with `statechart_plugins = lambda row: [OutboxPlugin(DjangoOutboxStore(using=row._state.db or "default"))]` -- the store must live on the row's database alias (a mismatch is refused, it could not join the send's transaction). The mixin writes its rows **after the fenced `UPDATE`, outside the plugin containment** (like `persisted()`). A failing outbox `INSERT` makes `send()` raise and rolls the transition back, so an approval can never commit without its integration event. A rolled-back transition takes its outbox row with it.
+
+`OutboxRelay(store, broker).relay_once_sync()` publishes pending rows and marks them sent only after `publish()` returns. Delivery is **at-least-once**: a crash between the two re-sends the **same** envelope `id`, so consumers must dedup on it. `DjangoInbox()` is the idempotency `InboxStore` and is wired the same way. Its claim and mark join the send's transaction, and a replayed key gives a `duplicate` receipt and audit row.
+
+The whole section, run end to end:
+
+<!-- doc-requires: django -->
+```python
+import django
+from django.conf import settings
+
+settings.configure(
+    INSTALLED_APPS=["django.contrib.contenttypes", "django.contrib.auth",
+                    "xstate_statemachine.contrib.django"],
+    DATABASES={"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}},
+    DEFAULT_AUTO_FIELD="django.db.models.BigAutoField",
+)
+django.setup()
+
+from django.contrib.auth.models import Group, User
+from django.core.management import call_command
+from django.db import connection, models, transaction
+from xstate_statemachine import MachineLogic
+from xstate_statemachine.contrib.django import (
+    DjangoOutboxStore, PermissionGuard, RoleGuard, StatechartField,
+    StatechartModelMixin, TransitionVetoed, has_event_permission,
+    permitted_events, post_transition, pre_transition)
+from xstate_statemachine.eda import OutboxPlugin, OutboxRelay
+
+class Invoice(StatechartModelMixin, models.Model):
+    statechart_machine = {
+        "id": "invoice", "initial": "draft", "context": {"lines": 0},
+        "states": {
+            "draft": {"on": {
+                "ADD_LINE": {"actions": "addLine"},
+                "APPROVE": {"target": "approved",          # "approver" OR "cfo"
+                            "guard": {"type": "and", "children": [
+                                {"type": "or", "children": ["canApprove", "isCfo"]},
+                                "hasLines"]}}}},
+            "approved": {"tags": ["publish"], "type": "final"}}}
+    statechart_logic = MachineLogic(
+        actions={"addLine": lambda i, ctx, e, a: ctx.update(lines=ctx["lines"] + 1)},
+        guards={"canApprove": PermissionGuard("auth.change_user"),  # any real perm
+                "isCfo": RoleGuard("cfo"),
+                "hasLines": lambda ctx, e: ctx["lines"] > 0})
+    statechart_plugins = staticmethod(lambda row: [OutboxPlugin(DjangoOutboxStore())])
+    statechart = StatechartField()
+
+    class Meta:
+        app_label = "billing"
+
+call_command("migrate", verbosity=0)
+with connection.schema_editor() as editor:
+    editor.create_model(Invoice)
+
+cfo = User.objects.create_user("cfo")
+cfo.groups.add(Group.objects.create(name="cfo"))
+intern = User.objects.create_user("intern")
+inv = Invoice.objects.create()
+
+# 🔐 "forbidden" vs "not possible right now"
+assert has_event_permission(cfo, inv, "APPROVE", require_enabled=False)  # may try
+assert not has_event_permission(cfo, inv, "APPROVE")                     # no lines yet
+assert not has_event_permission(intern, inv, "APPROVE", require_enabled=False)
+assert inv.send("APPROVE", actor=intern).denied
+
+# 📣 a pre_transition veto: denied, nothing written
+def frozen(sender, **kw):
+    if kw["event"].type == "APPROVE":
+        raise TransitionVetoed("period closed")
+pre_transition.connect(frozen)
+inv.send("ADD_LINE", actor=cfo)
+assert permitted_events(cfo, inv) == ["ADD_LINE", "APPROVE"]
+assert inv.send("APPROVE", actor=cfo).denied and inv.state == "invoice.draft"
+pre_transition.disconnect(frozen)
+
+# 📣 on_commit receivers run after COMMIT only (and disconnect(fn) works)
+sent = []
+def notify(sender, instance, to_states, **kw):
+    sent.append(to_states)
+post_transition.connect(notify, on_commit=True)
+with transaction.atomic():
+    assert inv.send("APPROVE", actor=cfo, reason="ok").changed
+    assert sent == []                                # not yet committed
+post_transition.disconnect(notify)
+assert sent == [("invoice.approved",)]
+
+# 🧾 the audit trail: every attempt, in order, with the actor
+assert [(h.event, h.disposition, h.actor_id) for h in inv.history] == [
+    ("APPROVE", "denied", intern.pk),                # a guard refusal: recorded
+    ("ADD_LINE", "transition", cfo.pk),              # (the veto wrote nothing)
+    ("APPROVE", "transition", cfo.pk)]
+
+# 📤 the outbox row committed WITH the approval; the relay publishes it
+published = []
+class Broker:
+    def publish(self, topic, envelope):
+        published.append(envelope.id)
+assert OutboxRelay(DjangoOutboxStore(), Broker()).relay_once_sync() == 1
+assert OutboxRelay(DjangoOutboxStore(), Broker()).relay_once_sync() == 0
+assert len(published) == 1
+
+# 🧹 forget: redact (default) keeps the gapless chain
+inv.forget_statechart()
+assert [h.seq for h in inv.history] == [1, 2, 3]
+assert all(h.actor_id is None and h.payload == {} for h in inv.history)
+```
 
 ### Admin
 
@@ -229,22 +355,23 @@ The output of the first four matches `xsm` byte for byte, and the tests pin that
 | `state = FSMField(default="new")` | `statechart = StatechartField()` + `statechart_machine = "machines/order.json"` |
 | `@transition(field=state, source="new", target="paid")` | `"new": {"on": {"PAY": "paid"}}` in the chart |
 | `conditions=[is_paid]` | a named guard: `"guard": "isPaid"` |
-| `permission="shop.pay"` | `PermissionGuard("shop.pay")` |
+| `permission="shop.pay"` | `PermissionGuard("shop.pay")` (object-level too) |
+| `has_transition_perm(order.pay, user)` | `has_event_permission(user, order, "PAY")` |
 | `can_proceed(order.pay)` | `order.can("PAY")` |
 | `get_available_user_state_transitions(user)` | `permitted_events(user, order)` |
 | `order.pay(); order.save()` | `order.send("PAY", actor=user)` (one transaction) |
 | `ConcurrentTransitionMixin` | `lock="optimistic"` + `send_with_retry` (or the default row lock) |
 | `pre_transition` / `post_transition` | the same names, inside the transaction; `on_commit=True` for side effects |
-| django-fsm-log | `TransitionLog`, written in the same transaction |
+| django-fsm-log (`StateLog`, `@fsm_log_by`, `@fsm_log_description`) | `TransitionLog`, written in the same transaction; `send(actor=user, reason=...)`; refusals are recorded too |
 | fsm_admin buttons | `StatechartAdminMixin` |
 
 `python manage.py xsm_migrate_fsm shop.Order --field state --dry-run` extracts the chart from your `@transition` decorators. The same command without `--dry-run` fills the snapshots, batched and resumable, and `FSMDualWriteMixin` keeps the old column in sync for one release. The four steps are on [vs django-fsm](../comparisons/vs-django-fsm/#migration-recipe). `from_state_ids(machine, ids, context)` in `xstate_statemachine.persistence` is the generic "adopt an existing record" primitive underneath, and it works for plain dicts and SQLAlchemy too.
 
 ## Guarantees
 
-> **What this does:** a model `send()` is atomic. The snapshot, sibling columns, deadline rows, audit rows, outbox rows and idempotency mark commit together or not at all. By default concurrent sends on one row serialise (16 threads × 100 sends = exactly 1600, pinned on SQLite, and on Postgres with `DATABASE_URL`). The optimistic mode never loses an update: it raises `ConflictError`. A `pre_transition` veto changes nothing. A `post_transition` failure rolls back. Snapshots are size-capped on write and read (X0.4). `forget_statechart()` erases the snapshot and its deadlines and redacts the audit trail (X0.5).
+> **What this does:** a model `send()` is atomic. The snapshot, sibling columns, deadline rows, audit rows, outbox rows and idempotency mark commit together or not at all. By default concurrent sends on one row serialise (16 threads × 100 sends = exactly 1600, pinned on SQLite, and on Postgres with `DATABASE_URL`). The optimistic mode never loses an update: it raises `ConflictError`. A `pre_transition` veto changes nothing. A `post_transition` failure rolls back. A failing audit or outbox write fails the send, so an approval never commits without its audit row or its integration event. The audit admin is append-only. Snapshots are size-capped on write and read (X0.4). `forget_statechart()` erases the snapshot and its deadlines and redacts the audit trail (X0.5).
 >
-> **What this does not do:** it does not make actions exactly-once. Under `send_with_retry`, an action may run once per attempt (X0.3), so put external effects in services, the outbox, or `post_transition(on_commit=True)`. It does not arm in-process timers: `after` fires when `xsm_deadlines` (or the next `send()`) runs. It does not provide a native async row lock (use `asend`). It does not authenticate snapshots edited directly in the database.
+> **What this does not do:** it does not make actions exactly-once. Under `send_with_retry`, an action may run once per attempt (X0.3), so put external effects in services, the outbox, or `post_transition(on_commit=True)`. The outbox relay is at-least-once, not exactly-once: consumers dedup on the envelope id. It does not arm in-process timers: `after` fires when `xsm_deadlines` (or the next `send()`) runs. It does not provide a native async row lock (use `asend`). It does not authenticate snapshots edited directly in the database.
 >
 > See the programme-wide [Guarantees](../guarantees/) and [Security](../security/) pages ([#303](https://github.com/basiltt/xstate-statemachine/issues/303)).
 
@@ -277,3 +404,9 @@ See the generated [compatibility table](../compatibility/). SQLite runs everywhe
 | `DoesNotExist` from `send()` | the row was deleted while the send ran | nothing to retry; the caller decides |
 | Columns out of step with the snapshot after `QuerySet.update()` / `bulk_update()` | the ORM write bypassed the mixin | `manage.py xsm_refresh_columns app.Model` |
 | Admin shows no buttons | the user lacks change permission, or every guard refuses | check `permitted_events(user, obj)` |
+| An `on_commit=True` receiver never runs in a test | a `TestCase` never commits | use `django_capture_on_commit_callbacks(execute=True)` / `captureOnCommitCallbacks` |
+| `send()` raises `IntegrityError` / `DatabaseError` from the outbox or audit table | the marker write failed, and by design the transition rolled back with it | migrate `xsm_django`, fix the table, retry the send |
+| The same integration event arrives twice | the relay crashed after `publish()` but before `mark_sent` (at-least-once) | dedup on the envelope `id` (`DjangoInbox` on the consumer) |
+| A permission check is always `False`, with a logged traceback | the auth backend raised (for example, LDAP is down) | fix the backend; the denial is deliberate |
+| `XStateMachineError: ... store ... on another database` from `send()` | an outbox / inbox store in `statechart_plugins` built for a different alias than the row | build it with `using=row._state.db` |
+| A vetoed attempt is missing from the history | a `pre_transition` veto runs before the machine and writes nothing | log it from the receiver |

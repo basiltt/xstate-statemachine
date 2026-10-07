@@ -1450,6 +1450,49 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **Django signals, audit, permissions and outbox, as battle-tested
+  (#281).** The trail that cannot disagree with the state, under a
+  finance team's load -- 200 expenses approved by two roles from separate
+  connections with a gapless, attributed audit trail (refusals included,
+  `to_states` agreeing with the row), a `pre_transition` veto that writes
+  nothing, receivers that raise (in-transaction: the send rolls back;
+  `on_commit`: the send is kept and the error surfaces), 1000 users
+  getting exactly their role's events at bounded query cost and never a
+  forbidden one under concurrency, the outbox row committing WITH the
+  approval and a relay crash re-sending the same envelope id,
+  `forget_statechart()` redacting while keeping the chain -- on SQLite
+  and Postgres (`examples/integrations/django_approvals/tests/
+  test_battle_281_scenario.py`, `tests/contrib/django/test_battle_281_
+  {a,b}.py`). Found and fixed: the outbox / inbox plugins wrote from
+  `on_event_processed` INSIDE the engine's plugin containment, so a
+  failing outbox INSERT was logged and the approval committed WITHOUT its
+  integration event -- `send()` now buffers marker plugins and flushes
+  them after the fenced UPDATE, unwrapped, like `persisted()`
+  (`_markers.py`; a plugin instance shared across concurrent sends keeps
+  buffering until the last one exits; a store on another database alias
+  than the row is refused); `post_transition.disconnect(fn)` after
+  `connect(fn, on_commit=True)` silently did nothing (the receiver fired
+  for the rest of the process) -- every spelling disconnects now, incl.
+  bound methods and per-sender connections, and `on_commit` receivers
+  honour `weak=` like Django's; `post_transition`'s `to_states` was wrong
+  when a parallel region finished in the same send; engine-generated
+  audit rows (`done.state`, `after`) borrowed the human sender's actor;
+  a user model with a UUID primary key broke every audited send
+  (`TypeError: UUID is not JSON serializable`); a send against a
+  FINISHED machine left no audit row (now `unhandled`, with actor, reason
+  and error); `has_event_permission` / `permitted_events` / the admin
+  buttons required EVERY permission guard named on an event -- an `or`
+  guard or two alternative transitions guarded by different roles hid
+  the button and DRF answered 403 for a user who could `send()`; an auth
+  backend whose `has_perm` raises was a 500 (now a logged denial); the
+  admin transition button was a 500 on `LockTimeoutError` /
+  `ConflictError` (now a message); `TransitionLog` gained a read-only
+  `TransitionLogAdmin` (filters by disposition / event / model / actor;
+  nobody -- superusers included -- can add, change or delete a row;
+  `XSM_ADMIN_TRANSITIONLOG = False` opts out). Docs: Signals / Audit /
+  Permissions (403 vs 409 table) / Outbox sections rewritten with one
+  end-to-end runnable block; the example gains `manage.py relay_outbox`
+  and its README says honestly what is wired.
 - **Django integration (field, mixin, store), as battle-tested (#280).**
   The approvals app under a finance team's load -- 200 expenses with
   legal and finance racing from separate connections (pessimistic and

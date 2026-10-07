@@ -31,7 +31,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from django.contrib import admin, messages
 from django.contrib.contenttypes.admin import GenericTabularInline
-from django.core.exceptions import PermissionDenied
+from django.core.exceptions import AppRegistryNotReady, PermissionDenied
 from django.http import HttpResponseRedirect
 from django.template.response import TemplateResponse
 from django.urls import path, reverse
@@ -40,12 +40,14 @@ from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
 from django.views.decorators.csrf import csrf_protect
 
+from ...exceptions import XStateMachineError
 from ._events import declared_events
 from .permissions import has_event_permission, permitted_events
 
 __all__ = [
     "StateListFilter",
     "StatechartAdminMixin",
+    "TransitionLogAdmin",
     "TransitionLogInline",
     "event_label",
 ]
@@ -153,6 +155,69 @@ class TransitionLogInline(GenericTabularInline):
 
     def has_change_permission(self, request: Any, obj: Any = None) -> bool:
         return False
+
+
+class TransitionLogAdmin(admin.ModelAdmin):
+    """Append-only audit changelist: filter by event / disposition /
+    actor, search by object id or reason. Nobody -- superusers included
+    -- can add, edit or delete a row here; erasure is `forget_statechart`
+    (redact by default), which keeps the ``seq`` chain gapless.
+    Registered automatically unless ``XSM_ADMIN_TRANSITIONLOG = False``."""
+
+    list_display = (
+        "created",
+        "content_type",
+        "object_id",
+        "seq",
+        "event",
+        "disposition",
+        "actor",
+        "short_payload",
+    )
+    list_filter = ("disposition", "event", "content_type")
+    search_fields = ("object_id", "event", "reason", "correlation_id")
+    list_select_related = ("actor", "content_type")
+    date_hierarchy = "created"
+    #: The changelist cuts ``payload`` to this many characters.
+    payload_preview = 120
+
+    @admin.display(description=_("payload"))
+    def short_payload(self, obj: Any) -> str:
+        import json
+
+        text = json.dumps(obj.payload, default=str, sort_keys=True)
+        cap = self.payload_preview
+        return text if len(text) <= cap else text[: cap - 1] + "…"
+
+    def get_list_filter(self, request: Any) -> Any:
+        return tuple(self.list_filter) + (
+            ("actor", admin.RelatedOnlyFieldListFilter),
+        )
+
+    def get_readonly_fields(self, request: Any, obj: Any = None) -> Any:
+        return [f.name for f in self.model._meta.fields]
+
+    def has_add_permission(self, request: Any) -> bool:
+        return False
+
+    def has_change_permission(self, request: Any, obj: Any = None) -> bool:
+        return False
+
+    def has_delete_permission(self, request: Any, obj: Any = None) -> bool:
+        return False
+
+
+def _register_log_admin() -> None:
+    from django.apps import apps
+    from django.conf import settings
+
+    if not getattr(settings, "XSM_ADMIN_TRANSITIONLOG", True):
+        return
+    if not apps.is_installed("django.contrib.admin"):  # pragma: no cover
+        return
+    model = apps.get_model("xsm_django", "TransitionLog")
+    if not admin.site.is_registered(model):
+        admin.site.register(model, TransitionLogAdmin)
 
 
 class StateListFilter(admin.SimpleListFilter):
@@ -351,8 +416,26 @@ class StatechartAdminMixin:
             )
             return HttpResponseRedirect(self._change_url(obj))
         reason = (request.POST.get("reason") or "").strip()[:2000] or None
-        receipt = obj.send(event, actor=request.user, reason=reason)
-        if receipt.changed:
+        try:
+            receipt = obj.send(event, actor=request.user, reason=reason)
+        except XStateMachineError as exc:
+            # 🔥 #281 battle: a lock timeout / conflict / vetoing receiver
+            #    is an answer for the operator, not a 500 page.
+            self.message_user(  # type: ignore[attr-defined]
+                request,
+                _("“%(event)s” failed: %(error)s")
+                % {"event": label, "error": exc},
+                messages.ERROR,
+            )
+            return HttpResponseRedirect(self._change_url(obj))
+        if receipt.error is not None:
+            self.message_user(  # type: ignore[attr-defined]
+                request,
+                _("“%(event)s” ran with an error: %(error)s")
+                % {"event": label, "error": receipt.error},
+                messages.ERROR,
+            )
+        elif receipt.changed:
             self.message_user(  # type: ignore[attr-defined]
                 request,
                 _("“%(event)s” done.") % {"event": label},
@@ -411,7 +494,11 @@ class StatechartAdminMixin:
                 if not modeladmin._allowed(request, obj, event):
                     denied += 1
                     continue
-                r = obj.send(event, actor=request.user)
+                try:
+                    r = obj.send(event, actor=request.user)
+                except XStateMachineError:
+                    denied += 1
+                    continue
                 if r.changed:
                     changed += 1
                 else:
@@ -438,3 +525,9 @@ def highlighted_mermaid(machine: Any, active: Optional[List[str]]) -> str:
     for sid in ids:
         lines.append(f"    class {sid} xsmActive")
     return "\n".join(lines)
+
+
+try:  # 📝 runs on admin autodiscovery (this IS the app's admin module)
+    _register_log_admin()
+except (LookupError, AppRegistryNotReady):  # pragma: no cover
+    pass

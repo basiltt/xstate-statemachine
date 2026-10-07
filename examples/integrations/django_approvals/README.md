@@ -17,6 +17,7 @@ draft ──SUBMIT──▶ review ═══════════════
 |:--|:--|
 | `machine.json` | The chart. It passes `xsm validate --plain`. |
 | `approvals/models.py` | `Expense(StatechartModelMixin)`. Two roles as `RoleGuard`s (the `legal` and `finance` groups), `AnyOf` for REJECT, and the `escalate` action. |
+| `approvals/management/commands/relay_outbox.py` | Drains the outbox with `OutboxRelay`. The stand-in broker prints one CloudEvents JSON line per event; swap in your own adapter. |
 | `approvals/admin.py` | `StatechartAdminMixin`. Transition buttons are CSRF-protected POST forms, computed for the logged-in user. REJECT asks for a reason. The audit history is inline. |
 | `approvals/api.py` | `StatechartViewSetMixin`: one `@action` per event (`/api/expenses/{id}/legal-approve/`), with the drf-spectacular schema at `/api/schema/`. |
 | `approvals/ws.py`, `config/asgi.py` | `StatechartConsumer` at `/ws/expenses/<id>/`, behind `AuthMiddlewareStack` and the origin validator. |
@@ -34,6 +35,7 @@ python manage.py runserver 8000                    # daphne: HTTP + WebSocket; a
 python manage.py xsm_deadlines --forever           # in another shell: fires the 48 h escalation (Ctrl+C stops it)
 python manage.py xsm_deadlines                     # or one pass, from cron
 python manage.py xsm_inspect approvals.Expense     # the chart, same output as `xsm inspect`
+python manage.py relay_outbox                      # publish pending integration events (one JSON line each)
 python -m pytest tests -q
 ```
 
@@ -64,17 +66,29 @@ can press. A request that forges another event is refused on POST. Watch
   `TransitionLog`, refused ones included, with the actor and the reason.
 - **Durable timers**: the 48 h `after` is a row in the deadlines table;
   `xsm_deadlines` fires it even if nobody touches the expense.
-- **Integration event**: `approved` is tagged `publish`. Attach an
-  `OutboxPlugin(DjangoOutboxStore())` through `statechart_plugins` to emit
-  it transactionally (#293).
+- **Integration event (transactional outbox)**: `approved` is tagged
+  `publish`. `Expense.statechart_plugins` attaches
+  `OutboxPlugin(DjangoOutboxStore(), topic="approvals")`, so the outbox
+  row is written in the same transaction as the approval. Either both
+  commit or neither does: if the outbox `INSERT` fails, the `send()`
+  raises and the approval rolls back. `manage.py relay_outbox` publishes
+  pending rows. Delivery is **at-least-once**: a row is marked sent only
+  after `publish()` returns, so a crash between the two re-sends the
+  *same* envelope `id`, and consumers dedup on it.
+- **Audit changelist**: `/admin/xsm_django/transitionlog/` lists every
+  attempt and filters by disposition, event and actor. It is read-only
+  for everyone, superusers included.
 
 ## What it does not do
 
 - **No production settings.** `DEBUG`, the hard-coded `SECRET_KEY`,
   `ALLOWED_HOSTS` and the in-memory channel layer are for a laptop. Use
   your own settings, and a Redis channel layer for more than one process.
-- **No outbox relay.** The `publish` tag is there, but nothing publishes
-  it until you wire `OutboxPlugin` + `OutboxRelay`.
+- **No real broker.** `relay_outbox` writes to stdout. Give
+  `OutboxRelay` your Kafka / NATS / SQS adapter (anything with
+  `publish(topic, envelope)`), and run `relay_outbox --forever` under
+  your process manager. Purge old sent rows with
+  `DjangoOutboxStore().purge_sent(older_than_s=...)`.
 - **No service for the deadlines.** `xsm_deadlines --forever` is a
   foreground loop; run it under your process manager (systemd, a
   container, Celery beat with `xsm_deadlines_every`).

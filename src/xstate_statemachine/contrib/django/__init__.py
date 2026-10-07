@@ -70,6 +70,7 @@ _LAZY = {
     # 🛠️ #282 -- admin
     "StatechartAdminMixin": ".admin",
     "TransitionLogInline": ".admin",
+    "TransitionLogAdmin": ".admin",
     "StateListFilter": ".admin",
     # 🔁 #310 -- migrating from django-fsm
     "extract_chart": ".fsm",
