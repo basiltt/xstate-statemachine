@@ -166,6 +166,29 @@ def test_lost_race_in_app_view_is_409_problem(tmp_path: Path) -> None:
     assert _items(app, "1") == codes[200]
 
 
+def test_error_handlers_opt_out_keeps_flask_default(tmp_path: Path) -> None:
+    app = _app_with_view(MemoryStore(), error_handlers=False)
+    assert app.test_client().get("/v/1").status_code == 500
+    # the blueprint maps its own errors either way
+    r = app.test_client().get("/orders/1/send")
+    assert r.status_code == 405
+
+
+def test_conflict_problem_does_not_leak_exception_text(
+    tmp_path: Path,
+) -> None:
+    app = _app_with_view(SQLiteStore(str(tmp_path / "t.db")))
+    rs = [r for r in _hammer(app, 20, "/v/1") if r.status_code == 409]
+    assert rs
+    body = rs[0].get_json()
+    assert body == {
+        "type": "about:blank",
+        "title": "Conflict",
+        "status": 409,
+        "error": "ConflictError",
+    }
+
+
 def test_raising_act_leaks_no_lock_or_thread(tmp_path: Path) -> None:
     app = _app_with_view(
         SQLiteStore(str(tmp_path / "l.db")), lock=PessimisticLock()

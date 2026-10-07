@@ -129,6 +129,7 @@ class QuartXState:
         heartbeat_s: float = 15.0,
         max_connections_per_key: int = 16,
         allowed_origins: Any = (),
+        error_handlers: bool = True,
     ) -> None:
         plugins = list(plugins)
         if log is not None:
@@ -155,8 +156,9 @@ class QuartXState:
         app.extensions[EXTENSION_KEY] = reg
         # 🔐 #285 battle (A): as in Flask -- a lost race / a GET `act()` in
         #    the app's own views is a 409 / 405 problem, not an HTML 500.
-        for exc_cls in mapped_exceptions():
-            app.register_error_handler(exc_cls, _aproblem)
+        if error_handlers:
+            for exc_cls in mapped_exceptions():
+                app.register_error_handler(exc_cls, _aproblem)
 
     def registry(self, app: Optional[Quart] = None) -> AppRegistry:
         app = app or current_app._get_current_object()  # type: ignore

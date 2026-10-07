@@ -194,6 +194,7 @@ class XState:
         max_connections_per_key: int = 16,
         allowed_origins: Any = (),
         cli: bool = True,
+        error_handlers: bool = True,
     ) -> None:
         """Bind a store (and policies) to *app*.
 
@@ -210,6 +211,10 @@ class XState:
                 ``GET /<id>/history`` reads it.
             max_body_bytes: JSON body cap (413); default 1 MiB.
             cli: Register the ``flask xsm`` command group.
+            error_handlers: Register app-level handlers so the library's
+                exceptions raised in YOUR views (a lost race, an `act()`
+                in a GET, an oversized session) answer RFC 9457 problems
+                (409 / 405 / 413) instead of a 500. ``False`` opts out.
         """
         plugins = list(plugins)
         if log is not None:
@@ -248,8 +253,9 @@ class XState:
         #    only held inside the blueprint. App-level handlers for the
         #    library's mapped exceptions only; an app's own handler for one
         #    of them, registered after `init_app`, still wins.
-        for exc_cls in mapped_exceptions():
-            app.register_error_handler(exc_cls, problem_response)
+        if error_handlers:
+            for exc_cls in mapped_exceptions():
+                app.register_error_handler(exc_cls, problem_response)
 
         if cli:
             from .cli import xsm_cli
