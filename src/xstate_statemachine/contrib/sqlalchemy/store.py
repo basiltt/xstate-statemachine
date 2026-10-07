@@ -140,14 +140,27 @@ class SQLAlchemyStore(BaseStore):
         """Make every call this thread makes through this store (and the
         inbox / log / outbox that `shares_connection_with` it) run on
         *connection* -- a `Session.connection()` whose transaction the
-        CALLER owns and commits. No-op inside an open `transaction()`.
+        CALLER owns and commits. Re-entrant for the SAME connection;
+        `RuntimeError` if this thread is already bound to a different one
+        (inside `transaction()`, or an outer send on another session).
 
         🔥 #284 battle: `StatechartMixin.send(plugins=[OutboxPlugin(...)])`
         wrote the outbox row on a connection of its own, so it committed
         even when the caller's session rolled back the state change.
         """
-        if getattr(self._local, "conn", None) is not None:
-            yield self._local.conn
+        current = getattr(self._local, "conn", None)
+        if current is not None:
+            if current is not connection:
+                # 🔥 #284-a battle: a send inside ``store.transaction()``
+                #    (or a nested send on another session) silently wrote
+                #    the plugin rows into THAT transaction, not the row's.
+                raise RuntimeError(
+                    "this SQLAlchemyStore is already bound to another "
+                    "transaction on this thread (store.transaction() or "
+                    "an outer send on a different session); its writes "
+                    "cannot join the row's session as well."
+                )
+            yield current
             return
         self._local.conn = connection
         try:
@@ -171,8 +184,24 @@ class SQLAlchemyStore(BaseStore):
                 self._local.conn = None
 
     def _check_version(self, conn: Any) -> None:
+        from sqlalchemy import inspect as sa_inspect
+
         from ...exceptions import StoreError
 
+        # 🔥 #284-a battle: ``create_tables=False`` on an EMPTY database
+        #    failed with a driver error ("no such table: xsm_schema" /
+        #    UndefinedTable) instead of saying what to do.
+        present = set(sa_inspect(conn).get_table_names())
+        missing = sorted(
+            t.name for t in self.tables.all() if t.name not in present
+        )
+        if missing:
+            raise StoreError(
+                "xstate-statemachine [sqlalchemy] tables are missing: "
+                f"{', '.join(missing)}. create_tables=False means your "
+                "migrations own the DDL -- run your migrations (see "
+                "xsm_sqlalchemy_ddl), or pass create_tables=True."
+            )
         sc = self.tables.schema
         row = conn.execute(
             select(sc.c.version).where(sc.c.component == "sqlalchemy")
@@ -308,9 +337,34 @@ class SQLAlchemyStore(BaseStore):
             }
 
 
+#: SQLSTATEs that mean "another transaction holds what you need; retry":
+#: lock_not_available (PG ``lock_timeout`` / ``NOWAIT``), deadlock,
+#: serialization failure.
+_LOCK_SQLSTATES = frozenset({"55P03", "40P01", "40001"})
+#: Message fragments for drivers without a SQLSTATE (SQLite, MySQL).
+_LOCK_WORDS = (
+    "locked",
+    "busy",
+    "lock timeout",
+    "lock wait timeout",
+    "deadlock",
+    "could not obtain lock",
+)
+
+
 def _is_locked(exc: BaseException) -> bool:
-    msg = str(getattr(exc, "orig", exc)).lower()
-    return "locked" in msg or "busy" in msg
+    """Is *exc* contention (map to `LockTimeoutError`, retryable)?
+
+    🔥 #284-a battle: only SQLite's "locked"/"busy" were recognised; a
+    Postgres ``lock_timeout`` ("canceling statement due to lock timeout")
+    or a deadlock leaked as a raw `OperationalError` that
+    `send_with_retry` does not retry."""
+    orig = getattr(exc, "orig", exc)
+    code = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    if code in _LOCK_SQLSTATES:
+        return True
+    msg = str(orig).lower()
+    return any(w in msg for w in _LOCK_WORDS)
 
 
 # -----------------------------------------------------------------------------
