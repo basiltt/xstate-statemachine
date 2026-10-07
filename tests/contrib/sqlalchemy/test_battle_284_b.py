@@ -206,13 +206,27 @@ def _alembic(url: str, script_dir: Path) -> Any:
     return cfg
 
 
-def _example_models() -> Any:
+@pytest.fixture
+def example_models() -> Iterator[Any]:
+    """The example's `models`, imported from ITS directory and left in
+    `sys.modules` for the test (env.py's `from models import Base` must
+    bind the SAME metadata object the test mutates); another example's
+    same-named modules (fastapi_orders, flask_wizard -- CI's Coverage job
+    runs them all in one process) are set aside and restored after."""
+    import importlib
+
+    names = ("logic", "models")
+    saved = {k: sys.modules.pop(k) for k in names if k in sys.modules}
     sys.path.insert(0, str(EXAMPLE))
     try:
-        import models
+        importlib.import_module("logic")
+        models = importlib.import_module("models")
+        yield models
     finally:
         sys.path.remove(str(EXAMPLE))
-    return models
+        for k in names:
+            sys.modules.pop(k, None)
+        sys.modules.update(saved)
 
 
 def _diff(url: str, metadata: Any) -> list:
@@ -228,7 +242,7 @@ def _diff(url: str, metadata: Any) -> list:
 
 
 def test_alembic_upgrade_no_diff_second_migration_downgrade(
-    url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, example_models
 ) -> None:
     pytest.importorskip("alembic")
     from alembic import command
@@ -241,7 +255,7 @@ def test_alembic_upgrade_no_diff_second_migration_downgrade(
         mig,
         ignore=shutil.ignore_patterns("__pycache__"),
     )
-    models = _example_models()
+    models = example_models
     cfg = _alembic(url, mig)
     command.upgrade(cfg, "head")
     eng = create_engine(url)

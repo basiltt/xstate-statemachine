@@ -193,6 +193,32 @@ def _count(eng: Any, table: Any, **where: Any) -> int:
         return int(s.execute(q).scalar_one())
 
 
+def _example_modules() -> Any:
+    """Import the example's ``logic`` / ``models`` / ``sync_app`` from ITS
+    directory, evicting any same-named modules another example suite
+    left in ``sys.modules`` (fastapi_orders / flask_wizard ship their own
+    `models.py` and `logic.py` -- CI's Coverage job runs them all in one
+    process)."""
+    import importlib
+
+    saved = {
+        k: sys.modules.pop(k)
+        for k in ("logic", "models", "sync_app")
+        if k in sys.modules
+    }
+    sys.path.insert(0, str(EXAMPLE))
+    try:
+        mods = tuple(
+            importlib.import_module(n) for n in ("logic", "models", "sync_app")
+        )
+    finally:
+        sys.path.remove(str(EXAMPLE))
+        for k in ("logic", "models", "sync_app"):
+            sys.modules.pop(k, None)
+        sys.modules.update(saved)
+    return mods
+
+
 # -----------------------------------------------------------------------------
 # 1. a fleet of writers on one row
 # -----------------------------------------------------------------------------
@@ -408,12 +434,7 @@ def test_alembic_upgrade_demo_no_diff_downgrade(
     from alembic.migration import MigrationContext
     from sqlalchemy import inspect
 
-    sys.path.insert(0, str(EXAMPLE))
-    try:
-        import models as ex_models
-        import sync_app
-    finally:
-        sys.path.remove(str(EXAMPLE))
+    _logic, ex_models, sync_app = _example_modules()
     url = f"sqlite:///{(tmp_path / 'fresh.db').as_posix()}"
     monkeypatch.setenv("ORDERS_DB_URL", url)
     cfg = Config(str(EXAMPLE / "alembic.ini"))
