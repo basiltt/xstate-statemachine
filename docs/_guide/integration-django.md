@@ -128,7 +128,7 @@ Methods and properties:
 
 ### Durable timers and `xsm_deadlines`
 
-Every armed `after` timer is a row in `xsm_django_deadline` (`source` = the model's table, `key` = pk). The row is written in the send's transaction and cleared when the state is exited. `python manage.py xsm_deadlines [app.Model ...] [--forever] [--interval 1]` runs `DueTimerScanner` over that index. A matured timer fires in an interpreter restored from the row, and the result is written back under the `<field>_version` fence, so a request racing the scanner cannot lose an update. `DjangoModelStore(Model)` is that `StateStore` view if you drive the scanner yourself.
+Every armed `after` timer is a row in `xsm_django_statechartdeadline` (`source` = the model's table, `key` = pk). The row is written in the send's transaction and cleared when the state is exited. `python manage.py xsm_deadlines [app.Model ...] [--forever] [--interval 1] [--limit 1000] [--now EPOCH]` runs `DueTimerScanner` over that index: one pass by default (cron), or a loop with `--forever` that finishes its current pass and exits 0 on `SIGINT` / `SIGTERM`. A matured timer fires in an interpreter restored from the row, and the result is written back under the `<field>_version` fence, so a request racing the scanner cannot lose an update. `DjangoModelStore(Model)` is that `StateStore` view if you drive the scanner yourself.
 
 ### `DjangoStore`
 
@@ -136,7 +136,17 @@ Every armed `after` timer is a row in `xsm_django_deadline` (`source` = the mode
 
 ### Migrations
 
-The app ships its migrations. `refresh_statechart_columns(Model, "statechart", migrate=None)` and `refresh_statechart_columns_op("shop", "Order")` (a `RunPython`) recompute the sibling columns after a chart change or a bulk import. With `migrate=`, the function rewrites each snapshot first and bumps its version.
+The app ships its migrations (`migrate xsm_django zero` reverses them). Your own model's sibling columns are ordinary fields in **your** migrations; a field named `workflow` gets `workflow_state`, `workflow_state_ids`, ... and the index on `workflow_state`.
+
+**Renaming a `StatechartField`:** `makemigrations` asks once per column ("Was doc.workflow renamed to doc.flow?", then `workflow_state` → `flow_state`, ...). Answer **yes to all five**. Answering no to a sibling drops that column and adds an empty one, which loses the denormalised state until you refresh it (below).
+
+`refresh_statechart_columns(Model, "statechart", *, batch=1000, migrate=None, dry_run=False)` recomputes the sibling columns after a chart change, a bulk import or a raw SQL edit. It reads rows in primary-key batches (bounded memory), skips rows that are already right, and returns how many it changed. With `migrate=`, it rewrites each snapshot first (on a deep copy) and bumps its version. In a migration:
+
+```text
+operations = [refresh_statechart_columns_op("shop", "Order", migrate=rename_state)]
+```
+
+From the shell: `python manage.py xsm_refresh_columns shop.Order [--batch 1000] [--dry-run]`.
 
 ### Signals
 
@@ -177,7 +187,7 @@ class OrderAdmin(StatechartAdminMixin, admin.ModelAdmin):
     xsm_confirm_events = ("CANCEL",)
 ```
 
-The change form shows **one button per event this user may send now**, computed with `has_event_permission`. Each button is its own **CSRF-protected POST form**, rendered after the admin's form. Buttons need no JavaScript. Events tagged `meta.confirm` (or listed in `xsm_confirm_events`) go through a confirmation page with a **reason** field. The reason and `actor=request.user` land in the audit row. The page also gets a `TransitionLogInline` (read-only, newest first), a state badge with a link to a Mermaid diagram view (active state highlighted, needs `view` permission), a `StateListFilter`, and one bulk action per event that reports `n changed / m denied`. Labels come from `meta.title`, then `description`, then the event id. UI strings use `gettext_lazy`.
+The change form shows **one button per event this user may send now**, computed with `has_event_permission`. Each button is its own **CSRF-protected POST form**, rendered after the admin's form. Buttons need no JavaScript. Events tagged `meta.confirm` (or listed in `xsm_confirm_events`) go through a confirmation page with a **reason** field. The reason and `actor=request.user` land in the audit row. The page also gets a `TransitionLogInline` (read-only, newest first, the latest `max_rows = 50`; visible to anyone who may view the row), a state badge with a link to a Mermaid diagram view (active state highlighted, needs `view` permission), a `StateListFilter`, and one bulk action per event that reports `n changed / m denied`. Labels come from `meta.title`, then `description`, then the event id. UI strings use `gettext_lazy`.
 
 A change form looks like this, rendered as text:
 
@@ -203,11 +213,12 @@ Templates (override in your project): `admin/xsm/change_form.html` (blocks `xsm_
 | `xsm_diagram app.Model [-f mermaid\|plantuml\|ascii] [-o out]` | `xsm diagram` |
 | `xsm_docs app.Model [-o dir]` | `xsm docs` |
 | `xsm_simulate app.Model [-e A,B,+500] [--json]` | `xsm simulate` (stub logic, no database) |
-| `xsm_deadlines [app.Model ...] [--forever]` | the durable-timer scanner |
+| `xsm_deadlines [app.Model ...] [--forever] [--interval S] [--limit N]` | the durable-timer scanner |
+| `xsm_refresh_columns app.Model [--batch N] [--dry-run]` | `refresh_statechart_columns` |
 | `xsm_snapshots app.Model [--stale] [--json]` | rows and their `machine_version` |
 | `xsm_migrate_fsm app.Model --field state [--dry-run] [--write-chart P]` | see below |
 
-The output of the first four matches `xsm` byte for byte, and the tests pin that. Charts given as a dict or a callable are written to a temporary JSON file first.
+The output of the first four matches `xsm` byte for byte, and the tests pin that. A bad label or option, or an unmigrated database, is a `CommandError` (exit status 1), not a traceback. Charts given as a dict or a callable are written to a temporary JSON file first.
 
 ## Coming from django-fsm-2
 
@@ -237,7 +248,7 @@ The output of the first four matches `xsm` byte for byte, and the tests pin that
 
 ## Threat model
 
-> **Who can call this:** any code holding a model instance can `send()` events. Guards, not the ORM, decide what a *user* may do, so put a `PermissionGuard` / `RoleGuard` on every event that needs one and pass `actor=request.user`. In the admin, anyone with the model's **change** permission sees the buttons that `has_event_permission` allows. Each press is **re-checked on POST**.
+> **Who can call this:** any code holding a model instance can `send()` events. Guards, not the ORM, decide what a *user* may do, so put a `PermissionGuard` / `RoleGuard` on every event that needs one and pass `actor=request.user`. In the admin, anyone with the model's **change** permission sees the buttons that `has_event_permission` allows. Each press is **re-checked on POST**; a POST from a user without the change permission is a 403.
 >
 > **What it exposes:** the admin transition view is a **POST form with Django's CSRF token** (the admin amendment to X0.7). A GET renders the confirmation form and changes nothing. A POST without the token is 403 (`CsrfViewMiddleware` plus `csrf_protect` on the view). The diagram view needs the **view** permission. The audit log stores the actor, the reason and a **redacted** payload (`password`, `token`, `secret`... masked). Management commands run with the caller's shell rights.
 >
