@@ -292,8 +292,13 @@ jobs:
               export XSM_ADOPTION_VENV=1
               targets="$targets tests/test_battle_309_adoption.py" ;;&
             # 🐘 #284: Postgres parity on the Linux cell (Docker present).
+            #    (review: pytest-socket must let the Docker unix socket and
+            #    testcontainers' `localhost` URL through on that cell)
             sqlalchemy)
-              if [ "$RUNNER_OS" = "Linux" ]; then export XSM_CONTAINERS=1; fi ;;
+              if [ "$RUNNER_OS" = "Linux" ]; then
+                export XSM_CONTAINERS=1
+                socket_args="--disable-socket --allow-unix-socket --allow-hosts=127.0.0.1,::1,localhost"
+              fi ;;
             # 📡 #294: the shared adapter core lives in tests/contrib/brokers.
             redis)
               targets="$targets tests/contrib/brokers" ;;
@@ -308,7 +313,7 @@ jobs:
             django)
               targets="$targets tests/persistence/test_store_contract.py tests/test_examples_integrations.py" ;;
           esac
-          pytest $targets -q --no-header --disable-socket --allow-hosts=127.0.0.1,::1
+          pytest $targets -q --no-header ${socket_args:---disable-socket --allow-hosts=127.0.0.1,::1}
 
   # ---------------------------------------------------------------------------
   # 📡 Live brokers (#294) -- OPT-IN: manual dispatch only, never the default

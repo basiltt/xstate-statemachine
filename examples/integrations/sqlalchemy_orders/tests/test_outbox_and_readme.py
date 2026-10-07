@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
 import pytest
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
 import sync_app

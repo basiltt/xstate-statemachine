@@ -386,6 +386,14 @@ def test_is_locked_recognises_dialects() -> None:
     assert _is_locked(wrap("x", "40P01"))
     assert _is_locked(wrap("Lock wait timeout exceeded"))
     assert not _is_locked(wrap("connection refused", "08001"))
+    # review #284: a table / column NAME containing a lock word is not
+    # contention -- a schema error must fail loudly, not spin in retry
+    assert not _is_locked(wrap("no such table: locked_orders"))
+    assert not _is_locked(wrap("no such column: busy_flag"))
+    assert not _is_locked(wrap("value 'deadlock' violates constraint"))
+    # with a SQLSTATE present, the code alone decides
+    assert not _is_locked(wrap("database is locked", "42P01"))
+    assert _is_locked(wrap("canceling statement due to lock timeout"))
 
 
 def test_retry_budget_exhaustion_sets_attempts(engine: Any) -> None:

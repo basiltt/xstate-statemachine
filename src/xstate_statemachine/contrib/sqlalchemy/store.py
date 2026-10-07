@@ -318,13 +318,19 @@ class SQLAlchemyStore(BaseStore):
 #: lock_not_available (PG ``lock_timeout`` / ``NOWAIT``), deadlock,
 #: serialization failure.
 _LOCK_SQLSTATES = frozenset({"55P03", "40P01", "40001"})
-#: Message fragments for drivers without a SQLSTATE (SQLite, MySQL).
-_LOCK_WORDS = (
-    "locked",
-    "busy",
-    "lock timeout",
-    "lock wait timeout",
-    "deadlock",
+#: Message phrases for drivers WITHOUT a SQLSTATE (SQLite, MySQL) --
+#: anchored to the engines' real wording (review #284: a bare "locked"
+#: matched "no such table: locked_orders" and turned a schema error into
+#: a retry loop).
+_LOCK_PHRASES = (
+    "database is locked",
+    "database table is locked",
+    "database schema is locked",
+    "database is busy",
+    "sqlite_busy",
+    "lock wait timeout exceeded",
+    "deadlock found when trying to get lock",
+    "canceling statement due to lock timeout",
     "could not obtain lock",
 )
 
@@ -335,13 +341,15 @@ def _is_locked(exc: BaseException) -> bool:
     🔥 #284-a battle: only SQLite's "locked"/"busy" were recognised; a
     Postgres ``lock_timeout`` ("canceling statement due to lock timeout")
     or a deadlock leaked as a raw `OperationalError` that
-    `send_with_retry` does not retry."""
+    `send_with_retry` does not retry. When the driver gives a SQLSTATE
+    it is the ONLY thing consulted; the phrase list is for drivers that
+    do not."""
     orig = getattr(exc, "orig", exc)
     code = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
-    if code in _LOCK_SQLSTATES:
-        return True
+    if code:
+        return code in _LOCK_SQLSTATES
     msg = str(orig).lower()
-    return any(w in msg for w in _LOCK_WORDS)
+    return any(w in msg for w in _LOCK_PHRASES)
 
 
 # -----------------------------------------------------------------------------
