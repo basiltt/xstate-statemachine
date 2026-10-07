@@ -476,3 +476,24 @@ def test_raw_insert_of_schema_row_roundtrip(engine: Any) -> None:
             conn.execute(
                 insert(tables.schema).values(component="sqlalchemy", version=1)
             )
+
+
+# -----------------------------------------------------------------------------
+# 4. docs truth
+# -----------------------------------------------------------------------------
+def test_docs_name_every_public_member_and_no_stale_outbox_claim() -> None:
+    import src.xstate_statemachine.contrib.sqlalchemy as pkg
+
+    guide = (ROOT / "docs/_guide/integration-sqlalchemy.md").read_text("utf-8")
+    api = (ROOT / "docs/api/index.md").read_text("utf-8")
+    row = next(
+        ln for ln in api.splitlines() if ln.startswith("| `[sqlalchemy]`")
+    )
+    for name in pkg.__all__:
+        assert f"`{name}" in guide or name == "SCHEMA_VERSION", name
+        assert f"`{name}`" in row, name
+    for stale in ("arrives with #293", "pretends to publish", "0.12"):
+        assert stale not in guide, stale
+    assert "at-least-once" in guide and "integration-eda" in guide
+    readme = (EXAMPLE / "README.md").read_text("utf-8")
+    assert "publishes nothing and does not pretend" not in readme

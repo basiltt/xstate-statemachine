@@ -66,7 +66,7 @@ with Session(engine) as s:
 
 ### `StatechartType(max_snapshot_bytes=1 MiB)`
 
-A `TypeDecorator` over `JSON`, and `JSONB` on Postgres through `with_variant`. `cache_ok = True`. The Python value is the snapshot **dict**, meaning `json.loads(interpreter.get_snapshot())`, or `None`. The size is checked on write **and** on read (X0.4) and raises `SnapshotTooLargeError`. It never hydrates an interpreter itself. `row.machine` does that lazily.
+A `TypeDecorator` over `JSON`, and `JSONB` on Postgres through `with_variant`. `cache_ok = True`. The Python value is the snapshot **dict**, meaning `json.loads(interpreter.get_snapshot())`, or `None`. The size is checked on write **and** on read (X0.4) and raises `SnapshotTooLargeError` (the same class, unwrapped, that `SQLAlchemyStore` raises). A stored value that is not a JSON object is `SnapshotCorruptError`; writing anything but a dict or `None` is `TypeError`. A `NULL` column means "never sent": `.state` is `None`, `in_state()` matches nothing, and the first `send()` starts from the initial state. Context values that are not JSON (`datetime`, `Decimal`, `set`) are stored as their `str()`, exactly as `get_snapshot()` does everywhere, so convert them in your actions if you need them back. It never hydrates an interpreter itself. `row.machine` does that lazily.
 
 ### `StatechartMixin`
 
@@ -82,7 +82,7 @@ The mixin adds four columns: `statechart_state` (`String`, indexed; the sorted l
 
 - `StatechartMixin.optimistic()` returns `{"version_id_col": statechart_version}` for `__mapper_args__`. Without it, the listener still increments the version whenever the snapshot changes. It just does not fence the write.
 - `.state` is a hybrid property. On an instance it returns the state string. In SQL it is the column.
-- `Model.in_state(*ids)` returns a `WHERE` clause that matches rows where any of the ids is active, either as a leaf or as an ancestor of one: `in_state("order.live")` matches `order.live.pay.due`.
+- `Model.in_state(*ids)` returns a `WHERE` clause that matches rows where any of the ids is active, either as a leaf or as an ancestor of one: `in_state("order.live")` matches `order.live.pay.due`. Ids match literally: `_` and `%` (legal in XState ids) are escaped, never `LIKE` wildcards, on every dialect.
 - `row.send(event, *, session=None, lock="optimistic", plugins=(), **payload) -> Receipt` restores a `SyncInterpreter` from the snapshot, sends the event, then **flushes** the snapshot, the denormalised columns, the deadline index and the audit rows. The caller commits. A stale `version_id_col` raises `ConflictError`, and the session must then be rolled back. `lock="pessimistic"` first re-selects the row with `FOR UPDATE` (Postgres/MySQL).
 - `row.send_with_retry(...)` and the module-level `send_with_retry(row, event, *, session, retries=10, backoff=None, lock=...)` catch `ConflictError`/`LockTimeoutError`, roll back the session, reload the row, back off and try again. ⚠️ **Actions may run once per attempt** (X0.3), so put side effects in services.
 - `row.machine` is a restored, not-started `SyncInterpreter`, for reading `.context`, `.can()` and `.value`.
@@ -91,9 +91,21 @@ The mixin adds four columns: `statechart_state` (`String`, indexed; the sorted l
 
 ### `xsm_sqlalchemy_ddl(metadata, *, snapshots_table="xsm_snapshots") -> MetaData`
 
-Adds the extra's tables to your metadata: `xsm_deadlines`, `xsm_transitions`, `xsm_inbox`, `xsm_locks`, `xsm_schema` and the `SQLAlchemyStore` snapshot table. Alembic autogenerate then sees them.
+Adds the extra's tables to your metadata: `xsm_deadlines`, `xsm_transitions`, `xsm_inbox`, `xsm_locks`, `xsm_schema`, `xsm_outbox` and the `SQLAlchemyStore` snapshot table. Alembic autogenerate then sees them, and does not propose dropping the outbox that `SQLAlchemyOutboxStore` created.
 
-📝 **Alembic.** Every column is a plain SQLAlchemy type, and `StatechartType` renders as `JSON`. Call `xsm_sqlalchemy_ddl(Base.metadata)` in the module your `env.py` imports for `target_metadata` and autogenerate proposes nothing unexpected. A test pins this (`compare_metadata(...) == []`). If you use a custom `render_item`, render `StatechartType` as `sa.JSON()`. It is only a Python-side guard.
+📝 **Alembic.** Call `xsm_sqlalchemy_ddl(Base.metadata)` in the module your `env.py` imports for `target_metadata`, and pass the library's `render_item` hook so `StatechartType` is written as `sa.JSON().with_variant(postgresql.JSONB(), "postgresql")`, the DDL `create_all` emits. A migration generated on SQLite then creates `JSONB` on Postgres:
+
+<!-- doc-requires: sqlalchemy -->
+```python
+# migrations/env.py (excerpt)
+from xstate_statemachine.contrib.sqlalchemy import render_statechart_type
+
+def configure(context, connection, target_metadata):
+    context.configure(connection=connection, target_metadata=target_metadata,
+                      render_item=render_statechart_type)
+```
+
+`render_statechart_type(type_, obj, autogen_context)` returns that string for a `StatechartType` and `False` for everything else (Alembic's default rendering), adding the `postgresql` import to the migration. `StatechartType.compare_against_backend` tells autogenerate that a `JSONB` (Postgres) or `JSON` column is this type, so there is no `modify_type` diff. Tests pin `compare_metadata(...) == []` after `alembic upgrade head` on SQLite **and** Postgres, plus a second migration autogenerated on top that contains only the team's `add_column`. The size cap is a Python-side guard, not a database type.
 
 ### `SQLAlchemyStore(session_factory, *, table="xsm_snapshots", metadata=None, create_tables=True, lock_ttl_s=60, codec=None, max_snapshot_bytes=1 MiB)`
 
@@ -104,7 +116,7 @@ Implements `StateStore`. `session_factory` is a `sessionmaker`.
 - `transaction()` gives you the same grouping without a lease.
 - `forget(key)` erases the record, its deadlines, its lease and its transition log in one transaction (X0.5).
 - `due_keys(until_wall, limit=)` reads the deadline index. `DueTimerScanner` uses it.
-- `xsm_schema` stores the layout version. Creation is idempotent, and a **newer** version is refused with `StoreError` (X0.10).
+- `xsm_schema` stores the layout version. Creation is idempotent, and a **newer** version is refused with `StoreError` (X0.10), with `create_tables=True` or `False`.
 
 ### `AsyncSQLAlchemyStore(async_session_factory, ...)`
 
@@ -118,15 +130,63 @@ Implements `AsyncStateStore` and runs the same statements through `AsyncSession.
 
 Behind `Model.statechart_store()`. Saves are a conditional Core `UPDATE` on `statechart_version`, the same fence the ORM applies. It never creates or deletes rows, and `forget()` erases only the auxiliary rows.
 
-### Transactional outbox (`SQLAlchemyOutboxStore`, [#293](https://github.com/basiltt/xstate-statemachine/issues/293))
+### `SQLAlchemyOutboxStore(store, *, create_table=True)`
 
-Part 3 of [#284](https://github.com/basiltt/xstate-statemachine/issues/284) adds an `xsm_outbox` table written in the same transaction as the state change, drained to a `BrokerAdapter` with at-least-once delivery. It depends on the EDA core's `BrokerAdapter` / `OutboxStore` protocols and ships with them. Nothing in this release pretends to publish events.
+The EDA core's `OutboxStore` ([#293](https://github.com/basiltt/xstate-statemachine/issues/293); see the [EDA guide](../integration-eda/)) in the `xsm_outbox` table of a `SQLAlchemyStore`. Pass `OutboxPlugin(SQLAlchemyOutboxStore(store))` to `row.send(..., plugins=[...])` or `send_with_retry`: the plugin's rows are written on the **caller's session connection**, so the event commits with the state change or not at all. `OutboxRelay(outbox, broker).relay_once_sync()` drains it.
+
+<!-- doc-requires: sqlalchemy -->
+```python
+from typing import Optional
+from sqlalchemy import create_engine
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+from xstate_statemachine import create_machine
+from xstate_statemachine.contrib.sqlalchemy import (
+    SQLAlchemyOutboxStore, SQLAlchemyStore, StatechartMixin, StatechartType, xsm_sqlalchemy_ddl)
+from xstate_statemachine.eda import OutboxPlugin, OutboxRelay, SyncFakeBrokerAdapter
+
+chart = create_machine({"id": "inv", "initial": "open", "context": {"n": 7},
+    "states": {"open": {"on": {"PAY": {"target": "paid",
+                                       "meta": {"publish": {"type": "invoice.paid", "data": ["n"]}}}}},
+               "paid": {}}})
+
+class Base(DeclarativeBase):
+    pass
+
+class Invoice(StatechartMixin, Base):
+    __tablename__ = "invoices"
+    __xsm_machine__ = chart
+    id: Mapped[int] = mapped_column(primary_key=True)
+    statechart: Mapped[Optional[dict]] = mapped_column(StatechartType, nullable=True)
+    __mapper_args__ = StatechartMixin.optimistic()
+
+engine = create_engine("sqlite://")
+xsm_sqlalchemy_ddl(Base.metadata).create_all(engine)       # includes xsm_outbox
+outbox = SQLAlchemyOutboxStore(SQLAlchemyStore(sessionmaker(engine), metadata=Base.metadata))
+plugin = OutboxPlugin(outbox, topic="billing")
+
+with Session(engine) as s:                                  # rolled back: no event
+    inv = Invoice(); s.add(inv); s.flush()
+    inv.send("PAY", session=s, plugins=[plugin])
+    s.rollback()
+assert outbox.count() == 0
+
+with Session(engine) as s:                                  # committed: one event
+    inv = Invoice(); s.add(inv); s.flush()
+    inv.send("PAY", session=s, plugins=[plugin])
+    s.commit()
+broker = SyncFakeBrokerAdapter()
+assert OutboxRelay(outbox, broker).relay_once_sync() == 1
+[d] = list(broker.subscribe("billing", timeout=0))
+assert d.envelope.type == "invoice.paid" and d.envelope.data == {"n": 7}
+```
+
+The relay marks a row sent only **after** the broker accepted it. A crash in between re-publishes that row with the **same envelope id** (at-least-once), so consumers dedup on `envelope.id`. The [`sqlalchemy_orders` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/sqlalchemy_orders) runs it end to end (`python sync_app.py relay`).
 
 ## Guarantees
 
-> **What this does:** a row's snapshot, its state columns, its deadline index and (with `__xsm_audit__`) its audit rows are written in **one flush**, so a rollback leaves none of them. `version_id_col` makes a concurrent write a `ConflictError`, never a lost update (16 threads × 100 `send_with_retry` on one SQLite row → exactly 1600). The columns always match the snapshot, because a listener recomputes them on every flush. `SQLAlchemyStore` passes the stdlib store contract suite. Under `PessimisticLock` the save, the inbox mark and the audit rows commit together. `forget()` erases every table for a key.
+> **What this does:** a row's snapshot, its state columns, its deadline index and (with `__xsm_audit__`) its audit rows are written in **one flush**, so a rollback leaves none of them. `version_id_col` makes a concurrent write a `ConflictError`, never a lost update (16 threads × 100 `send_with_retry` on one SQLite row → exactly 1600). The columns always match the snapshot, because a listener recomputes them on every flush. `SQLAlchemyStore` passes the stdlib store contract suite. Under `PessimisticLock` the save, the inbox mark and the audit rows commit together. `forget()` erases every table for a key. With `OutboxPlugin(SQLAlchemyOutboxStore(...))` passed to `row.send()`, the outbox row commits **with** the row (one transaction, X0.3), and `OutboxRelay` delivers it **at least once**: a row is marked sent only after the broker accepted it, a crash in between re-sends the same envelope id, and consumers dedup on it.
 >
-> **What this does not do:** it does not give exactly-once effects: a retried send may run its actions again (X0.3). It does not publish events (the outbox arrives with #293). The mixin's `lock="pessimistic"` gives no row lock on SQLite (SQLite serialises writers on its own). It cannot see writes that bypass the ORM *and* the version column.
+> **What this does not do:** it does not give exactly-once effects: a retried send may run its actions again (X0.3). The mixin's `lock="pessimistic"` gives no row lock on SQLite (SQLite serialises writers on its own). It cannot see writes that bypass the ORM *and* the version column.
 >
 > See the programme-wide [Guarantees](../guarantees/) and [Security](../security/) pages ([#303](https://github.com/basiltt/xstate-statemachine/issues/303)).
 
@@ -143,7 +203,7 @@ Part 3 of [#284](https://github.com/basiltt/xstate-statemachine/issues/284) adds
 | SQLAlchemy | Database | Python | Tested in CI |
 |:--|:--|:--|:--|
 | 2.0.x | SQLite (pysqlite, aiosqlite) | 3.9 – 3.14 | ✅ `[sqlalchemy]` cell |
-| 2.0.x | PostgreSQL | 3.9 – 3.14 | opt-in: set `DATABASE_URL=postgresql+<driver>://…` (no testcontainers job yet) |
+| 2.0.x | PostgreSQL 16 (psycopg 3) | 3.9 – 3.14 | opt-in: `DATABASE_URL=postgresql+<driver>://…`, or `XSM_CONTAINERS=1` for a throwaway testcontainer (no CI job yet) |
 
 ## Troubleshooting
 
@@ -153,5 +213,7 @@ Part 3 of [#284](https://github.com/basiltt/xstate-statemachine/issues/284) adds
 | `ConflictError` from `row.send()` | another session changed the row after you loaded it | roll back and retry, or use `send_with_retry` |
 | `TypeError: … __xsm_audit__ needs the xsm_transitions table` | audit enabled without the DDL | call `xsm_sqlalchemy_ddl(Base.metadata)` |
 | `StoreError: … schema is version N, newer than this library supports` | a newer library wrote this database | upgrade xstate-statemachine |
-| Alembic wants to drop `xsm_*` tables | the tables are not on `target_metadata` | call `xsm_sqlalchemy_ddl(Base.metadata)` where `env.py` imports your models |
+| Alembic wants to drop `xsm_*` tables (incl. `xsm_outbox`) | the tables are not on `target_metadata` | call `xsm_sqlalchemy_ddl(Base.metadata)` where `env.py` imports your models |
+| Alembic proposes `modify_type` on `statechart` (Postgres), or a migration made on SQLite created `json`, not `jsonb` | `render_item` rendered `sa.JSON()` | use `render_item=render_statechart_type` |
+| `SnapshotCorruptError` loading a row | the `statechart` column holds invalid JSON or a non-object | repair it, or set it to `NULL` (= never sent) |
 | `LockTimeoutError` on SQLite under load | many writers on one file | raise the driver `timeout` (`connect_args={"timeout": 30}`) or use Postgres |
