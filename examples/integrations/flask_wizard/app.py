@@ -122,9 +122,27 @@ xsm.register(
 
 
 def make_store(settings: Mapping[str, Any]) -> Any:
-    """`SessionStore` by default; `SQLiteStore` when WIZARD_STORE=sqlite."""
-    if settings.get("WIZARD_STORE", "session") == "sqlite":
-        return SQLiteStore(settings.get("WIZARD_DB", "wizard.db"))
+    """`SessionStore` by default; `SQLiteStore` when WIZARD_STORE=sqlite;
+    `SQLAlchemyStore` over the same file when WIZARD_STORE=sqlalchemy
+    (needs ``pip install "xstate-statemachine[sqlalchemy]"``)."""
+    kind = settings.get("WIZARD_STORE", "session")
+    db = settings.get("WIZARD_DB", "wizard.db")
+    if kind == "sqlite":
+        return SQLiteStore(db)
+    if kind == "sqlalchemy":
+        # 💡 Any SQLAlchemy URL works here (Postgres, MySQL ...); the
+        #    example uses a SQLite file so it runs with no server.
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+
+        from xstate_statemachine.contrib.sqlalchemy import SQLAlchemyStore
+
+        engine = create_engine(f"sqlite:///{db}")
+        return SQLAlchemyStore(sessionmaker(engine))
+    if kind != "session":
+        raise ValueError(
+            f"WIZARD_STORE={kind!r}: expected session, sqlite or sqlalchemy"
+        )
     return SessionStore()
 
 
@@ -150,9 +168,9 @@ def create_app(config: Optional[Mapping[str, Any]] = None) -> Flask:
     store = make_store(app.config)
     # 🔒 #285 battle: a double-click (two POSTs in flight on ONE wizard)
     #    under the default optimistic lock makes the second lose with
-    #    ConflictError. The SQLite store can serialise writers per key
+    #    ConflictError. A server-side store can serialise writers per key
     #    instead; the cookie store has one writer by construction.
-    lock = PessimisticLock() if isinstance(store, SQLiteStore) else None
+    lock = None if isinstance(store, SessionStore) else PessimisticLock()
     xsm.init_app(app, store=store, lock=lock)
     _routes(app)
     return app

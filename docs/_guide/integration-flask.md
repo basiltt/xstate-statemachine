@@ -5,7 +5,7 @@ description: "An init_app extension, a statechart blueprint, session-keyed wizar
 
 # Flask
 
-Flask has a very large install base and no state-machine extension. This extra follows the canonical `init_app` pattern. You get an `XState` extension that keeps its state in `app.extensions`, so the application-factory pattern is safe. `act()` gives you *create → act → persist → discard* on any `StateStore`. There is a blueprint with the same route table as the FastAPI router, a cookie-backed `SessionStore` for small multi-step wizards, and `flask xsm` commands for the machines your app registers. Quart, Flask's async twin, is served by a shim built on the same core.
+Flask has a very large install base, and (as of October 2026) PyPI has no Flask extension for statecharts -- no `flask-fsm`, `flask-statemachine` or `flask-transitions`. This extra follows the canonical `init_app` pattern. You get an `XState` extension that keeps its state in `app.extensions`, so the application-factory pattern is safe. `act()` gives you *create → act → persist → discard* on any `StateStore`. There is a blueprint with the same route table as the FastAPI router, a cookie-backed `SessionStore` for small multi-step wizards, and `flask xsm` commands for the machines your app registers. Quart, Flask's async twin, is served by a shim built on the same core.
 
 ## Install
 
@@ -73,7 +73,98 @@ Binds a store and its policies to *app*. The state lives in `app.extensions["xst
 
 ### `act(name, key=None, *, principal=None)`
 
-A context manager that yields a started `SyncInterpreter` and saves on a clean exit. Nothing is written if the block raises. It is `persistence.persisted()` using the app's lock, plugins and inbox. Under the default optimistic lock, a concurrent writer causes `ConflictError` at exit (HTTP 409 in the blueprint). Retry, or configure `PessimisticLock`. `act()` **refuses to run inside a GET/HEAD/OPTIONS request** and raises `MethodNotAllowedError` (405).
+A context manager that yields a started `SyncInterpreter` and saves on a clean exit. Nothing is written if the block raises. It is `persistence.persisted()` using the app's lock, plugins and inbox. Under the default optimistic lock, a concurrent writer causes `ConflictError` at exit. The blueprint turns it into a 409 problem; **in your own view it propagates**, and Flask answers 500 unless you catch it (see [Concurrent writers](#concurrent-writers-409-and-how-to-avoid-it)). `act()` **refuses to run inside a GET/HEAD/OPTIONS/TRACE request** and raises `MethodNotAllowedError`, an `HTTPProblemError` with `status = 405`. The blueprint renders it as a 405 problem; in your own view, render it with `problem_response(exc)` or register `app.register_error_handler(HTTPProblemError, problem_response)` -- otherwise Flask answers 500.
+
+`g.xsm` (set before every request) exposes `act`, `peek`, `skip_save` and `registry`. `g.xsm.skip_save()` (or `xsm.skip_save()`) leaves the enclosing `act()` block **without saving** -- the version is not bumped and nothing is published to SSE. The `flask_wizard` example uses it to refuse a stale form under the lock.
+
+### Concurrent writers: 409, and how to avoid it
+
+Two requests on one key at once: under the default `OptimisticLock` the second to save loses with `ConflictError`. Nothing retries for you. Pick one of two patterns.
+
+**Serialise writers** -- `PessimisticLock()` holds the store's per-key lock for the whole `act()` block, so no request loses (needs a store with `lock()`: `SQLiteStore`, `SQLAlchemyStore`, `RedisStore`, not `SessionStore`):
+
+<!-- doc-requires: flask -->
+```python
+import os, tempfile, threading
+from flask import Flask
+from xstate_statemachine import MachineLogic, create_machine
+from xstate_statemachine.contrib.flask import XState, allow_all, receipt_response
+from xstate_statemachine.persistence import PessimisticLock, SQLiteStore
+
+def inc(i, ctx, e, a):
+    ctx["n"] += 1
+
+counter = create_machine(
+    {"id": "counter", "initial": "on", "context": {"n": 0},
+     "states": {"on": {"on": {"INC": {"actions": "inc"}}}}},
+    logic=MachineLogic(actions={"inc": inc}))
+xsm = XState()
+xsm.register("counter", counter, authorize=allow_all, context_serializer=dict)
+app = Flask(__name__)
+db = os.path.join(tempfile.mkdtemp(), "c.db")
+xsm.init_app(app, store=SQLiteStore(db), lock=PessimisticLock())
+
+@app.post("/c/<k>/inc")
+def bump(k):
+    with xsm.act("counter", k) as i:
+        return receipt_response(i, i.send("INC", wait=True))
+
+codes = []
+def hit():
+    codes.append(app.test_client().post("/c/1/inc").status_code)
+threads = [threading.Thread(target=hit) for _ in range(20)]
+for t in threads: t.start()
+for t in threads: t.join()
+assert codes == [200] * 20
+with app.test_request_context(method="POST"):
+    assert xsm.peek("counter", "1")["context"] == {"n": 20}
+```
+
+**Retry the work** -- keep the optimistic lock and run the block through `persisted_retry` (or `OptimisticLock(retries=...).run(...)`), which reloads and re-applies your function on a conflict. The function may run more than once, so it must only send events:
+
+<!-- doc-requires: flask -->
+```python
+import os, tempfile, threading
+from flask import Flask
+from xstate_statemachine import MachineLogic, create_machine
+from xstate_statemachine.contrib.flask import XState, allow_all
+from xstate_statemachine.persistence import (
+    OptimisticLock, SQLiteStore, persisted_retry)
+
+def inc(i, ctx, e, a):
+    ctx["n"] += 1
+
+counter = create_machine(
+    {"id": "counter", "initial": "on", "context": {"n": 0},
+     "states": {"on": {"on": {"INC": {"actions": "inc"}}}}},
+    logic=MachineLogic(actions={"inc": inc}))
+xsm = XState()
+xsm.register("counter", counter, authorize=allow_all, context_serializer=dict)
+app = Flask(__name__)
+store = SQLiteStore(os.path.join(tempfile.mkdtemp(), "c.db"))
+xsm.init_app(app, store=store)
+
+@app.post("/c/<k>/inc")
+def bump(k):
+    r = xsm.registry()
+    n = persisted_retry(
+        store, r.store_key("counter", k), counter,
+        lambda i: (i.send("INC", wait=True), i.context["n"])[1],
+        lock=OptimisticLock(retries=50))
+    return {"n": n}
+
+codes = []
+def hit():
+    codes.append(app.test_client().post("/c/1/inc").status_code)
+threads = [threading.Thread(target=hit) for _ in range(20)]
+for t in threads: t.start()
+for t in threads: t.join()
+assert codes == [200] * 20
+with app.test_request_context(method="POST"):
+    assert xsm.peek("counter", "1")["context"] == {"n": 20}
+```
+
+`persisted_retry` bypasses `act()`'s extras -- the app's plugins, inbox and SSE fan-out are not applied; pass `plugins=` yourself if you need them. Use `PessimisticLock` when you need those.
 
 ### `receipt_response(interp, receipt, *, status=None, context_serializer=None)`
 
@@ -122,7 +213,35 @@ Runs the `xsm` command of the same name on the registered machine's JSON source.
 `CSRFProtect` rejects a POST that has no token, including JSON POSTs. There are two supported setups, and a test covers each one:
 
 - **Token auth** (bearer / API key, no cookies): exempt the blueprint with `csrf.exempt(app.blueprints["xsm_order"])`.
-- **Cookie-session auth:** keep CSRF on and send the token in the `X-CSRFToken` header (`generate_csrf()` in your page).
+- **Cookie-session auth:** keep CSRF on. The browser must send **both** the session cookie that `generate_csrf()` set (fetch's default `credentials: "same-origin"` does) **and** the token in the `X-CSRFToken` header (or `X-CSRF-Token`). The header alone, without the cookie session it was issued in, is a 400. Without either, Flask-WTF answers 400 `The CSRF token is missing.` -- an HTML error page, not a problem+json body.
+
+<!-- doc-requires: flask, flask_wtf -->
+```python
+from flask import Flask
+from flask_wtf.csrf import CSRFProtect, generate_csrf
+from xstate_statemachine import create_machine
+from xstate_statemachine.contrib.flask import XState, allow_all, create_statechart_blueprint
+from xstate_statemachine.persistence import MemoryStore
+
+xsm = XState()
+xsm.register("o", create_machine({"id": "o", "initial": "a",
+             "states": {"a": {"on": {"GO": "b"}}, "b": {}}}), authorize=allow_all)
+app = Flask(__name__)
+app.secret_key = "dev"
+CSRFProtect(app)
+xsm.init_app(app, store=MemoryStore())
+app.register_blueprint(create_statechart_blueprint(xsm, "o", "/o"))
+app.add_url_rule("/token", "token", generate_csrf)   # your page embeds this
+
+browser = app.test_client()
+assert browser.post("/o/1/send", json={"type": "GO"}).status_code == 400
+token = browser.get("/token").get_data(as_text=True)
+ok = browser.post("/o/1/send", json={"type": "GO"}, headers={"X-CSRFToken": token})
+assert ok.status_code == 200 and ok.get_json()["state"] == "b"
+stranger = app.test_client()                          # token, but not its session
+assert stranger.post("/o/2/send", json={"type": "GO"},
+                     headers={"X-CSRFToken": token}).status_code == 400
+```
 
 ### Quart: `xstate_statemachine.contrib.quart`
 
@@ -130,9 +249,9 @@ Runs the `xsm` command of the same name on the registered machine's JSON source.
 
 ## Guarantees
 
-> **What this does:** `act()` saves only on a clean exit, with `expected_version`, so concurrent requests on one key never lose an update. 50 threads posting to one `SQLiteStore` key produce exactly 50 increments, with the losers getting 409 and retrying. An idempotent replay returns the original receipt and does not bump the version. SSE subscribers see a transition only after its save committed. Two apps built from one extension share nothing.
+> **What this does:** `act()` saves only on a clean exit, with `expected_version`, so concurrent requests on one key never lose an update: every request either commits on top of the latest version or is refused (409 in the blueprint, `ConflictError` in your own view) with nothing saved. With `PessimisticLock()`, 50 threads posting to one `SQLiteStore` key produce exactly 50 increments and fifty 200s; under the default optimistic lock most of them get 409 and the count equals the number of 200s. An idempotent replay returns the original receipt and does not bump the version. SSE subscribers see a transition only after its save committed. Two apps built from one extension share nothing.
 >
-> **What this does not do:** it does not retry a 409 for you; the client retries (idempotency keys make that safe). It does not push transitions across processes over SSE. It does not make `SessionStore` replay-proof: a client can resend an older signed cookie, so use a server-side store for anything that matters. It does not run async authorizers under Flask (use Quart).
+> **What this does not do:** it does not retry a 409 for you; the client retries (idempotency keys make that safe), or the server avoids it with `PessimisticLock` / `persisted_retry` ([patterns](#concurrent-writers-409-and-how-to-avoid-it)). It does not push transitions across processes over SSE. It does not make `SessionStore` replay-proof: a client can resend an older signed cookie, so use a server-side store for anything that matters. It does not run async authorizers under Flask (use Quart).
 >
 > See the programme-wide [Guarantees](../guarantees/) and [Security](../security/) pages ([#303](https://github.com/basiltt/xstate-statemachine/issues/303)).
 
@@ -157,7 +276,8 @@ Runs the `xsm` command of the same name on the registered machine's JSON source.
 | `MissingExtraError: … pip install "xstate-statemachine[flask]"` | extra not installed | run the command |
 | `TypeError: register(authorize=) is required` | no authorizer | pass one, or `allow_all` on purpose |
 | `RuntimeError: XState.init_app(app, store=...) was not called` | `act()` in an app that never ran `init_app` | call `init_app` in your factory |
-| 405 `State-changing request must not use a safe method` | `act()` called from a GET view | make the route POST |
+| 405 `State-changing request must not use a safe method` (500 in your own view without an error handler) | `act()` called from a GET view | make the route POST; use `peek()` for reads |
+| 500 `ConflictError` from your own view | two writers on one key, optimistic lock | `PessimisticLock()`, `persisted_retry`, or catch it and answer 409 |
 | 400 `The CSRF token is missing.` | Flask-WTF `CSRFProtect` on a JSON route | exempt the blueprint, or send `X-CSRFToken` |
 | `SessionStoreTooLargeError` | the wizard's context outgrew the cookie | shrink the context or switch to `SQLiteStore` / `SQLAlchemyStore` |
 | The stream blocks other requests | single-threaded dev server | run a threaded/gevent server, or Quart |

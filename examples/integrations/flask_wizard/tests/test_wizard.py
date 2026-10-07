@@ -24,7 +24,7 @@ STEP = re.compile(r'data-step="(\w+)"')
 def make(tmp_path: Path, **cfg: Any) -> Any:
     base: Dict[str, Any] = {"TESTING": True, "WTF_CSRF_ENABLED": False}
     base.update(cfg)
-    if base.get("WIZARD_STORE") == "sqlite":
+    if base.get("WIZARD_STORE") in ("sqlite", "sqlalchemy"):
         base.setdefault("WIZARD_DB", str(tmp_path / "wizard.db"))
     return wizard.create_app(base)
 
@@ -127,6 +127,21 @@ class TestStores:
         post(c, "next", **ACCOUNT)
         post(c, "next", company="x", bio="y" * 5000)
         assert step_of(c) == "plan"
+
+    def test_sqlalchemy_variant_takes_the_same_input(self, tmp_path: Path):
+        pytest.importorskip("sqlalchemy")
+        from xstate_statemachine.contrib.sqlalchemy import SQLAlchemyStore
+
+        app = make(tmp_path, WIZARD_STORE="sqlalchemy")
+        assert isinstance(app.extensions["xstate"].store, SQLAlchemyStore)
+        c = app.test_client()
+        post(c, "next", **ACCOUNT)
+        post(c, "next", company="x", bio="y" * 5000)
+        assert step_of(c) == "plan"
+
+    def test_unknown_store_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="WIZARD_STORE"):
+            wizard.make_store({"WIZARD_STORE": "postgres"})
 
 
 class TestCSRF:

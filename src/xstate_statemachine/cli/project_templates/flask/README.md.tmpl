@@ -9,6 +9,7 @@ machine per browser session.
 pip install -r requirements.txt     # add flask-wtf for CSRF protection
 flask --app app run                 # http://127.0.0.1:5000/
 WIZARD_STORE=sqlite flask --app app run
+WIZARD_STORE=sqlalchemy flask --app app run   # needs xstate-statemachine[sqlalchemy]
 flask --app app xsm inspect wizard
 python -m pytest tests -q
 ```
