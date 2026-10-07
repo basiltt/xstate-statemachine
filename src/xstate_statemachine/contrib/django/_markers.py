@@ -17,13 +17,31 @@ import contextlib
 import threading
 from typing import Any, Dict, Iterator, List
 
+from ...exceptions import XStateMachineError
+
 __all__ = ["_marker_plugins", "_marker_session"]
 
 
-def _marker_plugins(plugins: List[Any]) -> List[Any]:
+def _marker_plugins(plugins: List[Any], using: str) -> List[Any]:
     """Plugins that buffer post-save writes (`flush_marks`), ordered by
-    ``flush_priority`` like `persisted()` does."""
+    ``flush_priority`` like `persisted()` does.
+
+    🐛 #281 battle (A): a `DjangoOutboxStore` / `DjangoInbox` on another
+    DB alias than the row's is NOT in the send's ``atomic()`` -- a
+    rolled-back approval kept its outbox row. Refused here, loudly.
+    """
     found = [p for p in plugins if callable(getattr(p, "flush_marks", None))]
+    for p in found:
+        for what in ("sink", "inbox"):
+            alias = getattr(getattr(p, what, None), "using", None)
+            if isinstance(alias, str) and alias != using:
+                raise XStateMachineError(
+                    f"{type(p).__name__}'s {what} writes to database "
+                    f"{alias!r} but this row is written on {using!r}: the "
+                    "write would not share the send's transaction. Build "
+                    "it with using=row._state.db (statechart_plugins "
+                    "receives the row)."
+                )
     return sorted(found, key=lambda p: getattr(p, "flush_priority", 0))
 
 

@@ -618,3 +618,66 @@ def test_two_relays_at_once_never_double_mark() -> None:
     assert errors == [] or all("lock" in str(e) for e in errors), errors
     assert sum(marked) == 40  # each row marked exactly once overall
     assert s.count(pending_only=True) == 0
+
+
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("lock", ["none", "optimistic", "pessimistic"])
+def test_audit_seq_gapless_under_16_writers_every_lock_mode(lock: str) -> None:
+    """The UPDATE takes the row lock before the audit flush reads
+    ``Max(seq)``, so no lock mode can hit the (ct, object_id, seq)
+    constraint as a raw IntegrityError."""
+    from django.db import IntegrityError
+    from shop.models import Approval
+
+    from xstate_statemachine.contrib.django.mixin import send_with_retry
+
+    a = Approval.objects.create()
+
+    def go(n: int) -> Any:
+        return lambda: send_with_retry(
+            Approval.objects.get(pk=a.pk), "COMMENT", text=str(n), lock=lock
+        )
+
+    errors = _fleet([go(n) for n in range(16)])
+    assert not [e for e in errors if isinstance(e, IntegrityError)], errors
+    fresh = Approval.objects.get(pk=a.pk)
+    seqs = [r.seq for r in fresh.history.all()]
+    assert seqs == list(range(1, len(seqs) + 1))
+    from xstate_statemachine.exceptions import ConflictError
+
+    # 📝 optimistic: a retry budget can run out under a 16-way storm --
+    #    a typed ConflictError, never a half-write (#280 decision).
+    assert all(isinstance(e, ConflictError) for e in errors), errors
+    if lock != "none":
+        assert len(seqs) == 16 - len(errors) == fresh.statechart_version
+    if lock == "pessimistic":
+        assert errors == []
+
+
+@pytest.mark.django_db(databases=["default", "other"])
+@pytest.mark.skipif(PG, reason="the 'other' alias is SQLite-only")
+def test_marker_store_on_another_alias_than_the_row_fails_loudly(
+    plugins_reset: Any,
+) -> None:
+    """An outbox / inbox on alias X for a row written on alias Y is NOT
+    in the send's transaction -- a rolled-back approval would keep its
+    integration event. Refused, never silently non-atomic."""
+    from shop.models import Approval
+
+    from xstate_statemachine.contrib.django.outbox import DjangoOutboxStore
+    from xstate_statemachine.exceptions import XStateMachineError
+
+    a = Approval.objects.using("other").create()
+    Approval.statechart_plugins = lambda row: [_outbox(DjangoOutboxStore())]
+    with pytest.raises(XStateMachineError, match="other"):
+        a.send("COMMENT", text="x")
+    assert DjangoOutboxStore(using="other").count() == 0
+    Approval.statechart_plugins = lambda row: [
+        _outbox(DjangoOutboxStore(using=row._state.db))
+    ]
+    Approval.objects.using("other").get(pk=a.pk).send("COMMENT", text="x")
+    Approval.statechart_plugins = lambda row: [_idem()]
+    with pytest.raises(XStateMachineError, match="inbox"):
+        Approval.objects.using("other").get(pk=a.pk).send(
+            "COMMENT", text="y", idempotency_key="k"
+        )

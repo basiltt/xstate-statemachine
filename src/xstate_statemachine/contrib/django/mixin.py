@@ -472,7 +472,7 @@ class StatechartModelMixin(models.Model):
         #    event. Buffer their rows during the run and flush them after
         #    the row's UPDATE, unwrapped: a failure now rolls the whole send
         #    back, exactly like `persisted()`.
-        markers = _marker_plugins(plugins)
+        markers = _marker_plugins(plugins, using)
         with _marker_session(markers):
             receipt, new_snap, deadlines = self._xsm_run(
                 snap, event_type, payload, plugins
