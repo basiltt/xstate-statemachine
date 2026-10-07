@@ -18,12 +18,15 @@
 
 from __future__ import annotations
 
+import time
 from dataclasses import replace
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional
 
 from django.db.models import Max
 
+from ...exceptions import InterpreterStoppedError
 from ...persistence.log import AuditPlugin, TransitionRecord
+from ...plugins import redact
 
 __all__ = ["DjangoAuditPlugin", "DjangoTransitionLogStore"]
 
@@ -207,6 +210,54 @@ class DjangoAuditPlugin(AuditPlugin):
         super().__init__(
             self.store, machine_id=lambda i: self.store.machine_id, **kw
         )
+
+
+def record_refused_send(
+    plugin: "DjangoAuditPlugin", instance: Any, ctx: Dict[str, Any]
+) -> None:
+    """Put a send the ENGINE refused on the record.
+
+    🐛 #281 battle (A): a send against a machine that already reached its
+    final state is answered ``InterpreterStoppedError`` before any step
+    runs, so no plugin hook fires and the audit trail had a hole exactly
+    where a user tried something the workflow no longer allowed. That
+    attempt is recorded as ``unhandled`` with its actor, reason and the
+    error -- nothing changed, but it happened.
+    """
+    receipt = ctx.get("receipt")
+    if receipt is None or not isinstance(
+        receipt.error, InterpreterStoppedError
+    ):
+        return
+    store = plugin.store
+    if store.buffer:  # the engine did record it
+        return
+    actor, reason, corr = plugin._audit(ctx["event"])
+    states = tuple(sorted(receipt.state_ids))
+    store.append(
+        TransitionRecord(
+            machine_id=store.machine_id,
+            seq=store.next_seq(store.machine_id),
+            ts=time.time(),
+            event_type=str(ctx["event_type"]),
+            event_payload=redact(dict(ctx["payload"]), plugin.redact_keys),
+            from_states=states,
+            to_states=states,
+            actions=(),
+            disposition="unhandled",
+            actor=actor,
+            reason=reason,
+            correlation_id=corr,
+            machine_version=str(
+                getattr(instance.statechart_machine_node(), "version", None)
+                or ""
+            ),
+            error={
+                "type": type(receipt.error).__name__,
+                "message": str(receipt.error),
+            },
+        )
+    )
 
 
 def history_of(instance: Any, using: Optional[str] = None) -> Any:

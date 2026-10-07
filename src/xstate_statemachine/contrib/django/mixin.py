@@ -348,7 +348,10 @@ class StatechartModelMixin(models.Model):
         #    own "actor_id" / "reason" in the data can never forge it.
         payload.pop("actor_id", None)
         if actor is not None:
-            payload["actor_id"] = getattr(actor, "pk", actor)
+            # 📝 #281 battle (A): a UUID pk made the audit JSON insert
+            #    raise; anything but int/str travels as its str().
+            pk = getattr(actor, "pk", actor)
+            payload["actor_id"] = pk if isinstance(pk, (int, str)) else str(pk)
         if reason is not None:
             payload["reason"] = str(reason)
         return payload
@@ -612,6 +615,9 @@ class StatechartModelMixin(models.Model):
 
         audit = ctx.get("audit_plugin")
         if audit is not None:
+            from .audit import record_refused_send
+
+            record_refused_send(audit, self, ctx)
             audit.store.flush()
         emit_post(self, ctx, ctx["signal_plugin"])
 

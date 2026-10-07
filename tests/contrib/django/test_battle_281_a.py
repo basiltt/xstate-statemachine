@@ -681,3 +681,55 @@ def test_marker_store_on_another_alias_than_the_row_fails_loudly(
         Approval.objects.using("other").get(pk=a.pk).send(
             "COMMENT", text="y", idempotency_key="k"
         )
+
+
+# -----------------------------------------------------------------------------
+# 6. coordinator items: UUID actor pk; a send against a finished machine
+# -----------------------------------------------------------------------------
+def test_uuid_actor_pk_survives_the_audit_payload(
+    approval_row: Any, monkeypatch: Any
+) -> None:
+    """A user model with a UUID pk: ``actor_id`` went into the JSON
+    payload raw and the TransitionLog insert raised ``TypeError``."""
+    import json
+    import uuid
+    from types import SimpleNamespace
+
+    from xstate_statemachine.contrib.django.audit import (
+        DjangoTransitionLogStore,
+    )
+
+    uid = uuid.uuid4()
+    actor = SimpleNamespace(pk=uid)
+    body = type(approval_row)._xsm_payload(actor, None, {})
+    assert body["actor_id"] == str(uid)
+    json.dumps(body)
+    # the FK column of THIS test project is an int; the payload is what
+    # broke, so the FK write is neutralised for the end-to-end check
+    orig = DjangoTransitionLogStore._write
+
+    def write(self: Any, rec: Any) -> None:
+        self.actor = None
+        orig(self, rec)
+
+    monkeypatch.setattr(DjangoTransitionLogStore, "_write", write)
+    r = approval_row.send("COMMENT", text="x", actor=actor)
+    assert r.changed
+    row = approval_row.history.get()
+    assert row.payload["actor_id"] == str(uid)
+
+
+def test_send_to_a_finished_machine_is_on_the_record(order: Any) -> None:
+    """Coordinator item 2 / the scenario: a refused send against a FINAL
+    machine wrote no audit row -- the trail had a hole exactly where a
+    user tried something the workflow no longer allowed."""
+    order.send("CANCEL")
+    r = order.send("INC", actor=None, reason="too late")
+    assert r.error is not None and not r.changed
+    rows = list(order.history.all())
+    assert [(x.seq, x.event, x.disposition) for x in rows] == [
+        (1, "CANCEL", "transition"),
+        (2, "INC", "unhandled"),
+    ]
+    assert rows[1].reason == "too late"
+    assert rows[1].from_states == rows[1].to_states == ["order.cancelled"]
