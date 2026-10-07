@@ -311,3 +311,19 @@ def is_idempotency_refusal(receipt: Any) -> bool:
     return isinstance(
         receipt.error, (IdempotencyMismatchError, IdempotencyInFlightError)
     )
+
+
+def register_problem_handlers(app: Any, handler: Any) -> int:
+    """Register *handler* for every mapped exception class on *app*,
+    SKIPPING classes the application already handles itself (review
+    #285: `register_error_handler` overwrites, and apps register their
+    handlers before `init_app` in the factory pattern). Returns the
+    number registered."""
+    own = app.error_handler_spec.get(None, {}).get(None, {})
+    n = 0
+    for exc_cls in mapped_exceptions():
+        if exc_cls in own:
+            continue
+        app.register_error_handler(exc_cls, handler)
+        n += 1
+    return n

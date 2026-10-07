@@ -173,6 +173,31 @@ class TestActInGet:
         assert r.mimetype == "application/problem+json"
         assert "Traceback" not in r.get_data(as_text=True)
 
+    def test_a_handler_registered_before_init_app_is_kept(self) -> None:
+        """Review #285: `register_error_handler` overwrites, and the
+        factory pattern registers the app's handlers BEFORE `init_app`.
+        The app's own handler for a mapped class must win."""
+        from xstate_statemachine.contrib.flask._http import (
+            MethodNotAllowedError,
+        )
+
+        xsm = XState()
+        xsm.register("c", COUNTER, authorize=allow_all)
+        app = Flask(__name__)
+        app.config["PROPAGATE_EXCEPTIONS"] = False
+        app.register_error_handler(
+            MethodNotAllowedError, lambda e: ("mine", 418)
+        )
+        xsm.init_app(app, store=MemoryStore())
+
+        @app.get("/v")
+        def v() -> Any:
+            with xsm.act("c", "1"):
+                return "unreachable"
+
+        r = app.test_client().get("/v")
+        assert (r.status_code, r.get_data(as_text=True)) == (418, "mine")
+
 
 class TestSkipSave:
     def test_g_xsm_skip_save_saves_nothing(self) -> None:

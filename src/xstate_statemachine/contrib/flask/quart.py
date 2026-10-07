@@ -53,7 +53,7 @@ from ._http import (  # noqa: E402
     MethodNotAllowedError,
     declared_events,
     is_idempotency_refusal,
-    mapped_exceptions,
+    register_problem_handlers,
     parse_json_body,
     principal_or_401,
     problem_body,
@@ -157,8 +157,7 @@ class QuartXState:
         # 🔐 #285 battle (A): as in Flask -- a lost race / a GET `act()` in
         #    the app's own views is a 409 / 405 problem, not an HTML 500.
         if error_handlers:
-            for exc_cls in mapped_exceptions():
-                app.register_error_handler(exc_cls, _aproblem)
+            register_problem_handlers(app, _aproblem)
 
     def registry(self, app: Optional[Quart] = None) -> AppRegistry:
         app = app or current_app._get_current_object()  # type: ignore

@@ -1468,7 +1468,10 @@ _No unreleased changes yet._
   views -- a lost optimistic race, `act()` in a GET view, an oversized
   session -- are RFC 9457 problems (409 / 405 / 413) instead of 500s:
   `init_app` registers the handlers (`error_handlers=False` opts out)
-  and `SnapshotTooLargeError` maps to 413. `SessionStore`'s cap now
+  and `SnapshotTooLargeError` maps to 413 (changed: the blueprint's
+  answer for a too-large snapshot was 500); a handler your app
+  registered for one of these classes -- before or after `init_app`
+  -- is left in place. `SessionStore`'s cap now
   covers every machine in one session together (two wizards made a
   4.3 KB cookie browsers silently drop; the wizard reset). The Quart
   shim: `/stream` checks `Origin`; `QuartXState.init_app` accepts

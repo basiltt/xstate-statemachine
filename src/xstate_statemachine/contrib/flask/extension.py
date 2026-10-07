@@ -49,7 +49,7 @@ from ._http import (
     PROBLEM_MEDIA_TYPE,
     MethodNotAllowedError,
     is_idempotency_refusal,
-    mapped_exceptions,
+    register_problem_handlers,
     problem_for_exception,
     receipt_body,
     state_body,
@@ -252,10 +252,9 @@ class XState:
         #    that Flask answered as an HTML 500 -- the documented 405 / 409
         #    only held inside the blueprint. App-level handlers for the
         #    library's mapped exceptions only; an app's own handler for one
-        #    of them, registered after `init_app`, still wins.
+        #    of them -- registered before OR after `init_app` -- wins.
         if error_handlers:
-            for exc_cls in mapped_exceptions():
-                app.register_error_handler(exc_cls, problem_response)
+            register_problem_handlers(app, problem_response)
 
         if cli:
             from .cli import xsm_cli
