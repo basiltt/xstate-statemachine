@@ -142,6 +142,11 @@ class _Bound:
     def peek(self, name: str, key: Any) -> Dict[str, Any]:
         return self._ext.peek(name, key)
 
+    def skip_save(self) -> None:
+        # 📝 #285 battle: `g.xsm` is the handle the guide hands out, and it
+        #    could `act()` but not leave the block without saving.
+        self._ext.skip_save()
+
     @property
     def registry(self) -> AppRegistry:
         return self._ext.registry()

@@ -46,7 +46,8 @@ from xstate_statemachine.contrib.flask import (
     XState,
     allow_all,
 )
-from xstate_statemachine.persistence import SQLiteStore
+from xstate_statemachine.exceptions import ConflictError
+from xstate_statemachine.persistence import PessimisticLock, SQLiteStore
 
 HERE = Path(__file__).resolve().parent
 MACHINE_JSON = HERE / "machine.json"
@@ -146,7 +147,13 @@ def create_app(config: Optional[Mapping[str, Any]] = None) -> Flask:
     )
     app.config.update(config or {})
     app.config["CSRF_ENABLED"] = _enable_csrf(app)
-    xsm.init_app(app, store=make_store(app.config))
+    store = make_store(app.config)
+    # 🔒 #285 battle: a double-click (two POSTs in flight on ONE wizard)
+    #    under the default optimistic lock makes the second lose with
+    #    ConflictError. The SQLite store can serialise writers per key
+    #    instead; the cookie store has one writer by construction.
+    lock = PessimisticLock() if isinstance(store, SQLiteStore) else None
+    xsm.init_app(app, store=store, lock=lock)
     _routes(app)
     return app
 
@@ -166,18 +173,41 @@ def _routes(app: Flask) -> None:
 
     @app.post("/<any(next, back, submit):action>")
     def step(action: str) -> Any:
-        body = g.xsm.peek("wizard", wizard_key())
-        here = body["state"].split(".")[-1]
-        fields = {k: request.form.get(k, "") for k in FIELDS.get(here, ())}
+        # 🛡️ #285 battle: every form names the step it was rendered FOR.
+        #    A double-click or the browser's Back button re-posts a form
+        #    for a step the wizard has already left; applying it would
+        #    push the wizard a step further with empty answers (NEXT is
+        #    legal from most steps). The check runs INSIDE `act()`, against
+        #    the state under the lock -- a `peek` before it would let two
+        #    simultaneous clicks both pass and the second apply anyway.
+        sent_for = request.form.get("step")
+        seen = {"here": "", "receipt": None}
         try:
             with g.xsm.act("wizard") as w:
-                receipt = w.send(action.upper(), wait=True, **fields)
+                here = sorted(w.current_state_ids)[0].split(".")[-1]
+                seen["here"] = here
+                if sent_for and sent_for != here:
+                    g.xsm.skip_save()  # leaves the block; nothing saved
+                fields = {
+                    k: request.form.get(k, "") for k in FIELDS.get(here, ())
+                }
+                seen["receipt"] = w.send(action.upper(), wait=True, **fields)
         except SessionStoreTooLargeError:
             # 🔥 Nothing was saved: `act` writes only on a clean exit.
             return (
-                render_template("too_large.html", step=here),
+                render_template("too_large.html", step=seen["here"]),
                 413,
             )
+        except ConflictError:
+            # 🔁 another request on THIS wizard won the race (a
+            #    double-click under the cookie store, two tabs). Nothing
+            #    was saved; show the page as it is now instead of a 500.
+            flash("That step was already submitted; here is where you are.")
+            return redirect(url_for("show"))
+        receipt = seen["receipt"]
+        if receipt is None:  # the stale form was skipped
+            flash("That step was already submitted; here is where you are.")
+            return redirect(url_for("show"))
         if not receipt.changed:
             flash("Please check the highlighted fields.")
         return redirect(url_for("show"))
