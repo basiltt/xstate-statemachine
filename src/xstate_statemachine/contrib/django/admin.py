@@ -104,6 +104,10 @@ class TransitionLogInline(GenericTabularInline):
         "created",
     )
     readonly_fields = fields
+    #: Newest rows shown on the change form. A long-lived row can have
+    #: thousands of audit rows; rendering them all made the change page
+    #: megabytes large (#280 battle). ``None`` shows everything.
+    max_rows: Optional[int] = 50
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         from django.apps import apps
@@ -111,8 +115,41 @@ class TransitionLogInline(GenericTabularInline):
         self.model = apps.get_model("xsm_django", "TransitionLog")
         super().__init__(*args, **kwargs)
 
+    def get_queryset(self, request: Any) -> Any:
+        return super().get_queryset(request).select_related("actor")
+
+    def get_formset(self, request: Any, obj: Any = None, **kw: Any) -> Any:
+        formset = super().get_formset(request, obj, **kw)
+        limit = self.max_rows
+        if limit is None:
+            return formset
+
+        class Capped(formset):  # type: ignore[misc, valid-type]
+            # 📝 The generic formset FILTERS the queryset it is given, so
+            #    the slice must happen here, after that filter.
+            def get_queryset(self) -> Any:
+                if not hasattr(self, "_xsm_capped"):
+                    self._xsm_capped = super().get_queryset()[:limit]
+                return self._xsm_capped
+
+        Capped.__name__ = formset.__name__
+        return Capped
+
     def has_add_permission(self, request: Any, obj: Any = None) -> bool:
         return False
+
+    def has_view_permission(self, request: Any, obj: Any = None) -> bool:
+        # 🔥 #280 battle: the default asks for ``xsm_django.view_
+        #    transitionlog`` -- a permission nobody grants -- so every
+        #    non-superuser saw NO history. Whoever may view the row may
+        #    view its audit trail.
+        opts = self.parent_model._meta
+        return bool(
+            request.user.has_perm(f"{opts.app_label}.view_{opts.model_name}")
+            or request.user.has_perm(
+                f"{opts.app_label}.change_{opts.model_name}"
+            )
+        )
 
     def has_change_permission(self, request: Any, obj: Any = None) -> bool:
         return False
@@ -298,6 +335,11 @@ class StatechartAdminMixin:
         )
 
     def _apply(self, request: Any, obj: Any, event: str) -> Any:
+        if not self.has_change_permission(request, obj):  # type: ignore[attr-defined]
+            # 🔐 #280 battle: no change permission at all is a forged
+            #    request (no button was ever rendered) -- 403, like
+            #    Django's own change view, not a friendly redirect.
+            raise PermissionDenied
         machine = obj.statechart_machine_node()
         label = event_label(machine, event)
         if not self._allowed(request, obj, event):
