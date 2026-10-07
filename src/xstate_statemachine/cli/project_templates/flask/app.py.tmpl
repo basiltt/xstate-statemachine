@@ -46,7 +46,8 @@ from xstate_statemachine.contrib.flask import (
     XState,
     allow_all,
 )
-from xstate_statemachine.persistence import SQLiteStore
+from xstate_statemachine.exceptions import ConflictError
+from xstate_statemachine.persistence import PessimisticLock, SQLiteStore
 
 HERE = Path(__file__).resolve().parent
 MACHINE_JSON = HERE / "machine.json"
@@ -121,9 +122,27 @@ xsm.register(
 
 
 def make_store(settings: Mapping[str, Any]) -> Any:
-    """`SessionStore` by default; `SQLiteStore` when WIZARD_STORE=sqlite."""
-    if settings.get("WIZARD_STORE", "session") == "sqlite":
-        return SQLiteStore(settings.get("WIZARD_DB", "wizard.db"))
+    """`SessionStore` by default; `SQLiteStore` when WIZARD_STORE=sqlite;
+    `SQLAlchemyStore` over the same file when WIZARD_STORE=sqlalchemy
+    (needs ``pip install "xstate-statemachine[sqlalchemy]"``)."""
+    kind = settings.get("WIZARD_STORE", "session")
+    db = settings.get("WIZARD_DB", "wizard.db")
+    if kind == "sqlite":
+        return SQLiteStore(db)
+    if kind == "sqlalchemy":
+        # 💡 Any SQLAlchemy URL works here (Postgres, MySQL ...); the
+        #    example uses a SQLite file so it runs with no server.
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+
+        from xstate_statemachine.contrib.sqlalchemy import SQLAlchemyStore
+
+        engine = create_engine(f"sqlite:///{db}")
+        return SQLAlchemyStore(sessionmaker(engine))
+    if kind != "session":
+        raise ValueError(
+            f"WIZARD_STORE={kind!r}: expected session, sqlite or sqlalchemy"
+        )
     return SessionStore()
 
 
@@ -146,7 +165,13 @@ def create_app(config: Optional[Mapping[str, Any]] = None) -> Flask:
     )
     app.config.update(config or {})
     app.config["CSRF_ENABLED"] = _enable_csrf(app)
-    xsm.init_app(app, store=make_store(app.config))
+    store = make_store(app.config)
+    # 🔒 #285 battle: a double-click (two POSTs in flight on ONE wizard)
+    #    under the default optimistic lock makes the second lose with
+    #    ConflictError. A server-side store can serialise writers per key
+    #    instead; the cookie store has one writer by construction.
+    lock = None if isinstance(store, SessionStore) else PessimisticLock()
+    xsm.init_app(app, store=store, lock=lock)
     _routes(app)
     return app
 
@@ -166,18 +191,41 @@ def _routes(app: Flask) -> None:
 
     @app.post("/<any(next, back, submit):action>")
     def step(action: str) -> Any:
-        body = g.xsm.peek("wizard", wizard_key())
-        here = body["state"].split(".")[-1]
-        fields = {k: request.form.get(k, "") for k in FIELDS.get(here, ())}
+        # 🛡️ #285 battle: every form names the step it was rendered FOR.
+        #    A double-click or the browser's Back button re-posts a form
+        #    for a step the wizard has already left; applying it would
+        #    push the wizard a step further with empty answers (NEXT is
+        #    legal from most steps). The check runs INSIDE `act()`, against
+        #    the state under the lock -- a `peek` before it would let two
+        #    simultaneous clicks both pass and the second apply anyway.
+        sent_for = request.form.get("step")
+        seen = {"here": "", "receipt": None}
         try:
             with g.xsm.act("wizard") as w:
-                receipt = w.send(action.upper(), wait=True, **fields)
+                here = sorted(w.current_state_ids)[0].split(".")[-1]
+                seen["here"] = here
+                if sent_for and sent_for != here:
+                    g.xsm.skip_save()  # leaves the block; nothing saved
+                fields = {
+                    k: request.form.get(k, "") for k in FIELDS.get(here, ())
+                }
+                seen["receipt"] = w.send(action.upper(), wait=True, **fields)
         except SessionStoreTooLargeError:
             # 🔥 Nothing was saved: `act` writes only on a clean exit.
             return (
-                render_template("too_large.html", step=here),
+                render_template("too_large.html", step=seen["here"]),
                 413,
             )
+        except ConflictError:
+            # 🔁 another request on THIS wizard won the race (a
+            #    double-click under the cookie store, two tabs). Nothing
+            #    was saved; show the page as it is now instead of a 500.
+            flash("That step was already submitted; here is where you are.")
+            return redirect(url_for("show"))
+        receipt = seen["receipt"]
+        if receipt is None:  # the stale form was skipped
+            flash("That step was already submitted; here is where you are.")
+            return redirect(url_for("show"))
         if not receipt.changed:
             flash("Please check the highlighted fields.")
         return redirect(url_for("show"))

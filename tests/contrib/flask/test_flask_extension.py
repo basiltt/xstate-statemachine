@@ -173,11 +173,18 @@ class TestSessionWizard:
         )
         from src.xstate_statemachine.exceptions import SnapshotTooLargeError
 
+        from src.xstate_statemachine.contrib.flask import SessionStore
+
         app = wizard_app()
-        app.testing = True
         c = app.test_client()
-        with pytest.raises(SessionStoreTooLargeError) as ei:
-            c.post("/wizard/NEXT", json={"essay": "x" * 4000})
+        # 📝 #285 battle (A): a 413 problem, no exception text (X0.7)
+        r = c.post("/wizard/NEXT", json={"essay": "x" * 4000})
+        assert r.status_code == 413
+        assert r.get_json()["error"] == "SessionStoreTooLargeError"
+        assert "server-side" not in r.get_data(as_text=True)
+        with app.test_request_context("/"):
+            with pytest.raises(SessionStoreTooLargeError) as ei:
+                SessionStore().save("w.k", "x" * 4000)
         assert isinstance(ei.value, SnapshotTooLargeError)
         assert ei.value.limit == 3 * 1024
         assert "server-side store" in str(ei.value)

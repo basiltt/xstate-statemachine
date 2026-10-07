@@ -1,6 +1,9 @@
 {#- CSRF token field: present only when Flask-WTF is installed. -#}
+{#- Every form also carries the step it was rendered for (a stale form
+    from a double-click / Back button is refused by the app). -#}
 {% macro csrf() -%}
-  {% if config.CSRF_ENABLED %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
+  <input type="hidden" name="step" value="{{ step }}">
+  {%- if config.CSRF_ENABLED %}<input type="hidden" name="csrf_token" value="{{ csrf_token() }}">{% endif %}
 {%- endmacro %}
 
 {% macro back() -%}

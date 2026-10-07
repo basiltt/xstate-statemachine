@@ -1450,6 +1450,42 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **Flask integration, as battle-tested (#285).** The onboarding wizard
+  as browsers use it -- a 50-POST double-click on one wizard, fifty
+  browsers walking every step at once on one SQLite file, two apps from
+  one extension, back-button form replay, a stale cookie, the cookie cap,
+  CSRF, a real `flask run` subprocess driven with httpx (+ `flask xsm
+  inspect`), the Quart shim with concurrent clients, 16 SSE subscribers
+  on a threaded server (`tests/contrib/flask/test_battle_285_{scenario,
+  a,b}.py`, `examples/integrations/flask_wizard/tests/
+  test_readme_commands.py`). Found and fixed: a double-click on the
+  SQLite wizard was an HTML 500 (a raw `ConflictError`) and a re-posted
+  earlier step's form was APPLIED to the current step, advancing the
+  wizard with empty answers -- the example serialises writers per key
+  (`PessimisticLock`), every form names its step and a stale one is
+  refused under the lock via `g.xsm.skip_save()` (which the documented
+  `g.xsm` handle did not expose). Library errors raised in your OWN
+  views -- a lost optimistic race, `act()` in a GET view, an oversized
+  session -- are RFC 9457 problems (409 / 405 / 413) instead of 500s:
+  `init_app` registers the handlers (`error_handlers=False` opts out)
+  and `SnapshotTooLargeError` maps to 413 (changed: the blueprint's
+  answer for a too-large snapshot was 500); a handler your app
+  registered for one of these classes -- before or after `init_app`
+  -- is left in place. `SessionStore`'s cap now
+  covers every machine in one session together (two wizards made a
+  4.3 KB cookie browsers silently drop; the wizard reset). The Quart
+  shim: `/stream` checks `Origin`; `QuartXState.init_app` accepts
+  `allowed_origins`, `max_connections_per_key`, `clock`, `migrator`,
+  `error_handlers`; `act()` passes the request principal to the inbox.
+  Docs: the guide's Guarantees box claimed losers "retry" -- nothing
+  retried; it now documents `PessimisticLock()` and `persisted_retry`
+  with runnable blocks, the exact CSRF recipe for the JSON blueprint
+  (`X-CSRFToken` + the token's session cookie), `g.xsm.skip_save`, the
+  shared cookie cap, a `flask xsm` reference in the CLI guide with a
+  tested transcript, every `contrib.flask` / `contrib.quart` name in the
+  API index; the example gained `WIZARD_STORE=sqlalchemy`, its README
+  commands run literally from a fresh copy, and the `xsm new` flask
+  scaffold stays file-for-file identical to it.
 - **SQLAlchemy integration, as battle-tested (#284).** An orders service
   on SQLAlchemy 2.0 as a team runs it -- a 16x25 writer fleet on one row
   (gapless audit `seq`), 200 orders with two concurrent `DueTimerScanner`s

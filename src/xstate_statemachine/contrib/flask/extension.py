@@ -49,6 +49,7 @@ from ._http import (
     PROBLEM_MEDIA_TYPE,
     MethodNotAllowedError,
     is_idempotency_refusal,
+    register_problem_handlers,
     problem_for_exception,
     receipt_body,
     state_body,
@@ -142,6 +143,11 @@ class _Bound:
     def peek(self, name: str, key: Any) -> Dict[str, Any]:
         return self._ext.peek(name, key)
 
+    def skip_save(self) -> None:
+        # 📝 #285 battle: `g.xsm` is the handle the guide hands out, and it
+        #    could `act()` but not leave the block without saving.
+        self._ext.skip_save()
+
     @property
     def registry(self) -> AppRegistry:
         return self._ext.registry()
@@ -188,6 +194,7 @@ class XState:
         max_connections_per_key: int = 16,
         allowed_origins: Any = (),
         cli: bool = True,
+        error_handlers: bool = True,
     ) -> None:
         """Bind a store (and policies) to *app*.
 
@@ -204,6 +211,10 @@ class XState:
                 ``GET /<id>/history`` reads it.
             max_body_bytes: JSON body cap (413); default 1 MiB.
             cli: Register the ``flask xsm`` command group.
+            error_handlers: Register app-level handlers so the library's
+                exceptions raised in YOUR views (a lost race, an `act()`
+                in a GET, an oversized session) answer RFC 9457 problems
+                (409 / 405 / 413) instead of a 500. ``False`` opts out.
         """
         plugins = list(plugins)
         if log is not None:
@@ -235,6 +246,15 @@ class XState:
         @app.before_request
         def _bind_g() -> None:
             g.xsm = _Bound(ext)
+
+        # 🔐 #285 battle (A): `act()` in the APP'S OWN views raised a bare
+        #    `MethodNotAllowedError` (GET) / `ConflictError` (lost race)
+        #    that Flask answered as an HTML 500 -- the documented 405 / 409
+        #    only held inside the blueprint. App-level handlers for the
+        #    library's mapped exceptions only; an app's own handler for one
+        #    of them -- registered before OR after `init_app` -- wins.
+        if error_handlers:
+            register_problem_handlers(app, problem_response)
 
         if cli:
             from .cli import xsm_cli
