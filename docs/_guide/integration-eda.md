@@ -136,6 +136,34 @@ What is published is declared **in the chart**:
 
 `publish_specs(machine)` lists every publication a chart declares.
 
+#### Several relays on one outbox (leases)
+
+You can run one relay per replica. `OutboxRelay(store, broker, *, batch=100, owner=None, lease_s=DEFAULT_CLAIM_LEASE_S)` does not read `pending()` when the store offers `claim()`. `SQLiteOutboxStore`, `SQLAlchemyOutboxStore` and `MemoryOutboxStore` all do. Instead, each run **leases** up to `batch` pending rows to its `owner` for `lease_s` seconds (default `30.0`), using the `claimed_by` / `claimed_until` columns. A second relay skips rows under a live lease, so two relays never publish the same row at the same time. A relay whose broker raises hands its unsent rows back at once with `release()`. A relay that **dies** cannot release, so its rows are picked up again when the lease expires. `owner` defaults to `host:pid:id(relay)`.
+
+```python
+from xstate_statemachine.eda import (
+    Envelope, MemoryOutboxStore, OutboxRelay, SyncFakeBrokerAdapter,
+)
+
+outbox, broker = MemoryOutboxStore(), SyncFakeBrokerAdapter()
+for n in range(10):
+    outbox.add("orders", Envelope.new(type="order.paid", subject=f"o-{n}"))
+
+# relay A claimed 4 rows and is still publishing them (or just died)
+held = outbox.claim(limit=4, owner="relay-a", lease_s=30)
+
+relay_b = OutboxRelay(outbox, broker, owner="relay-b", lease_s=30)
+assert relay_b.relay_once_sync() == 6              # B skips A's leased rows
+assert {e.subject for e in broker.published_on("orders")}.isdisjoint(
+    {r.envelope.subject for r in held}
+)
+outbox.release([r.seq for r in held], owner="relay-a")   # A failed: hands back
+assert relay_b.relay_once_sync() == 4               # nothing published twice
+assert len(broker.published_on("orders")) == 10
+```
+
+Set `lease_s` well above the time one batch takes to publish (`batch` × the broker's worst publish latency). If a lease expires while its owner is still publishing, a second relay publishes the same rows too. That is a duplicate, not a loss, and the consumer's inbox dedups it. A store without `claim()` (your own `OutboxStore`) falls back to `pending()`, so run **one** relay per outbox there.
+
 ### Dead letters
 
 Dead letters from both sources share one record, `DeadLetter`:
@@ -286,6 +314,8 @@ The rest of `xstate_statemachine.eda.__all__`, for readers who grep. Everything 
 | `publish_specs(machine)` | function | Every publication the chart declares (`meta.publish` and `publish`-tagged states); feeds AsyncAPI and the `OutboxPlugin`. |
 | `default_event_name(envelope_type)` | function | The dispatcher's default type→event mapping: `xsm.<machine>.<EVENT>` → `EVENT`; anything else unchanged. Pass `InboundDispatcher(event_type=...)` to override. |
 | `dlq_topic(topic)` | function | `orders` → `orders.dlq`: the topic `BrokerDeadLetterSink` publishes to. |
+| `SyncBrokerAdapter` | protocol | The blocking twin of `BrokerAdapter` (threads, Celery, Django): `publish`, `subscribe`, `ack`, `nack` without `await`. `SyncFakeBrokerAdapter` implements it. |
+| `DEFAULT_CLAIM_LEASE_S` = `30.0` | constant | `OutboxRelay(lease_s=)` default: seconds a relay owns the rows it claimed before another relay may take them ([leases](#several-relays-on-one-outbox-leases)). |
 | `new_id(now_ms=None)` | function | A UUIDv7-style id, lexicographically sortable by creation time; used for envelope ids. |
 | `load_asyncapi_schema()` | function | The vendored AsyncAPI 3.0.0 JSON Schema as a dict (offline). |
 | `PUBLISH_TAG` = `"publish"` | constant | The state tag that makes `OutboxPlugin` publish on entry. |
@@ -298,7 +328,7 @@ The rest of `xstate_statemachine.eda.__all__`, for readers who grep. Everything 
 
 > **What this does:** at-least-once delivery plus the inbox gives **effectively-once transitions**: a redelivered envelope is answered with the original receipt and never re-runs actions. Per-subject order is preserved within a consumer. A failed delivery is not committed and is retried, then dead-lettered and acked after `max_attempts`. With an `OutboxStore` sharing the state store's transaction under `PessimisticLock`, the outbox rows commit or roll back **with** the snapshot (`tests/eda/test_outbox.py::TestSQLiteTransactional::test_forced_failure_after_the_write_leaves_no_row`, `tests/contrib/sqlalchemy/test_sqlalchemy_outbox.py::TestSQLAlchemyOutbox::test_forced_rollback_leaves_no_row`). This fills steps 4–5 of the [order of operations](../guarantees/#the-order-of-operations).
 >
-> **What this does not do:** no exactly-once **publish**. The relay publishes then marks sent, so a crash in between publishes twice; consumers must dedup on the envelope id (the dispatcher does). The direct-broker sink is at-most-once-ish. There is no global order across subjects, and an `OptimisticLock` outbox is only transactional on stores whose save and outbox write share one transaction.
+> **What this does not do:** no exactly-once **publish**. The relay publishes then marks sent, so a crash in between publishes twice; consumers must dedup on the envelope id (the dispatcher does). Several relays may drain one outbox: row leases (`claim()` / `lease_s`) stop two live relays publishing the same row at once, but they do not make publishing exactly-once. A relay that dies mid-batch, or one that is still publishing when its lease expires, leaves rows another relay publishes again. A custom `OutboxStore` without `claim()` still needs **one** relay per outbox. The direct-broker sink is at-most-once-ish. There is no global order across subjects, and the leases do not order rows *across* relays. An `OptimisticLock` outbox is only transactional on stores whose save and outbox write share one transaction.
 >
 > See the programme-wide [Guarantees](../guarantees/) and [Security](../security/) pages ([#303](https://github.com/basiltt/xstate-statemachine/issues/303)).
 
@@ -324,7 +354,40 @@ The rest of `xstate_statemachine.eda.__all__`, for readers who grep. Everything 
 |:--|:--|:--|
 | `MissingExtraError: … pip install "xstate-statemachine[cloudevents]"` | SDK interop without the extra | run the command (the core envelope needs nothing) |
 | Every message ends in the DLQ as `unknown_event` | the dispatcher's `machine_for_type` does not know the CloudEvents `type` | map the type, or use `on_unknown="ignore"` on a shared bus |
+| DLQ reason `corrupt` (`EnvelopeCorruptError`: `envelope attribute 'x' missing` / `must be a non-empty string` / `exceeds … characters`, `invalid CloudEvents extension name`, `… is an envelope attribute, not an extension`, `must be a string, integer or boolean`, `invalid W3C traceparent extension`, `xsmattempt must be a non-negative integer`, `envelope has no subject`, `envelope is not JSON`, `data` not a JSON object) | a producer sends a malformed envelope | fix the producer; the record keeps the redacted envelope for `xsm dlq show` |
 | `EnvelopeCorruptError: extension 'authorization' looks credential-bearing` | a producer copied an auth header into the event | send credentials on the transport, never in the event |
+| `EnvelopeTooLargeError` (DLQ reason `corrupt`) | the body is over the size cap (1 MiB default), checked before parsing | send a reference (object-store key) instead of the payload, or raise `max_bytes` deliberately |
+| DLQ reason `max_attempts` | the machine's step kept failing (an action/service/store error) on every delivery | fix the cause, then `xsm dlq replay` |
+| DLQ reason `instance_done` | the subject's instance already reached a final state | usually correct (a late event); purge it, or route the type to a new instance key |
+| DLQ reason `idempotency_mismatch` | the same envelope `id` arrived with a different event / payload than the one first processed | a producer reuses ids: mint a new id per event (`Envelope.new`) |
 | The same message is processed twice | no `inbox=` on the dispatcher | pass `SQLiteInbox(store)` / `MemoryInbox()` |
-| `xsm dlq replay` exits 2 with "use --force" | the chart changed since the message failed | check the change is compatible, then add `--force` |
+| `xsm dlq replay` exits 2 with "use --force" | the chart changed since the message failed (`ReplayRefusedError`) | check the change is compatible, then add `--force` |
+| `xsm dlq replay` exits 2: "no machine handles type …" | none of the `--machine` charts has the record's machine id | pass the right `--machine` (repeatable) |
+| `xsm dlq replay` exits 2: "captured from a chart state, not an envelope" | a chart-driven (`DeadLetterPlugin`) record | restore its snapshot instead; only envelope dead letters replay |
+| `xsm dlq replay` exits 2: "cannot import --logic" | `--logic` is not an importable dotted module | run from the project root or set `PYTHONPATH`; pass `myapp.order_logic`, not a file path |
+| `xsm dlq replay` exits 1 | the replay ran and the machine failed again (outcome is not `processed` / `duplicate`) | the record stays unresolved; read `--json` output and the logs |
+| `xsm dlq … ` exits 2: "no such … file" | the `--dlq` / `--store` path is wrong (it is never created) | check the path; `sqlite:///rel.db` is relative, `sqlite:////abs.db` absolute |
 | Outbox row present after a failed request | the outbox is not sharing the store's transaction, or `OptimisticLock` is used | `SQLiteOutboxStore(same_store)` + `PessimisticLock()` |
+| `sqlite3.OperationalError: no such column: claimed_by` | never on `SQLiteOutboxStore`: it adds the lease columns to a 0.11.0 `xsm_outbox` table on open | if you see it, a raw query ran before any store was opened; open the store first |
+| SQLAlchemy: `no such column` / `UndefinedColumn: xsm_outbox.claimed_by` | the `xsm_outbox` table was created before the relay leases | add a migration with `claimed_by VARCHAR(128) NULL` and `claimed_until FLOAT NULL` (see `examples/integrations/sqlalchemy_orders` migration `0003`) |
+| Pending outbox rows stay pending for `lease_s` after a relay crash | a dead relay cannot release its lease | expected; lower `lease_s` if that delay matters (not below one batch's publish time) |
+
+## Operations
+
+**Sizing.** One dispatcher handles one subject at a time and up to `max_in_flight` (16) subjects concurrently. Scale out with more consumers on a partitioned topic: the broker keeps per-subject order, the inbox keeps redeliveries effectively-once. Run one `OutboxRelay` per replica if you like. With `batch=100`, a relay publishes at most 100 rows per `relay_once`, so schedule it often enough that `batch / interval` exceeds your peak publish rate.
+
+**Lease tuning.** Use `lease_s` ≥ 3 × the slowest batch you have seen (`batch` × p99 publish latency). If it is too short, a slow relay's rows are published twice (duplicates, which the consumers dedup). If it is too long, rows held by a crashed relay wait that long. Give every relay a stable `owner` (e.g. the pod name), so a restarted pod reclaims its own rows at once (`claim()` also returns rows already leased to the same owner).
+
+**Metrics to alert on.**
+
+| Signal | How to read it | Alert when |
+|:--|:--|:--|
+| DLQ growth | `len(SQLiteDeadLetterStore.list(limit=…))` or `xsm dlq --dlq … list --json` → `count` | any new record (it is a human's job), or growth over N per hour |
+| Outbox backlog | `outbox.count(pending_only=True)` | it rises for several relay intervals |
+| Outbox pending age | `SELECT MIN(created_at) FROM xsm_outbox WHERE sent_at IS NULL` | older than a few `lease_s` (the relays are stuck or the broker is down) |
+| Leased (`locked`) rows | `SELECT COUNT(*) FROM xsm_outbox WHERE sent_at IS NULL AND claimed_until > <now>` | stays above `batch` × relays (leases are not being released) |
+| Dispatcher outcomes | `DispatchResult.retried` / `.dead_lettered` per `run_once` | `retried` keeps rising (an infrastructure fault) |
+
+**Retention.** Purge sent outbox rows with `SQLiteOutboxStore.purge_sent(older_than_s=86400)`. Purge resolved dead letters with `xsm dlq --dlq … purge --older-than 30d --yes --reason retention` (the purge is audited).
+
+**`xsm dlq` exit codes.** `0` success. `1` a real replay ran and the outcome was not `processed` / `duplicate`. `2` refused input: a missing or non-SQLite `--dlq` / `--store` file (never created), an unsupported URL scheme, an unknown id, a bad `--older-than` / `--limit`, an unloadable `--machine` or `--logic`, a missing guard-rail flag (`--yes`, `--reason`), or a refused replay. Errors are one line on stderr, so `--json` stdout stays parseable.

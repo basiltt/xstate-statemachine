@@ -97,6 +97,8 @@ Double firing (the `eta` job plus the scan) is idempotent: the scanner re-checks
 
 A task that runs `OutboxRelay.relay_once` (the async form for an async broker, the sync form otherwise). Schedule it with Beat. An async broker is driven from **one private event loop per worker process**, never a new loop per tick. Call `task.close_relay_loop()` from `worker_process_shutdown` to close the broker and the loop.
 
+Every worker process gets its own `OutboxRelay`, so several workers draining one outbox is safe. On the bundled outbox stores the relays [lease their rows](../integration-eda/#several-relays-on-one-outbox-leases) (default lease 30 s, owner `host:pid:id`). A worker killed mid-batch leaves its rows to another worker when the lease expires, and consumers dedup the rare re-publication on the envelope id.
+
 ### `assert_json_serializer(app)`
 
 Raises `InvalidConfigError` unless `task_serializer` and `result_serializer` are `"json"` and neither `accept_content` nor `result_accept_content` admits pickle or YAML, by name or by MIME type (`application/x-python-serialize`, `application/x-yaml`; see `UNSAFE_CONTENT`). `result.get()` deserialises with the *result* settings, so both matter. `celery_service`, `@statechart_task`, `connect_signals` and `poll_results` all call it. See [Event-driven architecture](../integration-eda/).

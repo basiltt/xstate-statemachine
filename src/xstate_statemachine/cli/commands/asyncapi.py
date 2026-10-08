@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
@@ -15,14 +16,26 @@ from . import get_console
 __all__ = ["run_asyncapi"]
 
 
+def _fail(msg: str) -> SystemExit:
+    """One line on stderr, exit 2 -- never a traceback for bad input."""
+    print(f"xsm asyncapi: error: {msg}", file=sys.stderr)
+    return SystemExit(2)
+
+
 def _machine(path: str) -> Any:
+    from ...exceptions import XStateMachineError
     from ...factory import create_machine
     from ...testing_utils import stub_logic
 
-    cfg = json.loads(Path(path).read_text(encoding="utf-8"))
-    # 📝 Documentation only: stub logic so a chart whose logic lives
-    #    elsewhere still builds (no action ever runs here).
-    return create_machine(cfg, logic=stub_logic(cfg))
+    try:
+        cfg = json.loads(Path(path).read_text(encoding="utf-8"))
+        if not isinstance(cfg, dict):
+            raise _fail(f"{path!r} is not a machine (not a JSON object)")
+        # 📝 Documentation only: stub logic so a chart whose logic lives
+        #    elsewhere still builds (no action ever runs here).
+        return create_machine(cfg, logic=stub_logic(cfg))
+    except (OSError, ValueError, RecursionError, XStateMachineError) as exc:
+        raise _fail(f"cannot load machine {path!r}: {exc}") from None
 
 
 def run_asyncapi(
@@ -37,6 +50,20 @@ def run_asyncapi(
 ) -> None:
     from ...eda.asyncapi import asyncapi_document, validate_asyncapi
 
+    """Print (or write to *output*) the AsyncAPI 3.0 document of a chart.
+
+    Exit codes: 0 success; 2 a missing, unreadable or invalid machine
+    file.
+
+    Args:
+        json_file: The machine JSON file.
+        output: Write here instead of stdout.
+        server: Broker host for the ``servers`` block.
+        protocol: Server protocol (default ``kafka``).
+        inbound: Topic the machine consumes from.
+        outbound: Topic published events go to.
+        validate: Validate against the AsyncAPI 3.0 schema.
+    """
     c = get_console()
     doc = asyncapi_document(
         _machine(json_file),

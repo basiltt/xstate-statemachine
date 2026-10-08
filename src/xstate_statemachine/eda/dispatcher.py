@@ -560,6 +560,17 @@ class ReplayRefusedError(XStateMachineError):
 
 @dataclass
 class ReplayResult:
+    """What `replay_dead_letter` did.
+
+    Attributes:
+        record_id: The dead letter's id (the envelope id).
+        dry_run: ``True`` when nothing was sent.
+        outcome: ``would_replay`` (dry run) or the dispatcher outcome:
+            ``processed`` / ``duplicate`` resolve the record; anything
+            else (``retry``, ``dead_lettered:<reason>``) leaves it open.
+        warnings: Machine mismatches overridden with ``force``.
+    """
+
     record_id: str
     dry_run: bool
     outcome: str
