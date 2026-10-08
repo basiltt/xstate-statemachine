@@ -102,6 +102,8 @@ xsm generate-template [JSON_FILES...] [OPTIONS]
 | `-j` | `--json` | `FILE` | — | Additional JSON input file (repeatable) |
 | `-jp` | `--json-parent` | `FILE` | — | Designate the parent machine for hierarchy |
 | `-jc` | `--json-child` | `FILE` | — | Designate child machine(s) for hierarchy (repeatable) |
+| — | `--from-django-fsm` | `app.Model` | — | Extract the chart from a django-fsm-2 model (needs `DJANGO_SETTINGS_MODULE`; no database access); see [vs django-fsm](../comparisons/vs-django-fsm/#migration-recipe) |
+| — | `--fsm-field` | `FIELD` | `state` | The `FSMField` for `--from-django-fsm` |
 | `-t` | `--template` | `CHOICE` | `class-json` | Code generation template (see below) |
 | — | `--with-tests` | flag | `false` | Also emit `test_<machine>.py` — a pytest module recorded from the real engine |
 | — | `--with-types` | flag | `false` | Also emit `<machine>_types.py` — `TypedDict` context, `Literal` events, typed stubs |
@@ -1068,9 +1070,13 @@ python manage.py xsm_inspect approvals.Expense 17      # plus row 17's state and
 python manage.py xsm_diagram approvals.Expense -f mermaid
 python manage.py xsm_simulate approvals.Expense -e SUBMIT,LEGAL_APPROVE
 python manage.py xsm_snapshots approvals.Expense --stale --json
+python manage.py xsm_migrate_fsm legacy.Ticket --field state --dry-run > ticket.json
+python manage.py xsm_migrate_fsm legacy.Ticket --field state --map open=new --batch 500
 ```
 
-`xsm_inspect`, `xsm_diagram`, `xsm_docs` and `xsm_simulate` print byte for byte what `xsm inspect / diagram / docs / simulate <chart.json>` prints. `xsm_simulate` only runs the `-e` events and never reads stdin. The full table, with `xsm_deadlines`, `xsm_refresh_columns` and `xsm_migrate_fsm`, is in [Django → Management commands](../integration-django/#management-commands). Exit status: 0, 1 (`CommandError`: unknown model, missing pk, bad `--database`, unwritable `-o`), 2 (bad flag).
+`xsm_migrate_fsm` moves a django-fsm-2 model over ([recipe](../comparisons/vs-django-fsm/#migration-recipe)): `--dry-run` prints only the chart JSON on stdout (the recipe goes to stderr); without it, it fills empty snapshots and reports per value, with row counts, any column value the chart does not know; `--map OLD=NEW` folds such a value into a state.
+
+`xsm_inspect`, `xsm_diagram`, `xsm_docs` and `xsm_simulate` print byte for byte what `xsm inspect / diagram / docs / simulate <chart.json>` prints. `xsm_simulate` only runs the `-e` events and never reads stdin. The full table, with `xsm_deadlines`, `xsm_refresh_columns` and `xsm_migrate_fsm`, is in [Django → Management commands](../integration-django/#management-commands). Exit status: 0, 1 (`CommandError`: unknown model, missing pk, bad `--database`, unwritable `-o` / `--write-chart`, bad `--batch` / `--map`), 2 (bad flag).
 
 ---
 

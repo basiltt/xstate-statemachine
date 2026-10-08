@@ -86,6 +86,20 @@ def _add_file_input_args(parser: argparse.ArgumentParser) -> None:
         default=[],
         help="Path to a JSON file for a *child* (actor) machine (can be used multiple times).",
     )
+    # 🔁 #310: step 1 of the django-fsm migration without manage.py
+    parser.add_argument(
+        "--from-django-fsm",
+        metavar="app.Model",
+        default=None,
+        help="Extract the chart from a django-fsm model's @transition "
+        "decorators (needs DJANGO_SETTINGS_MODULE; no database access).",
+    )
+    parser.add_argument(
+        "--fsm-field",
+        default="state",
+        metavar="FIELD",
+        help="The FSMField for --from-django-fsm (default: state).",
+    )
 
 
 def _add_generation_option_args(parser: argparse.ArgumentParser) -> None:

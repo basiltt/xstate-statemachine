@@ -118,6 +118,14 @@ def _get_validated_json_paths(
     logger.info("📂 Validating and collecting input file paths...")
     # 🗂️ Collect paths in order: parent, standard, children
     json_paths: List[str] = []
+    if getattr(args, "from_django_fsm", None):
+        from .from_django_fsm import chart_from_django_fsm
+
+        json_paths.append(
+            chart_from_django_fsm(
+                args.from_django_fsm, args.fsm_field, args.output
+            )
+        )
     if args.json_parent:
         json_paths.append(args.json_parent)
     json_paths.extend(args.json)
@@ -126,7 +134,7 @@ def _get_validated_json_paths(
 
     # 🛑 Validate that a child machine is not specified without a parent
     has_children = bool(args.json_child)
-    has_parent = bool(args.json_parent or args.json or args.json_files)
+    has_parent = bool(json_paths or args.json or args.json_files)
     if has_children and not has_parent:
         err_msg = "--json-child requires a parent machine JSON."
         logger.error(f"❌ {err_msg}")
