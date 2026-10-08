@@ -152,7 +152,20 @@ application = ProtocolTypeRouter({
 | server → every connection on the row | `{"kind": "transition", "event", "version", ...state}` (group `xsm.<app>.<model>.<pk>`) |
 | server → client, every `heartbeat_s` | `{"kind": "ping"}` |
 
-Sends run the model's `send()` inside `database_sync_to_async`, so the row lock never blocks the event loop. Hooks: `get_instance()`, `authorize(user, instance)` (default: the model's `view` permission), `group_name(instance)`, `context_serializer`. `live_consumers()` reports how many consumers are connected in this process.
+Sends run the model's `send()` inside `database_sync_to_async`, so the row lock never blocks the event loop. Hooks: `get_instance()`, `authorize(user, instance)` (default: the model's `view` permission), `group_name(instance)` (a `@staticmethod`; an override is registered with the broadcaster, so its group still receives pushes), `context_serializer`. `live_consumers()` reports how many consumers are connected in this process.
+
+**Where pushes come from.** The `transition` push is sent by a `post_transition(on_commit=True)` receiver (`xstate_statemachine.contrib.channels.broadcast`, connected when the consumer module is imported). It is not sent by the socket that made the change. A transition committed anywhere (the admin, a REST call, a management command, another socket) reaches every subscriber on the row once. A rolled-back send reaches nobody. A socket sender gets its `receipt` first, then the same `transition` push as everyone else. If the channel layer is down, the failure is logged (`channels: could not broadcast ...`) and the commit still succeeds. A subscriber that does not read loses pushes once its channel is full (the in-memory layer holds 100). The sender is never blocked. Every push re-reads the row, so the body is always current. `version` is the version that was committed.
+
+**Frames and close codes.**
+
+| Situation | Result |
+|:--|:--|
+| malformed JSON, a binary frame, no string `type`, a non-object `payload`, an unknown event | `{"kind": "error", "status": 422, ...}`; the socket stays open |
+| an event the user may not send | `{"kind": "error", "status": 403, ...}` |
+| no `AuthMiddlewareStack` (logged as a warning), anonymous user, no `view` permission, no such row | closed with **1008** before any state is sent |
+| permission revoked, user deactivated or deleted | closed with **1008** on the next push or heartbeat |
+
+**Origins.** `AllowedHostsOriginValidator` takes its list from `ALLOWED_HOSTS`, so `ALLOWED_HOSTS = ["*"]` accepts every origin. For a frontend on a separate origin, use `OriginValidator(app, ["https://app.example.com"])` instead.
 
 ## Guarantees
 
