@@ -1,0 +1,37 @@
+{
+  "id": "counter",
+  "initial": "s_1",
+  "states": {
+    "s_1": {
+      "meta": {
+        "fsm_value": 1
+      },
+      "on": {
+        "UP": {
+          "target": "s_2",
+          "meta": {
+            "method": "up"
+          }
+        }
+      }
+    },
+    "s_2": {
+      "meta": {
+        "fsm_value": 2
+      },
+      "on": {
+        "TOP": {
+          "target": "s_3",
+          "meta": {
+            "method": "top"
+          }
+        }
+      }
+    },
+    "s_3": {
+      "meta": {
+        "fsm_value": 3
+      }
+    }
+  }
+}

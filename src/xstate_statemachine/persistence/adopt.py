@@ -87,12 +87,42 @@ def _is_ancestor(a: StateNode[Any], b: StateNode[Any]) -> bool:
     return False
 
 
+def _deadlines(interp: Any, active: Set[StateNode[Any]]) -> List[Any]:
+    """`Deadline` records for the ``after`` timers of *active*, anchored
+    to ``interp.wall_now()`` -- what entering them would have armed."""
+    import math
+
+    from .deadline import Deadline
+
+    now = interp.wall_now()
+    out: List[Any] = []
+    for seq, node in enumerate(sorted(active, key=lambda n: n.id), 1):
+        for delay, transitions in (node.after or {}).items():
+            ms = interp._resolve_delay(delay, None)
+            if ms is None or not math.isfinite(ms):
+                continue
+            ms = max(0.0, float(ms))
+            for event in sorted({t.event for t in transitions}):
+                out.append(
+                    Deadline(
+                        state_id=node.id,
+                        entry_seq=seq,
+                        due_at_wall=now + ms / 1000.0,
+                        delay_ms=int(round(ms)),
+                        event_type=event,
+                    ).to_dict()
+                )
+    return sorted(out, key=lambda d: (d["due_at_wall"], d["state_id"]))
+
+
 def from_state_ids(
     machine: MachineNode[Any],
     state_ids: Iterable[str],
     context: Optional[Dict[str, Any]] = None,
     *,
     status: str = "running",
+    timers: bool = False,
+    clock: Any = None,
 ) -> str:
     """The JSON snapshot of *machine* in the configuration *state_ids*.
 
@@ -104,6 +134,16 @@ def from_state_ids(
         context: The context; merged over the machine's initial context
             (keys given win), like a restore.
         status: ``"running"`` (default) or ``"done"`` for a final state.
+        timers: Also record a durable deadline (``deadlines``, #264) for
+            every ``after`` timer of the adopted configuration, due
+            ``delay`` after NOW (``clock.wall_now()``) -- the record's own
+            entry time is unknown, so adoption counts as entry. Without
+            it (the default) nothing is recorded and the timer starts
+            when the machine is next started with ``restart_timers``.
+            The Django migration (`migrate_rows`) passes ``True`` so the
+            deadline scanner sees adopted rows.
+        clock: The clock whose ``wall_now()`` anchors those deadlines
+            (default: the interpreter's, i.e. ``time.time()``).
 
     Returns:
         A ``get_snapshot()``-compatible JSON string (current layout).
@@ -132,7 +172,9 @@ def from_state_ids(
             f"from_state_ids: {sorted(missing)} conflict with the rest of "
             f"the configuration (different branches of one compound state)."
         )
-    interp: Any = SyncInterpreter(machine)  # never started: nothing runs
+    interp: Any = SyncInterpreter(  # never started: nothing runs
+        machine, **({"clock": clock} if clock is not None else {})
+    )
     snap: Dict[str, Any] = interp.get_persisted_snapshot()
     base = copy.deepcopy(snap.get("context") or {})
     if context:
@@ -151,7 +193,7 @@ def from_state_ids(
         state_ids=leaves,
         configuration=sorted(n.id for n in active),
         value=interp.value,
-        deadlines=[],
+        deadlines=_deadlines(interp, active) if timers else [],
     )
     blob = json.dumps(snap, indent=2, default=str)
     # ✅ Round-trip: the engine's own restore validates shape, identity,

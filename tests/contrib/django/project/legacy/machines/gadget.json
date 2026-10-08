@@ -1,0 +1,64 @@
+{
+  "id": "gadget",
+  "initial": "in_progress",
+  "states": {
+    "in_progress": {
+      "meta": {
+        "fsm_value": "in-progress"
+      },
+      "on": {
+        "ADVANCE": {
+          "target": "état",
+          "meta": {
+            "method": "advance"
+          }
+        },
+        "RESTART": {
+          "target": "in_progress",
+          "meta": {
+            "method": "restart"
+          }
+        }
+      }
+    },
+    "état": {
+      "on": {
+        "FINISH": {
+          "target": "s_1",
+          "meta": {
+            "method": "finish"
+          }
+        },
+        "RESTART": {
+          "target": "in_progress",
+          "meta": {
+            "method": "restart"
+          }
+        }
+      }
+    },
+    "s_1": {
+      "meta": {
+        "fsm_value": "1"
+      },
+      "on": {
+        "RESTART": {
+          "target": "in_progress",
+          "meta": {
+            "method": "restart"
+          }
+        }
+      }
+    },
+    "parked": {
+      "on": {
+        "RESTART": {
+          "target": "in_progress",
+          "meta": {
+            "method": "restart"
+          }
+        }
+      }
+    }
+  }
+}

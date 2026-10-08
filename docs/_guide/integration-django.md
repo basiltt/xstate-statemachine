@@ -349,7 +349,7 @@ Templates (override in your project): `admin/xsm/change_form.html` (blocks `xsm_
 | `xsm_deadlines [app.Model ...] [--forever] [--interval S] [--limit N] [--now EPOCH] [--database ALIAS]` | the durable-timer scanner |
 | `xsm_refresh_columns app.Model [--batch N] [--dry-run] [--database ALIAS]` | `refresh_statechart_columns` |
 | `xsm_snapshots app.Model [--stale] [--json] [--limit N] [--database ALIAS]` | rows and their `machine_version` |
-| `xsm_migrate_fsm app.Model --field state [--dry-run] [--write-chart P]` | see below |
+| `xsm_migrate_fsm app.Model [--field F] [--statechart-field F] [--dry-run] [--write-chart P] [--map OLD=NEW] [--batch N] [--machine-id ID] [--database ALIAS]` | see below |
 
 The output of the first four matches `xsm` byte for byte, and the tests pin that. `--no-color` is Django's own flag and is honoured; `NO_COLOR` and `TERM=dumb` are honoured as by `xsm`. `xsm_simulate` without `-e` runs no events and never waits for input. An unknown label, a model with two `StatechartField`s and no `statechart_field_name`, a missing or malformed *pk*, an unknown `--database` alias, an unwritable `-o`, or an unmigrated database is a `CommandError` (exit status 1), not a traceback. A bad flag or `-f` value is exit status 2 (argparse). Charts given as a dict or a callable are written to a temporary JSON file first.
 
@@ -370,7 +370,7 @@ The output of the first four matches `xsm` byte for byte, and the tests pin that
 | django-fsm-log (`StateLog`, `@fsm_log_by`, `@fsm_log_description`) | `TransitionLog`, written in the same transaction; `send(actor=user, reason=...)`; refusals are recorded too |
 | fsm_admin buttons | `StatechartAdminMixin` |
 
-`python manage.py xsm_migrate_fsm shop.Order --field state --dry-run` extracts the chart from your `@transition` decorators. The same command without `--dry-run` fills the snapshots, batched and resumable, and `FSMDualWriteMixin` keeps the old column in sync for one release. The four steps are on [vs django-fsm](../comparisons/vs-django-fsm/#migration-recipe). `from_state_ids(machine, ids, context)` in `xstate_statemachine.persistence` is the generic "adopt an existing record" primitive underneath, and it works for plain dicts and SQLAlchemy too.
+`python manage.py xsm_migrate_fsm shop.Order --field state --dry-run` extracts the chart from your `@transition` decorators. The same command without `--dry-run` fills the snapshots, batched and resumable, skips and reports per value any column value the chart does not know (`--map OLD=NEW` folds renamed values in), and `FSMDualWriteMixin` keeps both columns in sync for one release, in both directions: `send()` writes the old column, and an old `@transition` + `save()` re-adopts the snapshot. `--dry-run` prints only the chart JSON on stdout; the recipe goes to stderr. `xsm gt --from-django-fsm app.Model` does step 1 without `manage.py`. The four steps are on [vs django-fsm](../comparisons/vs-django-fsm/#migration-recipe). `from_state_ids(machine, ids, context)` in `xstate_statemachine.persistence` is the generic "adopt an existing record" primitive underneath, and it works for plain dicts and SQLAlchemy too.
 
 ## Guarantees
 

@@ -24,9 +24,9 @@ def _ticket() -> Any:
     return Ticket
 
 
-def _out(*args: Any) -> str:
+def _out(*args: Any, **kw: Any) -> str:
     buf = io.StringIO()
-    call_command(*args, stdout=buf)
+    call_command(*args, stdout=buf, **kw)
     return buf.getvalue()
 
 
@@ -35,8 +35,11 @@ class TestExtraction:
         from xstate_statemachine import create_machine
         from xstate_statemachine.testing_utils import stub_logic
 
-        text = _out("xsm_migrate_fsm", "legacy.Ticket", "--dry-run")
-        chart = json.loads(text[: text.index("\nMigrating ")])
+        err = io.StringIO()
+        text = _out(
+            "xsm_migrate_fsm", "legacy.Ticket", "--dry-run", stderr=err
+        )
+        chart = json.loads(text)  # #310-b: the recipe goes to stderr
         m = create_machine(chart, logic=stub_logic(chart), strict_config=True)
         assert sorted(m.known_events) == [
             "CLOSE",
@@ -59,7 +62,7 @@ class TestExtraction:
         assert close["meta"] == {"method": "close"}
         # source="*" fans out over every state
         assert all("RESET" in s["on"] for s in chart["states"].values())
-        assert "Dual-read" in text
+        assert "Dual-read" in err.getvalue()
         # the committed chart is exactly what the command extracts today
         committed = json.loads(
             (
