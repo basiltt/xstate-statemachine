@@ -1,5 +1,6 @@
 """The README's Python blocks run, and ``python -m eda_fulfilment`` works."""
 
+import pytest
 import os
 import re
 import subprocess
@@ -24,6 +25,8 @@ def test_readme_python_blocks_run(monkeypatch, tmp_path):
 
 
 def test_readme_links_every_guide_page():
+    if not (HERE / "../../../docs/_guide").resolve().is_dir():
+        pytest.skip("docs tree not alongside: the example was copied out")
     text = (HERE / "README.md").read_text("utf-8")
     for page in ("eda", "brokers", "celery", "observability", "inspector"):
         target = f"../../../docs/_guide/integration-{page}.md"

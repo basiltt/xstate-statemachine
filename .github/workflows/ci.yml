@@ -292,7 +292,7 @@ jobs:
             #    newcomer environments that found real defects.
             fastapi)
               export XSM_ADOPTION_VENV=1
-              targets="$targets tests/test_battle_309_adoption.py" ;;&
+              targets="$targets tests/test_battle_309_adoption.py tests/test_battle_286_scenario.py" ;;&
             # 🐘 #284: Postgres parity on the Linux cell (Docker present).
             #    (review: pytest-socket must let the Docker unix socket and
             #    testcontainers' `localhost` URL through on that cell)
