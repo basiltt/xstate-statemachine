@@ -182,7 +182,7 @@ def test_run_it_literally(copy):
     _superuser_can_log_in(copy)
 
 
-_ANSI = re.compile(r"\[[0-9;]*m")
+_ANSI = re.compile("\x1b\\[[0-9;]*m")
 
 
 def _check_output(cmd, out):
