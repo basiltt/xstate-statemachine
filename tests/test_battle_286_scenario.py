@@ -130,6 +130,8 @@ def _readme_installs(
                 tok = f"{wheel}{extras}"
             if tok in ("-e", ".", "-q"):
                 continue
+            # 📝 flags such as `--only-binary greenlet` (sqlalchemy_orders on
+            #    3.9 / Windows) are part of the README's line and stay
             args.append(tok)
         out.append(args)
     return out

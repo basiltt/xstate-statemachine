@@ -368,7 +368,7 @@ The output of the first four matches `xsm` byte for byte, and the tests pin that
 | `ConcurrentTransitionMixin` | `lock="optimistic"` + `send_with_retry` (or the default row lock) |
 | `pre_transition` / `post_transition` | the same names, inside the transaction; `on_commit=True` for side effects |
 | django-fsm-log (`StateLog`, `@fsm_log_by`, `@fsm_log_description`) | `TransitionLog`, written in the same transaction; `send(actor=user, reason=...)`; refusals are recorded too |
-| fsm_admin buttons | `StatechartAdminMixin` |
+| `FSMAdminMixin` admin buttons (`fsm_admin` is deprecated) | `StatechartAdminMixin` |
 
 `python manage.py xsm_migrate_fsm shop.Order --field state --dry-run` extracts the chart from your `@transition` decorators. The same command without `--dry-run` fills the snapshots, batched and resumable, skips and reports per value any column value the chart does not know (`--map OLD=NEW` folds renamed values in), and `FSMDualWriteMixin` keeps both columns in sync for one release, in both directions: `send()` writes the old column, and an old `@transition` + `save()` re-adopts the snapshot. `--dry-run` prints only the chart JSON on stdout; the recipe goes to stderr. `xsm gt --from-django-fsm app.Model` does step 1 without `manage.py`. The four steps are on [vs django-fsm](../comparisons/vs-django-fsm/#migration-recipe). `from_state_ids(machine, ids, context)` in `xstate_statemachine.persistence` is the generic "adopt an existing record" primitive underneath, and it works for plain dicts and SQLAlchemy too.
 
