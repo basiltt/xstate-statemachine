@@ -132,6 +132,18 @@ Reproduce with `python run.py`; raw numbers in `results.json`.
 | Delayed transition (timers/s) | **9,151** | — | — | 71 | 4,735 | 6,654 |
 | Native asyncio (ev/s) | — | — | 27,581 | **45,177** | 8,215 | — |
 
+### Reproduction check (2026-10-08, #286 battle)
+
+Re-run with `python run.py` on the same laptop, same pinned versions (transitions 0.9.3,
+python-statemachine 3.2.1, sismic 1.6.11, xstate-statemachine 0.11.0), but **not** idle:
+other test suites were running. Every absolute figure came out 20-45 % lower, uniformly
+across all libraries, so the table above is kept as the quiet-machine reference.
+**Reproduce ratios, not absolutes:** the cross-library ratio in each row should hold within
+±25 %. In that loaded run it did for every row except S6 (1,000 instances): ours / `transitions`
+0.80 against 0.98 here, so read the S6 "tie" as "within 20 %". The orderings in "Reading
+the table honestly" all held (flat: `transitions` ~2x ours; nested 3.1x, parallel 3.9x
+`transitions`; delayed 82x `transitions`, 1.2x `sismic`).
+
 ### What the #307 audit changed
 
 The 2026-09-19 table was not like-for-like in two rows; both adapters are fixed:

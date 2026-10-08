@@ -9,13 +9,13 @@ permalink: /guide/vs-step-functions/
 AWS Step Functions is a managed workflow service. You describe a state machine in the Amazon States Language (ASL), and AWS runs it, persists it, retries it and draws it. xstate-statemachine is a library. You describe a statechart in XState JSON and run it in your own Python process, with state in your own store. They overlap on "a JSON state machine that survives failures", and they differ on almost everything else.
 
 {% assign c = site.data.comparisons.workflow_competitors.step_functions %}
-This table is generated from [`docs/_data/comparisons.json`](https://github.com/basiltt/xstate-statemachine/blob/main/docs/_data/comparisons.json) (`workflow_rows`). Corrections are welcome as PRs against that file. Each cell describes documented behaviour at the time of writing. Check the [{{ c.name }} documentation]({{ c.url }}) for the current state.
+This table is generated from [`docs/_data/comparisons.json`](https://github.com/basiltt/xstate-statemachine/blob/main/docs/_data/comparisons.json) (`workflow_rows`). Corrections are welcome as PRs against that file. Every row carries a source note. It was checked against the {{ c.checked }}; see the [{{ c.name }} documentation]({{ c.url }}) for the current state.
 
 ## Feature table
 
-| Capability | xstate-statemachine | AWS Step Functions |
-|:--|:--|:--|
-{% for row in site.data.comparisons.workflow_rows %}| {{ row.feature }} | {{ row.ours }} | {{ row.step_functions }} |
+| Capability | xstate-statemachine | AWS Step Functions | Source |
+|:--|:--|:--|:--|
+{% for row in site.data.comparisons.workflow_rows %}| {{ row.feature }} | {{ row.ours }} | {{ row.step_functions }} | {{ row.source.step_functions }} |
 {% endfor %}
 
 <!-- rows (kept in sync by tests/test_comparisons.py): Definition language; Where it runs; Event-driven transitions; Hierarchy and parallel; Timers; Retries and error handling; Long-running durability; Local testing; Visual editor; Observability; Cost model; Lock-in -->
@@ -87,7 +87,7 @@ The shapes map closely. `Retry` becomes `RetryPolicy` plus a `retrying` state. `
 
 ## Local testing
 
-With Step Functions you test ASL locally through Step Functions Local (a Docker image) or the `TestState` API, and mock or stand up the Lambdas and queues it calls. The feedback loop runs through an emulator or through AWS.
+With Step Functions you test ASL through the `TestState` API, which runs one state at a time against AWS with mocked integrations, and stand up or mock the Lambdas and queues it calls. Step Functions Local, the downloadable emulator, is now marked unsupported by AWS and lacks feature parity. The feedback loop runs through AWS.
 
 Here the chart is tested with pytest in-process. A `SimulatedClock` makes the 3-day timeout instantaneous:
 

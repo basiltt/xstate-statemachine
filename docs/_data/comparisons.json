@@ -1,8 +1,20 @@
 {
   "competitors": {
-    "langgraph": {"name": "LangGraph", "url": "https://github.com/langchain-ai/langgraph"},
-    "burr": {"name": "Burr", "url": "https://github.com/apache/burr"},
-    "statelyai_agent": {"name": "@statelyai/agent", "url": "https://github.com/statelyai/agent"}
+    "langgraph": {
+      "name": "LangGraph",
+      "url": "https://github.com/langchain-ai/langgraph",
+      "checked": "langgraph 1.2.14, 2026-10-08"
+    },
+    "burr": {
+      "name": "Burr",
+      "url": "https://github.com/apache/burr",
+      "checked": "burr 0.42.0, 2026-10-08"
+    },
+    "statelyai_agent": {
+      "name": "@statelyai/agent",
+      "url": "https://github.com/statelyai/agent",
+      "checked": "@statelyai/agent 1.1.6 (npm latest, published 2024-09-28), 2026-10-08"
+    }
   },
   "rows": [
     {
@@ -10,83 +22,138 @@
       "ours": "Yes: compound states at any depth, XState v5 semantics",
       "langgraph": "Subgraphs as nodes; no statechart hierarchy",
       "burr": "Flat actions + transitions; sub-applications by composition",
-      "statelyai_agent": "Yes (XState v5, TypeScript)"
+      "statelyai_agent": "Yes (XState v5, TypeScript)",
+      "source": {
+        "langgraph": "langgraph 1.2.14: compiled `StateGraph` added as a node; no compound/parallel state type",
+        "burr": "burr 0.42.0: `burr.core.graph.GraphBuilder`; sub-applications via `burr.core.parallelism.RunnableGraph`",
+        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): package.json deps `xstate ^5.18.2`, `ai ^3.4.6`, `zod`; README \"powered by XState\""
+      }
     },
     {
       "feature": "Parallel regions",
       "ours": "Yes: `type: parallel`, `done.state` join",
       "langgraph": "Fan-out / fan-in via edges and `Send`",
       "burr": "Parallelism via `MapStates` / sub-applications",
-      "statelyai_agent": "Yes (XState v5)"
+      "statelyai_agent": "Yes (XState v5)",
+      "source": {
+        "langgraph": "langgraph 1.2.14: `langgraph.types.Send`; parallel nodes in a superstep",
+        "burr": "burr 0.42.0: `burr.core.parallelism.MapStates` / `MapActions`",
+        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): package.json deps `xstate ^5.18.2`, `ai ^3.4.6`, `zod`; README \"powered by XState\""
+      }
     },
     {
       "feature": "Guards as policy",
       "ours": "Named guards in the chart; `run_tool` re-checks per-state tool allow-lists (X0.13)",
       "langgraph": "Conditional edges are code; tool policy lives in node code",
       "burr": "Conditions on transitions (`when`, `expr`)",
-      "statelyai_agent": "XState guards; tool policy is app code"
+      "statelyai_agent": "XState guards; tool policy is app code",
+      "source": {
+        "langgraph": "langgraph 1.2.14: `add_conditional_edges` routing functions",
+        "burr": "burr 0.42.0: `burr.core.when`, `expr`, `default`",
+        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): package.json deps `xstate ^5.18.2`, `ai ^3.4.6`, `zod`; README \"powered by XState\""
+      }
     },
     {
       "feature": "`after` timeouts",
       "ours": "Yes: durable deadlines for model, tool and human waits, persisted and woken by `DueTimerScanner`",
-      "langgraph": "Per-step timeouts / retry policies; no durable timers",
+      "langgraph": "Per-node `timeout=` / `TimeoutPolicy` and `RetryPolicy`; no durable timers",
       "burr": "Not built in",
-      "statelyai_agent": "XState `after` (in-process)"
+      "statelyai_agent": "XState `after` (in-process)",
+      "source": {
+        "langgraph": "langgraph 1.2.14: `StateGraph.add_node(timeout=, retry_policy=)`, `langgraph.types.TimeoutPolicy`",
+        "burr": "burr 0.42.0: no timer / delay API in `burr.core`",
+        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): package.json deps `xstate ^5.18.2`, `ai ^3.4.6`, `zod`; README \"powered by XState\""
+      }
     },
     {
       "feature": "Human-in-the-loop as durable state",
       "ours": "`awaiting_human` is a persisted state with an escalation deadline; approval names exact call ids",
       "langgraph": "`interrupt()` + checkpointer (strong)",
       "burr": "Halt before/after an action, resume from persisted state",
-      "statelyai_agent": "Model it as a state; persistence is yours"
+      "statelyai_agent": "Model it as a state; persistence is yours",
+      "source": {
+        "langgraph": "langgraph 1.2.14: `langgraph.types.interrupt`, `Command(resume=)`",
+        "burr": "burr 0.42.0: `Application.run(halt_before=, halt_after=)` + persisters",
+        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): package.json deps `xstate ^5.18.2`, `ai ^3.4.6`, `zod`; README \"powered by XState\""
+      }
     },
     {
       "feature": "Persistence / replay",
       "ours": "Snapshots in SQLite / Redis / Postgres stores, versioned layout, event log replay",
       "langgraph": "Checkpointers with time travel (strong)",
       "burr": "Persisters + tracking UI replay (strong)",
-      "statelyai_agent": "XState snapshots; storage is yours"
+      "statelyai_agent": "XState snapshots; storage is yours",
+      "source": {
+        "langgraph": "langgraph 1.2.14: `langgraph.checkpoint` savers, `get_state_history`",
+        "burr": "burr 0.42.0: `burr.core.persistence`, `burr.integrations.persisters` (Postgres, Redis, Mongo, SQLite)",
+        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): package.json deps `xstate ^5.18.2`, `ai ^3.4.6`, `zod`; README \"powered by XState\""
+      }
     },
     {
       "feature": "Visual editor",
       "ours": "Stately editor round-trip (the chart is XState JSON)",
-      "langgraph": "LangGraph Studio (graph view, debugging)",
+      "langgraph": "LangSmith Studio, formerly LangGraph Studio (graph view, debugging)",
       "burr": "Burr UI (tracking, graph view)",
-      "statelyai_agent": "Stately editor"
+      "statelyai_agent": "Stately editor",
+      "source": {
+        "langgraph": "langgraph 1.2.14: LangSmith Studio docs",
+        "burr": "burr 0.42.0: `burr[tracking]` UI",
+        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): package.json deps `xstate ^5.18.2`, `ai ^3.4.6`, `zod`; README \"powered by XState\""
+      }
     },
     {
       "feature": "Typed context / events",
       "ours": "Pydantic context + event schemas (`[pydantic]`), strict tool-argument schemas",
       "langgraph": "TypedDict / Pydantic graph state",
       "burr": "State object; typed via Pydantic integration",
-      "statelyai_agent": "TypeScript types + Zod"
+      "statelyai_agent": "TypeScript types + Zod",
+      "source": {
+        "langgraph": "langgraph 1.2.14: `StateGraph(state_schema)` TypedDict / Pydantic",
+        "burr": "burr 0.42.0: `burr.integrations.pydantic.PydanticTypingSystem`",
+        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): package.json deps `xstate ^5.18.2`, `ai ^3.4.6`, `zod`; README \"powered by XState\""
+      }
     },
     {
       "feature": "Observability",
       "ours": "JSONL trace with `gen_ai.*` fields, OTel plugin, no content by default, secret redaction",
       "langgraph": "LangSmith (strong)",
       "burr": "Burr UI + OTel",
-      "statelyai_agent": "XState inspection"
+      "statelyai_agent": "XState inspection",
+      "source": {
+        "langgraph": "langgraph 1.2.14: LangSmith tracing",
+        "burr": "burr 0.42.0: `burr.tracking`, `burr.integrations.opentelemetry`",
+        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): package.json deps `xstate ^5.18.2`, `ai ^3.4.6`, `zod`; README \"powered by XState\""
+      }
     },
     {
       "feature": "Multi-agent",
       "ours": "Reference supervisor / pipeline / debate charts; `spawn_agent` with per-child and global budgets",
       "langgraph": "Supervisor / swarm libraries, subgraphs (strong ecosystem)",
       "burr": "Composition of applications",
-      "statelyai_agent": "Multiple agents as actors"
+      "statelyai_agent": "Multiple agents as actors",
+      "source": {
+        "langgraph": "langgraph 1.2.14: langgraph-supervisor / langgraph-swarm packages, subgraphs",
+        "burr": "burr 0.42.0: `RunnableGraph` / sub-applications",
+        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): package.json deps `xstate ^5.18.2`, `ai ^3.4.6`, `zod`; README \"powered by XState\""
+      }
     },
     {
       "feature": "Incremental adoption",
       "ours": "One LangGraph node (`statechart_node`), a graph as a service (`langgraph_service`), a pydantic-ai Tool",
       "langgraph": "Functional API; wraps any Python",
       "burr": "Wraps any Python function",
-      "statelyai_agent": "Drop into any XState app"
+      "statelyai_agent": "Drop into any XState app",
+      "source": {
+        "langgraph": "langgraph 1.2.14: `langgraph.func.entrypoint` / `task`",
+        "burr": "burr 0.42.0: `@action` decorates any function",
+        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): package.json deps `xstate ^5.18.2`, `ai ^3.4.6`, `zod`; README \"powered by XState\""
+      }
     }
   ],
   "django_fsm": {
     "name": "django-fsm-2",
     "url": "https://github.com/django-commons/django-fsm-2",
-    "checked": "django-fsm-2 4.2.4, 2026-09-29",
+    "checked": "django-fsm-2 4.2.4, 2026-10-08",
     "rows": [
       {
         "feature": "Hierarchy (nested states)",
@@ -139,8 +206,8 @@
       {
         "feature": "Admin / UI",
         "ours": "`StatechartAdminMixin`: permission-computed CSRF-protected transition buttons, confirm + reason, history inline, state filter, bulk actions; `manage.py xsm_inspect` / `xsm_diagram`",
-        "theirs": "Yes: `fsm_admin` transition buttons in the Django admin",
-        "source": "django-fsm-2 4.2.4: `fsm_admin` package ships with django-fsm-2; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+        "theirs": "Yes: `django_fsm.admin.FSMAdminMixin` transition buttons in the Django admin",
+        "source": "django-fsm-2 4.2.4: `django_fsm.admin.FSMAdminMixin` (the old `fsm_admin.mixins` import is a deprecated shim, check `django_fsm.admin.W001`); ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
       {
         "feature": "REST / DRF",
@@ -183,7 +250,7 @@
   "transitions": {
     "name": "transitions",
     "url": "https://github.com/pytransitions/transitions",
-    "checked": "transitions 0.9.3, 2026-09-29",
+    "checked": "transitions 0.9.3, 2026-10-08",
     "rows": [
       {
         "feature": "Hierarchy (nested states)",
@@ -224,7 +291,7 @@
       {
         "feature": "Locking / concurrent writers",
         "ours": "`OptimisticLock` / `PessimisticLock` on every store; Django `send()` in `transaction.atomic()` + `select_for_update()` (or a version fence + `send_with_retry`); SQLAlchemy `version_id_col`",
-        "theirs": "`LockedMachine`: an in-process `RLock`; nothing across processes",
+        "theirs": "`LockedMachine`: an in-process `threading.Lock` (re-entrant per thread); nothing across processes",
         "source": "transitions 0.9.3: `transitions.extensions.LockedMachine`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
       {
@@ -280,7 +347,7 @@
   "python_statemachine": {
     "name": "python-statemachine",
     "url": "https://github.com/fgmacedo/python-statemachine",
-    "checked": "python-statemachine 3.2.1, 2026-09-29",
+    "checked": "python-statemachine 3.2.1, 2026-10-08",
     "rows": [
       {
         "feature": "Hierarchy (nested states)",
@@ -351,8 +418,8 @@
       {
         "feature": "Visual editor",
         "ours": "Stately editor: the chart is plain XState JSON",
-        "theirs": "Diagrams (Graphviz) and a Sphinx extension; no editor",
-        "source": "python-statemachine 3.2.1: `statemachine.contrib.diagram`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+        "theirs": "Diagrams (Graphviz or Mermaid) and a Sphinx extension; no editor",
+        "source": "python-statemachine 3.2.1: `statemachine.contrib.diagram` (Graphviz via pydot, `renderers/mermaid.py`); ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
       {
         "feature": "Typed context",
@@ -375,68 +442,108 @@
     ]
   },
   "workflow_competitors": {
-    "step_functions": {"name": "AWS Step Functions", "url": "https://docs.aws.amazon.com/step-functions/latest/dg/welcome.html"}
+    "step_functions": {
+      "name": "AWS Step Functions",
+      "url": "https://docs.aws.amazon.com/step-functions/latest/dg/welcome.html",
+      "checked": "AWS Step Functions developer guide, read 2026-10-08"
+    }
   },
   "workflow_rows": [
     {
       "feature": "Definition language",
       "ours": "XState JSON (statecharts): states, events, guards, actions, `after`, `invoke`",
-      "step_functions": "Amazon States Language (ASL) JSON: Task / Choice / Wait / Parallel / Map states"
+      "step_functions": "Amazon States Language (ASL) JSON: Task / Choice / Wait / Parallel / Map states",
+      "source": {
+        "step_functions": "AWS Step Functions developer guide, read 2026-10-08: ASL spec (states-language.html)"
+      }
     },
     {
       "feature": "Where it runs",
       "ours": "In your Python process, on any host; state in your store (SQLite, Redis, Postgres)",
-      "step_functions": "Managed AWS service; state held by AWS"
+      "step_functions": "Managed AWS service; state held by AWS",
+      "source": {
+        "step_functions": "AWS Step Functions developer guide, read 2026-10-08: welcome.html"
+      }
     },
     {
       "feature": "Event-driven transitions",
       "ours": "Any state reacts to any named event (`send`) at any time",
-      "step_functions": "Flow is task-to-task; outside input via callback task tokens (`.waitForTaskToken`)"
+      "step_functions": "Flow is task-to-task; outside input via callback task tokens (`.waitForTaskToken`)",
+      "source": {
+        "step_functions": "AWS Step Functions developer guide, read 2026-10-08: connect-to-resource.html#connect-wait-token"
+      }
     },
     {
       "feature": "Hierarchy and parallel",
       "ours": "Nested compound states and parallel regions with statechart semantics",
-      "step_functions": "`Parallel` and `Map` states; nested workflows via child executions"
+      "step_functions": "`Parallel` and `Map` states; nested workflows via child executions",
+      "source": {
+        "step_functions": "AWS Step Functions developer guide, read 2026-10-08: state-parallel.html, state-map.html, concepts-nested-workflows.html"
+      }
     },
     {
       "feature": "Timers",
       "ours": "`after` per state, cancelled on exit; durable via persisted deadlines + `DueTimerScanner`",
-      "step_functions": "`Wait` state and task `TimeoutSeconds` / `HeartbeatSeconds`; durable by the service"
+      "step_functions": "`Wait` state and task `TimeoutSeconds` / `HeartbeatSeconds`; durable by the service",
+      "source": {
+        "step_functions": "AWS Step Functions developer guide, read 2026-10-08: state-wait.html, state-task.html (TimeoutSeconds, HeartbeatSeconds)"
+      }
     },
     {
       "feature": "Retries and error handling",
       "ours": "`onError` transitions; `RetryPolicy` backoff with jitter; `CircuitBreaker`; dead-letter tag",
-      "step_functions": "Declarative `Retry` / `Catch` per state with backoff and jitter"
+      "step_functions": "Declarative `Retry` / `Catch` per state with backoff and jitter",
+      "source": {
+        "step_functions": "AWS Step Functions developer guide, read 2026-10-08: concepts-error-handling.html"
+      }
     },
     {
       "feature": "Long-running durability",
       "ours": "As durable as your store; you run the process and one scheduler role",
-      "step_functions": "Standard workflows up to one year, fully managed"
+      "step_functions": "Standard workflows up to one year, fully managed",
+      "source": {
+        "step_functions": "AWS Step Functions developer guide, read 2026-10-08: service-quotas.html (\"Maximum execution time: 1 year\")"
+      }
     },
     {
       "feature": "Local testing",
       "ours": "Plain pytest: `SimulatedClock`, both engines, `xsm simulate`, no emulator",
-      "step_functions": "Step Functions Local / `TestState` API; AWS services mocked or called"
+      "step_functions": "`TestState` API (mocks per state); Step Functions Local is now marked unsupported by AWS",
+      "source": {
+        "step_functions": "AWS Step Functions developer guide, read 2026-10-08: test-state-isolation.html; sfn-local.html (\"Step Functions Local is unsupported\")"
+      }
     },
     {
       "feature": "Visual editor",
       "ours": "Stately editor round-trip; `xsm diagram` (Mermaid / PlantUML)",
-      "step_functions": "Workflow Studio in the AWS console"
+      "step_functions": "Workflow Studio in the AWS console",
+      "source": {
+        "step_functions": "AWS Step Functions developer guide, read 2026-10-08: workflow-studio.html"
+      }
     },
     {
       "feature": "Observability",
       "ours": "Plugins: transition log, audit, OTel / Prometheus; you ship them",
-      "step_functions": "Execution history, CloudWatch, X-Ray, built in"
+      "step_functions": "Execution history, CloudWatch, X-Ray, built in",
+      "source": {
+        "step_functions": "AWS Step Functions developer guide, read 2026-10-08: concepts-monitoring.html"
+      }
     },
     {
       "feature": "Cost model",
       "ours": "Library: your compute and storage only",
-      "step_functions": "Per state transition (Standard) or per request and duration (Express)"
+      "step_functions": "Per state transition (Standard) or per request and duration (Express)",
+      "source": {
+        "step_functions": "AWS Step Functions developer guide, read 2026-10-08: aws.amazon.com/step-functions/pricing"
+      }
     },
     {
       "feature": "Lock-in",
       "ours": "Portable JSON; the same chart runs in XState (TypeScript) and in Python",
-      "step_functions": "ASL runs only on AWS"
+      "step_functions": "ASL runs only on AWS",
+      "source": {
+        "step_functions": "AWS Step Functions developer guide, read 2026-10-08: ASL is executed only by the AWS service"
+      }
     }
   ]
 }

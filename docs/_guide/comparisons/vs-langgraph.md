@@ -6,16 +6,16 @@ permalink: /guide/vs-langgraph/
 
 # xstate-statemachine vs LangGraph
 
-LangGraph is the most widely used agent-orchestration library in Python: a graph of nodes over typed state, with checkpointers, `interrupt()` for human input, streaming, LangGraph Studio and LangSmith. It is excellent at what it does, and the two are not either/or.
+LangGraph is the most widely used agent-orchestration library in Python: a graph of nodes over typed state, with checkpointers, `interrupt()` for human input, streaming, LangSmith (tracing, and Studio for debugging). It is excellent at what it does, and the two are not either/or.
 
 {% assign c = site.data.comparisons.competitors.langgraph %}
-This table is generated from [`docs/_data/comparisons.json`](https://github.com/basiltt/xstate-statemachine/blob/main/docs/_data/comparisons.json), and corrections are welcome as PRs against that file. Each cell describes documented behaviour at the time of writing; check [{{ c.name }}]({{ c.url }}) for the current state.
+This table is generated from [`docs/_data/comparisons.json`](https://github.com/basiltt/xstate-statemachine/blob/main/docs/_data/comparisons.json), and corrections are welcome as PRs against that file. Every row carries a source note. It was checked against {{ c.checked }}; see [{{ c.name }}]({{ c.url }}) for the current state.
 
 ## Feature table
 
-| Capability | xstate-statemachine | LangGraph |
-|:--|:--|:--|
-{% for row in site.data.comparisons.rows %}| {{ row.feature }} | {{ row.ours }} | {{ row.langgraph }} |
+| Capability | xstate-statemachine | LangGraph | Source |
+|:--|:--|:--|:--|
+{% for row in site.data.comparisons.rows %}| {{ row.feature }} | {{ row.ours }} | {{ row.langgraph }} | {{ row.source.langgraph }} |
 {% endfor %}
 
 <!-- rows (kept in sync by tests/test_comparisons.py): Hierarchy (nested states); Parallel regions; Guards as policy; `after` timeouts; Human-in-the-loop as durable state; Persistence / replay; Visual editor; Typed context / events; Observability; Multi-agent; Incremental adoption -->
@@ -24,7 +24,7 @@ This table is generated from [`docs/_data/comparisons.json`](https://github.com/
 
 - You are already on LangChain and want the ecosystem: integrations, prebuilt agents, supervisor and swarm libraries.
 - Your control flow is mostly a dataflow graph, and time travel and LangSmith are what you need from persistence and observability.
-- You want a hosted platform (LangGraph Platform) for deployment.
+- You want a hosted platform for deployment (LangSmith Deployment, formerly LangGraph Platform) and LangSmith Studio for debugging.
 
 ## When to choose xstate-statemachine
 
