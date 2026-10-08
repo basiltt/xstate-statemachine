@@ -229,6 +229,7 @@ class InboundDispatcher:
         consumer loop and the other subjects keep running (X0.8).
         """
         res = DispatchResult()
+        outcome: Optional[str]
         try:
             outcome = self._handle(envelope, topic)
         except _Retry:
