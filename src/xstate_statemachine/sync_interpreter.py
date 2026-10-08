@@ -1086,6 +1086,9 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             logger.warning(
                 "🚫 Cannot send events. Interpreter is not running."
             )
+            # 🔔 #283 battle: parity with `send()` -- each event is
+            #    offered to the interceptors, then its drop is reported.
+            self._drop_batch_not_running(events)
             return
 
         for event_or_type in events:

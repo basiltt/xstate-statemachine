@@ -3003,6 +3003,26 @@ class BaseInterpreter(Generic[TContext]):
             "Subclasses must implement the '_invoke_service' method."
         )
 
+    def _drop_batch_not_running(self, events: Any) -> None:
+        """`send_events()` on a stopped / done / errored machine.
+
+        🐛 Battle #283: the batch used to vanish with a log line while
+        `send()` fired `on_event_dropped` (#123) -- an audit trail built
+        from plugin hooks missed every batched drop. Same order as
+        `send()`: interceptors first (an inbox may answer a replay and
+        then nothing is dropped), malformed events skipped, then the
+        drop is reported with the object the interceptors saw.
+        """
+        for raw in events:
+            try:
+                event = self._prepare_event(raw)
+            except Exception:  # noqa: BLE001 -- malformed AND misdirected
+                continue
+            if self._intercept_before_send(event) is not None:
+                continue
+            for plugin in self._plugins:
+                plugin.on_event_dropped(self, event, "not_running")
+
     def _intercept_before_send(self, event: Any) -> "Optional[Receipt]":
         """Run the `on_before_send` interception hook (#304).
 

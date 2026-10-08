@@ -268,3 +268,122 @@ class TestStatusMatrix:
             assert body["available"] == permitted_events(u, a)
         avail = _client(bob).get(f"/api/approvals/{a.pk}/events/").json()
         assert "APPROVE" not in avail["available"]
+
+
+# -----------------------------------------------------------------------------
+# 📜 history / schema / CSRF
+# -----------------------------------------------------------------------------
+class TestHistoryAndSchema:
+    def test_history_honours_pagination_and_filters(
+        self, order: Any, alice: Any
+    ) -> None:
+        from rest_framework.pagination import PageNumberPagination
+
+        from shop.api import OrderViewSet
+
+        class Two(PageNumberPagination):
+            page_size = 2
+
+        class OnlyInc:
+            def filter_queryset(self, request: Any, qs: Any, view: Any):
+                # the view's backends also filter get_object()'s queryset
+                if qs.model._meta.model_name == "order":
+                    return qs
+                return qs.filter(event="INC")
+
+        c = _client(alice)
+        for _ in range(3):
+            c.post(_url(order, "inc"), {}, format="json")
+        c.post(_url(order, "submit"), {}, format="json")
+        OrderViewSet.pagination_class = Two
+        OrderViewSet.filter_backends = [OnlyInc]
+        try:
+            body = c.get(_url(order, "history")).json()
+        finally:
+            del OrderViewSet.pagination_class, OrderViewSet.filter_backends
+        assert body["count"] == 3 and len(body["results"]) == 2
+        assert {row["event"] for row in body["results"]} == {"INC"}
+
+    def test_may_send_but_not_read_history(self, order: Any) -> None:
+        """Sending needs only the chart's guards; ``history/`` needs the
+        model's ``view`` perm -- a separate grant."""
+        carol = _user("carol")
+        c = _client(carol)
+        assert c.post(_url(order, "inc"), {}, format="json").status_code == 200
+        r = c.get(_url(order, "history"))
+        assert r.status_code == 403
+        assert r["Content-Type"].startswith("application/problem+json")
+
+    def test_schema_documents_headers_and_problem_statuses(self) -> None:
+        from drf_spectacular.generators import SchemaGenerator
+        from drf_spectacular.validation import validate_schema
+
+        schema = SchemaGenerator().get_schema(request=None, public=True)
+        validate_schema(schema)
+        for path, item in schema["paths"].items():
+            op = item.get("post")
+            if op is None:
+                continue
+            assert {"401", "403", "409", "422", "503"} <= set(
+                op["responses"]
+            ), path
+            headers = {
+                p["name"] for p in op["parameters"] if p["in"] == "header"
+            }
+            assert headers == {"Idempotency-Key", "X-XSM-Reason"}, path
+        field = schema["components"]["schemas"]["Order"]["properties"][
+            "statechart"
+        ]
+        assert field["type"] == "object"
+        assert "state_ids" in field["properties"]
+
+    def test_session_auth_post_without_csrf_is_403(
+        self, order: Any, alice: Any
+    ) -> None:
+        c = APIClient(enforce_csrf_checks=True)
+        assert c.login(username="alice", password="p")
+        r = c.post(_url(order, "inc"), {}, format="json")
+        assert r.status_code == 403
+        order.refresh_from_db()
+        assert order.statechart_version == 0
+
+
+# -----------------------------------------------------------------------------
+# 🧵 Concurrency
+# -----------------------------------------------------------------------------
+@pytest.mark.django_db(transaction=True)
+@pytest.mark.parametrize("lock", ["pessimistic", "optimistic"])
+def test_many_threads_one_row(lock: str) -> None:
+    from django.db import connection
+
+    from shop.api import OrderViewSet
+    from shop.models import Order
+
+    user = _user(f"u-{lock}", "view_order")
+    order = Order.objects.create(title="t")
+    out: List[Any] = []
+    OrderViewSet.xsm_lock = lock
+    try:
+
+        def go() -> None:
+            try:
+                r = _client(user).post(_url(order, "inc"), {}, format="json")
+                out.append((r.status_code, r.json()))
+            finally:
+                connection.close()
+
+        ts = [threading.Thread(target=go) for _ in range(20)]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+    finally:
+        del OrderViewSet.xsm_lock
+    codes = [c for c, _ in out]
+    assert len(codes) == 20 and set(codes) <= {200, 409}, out
+    for c, body in out:
+        if c == 409:
+            assert body["error"] in ("ConflictError", "LockTimeoutError")
+    order.refresh_from_db()
+    assert order.machine.context["count"] == codes.count(200)
+    assert order.statechart_version == codes.count(200)

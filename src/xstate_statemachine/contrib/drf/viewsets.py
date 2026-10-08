@@ -130,13 +130,46 @@ def _schema(**kw: Any) -> Callable[[Any], Any]:
 
 
 def _send_responses() -> Dict[int, Any]:
+    # 📝 #283 battle: 401 (an Idempotency-Key from nobody) and 503 (store /
+    #    inbox outage, #306) are real answers of every send route.
     return {
         200: ReceiptSerializer,
         202: ReceiptSerializer,
+        401: ProblemSerializer,
         403: ProblemSerializer,
         409: ReceiptSerializer,
         422: ProblemSerializer,
+        503: ProblemSerializer,
     }
+
+
+def _send_parameters() -> List[Any]:
+    """The two request headers every send route reads (schema only)."""
+    try:
+        from drf_spectacular.utils import OpenApiParameter
+    except ImportError:  # pragma: no cover - [drf] without spectacular
+        return []
+    return [
+        OpenApiParameter(
+            IDEMPOTENCY_HEADER,
+            str,
+            OpenApiParameter.HEADER,
+            description=(
+                "Retry key, scoped to the authenticated user: a replay "
+                "answers the original receipt (duplicate=true); the same "
+                "key with a different event or payload is 422."
+            ),
+        ),
+        OpenApiParameter(
+            REASON_HEADER,
+            str,
+            OpenApiParameter.HEADER,
+            description=(
+                "Audit reason recorded on the transition log row "
+                f"(max {MAX_REASON_CHARS} chars)."
+            ),
+        ),
+    ]
 
 
 # -----------------------------------------------------------------------------
@@ -389,7 +422,11 @@ class StatechartViewSetMixin:
         return Response(body, status=status)
 
     # -- generic routes ---------------------------------------------------------------
-    @_schema(request=SendSerializer, responses=_send_responses())
+    @_schema(
+        request=SendSerializer,
+        responses=_send_responses(),
+        parameters=_send_parameters(),
+    )
     @action(
         detail=True, methods=["post"], url_path="send", url_name="xsm-send"
     )
@@ -534,6 +571,7 @@ def _event_action(event: str, slug: str, cls: Type[Any]) -> Any:
     return _schema(
         request=ser,
         responses=_send_responses(),
+        parameters=_send_parameters(),
         operation_id=f"{cls.__name__.lower()}_{slug.replace('-', '_')}",
         description=f"Send the `{event}` event.",
     )(handler)
