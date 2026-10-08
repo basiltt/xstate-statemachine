@@ -89,7 +89,7 @@ If you prefer classes to JSON, the [Pythonic API](../pythonic-api/) builds the s
 ## When to choose python-statemachine instead
 
 - You want the **nicest declarative class API** in Python, with strong IDE support for states and events, and you do not need JSON.
-- **Diagrams and generated documentation** matter to you: its Graphviz output and Sphinx extension are excellent.
+- **Diagrams and generated documentation** matter to you: its Graphviz and Mermaid output and its Sphinx extension are excellent.
 - The machine lives **in one process**, and persistence is "store the current state on a model field" (`MachineMixin`).
 - You want SCXML or YAML import rather than XState JSON.
 

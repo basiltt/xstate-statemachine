@@ -47,10 +47,24 @@ class TestComparisonData(unittest.TestCase):
             self.assertTrue(
                 any(f.startswith(want) for f in features), f"row {want!r}"
             )
-        keys = {"feature", "ours", *self.data["competitors"]}
+        keys = {"feature", "ours", "source", *self.data["competitors"]}
         for row in self.data["rows"]:
             self.assertEqual(set(row), keys, row["feature"])
             self.assertTrue(all(str(v).strip() for v in row.values()))
+
+    def test_every_competitor_is_checked_and_every_row_sourced(self) -> None:
+        """#286 battle: each agent-framework column names the release it
+        was checked against, and every cell's source names that release."""
+        for key, comp in self.data["competitors"].items():
+            checked = comp.get("checked", "")
+            self.assertRegex(checked, r"\d+\.\d+\.\d+.*\d{4}-\d\d-\d\d", key)
+            version = checked.split(",")[0].split(" (")[0]
+            for row in self.data["rows"]:
+                src = row["source"].get(key, "")
+                self.assertTrue(src.startswith(version), (key, row["feature"]))
+            text = (PAGES / f"{PAGE_OF[key]}.md").read_text("utf-8")
+            self.assertIn("{{ c.checked }}", text, key)
+            self.assertIn(f"row.source.{key}", text, key)
 
     def test_every_page_renders_every_row_from_the_data(self) -> None:
         for key, comp in self.data["competitors"].items():
@@ -245,10 +259,25 @@ class TestWorkflowComparison(unittest.TestCase):
     def test_rows_are_present_and_complete(self) -> None:
         rows = self.data["workflow_rows"]
         self.assertEqual([r["feature"] for r in rows], self.EXPECTED)
-        keys = {"feature", "ours", *self.data["workflow_competitors"]}
+        keys = {
+            "feature",
+            "ours",
+            "source",
+            *self.data["workflow_competitors"],
+        }
         for row in rows:
             self.assertEqual(set(row), keys, row["feature"])
             self.assertTrue(all(str(v).strip() for v in row.values()))
+
+    def test_checked_and_every_row_sourced(self) -> None:
+        comp = self.data["workflow_competitors"]["step_functions"]
+        self.assertRegex(comp["checked"], r"\d{4}-\d\d-\d\d")
+        for row in self.data["workflow_rows"]:
+            self.assertIn("read 20", row["source"]["step_functions"])
+        self.assertIn("{{ c.checked }}", self.text)
+        self.assertIn("row.source.step_functions", self.text)
+        # 📝 AWS marks Step Functions Local unsupported: never recommend it
+        self.assertNotIn("through Step Functions Local", self.text)
 
     def test_page_renders_the_rows_from_the_data(self) -> None:
         comp = self.data["workflow_competitors"]["step_functions"]

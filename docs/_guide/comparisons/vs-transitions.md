@@ -98,6 +98,7 @@ The `after` deadline is part of `snapshot`. With a store and `DueTimerScanner`, 
 - Your machine is **mostly flat**, lives in one process, and never needs to survive a restart mid-timer.
 - You value a very large user base, a long track record and many answered questions.
 - You want in-process Graphviz or Mermaid diagrams, and you do not need a visual editor.
+- Raw speed on **flat** machines matters: it is the fastest library in our [benchmark](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/competitors/README.md) on flat scenarios (about 2x ours).
 
 ## When to choose xstate-statemachine
 

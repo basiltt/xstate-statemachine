@@ -9,13 +9,13 @@ permalink: /guide/vs-statelyai-agent/
 `@statelyai/agent` is Stately's TypeScript library for agents built on XState and the Vercel AI SDK. Same chart model, different runtime.
 
 {% assign c = site.data.comparisons.competitors.statelyai_agent %}
-This table is generated from [`docs/_data/comparisons.json`](https://github.com/basiltt/xstate-statemachine/blob/main/docs/_data/comparisons.json), and corrections are welcome as PRs against that file. Each cell describes documented behaviour at the time of writing; check [{{ c.name }}]({{ c.url }}) for the current state.
+This table is generated from [`docs/_data/comparisons.json`](https://github.com/basiltt/xstate-statemachine/blob/main/docs/_data/comparisons.json), and corrections are welcome as PRs against that file. Every row carries a source note. It was checked against {{ c.checked }}; see [{{ c.name }}]({{ c.url }}) for the current state.
 
 ## Feature table
 
-| Capability | xstate-statemachine | @statelyai/agent |
-|:--|:--|:--|
-{% for row in site.data.comparisons.rows %}| {{ row.feature }} | {{ row.ours }} | {{ row.statelyai_agent }} |
+| Capability | xstate-statemachine | @statelyai/agent | Source |
+|:--|:--|:--|:--|
+{% for row in site.data.comparisons.rows %}| {{ row.feature }} | {{ row.ours }} | {{ row.statelyai_agent }} | {{ row.source.statelyai_agent }} |
 {% endfor %}
 
 <!-- rows (kept in sync by tests/test_comparisons.py): Hierarchy (nested states); Parallel regions; Guards as policy; `after` timeouts; Human-in-the-loop as durable state; Persistence / replay; Visual editor; Typed context / events; Observability; Multi-agent; Incremental adoption -->

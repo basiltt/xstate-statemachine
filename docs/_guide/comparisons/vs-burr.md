@@ -9,13 +9,13 @@ permalink: /guide/vs-burr/
 Burr (Apache, incubating) models an application as actions and transitions over a state object, with persisters, a tracking UI and OpenTelemetry. It is the closest in spirit: explicit state machines for LLM apps.
 
 {% assign c = site.data.comparisons.competitors.burr %}
-This table is generated from [`docs/_data/comparisons.json`](https://github.com/basiltt/xstate-statemachine/blob/main/docs/_data/comparisons.json), and corrections are welcome as PRs against that file. Each cell describes documented behaviour at the time of writing; check [{{ c.name }}]({{ c.url }}) for the current state.
+This table is generated from [`docs/_data/comparisons.json`](https://github.com/basiltt/xstate-statemachine/blob/main/docs/_data/comparisons.json), and corrections are welcome as PRs against that file. Every row carries a source note. It was checked against {{ c.checked }}; see [{{ c.name }}]({{ c.url }}) for the current state.
 
 ## Feature table
 
-| Capability | xstate-statemachine | Burr |
-|:--|:--|:--|
-{% for row in site.data.comparisons.rows %}| {{ row.feature }} | {{ row.ours }} | {{ row.burr }} |
+| Capability | xstate-statemachine | Burr | Source |
+|:--|:--|:--|:--|
+{% for row in site.data.comparisons.rows %}| {{ row.feature }} | {{ row.ours }} | {{ row.burr }} | {{ row.source.burr }} |
 {% endfor %}
 
 <!-- rows (kept in sync by tests/test_comparisons.py): Hierarchy (nested states); Parallel regions; Guards as policy; `after` timeouts; Human-in-the-loop as durable state; Persistence / replay; Visual editor; Typed context / events; Observability; Multi-agent; Incremental adoption -->
@@ -25,6 +25,7 @@ This table is generated from [`docs/_data/comparisons.json`](https://github.com/
 - You want the Burr UI for step-by-step tracking and replay out of the box.
 - A flat action graph with `when` conditions fits your app, and you do not need nested or parallel states.
 - You prefer defining the machine with Python decorators over a JSON chart.
+- You want Burr's persisters for Postgres, Redis, MongoDB and SQLite, and `MapStates` / `MapActions` for fan-out, without writing a chart.
 
 ## When to choose xstate-statemachine
 
