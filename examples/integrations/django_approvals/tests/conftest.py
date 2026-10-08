@@ -53,9 +53,10 @@ else:
         import time
 
         test_db = _settings.DATABASES["default"].get("TEST", {}).get("NAME")
-        if not test_db or "sqlite" not in _settings.DATABASES["default"][
-            "ENGINE"
-        ]:
+        if (
+            not test_db
+            or "sqlite" not in _settings.DATABASES["default"]["ENGINE"]
+        ):
             return
         for suffix in ("", "-wal", "-shm", "-journal"):
             path = Path(f"{test_db}{suffix}")
