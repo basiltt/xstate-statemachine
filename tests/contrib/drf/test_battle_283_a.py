@@ -387,3 +387,55 @@ def test_many_threads_one_row(lock: str) -> None:
     order.refresh_from_db()
     assert order.machine.context["count"] == codes.count(200)
     assert order.statechart_version == codes.count(200)
+
+
+def test_value_from_ids_matches_interp_value_across_the_corpus() -> None:
+    """Review #283: pin the claim directly -- for every corpus chart that
+    starts under stub logic, walk a few events and compare
+    `value_from_ids(machine, ids)` with the live `interp.value`."""
+    import json
+    import pathlib
+
+    from xstate_statemachine import SyncInterpreter, create_machine, stub_logic
+    from xstate_statemachine.contrib.django._events import (
+        declared_events,
+        value_from_ids,
+    )
+
+    corpus = sorted(
+        (
+            pathlib.Path(__file__).resolve().parents[2]
+            / "tests_cli"
+            / "stately_machines"
+        ).glob("*.json")
+    )
+    assert corpus, "corpus missing"
+    checked = 0
+    for path in corpus:
+        cfg = json.loads(path.read_text("utf-8"))
+        try:
+            m = create_machine(cfg, logic=stub_logic(cfg))
+            i = SyncInterpreter(m).start()
+        except Exception:  # noqa: BLE001 - charts stub logic cannot start
+            continue
+        try:
+            assert value_from_ids(m, i.current_state_ids) == i.value, path.name
+            checked += 1
+            for ev in list(declared_events(m))[:4]:
+                try:
+                    i.send(ev)
+                except Exception:  # noqa: BLE001 - refused by the chart
+                    continue
+                if i.status != "running":
+                    break
+                assert value_from_ids(m, i.current_state_ids) == i.value, (
+                    path.name,
+                    ev,
+                )
+                checked += 1
+        finally:
+            try:
+                i.stop()
+            except Exception:  # noqa: BLE001
+                pass
+    assert checked >= 200, checked

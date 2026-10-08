@@ -159,16 +159,33 @@ def test_overridden_group_name_still_receives_broadcasts() -> None:
         broadcast._NAMERS.pop(Order, None)
 
 
-def test_group_name_override_must_be_static() -> None:
+def test_instance_method_group_name_still_imports_and_is_addressed() -> None:
+    """Review #283: 0.11.0 shipped `group_name` as a staticmethod; a plain
+    instance-method override must keep importing (a TypeError at class
+    creation takes the ASGI app down on upgrade) and, when it does not
+    need `self`, still receives cross-source broadcasts."""
     from shop.models import Order
 
-    with pytest.raises(TypeError, match="staticmethod"):
+    from xstate_statemachine.contrib.channels.broadcast import (
+        group_names_for,
+    )
 
-        class Bad(StatechartConsumer):
-            model = Order
+    class Legacy(StatechartConsumer):  # no TypeError
+        model = Order
 
-            def group_name(self, instance: Any) -> str:  # type: ignore
-                return "x"
+        def group_name(self, instance: Any) -> str:  # type: ignore
+            return f"legacy.{instance.pk}"
+
+    class NeedsSelf(StatechartConsumer):
+        model = Order
+
+        def group_name(self, instance: Any) -> str:  # type: ignore
+            return f"{self.channel_name}.{instance.pk}"
+
+    row = Order(pk=42)
+    names = group_names_for(row)
+    assert "legacy.42" in names  # addressed by the broadcaster
+    assert not any(n.endswith(".42") and "None" in n for n in names)
 
 
 def test_two_hundred_subscribers_five_rounds_leave_nothing() -> None:

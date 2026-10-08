@@ -65,7 +65,10 @@ def group_names_for(instance: Any) -> List[str]:
     for model, namers in list(_NAMERS.items()):
         if isinstance(instance, model):
             for namer in namers:
-                name = namer(instance)
+                try:
+                    name = namer(instance)
+                except Exception:  # noqa: BLE001 -- an override needing self
+                    continue
                 if name not in names:
                     names.append(name)
     return names

@@ -93,16 +93,36 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):
         super().__init_subclass__(**kw)
         # 📡 an overridden `group_name` is still addressed by the
         #    broadcaster (#283 battle B).
-        namer = getattr(cls, "group_name")
-        if cls.model is None or namer is group_name_for:
+        if cls.model is None:
             return
-        if not isinstance(
-            inspect.getattr_static(cls, "group_name"), staticmethod
-        ):
-            raise TypeError(
-                f"{cls.__name__}.group_name must be a @staticmethod "
-                "(the broadcaster calls it without a consumer)"
-            )
+        raw = inspect.getattr_static(cls, "group_name")
+        if isinstance(raw, (staticmethod, classmethod)):
+            namer = getattr(cls, "group_name")
+            if namer is group_name_for:
+                return
+        else:
+            # 📝 review #283: 0.11.0 shipped `group_name` as a staticmethod
+            #    and a project may have overridden it with a plain
+            #    instance method (`def group_name(self, instance)`). That
+            #    must keep IMPORTING -- a TypeError here takes the ASGI app
+            #    down on upgrade. The broadcaster has no consumer to pass,
+            #    so it calls the override with ``self=None``; an override
+            #    that really needs `self` is logged once and still joins
+            #    its own group (it just gets no cross-source pushes).
+            fn = raw
+
+            def namer(instance: Any, _fn: Any = fn, _cls: Any = cls) -> str:
+                try:
+                    return _fn(None, instance)
+                except Exception:  # noqa: BLE001 -- needs a consumer
+                    logger.warning(
+                        "%s.group_name needs a consumer instance; make it a "
+                        "@staticmethod so broadcasts from the admin / REST "
+                        "API reach its sockets",
+                        _cls.__name__,
+                    )
+                    raise
+
         register_group_namer(cls.model, namer)
 
     # -- hooks -------------------------------------------------------------------

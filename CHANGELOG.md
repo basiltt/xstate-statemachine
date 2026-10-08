@@ -1488,7 +1488,8 @@ _No unreleased changes yet._
   malformed JSON or binary frame killed the consumer with 1011 and left
   it in its group (now a 422 error frame, socket open); a consumer
   overriding `group_name` received no broadcasts (`register_group_namer`
-  / `group_names_for`; the override must be a `@staticmethod`); a
+  / `group_names_for`; a plain instance-method override still imports
+  and is addressed when it does not need `self`); a
   missing `AuthMiddlewareStack` is logged as a warning. Not ours:
   daphne on Windows stalls authenticated DRF requests (uvicorn serves
   the same app; documented). Docs: DRF/Channels guide gains where
