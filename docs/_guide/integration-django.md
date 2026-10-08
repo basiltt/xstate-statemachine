@@ -317,19 +317,24 @@ class OrderAdmin(StatechartAdminMixin, admin.ModelAdmin):
 
 The change form shows **one button per event this user may send now**, computed with `has_event_permission`. Each button is its own **CSRF-protected POST form**, rendered after the admin's form. Buttons need no JavaScript. Events tagged `meta.confirm` (or listed in `xsm_confirm_events`) go through a confirmation page with a **reason** field. The reason and `actor=request.user` land in the audit row. The page also gets a `TransitionLogInline` (read-only, newest first, the latest `max_rows = 50`; visible to anyone who may view the row), a state badge with a link to a Mermaid diagram view (active state highlighted, needs `view` permission), a `StateListFilter`, and one bulk action per event that reports `n changed / m denied`. Labels come from `meta.title`, then `description`, then the event id. UI strings use `gettext_lazy`.
 
-A change form looks like this, rendered as text:
+A change form looks like this, rendered as text. The history inline sits inside the admin's form, and the buttons come after it, because forms cannot nest:
 
 ```text
 Change order                                         [History]
   Title: [ Order 17        ]
-  State: legal ✓ · finance pending   (diagram)
+  State: Legal OK, Finance pending  (diagram)
+  ── Transition history ──
+  Seq  Event     Disposition  From states        To states         Actor
+  2    LEGAL_OK  transition   review.legal.pending  review.legal.ok   alice
+  1    CHECKOUT  transition   cart               review.legal.pending …  alice
   [ Save ] [ Save and continue editing ]
   ── Statechart: order.review.finance.pending ──
-  ( Finance OK )  ( Reset… )
-  ── Transition history ──
-  #2  LEGAL_OK   transition  review.legal.pending → review.legal.ok   alice
-  #1  CHECKOUT   transition  cart → review.*                          alice
+  [ Finance OK ]  [ Reset… ]
 ```
+
+Knobs on `StatechartAdminMixin`: `xsm_confirm_events` (a tuple of event ids that always get the confirmation page), `xsm_bulk_actions = False` (no per-event changelist actions), and `xsm_history_inline = False` (no `TransitionLogInline`). Set `TransitionLogInline.max_rows = None` on a subclass to show the whole history. The diagram view is `admin/<app>/<model>/<pk>/statechart/` (URL name `admin:<app>_<model>_xsm_diagram`) and needs the model's `view` permission. The confirm and POST endpoint is `<pk>/xsm-transition/` (`admin:<app>_<model>_xsm_transition`). `TransitionLogAdmin` (the read-only audit changelist) is registered automatically. Set `XSM_ADMIN_TRANSITIONLOG = False` in settings to register your own.
+
+**Permissions and limits.** The diagram view, the confirmation page and the transition endpoint need the model's `view` permission. A user without it gets 403 for every pk, existing or not, so pks cannot be probed. Only a user who may view gets 404 for a missing pk. Sending still needs `change` permission plus `has_event_permission` on the POST. Bulk actions are offered only to users with `change` permission. They stream the selection (`.iterator(chunk_size=500)`) and report `n changed / m denied`. If any row hit `LockTimeoutError` or `ConflictError`, the message is error level and ends `/ n failed (retry them)`: those rows were not refused, they lost a race. The `reason` is cut to 2000 characters. The diagram highlights only state ids the chart knows, and only ids that are safe in Mermaid, so an edited state column cannot inject Mermaid directives. The diagram page loads no remote JavaScript by default: the `xsm_mermaid_script` block is empty. Put your Mermaid loader there, and add its origin to your CSP.
 
 Templates (override in your project): `admin/xsm/change_form.html` (blocks `xsm_badge`, `xsm_transitions`), `admin/xsm/confirm_transition.html` (block `xsm_confirm_form`), `admin/xsm/diagram.html` (block `xsm_mermaid_script` loads Mermaid if you want it rendered; add its origin to your CSP).
 
@@ -337,16 +342,16 @@ Templates (override in your project): `admin/xsm/change_form.html` (blocks `xsm_
 
 | Command | Same output as |
 |:--|:--|
-| `xsm_inspect app.Model [pk] [--json] [--no-events] [--plain]` | `xsm inspect <chart.json>` (plus the row's state with *pk*) |
-| `xsm_diagram app.Model [-f mermaid\|plantuml\|ascii] [-o out]` | `xsm diagram` |
-| `xsm_docs app.Model [-o dir]` | `xsm docs` |
-| `xsm_simulate app.Model [-e A,B,+500] [--json]` | `xsm simulate` (stub logic, no database) |
-| `xsm_deadlines [app.Model ...] [--forever] [--interval S] [--limit N]` | the durable-timer scanner |
-| `xsm_refresh_columns app.Model [--batch N] [--dry-run]` | `refresh_statechart_columns` |
-| `xsm_snapshots app.Model [--stale] [--json]` | rows and their `machine_version` |
+| `xsm_inspect app.Model [pk] [--json] [--no-events] [--plain] [--database ALIAS]` | `xsm inspect <chart.json>` (plus the row's state with *pk*) |
+| `xsm_diagram app.Model [-f mermaid\|plantuml\|ascii] [-o out] [--plain]` | `xsm diagram` |
+| `xsm_docs app.Model [-o dir] [--plain]` | `xsm docs` |
+| `xsm_simulate app.Model [-e A,B,+500] [--clock C] [--guards-false G] [--json] [--plain]` | `xsm simulate` (stub logic, no database) |
+| `xsm_deadlines [app.Model ...] [--forever] [--interval S] [--limit N] [--now EPOCH] [--database ALIAS]` | the durable-timer scanner |
+| `xsm_refresh_columns app.Model [--batch N] [--dry-run] [--database ALIAS]` | `refresh_statechart_columns` |
+| `xsm_snapshots app.Model [--stale] [--json] [--limit N] [--database ALIAS]` | rows and their `machine_version` |
 | `xsm_migrate_fsm app.Model --field state [--dry-run] [--write-chart P]` | see below |
 
-The output of the first four matches `xsm` byte for byte, and the tests pin that. A bad label or option, or an unmigrated database, is a `CommandError` (exit status 1), not a traceback. Charts given as a dict or a callable are written to a temporary JSON file first.
+The output of the first four matches `xsm` byte for byte, and the tests pin that. `--no-color` is Django's own flag and is honoured; `NO_COLOR` and `TERM=dumb` are honoured as by `xsm`. `xsm_simulate` without `-e` runs no events and never waits for input. An unknown label, a model with two `StatechartField`s and no `statechart_field_name`, a missing or malformed *pk*, an unknown `--database` alias, an unwritable `-o`, or an unmigrated database is a `CommandError` (exit status 1), not a traceback. A bad flag or `-f` value is exit status 2 (argparse). Charts given as a dict or a callable are written to a temporary JSON file first.
 
 ## Coming from django-fsm-2
 
@@ -404,6 +409,13 @@ See the generated [compatibility table](../compatibility/). SQLite runs everywhe
 | `DoesNotExist` from `send()` | the row was deleted while the send ran | nothing to retry; the caller decides |
 | Columns out of step with the snapshot after `QuerySet.update()` / `bulk_update()` | the ORM write bypassed the mixin | `manage.py xsm_refresh_columns app.Model` |
 | Admin shows no buttons | the user lacks change permission, or every guard refuses | check `permitted_events(user, obj)` |
+| Admin diagram / confirm page is 403, even for an existing pk | the user lacks the model's `view` permission (missing and existing pks answer the same, by design) | grant `view_<model>` |
+| No "Send …" bulk actions in the changelist | the user lacks `change` permission, or `xsm_bulk_actions = False` | grant `change_<model>` |
+| Bulk action message ends `n failed (retry them)` | those rows hit `LockTimeoutError` / `ConflictError` (a concurrent writer), not a denial | run the action again on the same selection |
+| Admin diagram shows text, not a picture | no Mermaid script loads by default (CSP-safe) | override block `xsm_mermaid_script` with your Mermaid loader and allow its origin in your CSP |
+| `xsm_inspect app.Model <pk>` says `bad pk` / `not found` | a malformed or missing pk, or the row is on another alias | pass `--database ALIAS` |
+| `CommandError: unknown --database` | the alias is not in `DATABASES` | use a configured alias |
+| `CommandError: ... needs exactly one StatechartField` | the model has several fields | set `statechart_field_name` on the model |
 | An `on_commit=True` receiver never runs in a test | a `TestCase` never commits | use `django_capture_on_commit_callbacks(execute=True)` / `captureOnCommitCallbacks` |
 | `send()` raises `IntegrityError` / `DatabaseError` from the outbox or audit table | the marker write failed, and by design the transition rolled back with it | migrate `xsm_django`, fix the table, retry the send |
 | The same integration event arrives twice | the relay crashed after `publish()` but before `mark_sent` (at-least-once) | dedup on the envelope `id` (`DjangoInbox` on the consumer) |

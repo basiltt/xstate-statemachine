@@ -1058,6 +1058,20 @@ From the `flask_wizard` example (an excerpt of `inspect --plain`; the test suite
 | SUBMIT       | confirm    | done       |            |             |
 ```
 
+## `manage.py xsm_*` (Django projects)
+
+With `[django]` installed and `xstate_statemachine.contrib.django` in `INSTALLED_APPS`, the same reports are management commands. They take a **model label** (`app.Model`, a `StatechartModelMixin` model) instead of a file path. A chart given as a dict or a callable is written to a temporary JSON file first.
+
+```bash
+python manage.py xsm_inspect approvals.Expense --plain
+python manage.py xsm_inspect approvals.Expense 17      # plus row 17's state and version
+python manage.py xsm_diagram approvals.Expense -f mermaid
+python manage.py xsm_simulate approvals.Expense -e SUBMIT,LEGAL_APPROVE
+python manage.py xsm_snapshots approvals.Expense --stale --json
+```
+
+`xsm_inspect`, `xsm_diagram`, `xsm_docs` and `xsm_simulate` print byte for byte what `xsm inspect / diagram / docs / simulate <chart.json>` prints. `xsm_simulate` only runs the `-e` events and never reads stdin. The full table, with `xsm_deadlines`, `xsm_refresh_columns` and `xsm_migrate_fsm`, is in [Django → Management commands](../integration-django/#management-commands). Exit status: 0, 1 (`CommandError`: unknown model, missing pk, bad `--database`, unwritable `-o`), 2 (bad flag).
+
 ---
 
 ## Reading Generated Files

@@ -15,7 +15,7 @@ from typing import Any
 
 from django.core.management.base import BaseCommand, CommandError
 
-from ._resolve import model_from_label
+from ._resolve import database, field_name, model_from_label
 
 __all__ = ["Command"]
 
@@ -40,8 +40,8 @@ class Command(BaseCommand):
         model = model_from_label(opts["model"])
         n = refresh_statechart_columns(
             model,
-            model.statechart_field_obj().name,
-            using=opts["database"],
+            field_name(model),
+            using=database(opts["database"]),
             batch=opts["batch"],
             dry_run=opts["dry_run"],
         )

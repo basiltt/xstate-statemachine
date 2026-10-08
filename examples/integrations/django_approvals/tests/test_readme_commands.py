@@ -118,6 +118,9 @@ def test_readme_has_the_commands_this_test_runs():
         "manage.py runserver",
         "xsm_deadlines --forever",
         "xsm_inspect approvals.Expense",
+        "xsm_diagram approvals.Expense -f mermaid",
+        "xsm_snapshots approvals.Expense",
+        "xsm_refresh_columns approvals.Expense --dry-run",
         "manage.py relay_outbox",
         "python -m pytest tests",
     ):
@@ -162,16 +165,31 @@ def test_run_it_literally(copy):
             _argv(parts), cwd=copy, env=env, capture_output=True, timeout=300
         )
         assert p.returncode == 0, (cmd, p.stdout, p.stderr)
+        assert b"Traceback" not in p.stderr, (cmd, p.stderr)
+        _check_output(parts[2], p.stdout.decode("utf-8", "replace"))
         ran.append(parts[2])
     assert ran.count("xsm_deadlines") == 1 and "forever" in ran
     assert {
         "migrate",
         "createsuperuser",
         "xsm_inspect",
+        "xsm_diagram",
+        "xsm_snapshots",
+        "xsm_refresh_columns",
         "relay_outbox",
         "runserver",
     } <= set(ran)
     _superuser_can_log_in(copy)
+
+
+def _check_output(cmd, out):
+    """#282 battle B: each README command prints what the README says."""
+    if cmd == "xsm_diagram":
+        assert out.lstrip().startswith("stateDiagram"), out[:200]
+    elif cmd == "xsm_snapshots":
+        assert out.startswith("approvals.Expense snapshots"), out[:200]
+    elif cmd == "xsm_refresh_columns":
+        assert "approvals.Expense: would change" in out, out
 
 
 def _wait_for_login(httpx, port, proc):

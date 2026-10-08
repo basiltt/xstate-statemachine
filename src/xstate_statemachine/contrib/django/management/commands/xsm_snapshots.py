@@ -11,7 +11,7 @@ from typing import Any
 
 from django.core.management.base import BaseCommand
 
-from ._resolve import model_from_label
+from ._resolve import database, field_name, model_from_label
 
 
 class Command(BaseCommand):
@@ -22,13 +22,20 @@ class Command(BaseCommand):
         parser.add_argument("--stale", action="store_true")
         parser.add_argument("--json", action="store_true", dest="as_json")
         parser.add_argument("--limit", type=int, default=1000)
+        parser.add_argument("--database", default="default")
 
     def handle(self, *args: Any, **options: Any) -> None:
+        from django.core.management.base import CommandError
+
+        if options["limit"] < 1:
+            raise CommandError("--limit must be >= 1")
+        using = database(options["database"])
         model = model_from_label(options["model"])
         current = model().statechart_machine_node().version
-        name = model.statechart_field_obj().name
+        name = field_name(model)
         qs = (
-            model._base_manager.exclude(**{f"{name}__isnull": True})
+            model._base_manager.using(using)
+            .exclude(**{f"{name}__isnull": True})
             .order_by("pk")
             .values_list(
                 "pk",
@@ -72,6 +79,7 @@ class Command(BaseCommand):
                         "snapshots": rows,
                     },
                     indent=2,
+                    ensure_ascii=False,
                 )
             )
             return

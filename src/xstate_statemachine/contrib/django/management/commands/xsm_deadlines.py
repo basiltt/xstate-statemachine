@@ -21,7 +21,7 @@ from django.apps import apps
 from django.core.management.base import BaseCommand, CommandError
 from django.db import DatabaseError
 
-from ._resolve import model_from_label
+from ._resolve import database, model_from_label
 
 __all__ = ["Command"]
 
@@ -59,6 +59,7 @@ class Command(BaseCommand):
             raise CommandError("--limit must be >= 1")
         if opts["interval"] <= 0:
             raise CommandError("--interval must be > 0")
+        database(opts["database"])
         scanners = self._scanners(opts)
         try:
             if opts["forever"]:
