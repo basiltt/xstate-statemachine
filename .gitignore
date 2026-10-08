@@ -725,3 +725,7 @@ benchmarks/scaling.json
 
 # model_test failing artefacts (#271)
 failing.json
+
+# example app databases (the test run must leave the tree clean)
+*.sqlite3
+*.sqlite3.test

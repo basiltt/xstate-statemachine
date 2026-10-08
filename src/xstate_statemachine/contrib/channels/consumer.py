@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
+import logging
 import weakref
 from typing import Any, Dict, Optional
 
@@ -26,7 +28,11 @@ from ..django._events import declared_events
 from ..django._problems import problem_for_exception, receipt_fields
 from ..django.mixin import reserved_keys
 from ..django.permissions import has_event_permission, permitted_events
-from .broadcast import ensure_broadcaster, group_name_for
+from .broadcast import (
+    ensure_broadcaster,
+    group_name_for,
+    register_group_namer,
+)
 from ...context_keys import (
     public_context as _public_context,
 )  # 🔑 #265: no `_xsm_*` keys in API bodies
@@ -34,6 +40,7 @@ from ...context_keys import (
 __all__ = ["StatechartConsumer", "WS_POLICY_VIOLATION", "live_consumers"]
 
 WS_POLICY_VIOLATION = 1008
+logger = logging.getLogger(__name__)
 _LIVE: "weakref.WeakSet[StatechartConsumer]" = weakref.WeakSet()
 
 
@@ -82,6 +89,22 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):
     heartbeat_s: float = 15.0
     context_serializer: Any = None
 
+    def __init_subclass__(cls, **kw: Any) -> None:
+        super().__init_subclass__(**kw)
+        # 📡 an overridden `group_name` is still addressed by the
+        #    broadcaster (#283 battle B).
+        namer = getattr(cls, "group_name")
+        if cls.model is None or namer is group_name_for:
+            return
+        if not isinstance(
+            inspect.getattr_static(cls, "group_name"), staticmethod
+        ):
+            raise TypeError(
+                f"{cls.__name__}.group_name must be a @staticmethod "
+                "(the broadcaster calls it without a consumer)"
+            )
+        register_group_namer(cls.model, namer)
+
     # -- hooks -------------------------------------------------------------------
     def get_instance(self) -> Any:
         """The row for this connection (sync; runs in a worker thread)."""
@@ -97,10 +120,9 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):
         perm = f"{opts.app_label}.view_{opts.model_name}"
         return bool(user.has_perm(perm) or user.has_perm(perm, instance))
 
-    @staticmethod
-    def group_name(instance: Any) -> str:
-        """``xsm.<app>.<model>.<pk>`` (shared with the broadcaster)."""
-        return group_name_for(instance)
+    #: ``xsm.<app>.<model>.<pk>`` (shared with the broadcaster). An
+    #: override (a staticmethod) is registered with the broadcaster.
+    group_name = staticmethod(group_name_for)
 
     # -- lifecycle ---------------------------------------------------------------
     async def connect(self) -> None:
@@ -108,6 +130,12 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):
         self.group: Optional[str] = None
         self._beat: Optional[asyncio.Task] = None  # type: ignore[type-arg]
         user = self.scope.get("user")
+        if user is None:
+            logger.warning(
+                "%s: no 'user' in the scope -- wrap the router in "
+                "AuthMiddlewareStack; closing with 1008",
+                type(self).__name__,
+            )
         if user is None or not getattr(user, "is_authenticated", False):
             # 🔐 No AuthMiddlewareStack, or an anonymous user.
             await self.close(code=WS_POLICY_VIOLATION)
@@ -181,6 +209,29 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):
         return bool(self.authorize(user, inst))
 
     # -- inbound -----------------------------------------------------------------
+    async def receive(
+        self,
+        text_data: Optional[str] = None,
+        bytes_data: Optional[bytes] = None,
+        **kwargs: Any,
+    ) -> None:
+        # 🔥 #283 battle B: a malformed JSON frame (or any binary frame)
+        #    raised inside Channels' `receive` -- the consumer task died,
+        #    the socket dropped with 1011 and `disconnect` never ran, so
+        #    the connection stayed in its group and in `live_consumers()`.
+        #    Answer with an error frame; the socket stays open.
+        if self.instance is None:
+            return
+        if text_data is None:
+            await self._error(422, "Binary frames are not supported")
+            return
+        try:
+            content = await self.decode_json(text_data)
+        except ValueError:
+            await self._error(422, "Malformed JSON")
+            return
+        await self.receive_json(content, **kwargs)
+
     async def receive_json(self, content: Any, **kwargs: Any) -> None:
         if self.instance is None:
             return

@@ -58,6 +58,16 @@ In the admin, create the groups `legal` and `finance` and put a user in
 each. Open an expense as either user: you only see the buttons your role
 can press. A request that forges another event is refused on POST. Watch
 `/expenses/<id>/` in a second tab while you approve.
+The page updates whether the approval came from the admin, the REST
+API or another socket: every committed transition is pushed to the
+row's subscribers.
+
+**Windows.** `runserver` is daphne (the `daphne` app is installed). On
+Windows, daphne stalls authenticated DRF requests: the request never
+returns. Linux and macOS are not affected, and this is not caused by
+this library. On Windows, serve the app with uvicorn instead:
+`uvicorn config.asgi:application --port 8000` (`pip install uvicorn`).
+The end-to-end test does the same.
 
 ## What it shows
 
@@ -101,5 +111,9 @@ can press. A request that forges another event is refused on POST. Watch
   Beat task, not this command.
 - **No user or group setup.** The `legal` / `finance` groups and their
   members are created by you in the admin (or by the tests).
+- **No separate frontend origin.** The WebSocket is wrapped in
+  `AllowedHostsOriginValidator`, which reads `ALLOWED_HOSTS`. A frontend
+  served from another origin needs `OriginValidator(app, [origin])`.
+  Note that `ALLOWED_HOSTS = ["*"]` accepts every origin.
 - **No login page of its own.** The status page and the API use the
   admin's session login.
