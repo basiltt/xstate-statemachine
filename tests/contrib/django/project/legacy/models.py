@@ -88,3 +88,67 @@ def ticket_logic() -> object:
             "closeTicket": PermissionGuard("legacy.close_ticket"),
         }
     )
+
+
+# -----------------------------------------------------------------------------
+# #310 battle (adversary A): the awkward shapes a real legacy app has
+# -----------------------------------------------------------------------------
+GADGET_STATES = [
+    ("in-progress", "In progress"),
+    ("état", "Étatique"),
+    ("1", "One"),
+    ("parked", "Parked"),
+]
+
+
+class Gadget(FSMDualWriteMixin, StatechartModelMixin, models.Model):
+    """UUID pk, ``protected=True``, NULLable column, state values that are
+    not XState-safe keys, a statechart field NOT named ``statechart``."""
+
+    import uuid as _uuid
+
+    id = models.UUIDField(primary_key=True, default=_uuid.uuid4)
+    status = FSMField(
+        default="in-progress",
+        choices=GADGET_STATES,
+        protected=True,
+        null=True,
+    )
+    chart = StatechartField()
+
+    statechart_machine = "machines/gadget.json"
+    statechart_initialize = False
+    fsm_dual_write_field = "status"
+
+    @transition(field=status, source="in-progress", target="état")
+    def advance(self) -> None:
+        pass
+
+    @transition(field=status, source="état", target="1")
+    def finish(self) -> None:
+        pass
+
+    @transition(field=status, source="*", target="in-progress")
+    def restart(self) -> None:
+        pass
+
+
+class Counter(FSMDualWriteMixin, StatechartModelMixin, models.Model):
+    """An ``FSMIntegerField``: the values are ints, the keys ``s_<n>``."""
+
+    from django_fsm import FSMIntegerField as _F
+
+    level = _F(default=1, choices=[(1, "one"), (2, "two"), (3, "three")])
+    statechart = StatechartField()
+
+    statechart_machine = "machines/counter.json"
+    statechart_initialize = False
+    fsm_dual_write_field = "level"
+
+    @transition(field=level, source=1, target=2)
+    def up(self) -> None:
+        pass
+
+    @transition(field=level, source=2, target=3)
+    def top(self) -> None:
+        pass
