@@ -182,8 +182,13 @@ def test_run_it_literally(copy):
     _superuser_can_log_in(copy)
 
 
+_ANSI = re.compile(r"\[[0-9;]*m")
+
+
 def _check_output(cmd, out):
-    """#282 battle B: each README command prints what the README says."""
+    """#282 battle B: each README command prints what the README says.
+    CI exports FORCE_COLOR=1, so piped output may carry ANSI colour."""
+    out = _ANSI.sub("", out)
     if cmd == "xsm_diagram":
         assert out.lstrip().startswith("stateDiagram"), out[:200]
     elif cmd == "xsm_snapshots":
