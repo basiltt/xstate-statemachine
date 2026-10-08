@@ -35,6 +35,9 @@ python manage.py runserver 8000                    # daphne: HTTP + WebSocket; a
 python manage.py xsm_deadlines --forever           # in another shell: fires the 48 h escalation (Ctrl+C stops it)
 python manage.py xsm_deadlines                     # or one pass, from cron
 python manage.py xsm_inspect approvals.Expense     # the chart, same output as `xsm inspect`
+python manage.py xsm_diagram approvals.Expense -f mermaid   # the chart as Mermaid
+python manage.py xsm_snapshots approvals.Expense   # every row, its state and chart version
+python manage.py xsm_refresh_columns approvals.Expense --dry-run   # rows whose state columns drifted
 python manage.py relay_outbox                      # publish pending integration events (one JSON line each)
 python -m pytest tests -q
 ```
@@ -91,7 +94,11 @@ can press. A request that forges another event is refused on POST. Watch
   `DjangoOutboxStore().purge_sent(older_than_s=...)`.
 - **No service for the deadlines.** `xsm_deadlines --forever` is a
   foreground loop; run it under your process manager (systemd, a
-  container, Celery beat with `xsm_deadlines_every`).
+  container). With Celery, schedule the same scan instead:
+  `DurableTimerScheduler(app, DjangoModelStore(Expense), machine_for_key)`
+  plus `app.conf.beat_schedule = xsm_deadlines_every(scheduler)`
+  (`xstate_statemachine.contrib.celery`); that runs the scanner as a
+  Beat task, not this command.
 - **No user or group setup.** The `legal` / `finance` groups and their
   members are created by you in the admin (or by the tests).
 - **No login page of its own.** The status page and the API use the

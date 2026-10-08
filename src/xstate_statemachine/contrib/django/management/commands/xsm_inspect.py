@@ -19,6 +19,9 @@ class Command(CLICommand):
         parser.add_argument("pk", nargs="?", default=None)
         parser.add_argument("--json", action="store_true", dest="as_json")
         parser.add_argument("--no-events", action="store_true")
+        parser.add_argument(
+            "--database", default="default", help="Alias to read *pk* from."
+        )
 
     def run(self, path: str, **options: Any) -> None:
         from .....cli.commands.inspect import run_inspect
@@ -28,20 +31,18 @@ class Command(CLICommand):
         )
 
     def handle(self, *args: Any, **options: Any) -> None:
-        super().handle(*args, **options)
+        from ._resolve import database, field_name, get_row, model_from_label
+
         pk = options.get("pk")
+        if pk is not None:
+            # 📝 Validate before printing the chart report, so a bad pk /
+            #    alias fails without half the output (#282 battle).
+            model = model_from_label(options["model"])
+            row = get_row(model, pk, database(options["database"]))
+            name = field_name(model)
+        super().handle(*args, **options)
         if pk is None:
             return
-        from ._resolve import model_from_label
-
-        model = model_from_label(options["model"])
-        try:
-            row = model._base_manager.get(pk=pk)
-        except model.DoesNotExist:
-            from django.core.management.base import CommandError
-
-            raise CommandError(f"{options['model']} pk={pk} not found")
-        name = model.statechart_field_obj().name
         self.stdout.write(f"row {pk}: {row.state or '-'}")
         self.stdout.write(
             f"version {getattr(row, name + '_version')}  "
