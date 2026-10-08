@@ -334,6 +334,8 @@ Change order                                         [History]
 
 Knobs on `StatechartAdminMixin`: `xsm_confirm_events` (a tuple of event ids that always get the confirmation page), `xsm_bulk_actions = False` (no per-event changelist actions), and `xsm_history_inline = False` (no `TransitionLogInline`). Set `TransitionLogInline.max_rows = None` on a subclass to show the whole history. The diagram view is `admin/<app>/<model>/<pk>/statechart/` (URL name `admin:<app>_<model>_xsm_diagram`) and needs the model's `view` permission. The confirm and POST endpoint is `<pk>/xsm-transition/` (`admin:<app>_<model>_xsm_transition`). `TransitionLogAdmin` (the read-only audit changelist) is registered automatically. Set `XSM_ADMIN_TRANSITIONLOG = False` in settings to register your own.
 
+**Permissions and limits.** The diagram view, the confirmation page and the transition endpoint need the model's `view` permission. A user without it gets 403 for every pk, existing or not, so pks cannot be probed. Only a user who may view gets 404 for a missing pk. Sending still needs `change` permission plus `has_event_permission` on the POST. Bulk actions are offered only to users with `change` permission. They stream the selection (`.iterator(chunk_size=500)`) and report `n changed / m denied`. If any row hit `LockTimeoutError` or `ConflictError`, the message is error level and ends `/ n failed (retry them)`: those rows were not refused, they lost a race. The `reason` is cut to 2000 characters. The diagram highlights only state ids the chart knows, and only ids that are safe in Mermaid, so an edited state column cannot inject Mermaid directives. The diagram page loads no remote JavaScript by default: the `xsm_mermaid_script` block is empty. Put your Mermaid loader there, and add its origin to your CSP.
+
 Templates (override in your project): `admin/xsm/change_form.html` (blocks `xsm_badge`, `xsm_transitions`), `admin/xsm/confirm_transition.html` (block `xsm_confirm_form`), `admin/xsm/diagram.html` (block `xsm_mermaid_script` loads Mermaid if you want it rendered; add its origin to your CSP).
 
 ### Management commands
@@ -407,6 +409,13 @@ See the generated [compatibility table](../compatibility/). SQLite runs everywhe
 | `DoesNotExist` from `send()` | the row was deleted while the send ran | nothing to retry; the caller decides |
 | Columns out of step with the snapshot after `QuerySet.update()` / `bulk_update()` | the ORM write bypassed the mixin | `manage.py xsm_refresh_columns app.Model` |
 | Admin shows no buttons | the user lacks change permission, or every guard refuses | check `permitted_events(user, obj)` |
+| Admin diagram / confirm page is 403, even for an existing pk | the user lacks the model's `view` permission (missing and existing pks answer the same, by design) | grant `view_<model>` |
+| No "Send …" bulk actions in the changelist | the user lacks `change` permission, or `xsm_bulk_actions = False` | grant `change_<model>` |
+| Bulk action message ends `n failed (retry them)` | those rows hit `LockTimeoutError` / `ConflictError` (a concurrent writer), not a denial | run the action again on the same selection |
+| Admin diagram shows text, not a picture | no Mermaid script loads by default (CSP-safe) | override block `xsm_mermaid_script` with your Mermaid loader and allow its origin in your CSP |
+| `xsm_inspect app.Model <pk>` says `bad pk` / `not found` | a malformed or missing pk, or the row is on another alias | pass `--database ALIAS` |
+| `CommandError: unknown --database` | the alias is not in `DATABASES` | use a configured alias |
+| `CommandError: ... needs exactly one StatechartField` | the model has several fields | set `statechart_field_name` on the model |
 | An `on_commit=True` receiver never runs in a test | a `TestCase` never commits | use `django_capture_on_commit_callbacks(execute=True)` / `captureOnCommitCallbacks` |
 | `send()` raises `IntegrityError` / `DatabaseError` from the outbox or audit table | the marker write failed, and by design the transition rolled back with it | migrate `xsm_django`, fix the table, retry the send |
 | The same integration event arrives twice | the relay crashed after `publish()` but before `mark_sent` (at-least-once) | dedup on the envelope `id` (`DjangoInbox` on the consumer) |
