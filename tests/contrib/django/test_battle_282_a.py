@@ -149,6 +149,39 @@ class TestBulk:
         ).values_list("pk", flat=True)
         assert sorted(done) == sorted(x.pk for x in rows if x.pk != victim)
 
+    def test_deleted_row_and_config_error_mid_bulk_are_denied_not_500(
+        self, monkeypatch: Any
+    ) -> None:
+        """Review #282: a row deleted mid-bulk raised `DoesNotExist` past
+        the loop (a 500 with no counts); a configuration error such as a
+        missing implementation said "retry them" (retrying cannot help)."""
+        from shop.models import Approval
+
+        from xstate_statemachine.exceptions import ImplementationMissingError
+
+        rows = [Approval.objects.create() for _ in range(6)]
+        gone, broken = rows[1].pk, rows[4].pk
+        real = Approval.send
+
+        def send(self: Any, *a: Any, **kw: Any) -> Any:
+            if self.pk == gone:
+                raise Approval.DoesNotExist("deleted during send()")
+            if self.pk == broken:
+                raise ImplementationMissingError("action 'x' not implemented")
+            return real(self, *a, **kw)
+
+        monkeypatch.setattr(Approval, "send", send)
+        boss = _staff("boss4", *BOSS)
+        r = _client(boss).post(
+            reverse("admin:shop_approval_changelist"),
+            {"action": "xsm_REJECT", "_selected_action": [x.pk for x in rows]},
+            follow=True,
+        )
+        assert r.status_code == 200
+        msgs = _msgs(r)
+        assert any("4 changed" in m and "2 denied" in m for m in msgs), msgs
+        assert not any("failed" in m for m in msgs), msgs
+
 
 class TestTemplates:
     def test_documented_block_override_keeps_buttons(

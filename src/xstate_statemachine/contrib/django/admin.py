@@ -27,6 +27,8 @@
 
 from __future__ import annotations
 
+import logging
+import sys
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -41,9 +43,18 @@ from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
 from django.views.decorators.csrf import csrf_protect
 
-from ...exceptions import XStateMachineError
+from ...exceptions import (
+    ConflictError,
+    LockTimeoutError,
+    StoreUnavailableError,
+    XStateMachineError,
+)
 from ._events import declared_events
 from .permissions import has_event_permission, permitted_events
+
+logger = logging.getLogger(__name__)
+#: Bulk-action errors the operator should retry.
+_RETRYABLE = (LockTimeoutError, ConflictError, StoreUnavailableError)
 
 __all__ = [
     "StateListFilter",
@@ -517,10 +528,27 @@ class StatechartAdminMixin:
                     continue
                 try:
                     r = obj.send(event, actor=request.user)
-                except XStateMachineError:
-                    # 🔥 #282 battle: a lock timeout / conflict is not a
-                    #    refusal -- the operator must know to retry it.
+                except _RETRYABLE:
+                    # 🔥 #282 battle: a lock timeout / conflict / store
+                    #    outage is not a refusal -- the operator must know
+                    #    to retry it (review: ONLY those; a config error
+                    #    such as a missing implementation is a denial --
+                    #    retrying cannot help, and it is logged).
                     failed += 1
+                    continue
+                except modeladmin.model.DoesNotExist:
+                    # 📝 review #282: a row deleted mid-bulk ended the whole
+                    #    action in a 500 with no counts at all
+                    denied += 1
+                    continue
+                except XStateMachineError:
+                    logger.warning(
+                        "bulk %s on %s refused: %s",
+                        event,
+                        getattr(obj, "pk", "?"),
+                        type(sys.exc_info()[1]).__name__,
+                    )
+                    denied += 1
                     continue
                 if r.changed:
                     changed += 1

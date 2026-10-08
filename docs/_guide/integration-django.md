@@ -411,7 +411,7 @@ See the generated [compatibility table](../compatibility/). SQLite runs everywhe
 | Admin shows no buttons | the user lacks change permission, or every guard refuses | check `permitted_events(user, obj)` |
 | Admin diagram / confirm page is 403, even for an existing pk | the user lacks the model's `view` permission (missing and existing pks answer the same, by design) | grant `view_<model>` |
 | No "Send …" bulk actions in the changelist | the user lacks `change` permission, or `xsm_bulk_actions = False` | grant `change_<model>` |
-| Bulk action message ends `n failed (retry them)` | those rows hit `LockTimeoutError` / `ConflictError` (a concurrent writer), not a denial | run the action again on the same selection |
+| Bulk action message ends `n failed (retry them)` | those rows hit `LockTimeoutError` / `ConflictError` / `StoreUnavailableError` (a concurrent writer or an outage), not a denial; any other library error -- a missing implementation, an unknown event -- is counted as denied and logged at WARNING, and a row deleted mid-action is denied too | run the action again on the same selection |
 | Admin diagram shows text, not a picture | no Mermaid script loads by default (CSP-safe) | override block `xsm_mermaid_script` with your Mermaid loader and allow its origin in your CSP |
 | `xsm_inspect app.Model <pk>` says `bad pk` / `not found` | a malformed or missing pk, or the row is on another alias | pass `--database ALIAS` |
 | `CommandError: unknown --database` | the alias is not in `DATABASES` | use a configured alias |
