@@ -229,21 +229,24 @@ class InboundDispatcher:
         consumer loop and the other subjects keep running (X0.8).
         """
         res = DispatchResult()
+        outcome: Optional[str]
         try:
             outcome = self._handle(envelope, topic)
         except _Retry:
             res.retried += 1
             res.outcomes.append((envelope.id, "retry"))
             return res
-        except Exception:  # noqa: BLE001 - infrastructure / user hooks
+        except Exception as exc:  # noqa: BLE001 - infrastructure / user hooks
             logger.exception(
                 "🔥 dispatching envelope %s failed outside the machine; "
                 "requeueing",
                 envelope.id,
             )
-            res.retried += 1
-            res.outcomes.append((envelope.id, "retry"))
-            return res
+            outcome = self._outside_failure(envelope, topic, exc)
+            if outcome is None:
+                res.retried += 1
+                res.outcomes.append((envelope.id, "retry"))
+                return res
         if outcome == "duplicate":
             res.duplicates += 1
         elif outcome == "processed":
@@ -254,6 +257,28 @@ class InboundDispatcher:
             res.dead_lettered += 1
         res.outcomes.append((envelope.id, outcome))
         return res
+
+    def _outside_failure(
+        self, env: Envelope, topic: Optional[str], exc: Exception
+    ) -> Optional[str]:
+        """Count a failure OUTSIDE the machine; dead-letter at the cap.
+
+        🔥 #293-a battle: a ``machine_for_type`` / ``key_for`` that raised
+        for one envelope requeued it forever -- the attempt counter was
+        only bumped for failures inside the machine (X0.8: never an
+        infinite redelivery loop). Returns ``None`` to requeue. If the
+        dead-letter store itself is down the delivery is requeued (never
+        acked without a record).
+        """
+        if self._bump(env) < self.max_attempts:
+            return None
+        try:
+            return self._dead_letter(env, topic, "max_attempts", exc, None)
+        except Exception:  # noqa: BLE001 - DLQ down: keep the message
+            logger.exception(
+                "🔥 dead-lettering envelope %s failed; requeueing", env.id
+            )
+            return None
 
     def _handle(self, env: Envelope, topic: Optional[str]) -> str:
         try:

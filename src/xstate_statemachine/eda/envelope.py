@@ -350,7 +350,18 @@ class Envelope:
         return out
 
     def to_json(self, *, max_bytes: int = DEFAULT_MAX_SNAPSHOT_BYTES) -> str:
-        text = json.dumps(self.to_dict(), separators=(",", ":"), default=str)
+        try:
+            text = json.dumps(
+                self.to_dict(),
+                separators=(",", ":"),
+                default=str,
+            )
+        except (RecursionError, ValueError) as exc:
+            # 🔥 #293-a battle: a self-referencing (ValueError) or absurdly
+            #    deep ``data`` must not escape as a bare RecursionError.
+            raise EnvelopeCorruptError(
+                f"envelope {self.id} data is not encodable JSON: {exc}"
+            ) from exc
         if len(text.encode("utf-8")) > max_bytes:
             raise EnvelopeTooLargeError(
                 f"envelope {self.id} is larger than {max_bytes} bytes"
@@ -394,6 +405,13 @@ class Envelope:
             raw = json.loads(text)
         except ValueError as exc:
             raise EnvelopeCorruptError(f"envelope is not JSON: {exc}") from exc
+        except RecursionError as exc:
+            # 🔥 #293-a battle: `[[[[...` within the byte cap blew the
+            #    C parser's recursion limit -- a RecursionError escaped
+            #    into the consumer loop instead of a dead letter.
+            raise EnvelopeCorruptError(
+                "envelope is nested too deeply"
+            ) from exc
         return cls.from_dict(raw)
 
     @staticmethod
