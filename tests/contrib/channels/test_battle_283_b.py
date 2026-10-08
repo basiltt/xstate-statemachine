@@ -281,3 +281,38 @@ def test_ensure_broadcaster_is_idempotent() -> None:
     for _ in range(3):  # autoreload re-imports call it again
         broadcast.ensure_broadcaster()
     assert len(post_transition.receivers) == before
+
+
+def test_ws_bodies_match_the_shared_state_golden() -> None:
+    """The Channels snapshot / receipt / transition bodies render `state`
+    in the same form as REST (tests/contrib/state_body_golden.json)."""
+    import json
+    from pathlib import Path
+
+    golden = json.loads(
+        (Path(__file__).parents[1] / "state_body_golden.json").read_text(
+            "utf-8"
+        )
+    )
+    user, _, order = _setup()
+
+    async def go() -> None:
+        c = _comm(f"/ws/orders/{order.pk}/", user)
+        await c.connect()
+        snap = await c.receive_json_from()
+        assert snap.pop("kind") == "snapshot"
+        assert snap == golden["order_initial"]
+        await c.send_json_to({"type": "INC"})
+        receipt = await c.receive_json_from()
+        assert receipt.pop("kind") == "receipt"
+        assert receipt.pop("status") == 200
+        assert sorted(receipt) == golden["receipt_keys"]
+        assert receipt["state"] == golden["order_initial"]["state"]
+        push = await c.receive_json_from(timeout=2)
+        assert push.pop("kind") == "transition"
+        push.pop("event"), push.pop("version")
+        assert sorted(push) == golden["keys"]
+        assert push["state"] == golden["order_initial"]["state"]
+        await c.disconnect()
+
+    asyncio.run(go())

@@ -118,6 +118,10 @@ The receipt body is FastAPI's `ReceiptModel`: `state`, `state_ids`, `available_e
 
 Attributes: `xsm_event_serializers = {"PAY": PaySerializer}` (validation, and the request schema), `xsm_context_serializer` (off by default, X0.1), `xsm_inbox` (default `DjangoInbox()`; `None` turns `Idempotency-Key` off), `xsm_history_permission_classes`, `xsm_history_filter_backends`, `xsm_lock`.
 
+**Filter backends.** DRF also runs a view's `filter_backends` over `get_object()`'s queryset, not only over `history/`. A backend written for `TransitionLog` rows must return any other queryset unchanged, or every detail route (`history/` included) fails. To filter `history/` only, put the backend in `xsm_history_filter_backends` instead.
+
+**Idempotency.** A replayed `Idempotency-Key` returns the original receipt's `state` and `state_ids`. It does not return the row's state now; `GET /{pk}/` gives that. `context` (when `xsm_context_serializer` is set) is the row's **current** context. A replay still answers after the machine has finished. A **new** key sent to a finished machine gets the normal 409 receipt and is not left marked as in flight. With `xsm_inbox = None` the `Idempotency-Key` header is ignored. An `Idempotency-Key` with no authenticated user is 401. The audit reason for a send goes in the `X-XSM-Reason` header (`reason` is a reserved payload key). The OpenAPI schema documents both headers and the 401 and 503 responses.
+
 **`event_serializer(event, fields=None, *, model=None)`** builds a `Serializer` for one event's payload from DRF fields or from a pydantic model (A9).
 
 ### `StatechartSerializerField`
