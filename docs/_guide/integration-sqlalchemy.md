@@ -134,6 +134,8 @@ Behind `Model.statechart_store()`. Saves are a conditional Core `UPDATE` on `sta
 
 ### `SQLAlchemyOutboxStore(store, *, create_table=True)`
 
+> **Upgrading from 0.11.0:** the relay leases ([#293](https://github.com/basiltt/xstate-statemachine/issues/293)) added `claimed_by` / `claimed_until` to `xsm_outbox`. With `create_table=True` the store **adds the columns on open** (`ALTER TABLE … ADD COLUMN`, idempotent). With `create_table=False` -- migrations are yours -- it refuses to start with `StoreError: xsm_outbox lacks claimed_by, claimed_until` and names the migration: the `sqlalchemy_orders` example's `0003_xsm_outbox_relay_lease.py` is the template (guarded, so it is a no-op where the store already added them). `LEASE_COLUMNS` names the two columns.
+
 The EDA core's `OutboxStore` ([#293](https://github.com/basiltt/xstate-statemachine/issues/293); see the [EDA guide](../integration-eda/)) in the `xsm_outbox` table of a `SQLAlchemyStore`. Pass `OutboxPlugin(SQLAlchemyOutboxStore(store))` to `row.send(..., plugins=[...])` or `send_with_retry`: the plugin's rows are written on the **caller's session connection**, so the event commits with the state change or not at all. `OutboxRelay(outbox, broker).relay_once_sync()` drains it.
 
 <!-- doc-requires: sqlalchemy -->

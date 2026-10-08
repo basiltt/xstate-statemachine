@@ -48,8 +48,6 @@ def run_asyncapi(
     outbound: str = "events",
     validate: bool = False,
 ) -> None:
-    from ...eda.asyncapi import asyncapi_document, validate_asyncapi
-
     """Print (or write to *output*) the AsyncAPI 3.0 document of a chart.
 
     Exit codes: 0 success; 2 a missing, unreadable or invalid machine
@@ -64,6 +62,8 @@ def run_asyncapi(
         outbound: Topic published events go to.
         validate: Validate against the AsyncAPI 3.0 schema.
     """
+    from ...eda.asyncapi import asyncapi_document, validate_asyncapi
+
     c = get_console()
     doc = asyncapi_document(
         _machine(json_file),

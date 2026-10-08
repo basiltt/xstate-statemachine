@@ -48,6 +48,7 @@ from .dispatcher import (
     replay_dead_letter,
 )
 from .envelope import (
+    MAX_DATA_DEPTH,
     ATTEMPT_EXTENSION,
     SPECVERSION,
     Envelope,
@@ -75,6 +76,7 @@ from ..patterns.dead_letter import DeadLetter, DeadLetterPlugin
 DeadLetterStore = DeadLetterStoreProtocol
 
 __all__ = [
+    "MAX_DATA_DEPTH",
     "DEFAULT_CLAIM_LEASE_S",
     "ASYNCAPI_VERSION",
     "ATTEMPT_EXTENSION",

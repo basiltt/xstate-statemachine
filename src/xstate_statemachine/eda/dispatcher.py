@@ -270,6 +270,13 @@ class InboundDispatcher:
         dead-letter store itself is down the delivery is requeued (never
         acked without a record).
         """
+        from ..persistence.store import StoreError
+
+        if isinstance(exc, StoreError):
+            # 📝 review M4: an inbox / state-store OUTAGE is not the
+            #    message's fault -- it keeps being redelivered (bounded by
+            #    the broker's own policy), never dead-lettered as poison.
+            return None
         if self._bump(env) < self.max_attempts:
             return None
         try:
@@ -427,6 +434,21 @@ class InboundDispatcher:
                 mhash = None
             mversion = getattr(machine, "version", None)
         data = env.data if isinstance(env.data, dict) else {}
+        try:
+            payload = redact(dict(data))
+            envelope_dict = redact(env.to_dict())
+        except (RecursionError, ValueError, TypeError) as inner:
+            # 🔥 #293 review C1: a record is ALWAYS written -- a payload
+            #    the redactor cannot walk is replaced by its attributes
+            #    (the body is lost; the id/type/source are what a replay
+            #    needs to find the producer).
+            payload = {"_unrecorded": type(inner).__name__}
+            envelope_dict = {
+                "id": env.id,
+                "type": env.type,
+                "source": env.source,
+                "subject": env.subject,
+            }
         record = DeadLetter(
             machine_id=str(
                 getattr(machine, "id", None) or env.machineid or "?"
@@ -434,7 +456,7 @@ class InboundDispatcher:
             state_id="",
             event={
                 "type": env.type,
-                "payload": redact(dict(data)),
+                "payload": payload,
             },
             attempts=max(self.attempts_of(env), 1),
             errors=[
@@ -449,7 +471,7 @@ class InboundDispatcher:
             taken_at=time.time(),
             id=env.id,
             reason=reason,
-            envelope=redact(env.to_dict()),
+            envelope=envelope_dict,
             topic=topic,
             machine_hash=mhash,
             machine_version=mversion,

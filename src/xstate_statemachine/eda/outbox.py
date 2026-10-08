@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import sqlite3
 import threading
 import time
@@ -54,6 +55,8 @@ from ..persistence.locking import after_commit, current_session
 from ..plugins import DEFAULT_REDACT_KEYS, PluginBase, redact
 from .broker import settle_awaitable
 from .envelope import Envelope
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "DEFAULT_CLAIM_LEASE_S",
@@ -85,7 +88,10 @@ class OutboxStore(Protocol):
 
     ``add`` must join the state store's current transaction when there is
     one (that is the whole point); ``pending`` / ``mark_sent`` are for the
-    relay.
+    relay. Optional members the relay uses when present:
+    ``claim(limit=, owner=, lease_s=)`` (rows leased to one relay so
+    several relays may drain one outbox) and ``release(seqs, owner=)``
+    (hand unsent rows back; without it they wait out the lease).
     """
 
     def add(self, topic: str, envelope: Envelope) -> None:
@@ -254,11 +260,12 @@ class SQLiteOutboxStore:
                 "ORDER BY seq LIMIT ?",
                 (now, owner, int(limit)),
             ).fetchall()
-            for r in rows:
+            if rows:
+                marks = ",".join("?" * len(rows))
                 conn.execute(
                     "UPDATE xsm_outbox SET claimed_by = ?, claimed_until = ? "
-                    "WHERE seq = ?",
-                    (owner, now + float(lease_s), int(r[0])),
+                    f"WHERE seq IN ({marks})",
+                    (owner, now + float(lease_s), *[int(r[0]) for r in rows]),
                 )
         return [
             OutboxRecord(int(r[0]), r[1], Envelope.from_json(r[2]))
@@ -301,14 +308,15 @@ class SQLiteOutboxStore:
         if not seqs:
             return 0
         conn = self._conn()
+        marks = ",".join("?" * len(seqs))
         with self._store._tx(conn, immediate=True):
-            return sum(
+            return int(
                 conn.execute(
                     "UPDATE xsm_outbox SET claimed_by = NULL, "
-                    "claimed_until = NULL WHERE seq = ? AND claimed_by = ?",
-                    (int(sq), owner),
+                    f"claimed_until = NULL WHERE claimed_by = ? "
+                    f"AND seq IN ({marks})",
+                    (owner, *[int(sq) for sq in seqs]),
                 ).rowcount
-                for sq in seqs
             )
 
     def mark_sent(self, seqs: List[int]) -> int:
@@ -636,6 +644,11 @@ class OutboxRelay:
     so two relays never publish the same row at the same time; a relay
     that dies mid-batch loses its lease and the rows are picked up again
     (#293 battle). *owner* defaults to ``host:pid:id(relay)``.
+
+    ⚠️ The duplicate window is one BATCH per expired lease: a relay that
+    outlives its lease still publishes the rows it holds in memory while
+    another relay may have re-claimed them. Size *lease_s* above the
+    slowest batch you expect (``batch`` x the broker's worst publish).
     """
 
     def __init__(
@@ -663,18 +676,38 @@ class OutboxRelay:
             )
         return list(self.store.pending(limit=self.batch))
 
-    def _settle(self, taken: List[OutboxRecord], sent: List[int]) -> None:
+    def _settle(
+        self, taken: List[OutboxRecord], sent: List[int], *, failing: bool
+    ) -> None:
         """Mark what the broker accepted; hand the rest back at once.
 
         📝 A relay that RAISED is still alive -- its unsent rows must not
         wait out the lease (the #284 scenario's second relay picks them
         up immediately). A relay that DIED cannot release; the lease
-        expiry covers it.
+        expiry covers it. Review M1: the release runs even when
+        `mark_sent` raised (the DB is locked), and while the broker's
+        own error is propagating (*failing*) a failing mark / release is
+        LOGGED, not raised over it -- the operator sees the cause.
         """
-        self.store.mark_sent(sent)
         release = getattr(self.store, "release", None)
         done = set(sent)
         left = [r.seq for r in taken if r.seq not in done]
+        try:
+            self.store.mark_sent(sent)
+        except Exception:  # noqa: BLE001 - logged or re-raised below
+            if not failing:
+                self._release(release, left)
+                raise
+            logger.exception("📤 outbox relay: mark_sent failed")
+        if failing:
+            try:
+                self._release(release, left)
+            except Exception:  # noqa: BLE001 - the lease covers it
+                logger.exception("📤 outbox relay: release failed")
+        else:
+            self._release(release, left)
+
+    def _release(self, release: Any, left: List[int]) -> None:
         if left and callable(release):
             release(left, owner=self.owner)
 
@@ -695,8 +728,10 @@ class OutboxRelay:
                 if asyncio.iscoroutine(result):
                     await result
                 sent.append(rec.seq)
-        finally:
-            self._settle(taken, sent)
+        except BaseException:
+            self._settle(taken, sent, failing=True)
+            raise
+        self._settle(taken, sent, failing=False)
         return len(sent)
 
     def relay_once_sync(self) -> int:
@@ -712,8 +747,10 @@ class OutboxRelay:
             for rec in taken:
                 self.broker.publish(rec.topic, rec.envelope)
                 sent.append(rec.seq)
-        finally:
-            self._settle(taken, sent)
+        except BaseException:
+            self._settle(taken, sent, failing=True)
+            raise
+        self._settle(taken, sent, failing=False)
         return len(sent)
 
 

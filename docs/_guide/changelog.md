@@ -1485,7 +1485,23 @@ _No unreleased changes yet._
   `Envelope.from_json` on input nested too deeply to parse let
   `RecursionError` escape into the consumer loop (dead-lettered as
   `corrupt` now; `to_json` on self-referencing / extremely deep `data`
-  raises `EnvelopeCorruptError` too); `xsm dlq` and `xsm asyncapi`
+  raises `EnvelopeCorruptError` too) -- and the independent review found
+  the gap behind it: a payload nested ~700 deep PARSED but neither the
+  redactor nor the dead-letter writer could walk it, so it could be
+  neither processed nor recorded and was redelivered forever;
+  `MAX_DATA_DEPTH` (64) is now enforced on decode and a dead-letter
+  record is ALWAYS written (a payload the redactor cannot walk is
+  replaced by the envelope's id / type / source); `NaN` / `Infinity`
+  are refused as not-JSON; a state-store / inbox OUTAGE (`StoreError`)
+  is never counted as poison -- the message keeps being redelivered,
+  only user-hook failures count; the SQLAlchemy outbox on an upgraded
+  0.11.0 table would have died at the first relay tick (`create_all`
+  adds no columns) -- `SQLAlchemyOutboxStore` adds `claimed_by` /
+  `claimed_until` on open with `create_table=True` and refuses to start
+  naming the migration without it (`LEASE_COLUMNS`); its `claim()` is
+  now the guard on EVERY dialect (the UPDATE re-states "free or mine",
+  each relay reads back only its own stamps; `SKIP LOCKED` is an
+  optimisation), and `release()` runs even when `mark_sent` raises; `xsm dlq` and `xsm asyncapi`
   answered operator mistakes with tracebacks -- a missing or non-SQLite
   `--dlq` / `--store` file (which also silently CREATED an empty database
   and reported "no dead letters"), a missing or invalid `--machine`

@@ -456,6 +456,10 @@ def test_dirty_bus_is_refused_without_a_snapshot(tmp_path: Path) -> None:
 # -----------------------------------------------------------------------------
 # 6. resources: 10,000 envelopes, flat memory, no thread growth
 # -----------------------------------------------------------------------------
+@pytest.mark.skipif(
+    not os.environ.get("XSM_STRESS"),
+    reason="~2 min soak: set XSM_STRESS=1 (the nightly stress job)",
+)
 def test_ten_thousand_envelopes_flat(tmp_path: Path) -> None:
     # 📝 1,400 poison messages each log a traceback; pytest's log capture
     #    would keep them all (118 MB) and the soak would measure pytest,

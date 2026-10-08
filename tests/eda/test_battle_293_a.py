@@ -58,6 +58,10 @@ class TestEnvelopeRecursion(unittest.TestCase):
                 Envelope.from_json(text)
 
     def test_unencodable_data_is_corrupt_on_to_json(self) -> None:
+        # 📝 review C1 added a depth check to `validate()`, so a deep or
+        #    cyclic `data` is refused at construction (never reaches
+        #    `to_json`); the encoder guard is probed on an envelope whose
+        #    data is swapped in after validation.
         deep: List[Any] = []
         cur = deep
         for _ in range(100_000):
@@ -67,9 +71,12 @@ class TestEnvelopeRecursion(unittest.TestCase):
         cyclic: Dict[str, Any] = {}
         cyclic["me"] = cyclic
         for data in ({"d": deep}, cyclic):
-            env = Envelope.new(type="t", data=data)
             with self.assertRaises(EnvelopeCorruptError):
-                env.to_json()
+                Envelope.new(type="t", data=data)
+        env = Envelope.new(type="t", data={})
+        object.__setattr__(env, "data", cyclic)
+        with self.assertRaises(EnvelopeCorruptError):
+            env.to_json()
 
     def test_max_bytes_is_inclusive(self) -> None:
         env = Envelope.new(type="t", data={"a": "é" * 10})
