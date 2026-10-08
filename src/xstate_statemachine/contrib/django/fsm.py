@@ -605,11 +605,14 @@ class FSMDualWriteMixin:
         values[vcol] = expected + 1
         # 🔒 fenced on the version AND the column: a concurrent send()
         #    wins, we never stomp a newer snapshot with a stale column
-        n = mgr.filter(
-            pk=self.pk, **{vcol: expected, field: value}  # type: ignore[attr-defined]
-        ).update(**values)
+        # 📝 review #310: the UPDATE and its deadline rows commit together
+        with transaction.atomic(using=using):
+            n = mgr.filter(
+                pk=self.pk, **{vcol: expected, field: value}  # type: ignore[attr-defined]
+            ).update(**values)
+            if n:
+                _write_deadlines(type(self), using, self.pk, new_snap)  # type: ignore[attr-defined]
         if n:
-            _write_deadlines(type(self), using, self.pk, new_snap)  # type: ignore[attr-defined]
             for k, v in values.items():
                 setattr(self, k, v)
 
