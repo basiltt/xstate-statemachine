@@ -27,12 +27,15 @@
 
 from __future__ import annotations
 
+import logging
+import sys
+import re
 from typing import Any, Dict, List, Optional, Tuple
 
 from django.contrib import admin, messages
 from django.contrib.contenttypes.admin import GenericTabularInline
 from django.core.exceptions import AppRegistryNotReady, PermissionDenied
-from django.http import HttpResponseRedirect
+from django.http import Http404, HttpResponseRedirect
 from django.template.response import TemplateResponse
 from django.urls import path, reverse
 from django.utils.decorators import method_decorator
@@ -40,9 +43,18 @@ from django.utils.html import format_html
 from django.utils.translation import gettext_lazy as _
 from django.views.decorators.csrf import csrf_protect
 
-from ...exceptions import XStateMachineError
+from ...exceptions import (
+    ConflictError,
+    LockTimeoutError,
+    StoreUnavailableError,
+    XStateMachineError,
+)
 from ._events import declared_events
 from .permissions import has_event_permission, permitted_events
+
+logger = logging.getLogger(__name__)
+#: Bulk-action errors the operator should retry.
+_RETRYABLE = (LockTimeoutError, ConflictError, StoreUnavailableError)
 
 __all__ = [
     "StateListFilter",
@@ -353,6 +365,17 @@ class StatechartAdminMixin:
             ),
         ] + super().get_urls()  # type: ignore[misc]
 
+    def _xsm_object(self, request: Any, object_id: str) -> Any:
+        """The row, or 404 -- but only to a user who may see the model at
+        all (anyone else gets 403 and learns nothing about which pks
+        exist)."""
+        obj = self.get_object(request, object_id)  # type: ignore[attr-defined]
+        if obj is None:
+            if not self.has_view_permission(request):  # type: ignore[attr-defined]
+                raise PermissionDenied
+            raise Http404
+        return obj
+
     def _change_url(self, obj: Any) -> str:
         info = self.model._meta.app_label, self.model._meta.model_name  # type: ignore[attr-defined]
         return reverse("admin:%s_%s_change" % info, args=[obj.pk])
@@ -361,8 +384,10 @@ class StatechartAdminMixin:
     def xsm_transition_view(self, request: Any, object_id: str) -> Any:
         """GET: the confirm form (no state change). POST: re-check the
         permission, then send with ``actor=request.user``."""
-        obj = self.get_object(request, object_id)  # type: ignore[attr-defined]
-        if obj is None:
+        obj = self._xsm_object(request, object_id)
+        if not self.has_view_permission(request, obj):  # type: ignore[attr-defined]
+            # 🔐 #282 battle: the confirm page named the object and the
+            #    event to a staff user with no permission on the model.
             raise PermissionDenied
         event = request.POST.get(EVENT_FIELD) or request.GET.get(EVENT_FIELD)
         machine = obj.statechart_machine_node()
@@ -452,8 +477,8 @@ class StatechartAdminMixin:
     def xsm_diagram_view(self, request: Any, object_id: str) -> Any:
         """The chart as Mermaid, active states highlighted (needs view
         permission)."""
-        obj = self.get_object(request, object_id)  # type: ignore[attr-defined]
-        if obj is None or not self.has_view_permission(request, obj):  # type: ignore[attr-defined]
+        obj = self._xsm_object(request, object_id)
+        if not self.has_view_permission(request, obj):  # type: ignore[attr-defined]
             raise PermissionDenied
         machine = obj.statechart_machine_node()
         ctx = {
@@ -480,6 +505,11 @@ class StatechartAdminMixin:
             )
         if not self.xsm_bulk_actions:
             return actions
+        # 🔐 #282 battle: these are added AFTER Django's own
+        #    ``allowed_permissions`` filter, so a view-only user was
+        #    offered every transition in the dropdown. Gate them here.
+        if not self.has_change_permission(request):  # type: ignore[attr-defined]
+            return actions
         machine = self.model().statechart_machine_node()  # type: ignore[attr-defined]
         for event in declared_events(machine):
             name = f"xsm_{event}"
@@ -489,36 +519,81 @@ class StatechartAdminMixin:
 
     def _bulk_action(self, event: str, label: str) -> Any:
         def action(modeladmin: Any, request: Any, queryset: Any) -> None:
-            changed = denied = 0
-            for obj in queryset:
+            changed = denied = failed = 0
+            # 📝 ``iterator()``: a 10k-row selection is streamed, not
+            #    cached on the queryset for the life of the request.
+            for obj in queryset.iterator(chunk_size=500):
                 if not modeladmin._allowed(request, obj, event):
                     denied += 1
                     continue
                 try:
                     r = obj.send(event, actor=request.user)
+                except _RETRYABLE:
+                    # 🔥 #282 battle: a lock timeout / conflict / store
+                    #    outage is not a refusal -- the operator must know
+                    #    to retry it (review: ONLY those; a config error
+                    #    such as a missing implementation is a denial --
+                    #    retrying cannot help, and it is logged).
+                    failed += 1
+                    continue
+                except modeladmin.model.DoesNotExist:
+                    # 📝 review #282: a row deleted mid-bulk ended the whole
+                    #    action in a 500 with no counts at all
+                    denied += 1
+                    continue
                 except XStateMachineError:
+                    logger.warning(
+                        "bulk %s on %s refused: %s",
+                        event,
+                        getattr(obj, "pk", "?"),
+                        type(sys.exc_info()[1]).__name__,
+                    )
                     denied += 1
                     continue
                 if r.changed:
                     changed += 1
                 else:
                     denied += 1
-            modeladmin.message_user(
-                request,
-                _("%(event)s: %(changed)d changed / %(denied)d denied")
-                % {"event": label, "changed": changed, "denied": denied},
-                messages.SUCCESS if not denied else messages.WARNING,
-            )
+            text = _("%(event)s: %(changed)d changed / %(denied)d denied") % {
+                "event": label,
+                "changed": changed,
+                "denied": denied,
+            }
+            level = messages.SUCCESS if not denied else messages.WARNING
+            if failed:
+                text = _("%(text)s / %(failed)d failed (retry them)") % {
+                    "text": text,
+                    "failed": failed,
+                }
+                level = messages.ERROR
+            modeladmin.message_user(request, text, level)
 
         action.short_description = _("Send “%(event)s”") % {"event": label}  # type: ignore[attr-defined]
         action.__name__ = f"xsm_{event}"
         return action
 
 
+_MERMAID_ID = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]*$")
+
+
+def _walk(machine: Any) -> Any:
+    from ...validation import walk
+
+    return walk(machine)
+
+
 def highlighted_mermaid(machine: Any, active: Optional[List[str]]) -> str:
     """`to_mermaid()` plus a ``classDef`` marking the active leaves."""
     text = machine.to_mermaid()
-    ids = [s.split(".")[-1] for s in (active or ())]
+    # 🔐 #282 battle: only keys of real states, and only Mermaid-safe
+    #    ones -- a hostile column value must not add directives such as
+    #    ``click x call fn()`` to the diagram.
+    known = {n.key for n in _walk(machine)}
+    ids = [
+        k
+        for k in (s.split(".")[-1] for s in (active or ()))
+        if k in known and _MERMAID_ID.match(k)
+    ]
     if not ids:
         return text
     lines = [text, "    classDef xsmActive fill:#ffd54f,stroke:#e65100"]

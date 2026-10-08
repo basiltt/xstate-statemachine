@@ -1456,6 +1456,37 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **Django admin and management commands, as battle-tested (#282).**
+  An ops team's day -- fifty reviewers in the admin at once seeing only
+  their role's buttons and never a 500, a 200-row bulk action reporting
+  exact counts, the confirm form's reason and tampered event names, the
+  changelist / state filter / search / `TransitionLog` admin at 10k rows
+  in bounded queries and time, `xsm_snapshots` / `xsm_refresh_columns` /
+  `xsm_deadlines` / `xsm_inspect` / `xsm_diagram` on 10k rows in bounded
+  time and memory, `--plain` on a cp1252 console -- on SQLite and
+  Postgres; the scenario itself held (`examples/integrations/
+  django_approvals/tests/test_battle_282_scenario.py`,
+  `tests/contrib/django/test_battle_282_{a,b}.py`). Found and fixed: the
+  confirm page was a 200 for staff with NO permission on the model
+  (naming the object and the event); a missing pk was 403 for viewers
+  (now 404; 403 only for users who may not view the model, so pks cannot
+  be probed); view-only users were offered every transition in the
+  bulk-action dropdown; a `LockTimeoutError` / `ConflictError` mid-bulk
+  was counted as "denied" (now "n failed (retry them)" at error level,
+  the other rows still applied; the selection is streamed); the diagram's
+  highlighting took state ids from the row unchecked (a tampered column
+  could inject Mermaid directives -- now only known, Mermaid-safe keys).
+  Commands: a malformed / missing pk, an unknown `--database`, an
+  unwritable `-o`, or a model with several `StatechartField`s and no
+  `statechart_field_name` were tracebacks (now `CommandError`, exit 1,
+  checked BEFORE any output); `xsm_snapshots` and `xsm_inspect <pk>`
+  accept `--database`; `--limit < 1` refused; `--json` keeps non-ASCII.
+  Docs: §Admin redrawn (inline before Save, buttons after) with every
+  setting, URL name, the 403/404 rule, the bulk message, the 2000-char
+  reason cap and the CSP-safe empty `xsm_mermaid_script` block (block
+  names pinned by test); the command table matches `--help` (pinned); a
+  `manage.py` section in the CLI guide; the example README's Celery line
+  names `DurableTimerScheduler` + `xsm_deadlines_every` as they exist.
 - **Django signals, audit, permissions and outbox, as battle-tested
   (#281).** The trail that cannot disagree with the state, under a
   finance team's load -- 200 expenses approved by two roles from separate
