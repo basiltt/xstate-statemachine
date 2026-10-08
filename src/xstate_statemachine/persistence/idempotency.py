@@ -899,6 +899,23 @@ class IdempotencyPlugin(PluginBase[Any]):
             scope, key, _fp = claim[1:]
             self.inbox.release(scope, key)
 
+    def on_event_dropped(
+        self, interpreter: Any, event: Any, reason: str
+    ) -> None:
+        """The engine dropped an event this plugin had claimed.
+
+        🐛 Battle #283: a FRESH key sent to a finished machine was claimed
+        here, then refused by the engine (``"not_running"``) -- the claim
+        stayed in flight and every retry answered 409 for the whole TTL.
+        A dropped event never reached the machine: release, so a retry
+        is a first delivery (and gets the engine's real answer again).
+        """
+        with self._lock:
+            claim = self._pending.pop(id(event), None)
+        if claim is not None:
+            scope, key, _fp = claim[1:]
+            self.inbox.release(scope, key)
+
     def on_event_processed(
         self, interpreter: Any, event: Any, receipt: Receipt
     ) -> None:

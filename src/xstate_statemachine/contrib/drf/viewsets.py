@@ -157,7 +157,11 @@ class StatechartViewSetMixin:
             event's payload (422 on failure; `event_serializer` builds one
             from fields or a pydantic model).
         xsm_context_serializer: ``(context) -> JSON`` to include context in
-            response bodies (X0.1: off by default).
+            response bodies (X0.1: off by default). A receipt stores state
+            ids, not context: an ``Idempotency-Key`` replay renders the
+            ORIGINAL ``state`` / ``state_ids`` but the row's CURRENT
+            context.
+        Idempotency-Key with ``xsm_inbox = None`` is ignored (no dedup).
         xsm_inbox: An `InboxStore` for ``Idempotency-Key``; default a
             `DjangoInbox` (joins the send's transaction); ``None`` = off.
         xsm_history_permission_classes: Checked for ``history/`` (default

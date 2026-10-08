@@ -696,10 +696,11 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             logger.warning("🚫 Cannot send event. Interpreter is not running.")
             if not self._is_processing:
                 self._drain_mailbox()  # 🔔 report stranded producer events
-            try:
-                dropped = self._prepare_event(event_or_type, **payload)
-            except Exception:  # noqa: BLE001 -- malformed AND misdirected
-                return None
+            if probe is None:
+                return None  # malformed AND misdirected
+            # 📝 The SAME object the interceptors saw: a claim taken in
+            #    `on_before_send` is keyed by it and released on the drop.
+            dropped = probe
             for plugin in self._plugins:
                 plugin.on_event_dropped(self, dropped, "not_running")
             if wait:
