@@ -71,6 +71,10 @@ def _stdlib_names() -> Set[str]:
         stdlib = Path(sysconfig.get_paths()["stdlib"])
         names = {p.stem for p in stdlib.iterdir() if p.suffix == ".py"}
         names |= {p.name for p in stdlib.iterdir() if p.is_dir()}
+        # C modules (`zlib`, `_json`, ...) live in lib-dynload as .so/.pyd
+        dyn = stdlib / "lib-dynload"
+        if dyn.is_dir():
+            names |= {p.name.split(".")[0] for p in dyn.iterdir()}
         names |= set(sys.builtin_module_names)
     return names | {"__future__"}
 
