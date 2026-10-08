@@ -50,6 +50,9 @@ export OPENAI_API_KEY=... # or ANTHROPIC_API_KEY
 python run.py --provider openai --prompt "Where is order 42? Please refund it."
 ```
 
+Without the SDK or the key, `run.py` exits with status 2 and one line naming
+the fix (`pip install openai` / `OPENAI_API_KEY`); no ticket is started.
+
 Only the model changes. The allow-list, budgets and human gate stay exactly as they were.
 
 ## Tests
