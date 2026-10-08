@@ -42,6 +42,10 @@ python manage.py relay_outbox                      # publish pending integration
 python -m pytest tests -q
 ```
 
+Django 4.2 LTS or newer (the `[django]` extra's floor). On Python 3.9 pip
+resolves Django 4.2, the last line that supports it; the suite passes there
+too. Django 5.x needs Python 3.10+.
+
 `createsuperuser` without `--noinput` asks for the password interactively
 instead. The commands above are run, literally, by
 `tests/test_readme_commands.py`.

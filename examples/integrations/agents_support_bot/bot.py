@@ -133,8 +133,17 @@ def build_tools(fetch: OrderFetcher, refunds: List[Dict[str, Any]]) -> Any:
 # -----------------------------------------------------------------------------
 # 🤖 Models
 # -----------------------------------------------------------------------------
-def fake_model(order_id: int = 42) -> FakeModel:
-    """Scripted, offline: look up → propose refund → confirm."""
+def fake_model(order_id: int = 42, *, approve: bool = True) -> FakeModel:
+    """Scripted, offline: look up → propose refund → confirm.
+
+    The closing answer matches the reviewer's verdict, so ``--reject``
+    never prints "has been refunded" for a refund that did not run.
+    """
+    final = (
+        f"Order {order_id} has been refunded (24.00)."
+        if approve
+        else f"Sorry, the refund on order {order_id} was declined."
+    )
     return FakeModel(
         [
             {"tool": "lookup_order", "args": {"order_id": order_id}},
@@ -142,13 +151,43 @@ def fake_model(order_id: int = 42) -> FakeModel:
                 "tool": "refund_order",
                 "args": {"order_id": order_id, "amount_cents": 2400},
             },
-            {"text": f"Order {order_id} has been refunded (24.00)."},
+            {"text": final},
         ]
     )
 
 
+#: provider -> (SDK module, API-key variable)
+PROVIDERS = {
+    "openai": ("openai", "OPENAI_API_KEY"),
+    "anthropic": ("anthropic", "ANTHROPIC_API_KEY"),
+}
+
+
+class ProviderUnavailable(RuntimeError):
+    """The opt-in provider cannot run: SDK missing or API key unset."""
+
+
+def check_provider(name: str) -> None:
+    """Fail fast, with the fix, before any ticket is started."""
+    if name not in PROVIDERS:
+        raise ValueError(f"unknown provider {name!r}")
+    module, var = PROVIDERS[name]
+    try:
+        __import__(module)
+    except ImportError:
+        raise ProviderUnavailable(
+            f"--provider {name} needs its SDK: pip install {module}"
+        ) from None
+    if not os.environ.get(var):
+        raise ProviderUnavailable(
+            f"--provider {name} needs {var} set in the environment "
+            "(or run offline with --fake)"
+        )
+
+
 def provider_model(name: str) -> Any:
     """A real model -- opt-in, needs the SDK and an API key."""
+    check_provider(name)
     if name == "openai":
         import openai
 
@@ -215,10 +254,7 @@ class SupportBot:
 
 def env_provider() -> Optional[str]:
     """``openai`` / ``anthropic`` when its API key is set, else ``None``."""
-    for name, var in (
-        ("openai", "OPENAI_API_KEY"),
-        ("anthropic", "ANTHROPIC_API_KEY"),
-    ):
+    for name, (_module, var) in PROVIDERS.items():
         if os.environ.get(var):
             return name
     return None

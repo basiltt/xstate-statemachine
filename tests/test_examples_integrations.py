@@ -137,6 +137,7 @@ def test_machine_builds_with_stub_logic(path):
 def test_example_suite_passes(example):
     for module in REQUIRES.get(example.name, DEFAULT_REQUIRES):
         pytest.importorskip(module)
+    before = _leftovers(example)
     proc = subprocess.run(
         [
             sys.executable,
@@ -168,6 +169,26 @@ def test_example_suite_passes(example):
         ]
         detail = "\n".join(heads[-30:]) + "\n...\n" + proc.stdout[-2500:]
         raise AssertionError(detail + proc.stderr[-1500:])
+    # 🧹 #286-a: a suite leaves its folder as it found it -- including
+    #    git-IGNORED files (the #283 `approvals.sqlite3.test` survived
+    #    because `.gitignore` hid it from a plain `git status`).
+    left = _leftovers(example) - before
+    assert not left, f"{example.name} suite left files behind: {left}"
+
+
+def _leftovers(example: Path) -> set:
+    return {
+        str(p.relative_to(example))
+        for p in example.rglob("*")
+        if p.is_file()
+        and "__pycache__" not in p.parts
+        and ".pytest_cache" not in p.parts
+        and ".hypothesis" not in p.parts
+        # 📝 the coverage job's COVERAGE_PROCESS_START makes the child
+        #    write `.coverage.*` into its cwd; that is ours, not the suite's
+        and not p.name.startswith(".coverage")
+        and not p.name.endswith((".pyc",))
+    }
 
 
 def test_fastapi_orders_process_tests_are_reported():

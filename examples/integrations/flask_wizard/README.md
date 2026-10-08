@@ -97,4 +97,4 @@ as `xsm inspect machine.json`, because the registration passes
 - **A production server and a real secret.** `flask run` is the dev server;
   set `WIZARD_SECRET_KEY`.
 
-See the [Flask integration guide](../../../docs/_guide/integration-flask.md).
+See the [Flask integration guide](https://basiltt.github.io/xstate-statemachine/guide/integration-flask/).

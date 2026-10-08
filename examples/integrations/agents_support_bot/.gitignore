@@ -1,0 +1,3 @@
+# What `python run.py` writes into this folder
+support.db
+support-trace.jsonl

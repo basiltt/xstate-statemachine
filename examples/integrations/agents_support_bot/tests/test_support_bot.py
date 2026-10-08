@@ -97,6 +97,10 @@ def test_budget_stops_a_looping_model(tmp_path):
 def test_lookup_goes_through_the_fastapi_example(tmp_path):
     pytest.importorskip("fastapi")
     pytest.importorskip("httpx")
+    if not (bot.ORDERS_EXAMPLE / "app.py").is_file():
+        # 📝 #286: a newcomer copied THIS folder; the sibling example is
+        #    part of the repository checkout, not of this app
+        pytest.skip("the fastapi_orders example is not alongside")
     fetch = bot.fastapi_orders(str(tmp_path))
     order = fetch(42)
     assert order["state"] == "cart"

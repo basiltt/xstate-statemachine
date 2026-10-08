@@ -443,6 +443,10 @@ def test_v2_chart_and_corpus_agree_with_create_machine() -> None:
         .joinpath("stately_machines")
         .glob("*.json")
     )
+    if not corpus:
+        # 📝 #286: the corpus lives in the repository checkout; a newcomer
+        #    who copied this app has only its own chart (validated above)
+        pytest.skip("repository chart corpus not alongside")
     assert len(corpus) >= 100
     disagreements = []
     for p in corpus:

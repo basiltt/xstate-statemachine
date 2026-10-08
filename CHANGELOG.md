@@ -1450,6 +1450,38 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **Examples and comparisons, as battle-tested (#286).** The six example
+  apps as a newcomer has them -- each README's own `pip install` line
+  run against the built wheel in a FRESH venv (3.9 and current), the app
+  copied OUT of the repository, its suite run with no `PYTHONPATH`; and
+  the seven comparison pages against the competitors' CURRENT releases,
+  with probes that re-run on the pinned versions (`tests/
+  test_battle_286_{scenario,a,b}.py`). Found and fixed: three example
+  suites assumed the repository checkout around them (the sibling
+  fastapi example, the docs tree, the 104-chart corpus) and failed for
+  anyone who copied one app (they skip those checks outside the
+  checkout); `agents_support_bot --provider` without the SDK or key was
+  a traceback (exit 2 + one line naming the fix) and `--reject` claimed
+  a refund that never ran; five READMEs linked `../../../docs/...`
+  (dead on GitHub / PyPI / a copied folder -- absolute URLs now);
+  `sqlalchemy_orders` did not install on Python 3.9 / Windows (greenlet
+  has no wheel there -- `--only-binary greenlet` documented);
+  `django_approvals` states its Django 4.2+ / Python floor and no longer
+  leaves `approvals.sqlite3.test` behind; the example runner fails if
+  any suite leaves files behind. Comparison claims that were false or
+  stale on the current releases: django-fsm-2's admin is
+  `django_fsm.admin.FSMAdminMixin` (`fsm_admin` is deprecated);
+  `transitions.LockedMachine` uses `threading.Lock`, transitions has NO
+  history states, and both transitions and python-statemachine export
+  Mermaid without Graphviz; LangGraph's products are LangSmith Studio /
+  Deployment and nodes take `timeout=`; AWS marks Step Functions Local
+  unsupported (`TestState` is the route); the README's "Find your way"
+  table linked 3 of the 7 pages. Every competitor now carries a
+  "checked" release (langgraph 1.2.14, burr 0.42.0, @statelyai/agent
+  1.1.6, the AWS guide's read date) and every row a source, both pinned
+  by `tests/test_comparisons.py`; PyPI drift fails the pin. The
+  competitor benchmark's ratios reproduce within tolerance (a dated
+  reproduction note in its README).
 - **`xsm_migrate_fsm`, as battle-tested (#310).** Migrating a real
   django-fsm-2 app with the site up -- 10k rows in batches in bounded
   time and memory with every column correct, `--dry-run` touching no

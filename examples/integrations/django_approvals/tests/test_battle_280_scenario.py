@@ -261,6 +261,21 @@ def test_escalation_wakes_each_expense_once_with_two_scanners(people: Any):
         for m in [re.search(r"woke (\d+)/", o.getvalue())]
         if m
     )
+    # 📝 #286 (CI): under the optimistic default two scanners racing one
+    #    row on SQLite can BOTH lose (`database is locked` on each side) --
+    #    that row is a stale skip for both, stays due, and the next tick
+    #    wakes it. The contract is "each expense once, all eventually",
+    #    not "all in one pass": drain, then check the total and the state.
+    assert woke <= N - N // 4, [o.getvalue()[-200:] for o in outs]
+    for _ in range(10):
+        if woke == N - N // 4:
+            break
+        out = io.StringIO()
+        call_command(
+            "xsm_deadlines", "approvals.Expense", now=later, stdout=out
+        )
+        m = re.search(r"woke (\d+)/", out.getvalue())
+        woke += int(m.group(1)) if m else 0
     assert woke == N - N // 4, [o.getvalue()[-200:] for o in outs]
     escalated = sum(
         1

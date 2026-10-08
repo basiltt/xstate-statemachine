@@ -47,7 +47,7 @@ and your Python backend. Async **and** sync interpreters. Zero dependencies.
 | 🔍 | [**Introspection**](#-introspection--plugins) · [**Pure API**](#-the-pure-api--no-interpreter) | Observe and test |
 | 🐍 | [**Pythonic API**](#-prefer-pure-python-three-more-ways-to-define-a-machine) | No JSON required |
 | 🛠️ | [**CLI Tool**](#️-cli-tool) | Generate, inspect, simulate, diagram — zero deps |
-| 📚 | [**Cookbook**](#-cookbook) · [**FAQ**](#-faq) · [**Comparisons**](#️-how-it-compares) | Copy-paste recipes; [vs transitions](https://basiltt.github.io/xstate-statemachine/guide/vs-transitions/), [python-statemachine](https://basiltt.github.io/xstate-statemachine/guide/vs-python-statemachine/), [django-fsm](https://basiltt.github.io/xstate-statemachine/guide/vs-django-fsm/) |
+| 📚 | [**Cookbook**](#-cookbook) · [**FAQ**](#-faq) · [**Comparisons**](#️-how-it-compares) | Copy-paste recipes; vs [transitions](https://basiltt.github.io/xstate-statemachine/guide/vs-transitions/), [python-statemachine](https://basiltt.github.io/xstate-statemachine/guide/vs-python-statemachine/), [django-fsm](https://basiltt.github.io/xstate-statemachine/guide/vs-django-fsm/), [LangGraph](https://basiltt.github.io/xstate-statemachine/guide/vs-langgraph/), [Burr](https://basiltt.github.io/xstate-statemachine/guide/vs-burr/), [@statelyai/agent](https://basiltt.github.io/xstate-statemachine/guide/vs-statelyai-agent/), [AWS Step Functions](https://basiltt.github.io/xstate-statemachine/guide/vs-step-functions/) |
 | 🏭 | [**Production**](#-running-it-in-production) · [**API Reference**](#-api-reference) · [**Troubleshooting**](#-troubleshooting) | Failure semantics, every kwarg, every error |
 
 ---
@@ -1127,13 +1127,13 @@ Python has good state machine libraries. Here's an honest read on when to pick w
 | XState / Stately JSON | ✅ **runs unmodified** | ❌ | ❌ |
 | Compound (nested) states | ✅ | ✅ | ✅ |
 | Parallel regions | ✅ | ✅ | ✅ |
-| History states | ✅ | ✅ | ✅ |
+| History states | ✅ | ❌ | ✅ |
 | `invoke` services + `onDone`/`onError` | ✅ built-in | ⚙️ DIY | ⚙️ `invoke` (callables) |
 | Delayed transitions (`after`) | ✅ built-in | ⚙️ `Timeout` extension (one OS thread per entry) | ✅ `delay=` |
 | Actor model / spawning | ✅ | ❌ | ❌ |
 | Snapshot persistence | ✅ | ⚙️ DIY | ⚙️ DIY |
 | Sync **and** async runtimes | ✅ two engines | ✅ | ✅ |
-| Diagram export | ✅ no binaries | ⚙️ needs graphviz | ✅ |
+| Diagram export | ✅ no binaries | ✅ Graphviz or Mermaid | ✅ Graphviz or Mermaid |
 | CLI: generate, inspect, simulate, diagram, docs | ✅ | ❌ | ❌ |
 | Live inspector (Stately Inspector protocol, like `@statelyai/inspect`) | ✅ `xsm inspect --live` | ❌ | ❌ |
 | Virtual clock for tests | ✅ `SimulatedClock` | ❌ | ❌ |

@@ -23,7 +23,12 @@ from typing import List, Optional
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
-from bot import SupportBot, fake_model, provider_model  # noqa: E402
+from bot import (  # noqa: E402
+    ProviderUnavailable,
+    SupportBot,
+    fake_model,
+    provider_model,
+)
 from xstate_statemachine.contrib.agents import pending_approval  # noqa: E402
 
 
@@ -43,9 +48,13 @@ async def main(argv: Optional[List[str]] = None) -> int:
     a = _args(argv)
     if a.fake:
         m = re.search(r"\d+", a.prompt)
-        model = fake_model(int(m.group()) if m else 42)
+        model = fake_model(int(m.group()) if m else 42, approve=not a.reject)
     else:
-        model = provider_model(a.provider)
+        try:
+            model = provider_model(a.provider)
+        except ProviderUnavailable as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
     bot = SupportBot(model, db=a.db, trace=a.trace)
     key = f"ticket:{uuid.uuid4().hex[:8]}"
     try:
