@@ -59,7 +59,23 @@ OPT_IN = {
 }
 #: app -> extras an opt-in mode needs, which the README must name there
 OPT_IN_EXTRAS = {"flask_wizard": ("sqlalchemy",)}
-STDLIB = set(getattr(sys, "stdlib_module_names", ())) | {"__future__"}
+
+
+def _stdlib_names() -> Set[str]:
+    """`sys.stdlib_module_names` is 3.10+; on 3.9 fall back to "importable
+    from the interpreter's own lib dir" (CI py3.9 cells, review #286)."""
+    names = set(getattr(sys, "stdlib_module_names", ()))
+    if not names:
+        import sysconfig
+
+        stdlib = Path(sysconfig.get_paths()["stdlib"])
+        names = {p.stem for p in stdlib.iterdir() if p.suffix == ".py"}
+        names |= {p.name for p in stdlib.iterdir() if p.is_dir()}
+        names |= set(sys.builtin_module_names)
+    return names | {"__future__"}
+
+
+STDLIB = _stdlib_names()
 
 
 def _extras() -> Dict[str, Set[str]]:

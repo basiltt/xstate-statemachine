@@ -31,8 +31,16 @@ DATA = json.loads(
     (ROOT / "docs" / "_data" / "comparisons.json").read_text("utf-8")
 )
 needs_net = pytest.mark.skipif(
-    os.environ.get("XSM_ADOPTION_VENV") != "1",
-    reason="set XSM_ADOPTION_VENV=1: network + venvs (slow)",
+    os.environ.get("XSM_ADOPTION_VENV") != "1" or sys.version_info < (3, 10),
+    reason="set XSM_ADOPTION_VENV=1 on Python >= 3.10: venvs with the "
+    "pinned competitors (they dropped 3.9)",
+)
+# 📝 the npm registry / AWS docs fetches happen IN this process (the CI
+#    cells run pytest-socket); they belong with the PyPI drift check in
+#    the nightly `comparisons` job (ci.yml), gated the same way.
+needs_drift = pytest.mark.skipif(
+    os.environ.get("XSM_COMPARISON_DRIFT") != "1",
+    reason="set XSM_COMPARISON_DRIFT=1: fetches npm / AWS docs",
 )
 
 
@@ -221,7 +229,7 @@ def test_competitor_rows_hold_on_the_pinned_release(
     assert r.returncode == 0 and "OK" in r.stdout, (key, r.stderr[-2000:])
 
 
-@needs_net
+@needs_drift
 def test_statelyai_agent_npm_metadata_matches_the_rows() -> None:
     pinned = _pinned("statelyai_agent")
     meta = json.loads(_get("https://registry.npmjs.org/@statelyai/agent"))
@@ -245,7 +253,7 @@ SFN_FACTS = {
 }
 
 
-@needs_net
+@needs_drift
 @pytest.mark.parametrize("page", sorted(SFN_FACTS))
 def test_step_functions_docs_still_say_what_the_rows_cite(page: str) -> None:
     text = re.sub(r"<[^>]+>", " ", _get(SFN + page))

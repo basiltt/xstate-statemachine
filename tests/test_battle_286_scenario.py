@@ -324,6 +324,10 @@ print("OK", statemachine.__version__)
 
 
 @needs_venv
+@pytest.mark.skipif(
+    sys.version_info < (3, 10),
+    reason="the pinned competitor releases require Python >= 3.10",
+)
 @pytest.mark.parametrize("key", sorted(PROBES))
 def test_competitor_rows_hold_on_the_current_release(
     key: str, tmp_path: pathlib.Path

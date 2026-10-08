@@ -685,7 +685,7 @@ jobs:
       - name: 📰 PyPI drift -- every "checked" line names the current release
         env:
           XSM_COMPARISON_DRIFT: "1"
-        run: python -m pytest tests/test_battle_286_scenario.py -k checked_version -q -rs
+        run: python -m pytest tests/test_battle_286_scenario.py tests/test_battle_286_b.py -k "checked_version or npm_metadata or step_functions_docs" -q -rs
 
   # ---------------------------------------------------------------------------
   # 📏 Integration performance budgets (opt-in; never blocks a pull request)
