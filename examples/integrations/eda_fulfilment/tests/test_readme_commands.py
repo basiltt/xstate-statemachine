@@ -25,13 +25,19 @@ def test_readme_python_blocks_run(monkeypatch, tmp_path):
 
 
 def test_readme_links_every_guide_page():
-    if not (HERE / "../../../docs/_guide").resolve().is_dir():
-        pytest.skip("docs tree not alongside: the example was copied out")
+    # 📝 Absolute docs-site URLs: the README is read on GitHub, on PyPI
+    #    and from a copied-out folder, where ``../../../docs`` is gone.
     text = (HERE / "README.md").read_text("utf-8")
+    assert "../../../docs" not in text
+    docs = (HERE / "../../../docs/_guide").resolve()
     for page in ("eda", "brokers", "celery", "observability", "inspector"):
-        target = f"../../../docs/_guide/integration-{page}.md"
-        assert target in text, page
-        assert (HERE / target).resolve().is_file(), page
+        url = (
+            "https://basiltt.github.io/xstate-statemachine/guide/"
+            f"integration-{page}/"
+        )
+        assert url in text, page
+        if docs.is_dir():  # in the checkout: the page exists
+            assert (docs / f"integration-{page}.md").is_file(), page
 
 
 def test_python_dash_m_exits_zero():

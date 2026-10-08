@@ -38,6 +38,11 @@ alembic check                               # "No new upgrade operations detecte
 python -m pytest tests -q
 ```
 
+⚠️ **Python 3.9 on Windows:** the newest `greenlet` (pulled in by
+`sqlalchemy[asyncio]`) ships no Python 3.9 Windows wheel, so pip tries to
+compile it and fails without a C compiler. Add `--only-binary greenlet` to
+the install line above; pip then picks the last release that has the wheel.
+
 `ORDERS_DB_URL` (sync and Alembic) and `ORDERS_DB_PATH` (async) point the
 example at another database. `python sync_app.py init` creates the tables
 with `create_all` if you want to skip Alembic.
@@ -91,7 +96,7 @@ relay that dies between publish and mark re-sends that row with the
 **same envelope id** next time, so consumers dedup on `envelope.id`. The
 example's broker prints; the tests use `SyncFakeBrokerAdapter`; production
 passes a real adapter (Kafka, RabbitMQ, ...). See the
-[EDA guide](../../../docs/_guide/integration-eda.md) for the relay and dead letters.
+[EDA guide](https://basiltt.github.io/xstate-statemachine/guide/integration-eda/) for the relay and dead letters.
 
 ## Postgres
 
@@ -116,4 +121,4 @@ retries. The async variant reads `ORDERS_DB_PATH` and stays on aiosqlite.
   `AsyncSQLAlchemyStore`, and `SQLAlchemyOutboxStore` needs the sync
   `SQLAlchemyStore`, so the async variant publishes nothing.
 
-See the [SQLAlchemy integration guide](../../../docs/_guide/integration-sqlalchemy.md).
+See the [SQLAlchemy integration guide](https://basiltt.github.io/xstate-statemachine/guide/integration-sqlalchemy/).

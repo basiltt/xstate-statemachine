@@ -3,11 +3,11 @@
 Order fulfilment across two charts that never call each other. Every
 hand-off is an event on a broker. This is the worked example for three
 guide pages that had no app yet: the
-[event-driven core](../../../docs/_guide/integration-eda.md),
-[brokers](../../../docs/_guide/integration-brokers.md) +
-[Celery](../../../docs/_guide/integration-celery.md), and
-[observability](../../../docs/_guide/integration-observability.md) +
-the [inspector](../../../docs/_guide/integration-inspector.md).
+[event-driven core](https://basiltt.github.io/xstate-statemachine/guide/integration-eda/),
+[brokers](https://basiltt.github.io/xstate-statemachine/guide/integration-brokers/) +
+[Celery](https://basiltt.github.io/xstate-statemachine/guide/integration-celery/), and
+[observability](https://basiltt.github.io/xstate-statemachine/guide/integration-observability/) +
+the [inspector](https://basiltt.github.io/xstate-statemachine/guide/integration-inspector/).
 
 It runs with **no external services**. State, outbox, inbox, dead letters
 and audit log live in one SQLite file in a temp directory. The broker is
@@ -160,14 +160,14 @@ packed --> [*]
 
 | Piece | Where | Guide |
 |:--|:--|:--|
-| `Envelope`, `ChoreographyRouter` (type → `(machine, EVENT)`, instances keyed `<machine>:<subject>`) | `app.FulfilmentApp` | [EDA: choreography](../../../docs/_guide/integration-eda.md) |
-| `OutboxPlugin` → `SQLiteOutboxStore` on the **same** `SQLiteStore`, `PessimisticLock` (the rows commit with the snapshot), `OutboxRelay` | `app.FulfilmentApp`, `pump()` | [EDA: outbox](../../../docs/_guide/integration-eda.md) |
-| `SQLiteInbox` dedup on the envelope id, `max_attempts=3`, `SQLiteDeadLetterStore`, `xsm dlq` | `app.FulfilmentApp` | [EDA: dead letters](../../../docs/_guide/integration-eda.md) |
-| `AuditPlugin` → `SQLiteLog` | `app.FulfilmentApp.transitions()` | [Persistence](../../../docs/_guide/persistence.md) |
-| `SyncRedisStreamsBroker` (`prefix`, consumer group, `min_idle_ms`, `max_bytes`, `dead_letters`) | `app.select_broker()` | [Brokers: Redis Streams](../../../docs/_guide/integration-brokers.md) |
-| `celery_service`, `statechart_task`, `DurableTimerScheduler`, `outbox_relay_task`, `assert_json_serializer` | `celery_app.py` | [Celery](../../../docs/_guide/integration-celery.md) |
-| `PrometheusPlugin`, `OpenTelemetryPlugin` | `app.instrument()` | [Observability](../../../docs/_guide/integration-observability.md) |
-| `InspectorPlugin(MemorySink)` with a context allow-list, `replay_messages` | `app.instrument()` | [Inspector](../../../docs/_guide/integration-inspector.md) |
+| `Envelope`, `ChoreographyRouter` (type → `(machine, EVENT)`, instances keyed `<machine>:<subject>`) | `app.FulfilmentApp` | [EDA: choreography](https://basiltt.github.io/xstate-statemachine/guide/integration-eda/) |
+| `OutboxPlugin` → `SQLiteOutboxStore` on the **same** `SQLiteStore`, `PessimisticLock` (the rows commit with the snapshot), `OutboxRelay` | `app.FulfilmentApp`, `pump()` | [EDA: outbox](https://basiltt.github.io/xstate-statemachine/guide/integration-eda/) |
+| `SQLiteInbox` dedup on the envelope id, `max_attempts=3`, `SQLiteDeadLetterStore`, `xsm dlq` | `app.FulfilmentApp` | [EDA: dead letters](https://basiltt.github.io/xstate-statemachine/guide/integration-eda/) |
+| `AuditPlugin` → `SQLiteLog` | `app.FulfilmentApp.transitions()` | [Persistence](https://basiltt.github.io/xstate-statemachine/guide/persistence/) |
+| `SyncRedisStreamsBroker` (`prefix`, consumer group, `min_idle_ms`, `max_bytes`, `dead_letters`) | `app.select_broker()` | [Brokers: Redis Streams](https://basiltt.github.io/xstate-statemachine/guide/integration-brokers/) |
+| `celery_service`, `statechart_task`, `DurableTimerScheduler`, `outbox_relay_task`, `assert_json_serializer` | `celery_app.py` | [Celery](https://basiltt.github.io/xstate-statemachine/guide/integration-celery/) |
+| `PrometheusPlugin`, `OpenTelemetryPlugin` | `app.instrument()` | [Observability](https://basiltt.github.io/xstate-statemachine/guide/integration-observability/) |
+| `InspectorPlugin(MemorySink)` with a context allow-list, `replay_messages` | `app.instrument()` | [Inspector](https://basiltt.github.io/xstate-statemachine/guide/integration-inspector/) |
 
 > **Guarantees**
 >

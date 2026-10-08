@@ -26,6 +26,10 @@ draft ──SUBMIT──▶ review ═══════════════
 
 ## Run it
 
+Django 4.2 LTS or newer (the `[django]` extra's floor). On Python 3.9 pip
+resolves Django 4.2, the last line that supports it; the suite passes there
+too. Django 5.x needs Python 3.10+.
+
 ```bash
 pip install "xstate-statemachine[django,drf,channels]" drf-spectacular daphne pytest-django
 cd examples/integrations/django_approvals

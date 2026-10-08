@@ -474,5 +474,5 @@ inspector gate, `stub_logic` parity, and the rolling upgrade above. The
 repository's `tests/test_examples_integrations.py` runs this suite in CI
 (in the `[fastapi]` cell).
 
-See the [FastAPI guide](../../../docs/_guide/integration-fastapi.md) for the
+See the [FastAPI guide](https://basiltt.github.io/xstate-statemachine/guide/integration-fastapi/) for the
 design discussion.

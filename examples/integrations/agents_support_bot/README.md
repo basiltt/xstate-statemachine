@@ -8,7 +8,7 @@ decides.
 | Piece | Where |
 |:--|:--|
 | Chart | `machine.json`: `TOOL_LOOP` with `meta.tools` narrowed to `lookup_order` and `refund_order` |
-| Tools | `bot.py`: `lookup_order` calls the [FastAPI orders example](../fastapi_orders/) `GET /orders/{id}` through an in-process `TestClient` (or a local stub when it cannot be imported); `refund_order` is `side_effect=True` |
+| Tools | `bot.py`: `lookup_order` calls the [FastAPI orders example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/fastapi_orders) `GET /orders/{id}` through an in-process `TestClient` (or a local stub when it cannot be imported); `refund_order` is `side_effect=True` |
 | Human approval | `refund_order` parks the agent in `awaiting_human`, a normal persisted state with a one-hour escalation deadline |
 | Budgets | 6 turns, 20k tokens, $0.05 per ticket (`BUDGETS`) |
 | Persistence | `SQLiteStore("support.db")`: each ticket is a key, and approval resumes the stored run |

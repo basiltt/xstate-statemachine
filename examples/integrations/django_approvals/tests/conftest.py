@@ -38,3 +38,32 @@ else:
     import django  # noqa: E402
 
     django.setup()
+
+    def pytest_sessionfinish(session, exitstatus):
+        """🧹 #286-a: remove the SQLite test database Django could not.
+
+        On Windows, a connection a worker thread opened (the concurrency
+        tests) can still hold the file when pytest-django tears the test
+        database down: Django warns ``PermissionError(13 ...)`` and the
+        example folder keeps ``approvals.sqlite3.test`` -- hidden by
+        ``.gitignore``, but a newcomer's ``ls`` shows it. By session end
+        those threads are gone; collect their connections and retry.
+        """
+        import gc
+        import time
+
+        test_db = _settings.DATABASES["default"].get("TEST", {}).get("NAME")
+        if not test_db or "sqlite" not in _settings.DATABASES["default"][
+            "ENGINE"
+        ]:
+            return
+        for suffix in ("", "-wal", "-shm", "-journal"):
+            path = Path(f"{test_db}{suffix}")
+            for _ in range(50):
+                if not path.exists():
+                    break
+                gc.collect()
+                try:
+                    path.unlink()
+                except PermissionError:
+                    time.sleep(0.1)
