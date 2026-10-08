@@ -166,6 +166,7 @@ class Command(BaseCommand):
         using = opts["database"]
         mgr = model._base_manager.using(using)
         unknown: Dict[str, int] = {}
+        failed: Dict[Any, str] = {}
         try:
             done, batches = migrate_rows(
                 model,
@@ -175,9 +176,21 @@ class Command(BaseCommand):
                 using=using,
                 value_map=value_map,
                 unknown=unknown,
+                failed=failed,
             )
         except ValueError as exc:
             raise CommandError(str(exc)) from None
+        if failed:
+            # 📝 a `context()` hook that raised for a row: the row is left
+            #    empty and named -- the migration finishes the others.
+            self.stderr.write(
+                f"{len(failed)} row(s) failed to adopt and were left "
+                "empty (fix and run again):"
+            )
+            for pk, err in list(failed.items())[:20]:
+                self.stderr.write(f"  pk={pk!r}: {err}")
+            if len(failed) > 20:
+                self.stderr.write(f"  ... and {len(failed) - 20} more")
         remaining = mgr.filter(**{f"{sfield}__isnull": True}).count()
         skipped = sum(unknown.values())
         # 📝 skipped rows stay empty, so they are part of `remaining`;

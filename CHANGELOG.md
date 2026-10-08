@@ -1450,6 +1450,53 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **`xsm_migrate_fsm`, as battle-tested (#310).** Migrating a real
+  django-fsm-2 app with the site up -- 10k rows in batches in bounded
+  time and memory with every column correct, `--dry-run` touching no
+  row, dirty data, live writers firing `@transition`s during the
+  migration, the dual-read window in both directions, the recipe run
+  word for word, `scripts/verify/django_fsm_migration.py`
+  (`tests/contrib/django/test_battle_310_{scenario,a,b}.py`,
+  `test_battle_310_postgres.py`). Found and fixed: a column value the
+  chart did not know (a renamed legacy state, a typo, an empty string,
+  NULL) killed the run with a traceback on row 4,217, half-migrated --
+  such rows are skipped and REPORTED per value, `--map OLD=NEW` folds
+  renames in (malformed / contradictory maps and a map to an unknown
+  state are refused up front; a map no row matches is flagged as a
+  typo), and the summary says skipped rows count toward "remaining";
+  36k unknown rows then hit SQLite's parameter limit (the run now walks
+  pks forward instead of excluding every skipped one); a row a live
+  writer moved between the read and the UPDATE was migrated into the
+  state it had already LEFT (the UPDATE is fenced on the FSM value too);
+  an FSM `@transition` by still-deployed old code moved the column but
+  the snapshot stayed stale, so the next `send()` started from the wrong
+  state (`FSMDualWriteMixin.save()` re-adopts the snapshot at the
+  column's value, fenced on version AND column so a stale instance never
+  rolls back a newer `send()`; 8 threads mixing both paths on one row
+  end consistent); FSM values that are not valid XState keys
+  (`"in-progress"` vs `"in_progress"`, `"état"`, `FSMIntegerField`)
+  merged or were garbled -- the chart records `meta.fsm_value` and both
+  directions map back exactly (regenerate pre-0.11.0 charts with
+  `--write-chart`); `RETURN_VALUE` / `GET_STATE` targets produced a fake
+  state whose name changed every run (now one guarded transition per
+  allowed state, `<method>Returns` + `params.value`; unbounded ones
+  refused); `on_error` targets were dropped (now states, `meta.on_error`;
+  `custom` in `meta.custom`); every lambda guard was named `lambda` and
+  same-named conditions from different modules merged (stable, distinct
+  names); a `context()` hook raising for one row was an unnamed
+  traceback (the pk is named; `failed=` skips it and the command lists
+  them); rows adopted into a state with an `after` timer got no scanner
+  deadline (`from_state_ids(timers=True, clock=)`); `--dry-run` printed
+  the recipe after the JSON so `| python -m json.tool` failed (stdout is
+  the chart only, the recipe goes to stderr); an unknown `--database`,
+  a wrong `--statechart-field`, an unwritable `--write-chart`, an
+  unmigrated database and `--batch 0` were tracebacks (clean errors,
+  exit 1); `--field` names the model's FSMFields. Added: `xsm gt
+  --from-django-fsm app.Model [--fsm-field F]` extracts the chart from
+  the decorators without `manage.py` or a database and generates code
+  from it. Docs: the migration recipe says what the chart records, that
+  the migration is safe with the site up and that the window is two-way;
+  the command table, `cli.md` and the API index updated.
 - **Django REST Framework and Channels, as battle-tested (#283).** The
   API and the WebSocket under a company's load -- 200 API clients
   approving with every request retried under an `Idempotency-Key`, the
