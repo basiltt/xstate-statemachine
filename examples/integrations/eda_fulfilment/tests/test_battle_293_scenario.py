@@ -456,13 +456,11 @@ def test_dirty_bus_is_refused_without_a_snapshot(tmp_path: Path) -> None:
 # -----------------------------------------------------------------------------
 # 6. resources: 10,000 envelopes, flat memory, no thread growth
 # -----------------------------------------------------------------------------
-def test_ten_thousand_envelopes_flat(
-    tmp_path: Path, caplog: pytest.LogCaptureFixture
-) -> None:
+def test_ten_thousand_envelopes_flat(tmp_path: Path) -> None:
     # 📝 1,400 poison messages each log a traceback; pytest's log capture
     #    would keep them all (118 MB) and the soak would measure pytest,
-    #    not the EDA core (adversary B).
-    caplog.set_level(logging.CRITICAL)
+    #    not the EDA core (adversary B). `logging.disable` works with and
+    #    without the logging plugin (`-p no:logging` has no `caplog`).
     logging.disable(logging.CRITICAL)
     a = app.build_app("fake", tmp_path, celery=False, instruments=False)
     threads0 = threading.active_count()
