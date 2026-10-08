@@ -676,6 +676,20 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         fires first (#159).
         """
         if self.status != "running":
+            # ⛔ #283 battle (parity with the async engine, which intercepts
+            #    BEFORE the not-running refusal): an idempotency inbox must
+            #    answer a replayed key from its record even when the machine
+            #    has since finished -- a retrying client got a 409 instead
+            #    of its original receipt. Only a well-formed event reaches
+            #    the interceptors; a malformed one falls through to the drop.
+            try:
+                probe = self._prepare_event(event_or_type, **payload)
+            except Exception:  # noqa: BLE001 -- handled below as a drop
+                probe = None
+            if probe is not None:
+                intercepted = self._intercept_before_send(probe)
+                if intercepted is not None:
+                    return intercepted if wait else None
             # 🔔 #123: parity with the async engine -- a send to a stopped /
             #    done / errored machine is a DROP and fires the hook, so an
             #    audit trail built from plugin hooks sees it on both engines.

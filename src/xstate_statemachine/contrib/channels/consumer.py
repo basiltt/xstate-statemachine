@@ -26,6 +26,7 @@ from ..django._events import declared_events
 from ..django._problems import problem_for_exception, receipt_fields
 from ..django.mixin import reserved_keys
 from ..django.permissions import has_event_permission, permitted_events
+from .broadcast import ensure_broadcaster, group_name_for
 from ...context_keys import (
     public_context as _public_context,
 )  # 🔑 #265: no `_xsm_*` keys in API bodies
@@ -34,6 +35,22 @@ __all__ = ["StatechartConsumer", "WS_POLICY_VIOLATION", "live_consumers"]
 
 WS_POLICY_VIOLATION = 1008
 _LIVE: "weakref.WeakSet[StatechartConsumer]" = weakref.WeakSet()
+
+
+def _concrete_model(user: Any) -> Any:
+    """The user's model class, through a `SimpleLazyObject` proxy."""
+    cls = type(user)
+    if hasattr(cls, "_default_manager"):
+        return cls
+    from django.utils.functional import LazyObject, empty
+
+    if isinstance(user, LazyObject):
+        if user._wrapped is empty:
+            user._setup()
+        return type(user._wrapped)
+    from django.contrib.auth import get_user_model
+
+    return get_user_model()
 
 
 def live_consumers() -> int:
@@ -82,8 +99,8 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):
 
     @staticmethod
     def group_name(instance: Any) -> str:
-        opts = instance._meta
-        return f"xsm.{opts.app_label}.{opts.model_name}.{instance.pk}"
+        """``xsm.<app>.<model>.<pk>`` (shared with the broadcaster)."""
+        return group_name_for(instance)
 
     # -- lifecycle ---------------------------------------------------------------
     async def connect(self) -> None:
@@ -145,7 +162,15 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):
             return False
         try:
             if getattr(user, "pk", None) is not None:
-                user = type(user)._default_manager.get(pk=user.pk)
+                # 🔥 #283 battle: under `AuthMiddlewareStack` the scope
+                #    user is a `SimpleLazyObject`; `type(user)` is the
+                #    proxy class (no `_default_manager`), so this raised
+                #    and EVERY push closed the socket with 1008 -- every
+                #    dashboard subscriber was kicked on the first
+                #    transition. The communicator tests set a concrete
+                #    user and never saw it. Resolve the real model class.
+                model = _concrete_model(user)
+                user = model._default_manager.get(pk=user.pk)
                 self.scope["user"] = user
         except Exception:  # noqa: BLE001 - deleted user
             return False
@@ -190,15 +215,11 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):
             await self.send_json({"kind": "error", **result["problem"]})
             return
         await self.send_json({"kind": "receipt", **result["body"]})
-        if result["changed"]:
-            await self.channel_layer.group_send(
-                self.group,
-                {
-                    "type": "xsm.transition",
-                    "event": etype,
-                    "version": result["version"],
-                },
-            )
+        # 📡 #283 battle: the push to the group is the broadcaster's job --
+        #    a `post_transition(on_commit=True)` receiver that fires for a
+        #    transition committed ANYWHERE (admin, REST API, a command, this
+        #    socket). Pushing here too delivered socket-made transitions
+        #    twice.
 
     def _send(self, etype: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         if not self._still_allowed():
@@ -284,3 +305,7 @@ def _problem(status: int, title: str, error: Optional[str]) -> Dict[str, Any]:
     if error:
         body["error"] = error
     return body
+
+
+# 📡 committed transitions from anywhere reach the groups (idempotent)
+ensure_broadcaster()

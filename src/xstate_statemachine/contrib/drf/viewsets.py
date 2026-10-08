@@ -36,7 +36,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from ...receipts import receipt_to_status
-from ..django._events import declared_events
+from ..django._events import declared_events, value_from_ids
 from ..django._problems import (
     IDEMPOTENCY_HEADER,
     PROBLEM_MEDIA_TYPE,
@@ -52,6 +52,9 @@ from .permissions import StatechartHistoryPermission
 __all__ = ["StatechartViewSetMixin", "event_slug", "problem_response"]
 
 RESERVED = ("send", "events", "history", "stream")
+#: The audit row's `reason`, sent as a HEADER (payload keys are data).
+REASON_HEADER = "X-XSM-Reason"
+MAX_REASON_CHARS = 2000
 
 
 def event_slug(event: str) -> str:
@@ -333,10 +336,22 @@ class StatechartViewSetMixin:
                 )
             payload["idempotency_key"] = idem
             plugins.append(IdempotencyPlugin(inbox, principal=lambda e: who))
+        # 📝 #283 battle: the admin's confirm form records WHY; an API
+        #    client could not -- `reason` is a reserved payload key (422).
+        #    A header is not payload: it is the audit row's `reason`.
+        reason = request.headers.get(REASON_HEADER) or None
+        if reason is not None and len(reason) > MAX_REASON_CHARS:
+            return problem_response(
+                422,
+                "Reason too long",
+                error="ReasonTooLongError",
+                limit=MAX_REASON_CHARS,
+            )
         try:
             receipt = obj.send(
                 event,
                 actor=request.user,
+                reason=reason,
                 lock=self.xsm_lock,
                 plugins=plugins,
                 payload=payload,
@@ -357,7 +372,15 @@ class StatechartViewSetMixin:
             resp.content_type = PROBLEM_MEDIA_TYPE
             return resp
         body = self._xsm_state(request, obj)
+        # 📝 #283 battle: `state` / `state_ids` describe the RECEIPT's step
+        #    (the FastAPI router's contract), not the row -- so a replayed
+        #    Idempotency-Key answers with exactly the original body even
+        #    after another role moved the row on. `GET /{id}/` is the
+        #    row's current state. Both fields come from the same ids.
         body["state_ids"] = sorted(receipt.state_ids)
+        body["state"] = value_from_ids(
+            type(obj).statechart_class_machine(), receipt.state_ids
+        )
         body.update(receipt_fields(receipt))
         return Response(body, status=status)
 

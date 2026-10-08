@@ -73,6 +73,7 @@ def _run(url: str) -> None:
             "tests/test_battle_280_scenario.py",
             "tests/test_battle_281_scenario.py",
             "tests/test_battle_282_scenario.py",
+            "tests/test_battle_283_scenario.py",
             "tests/test_approvals.py",
             "-q",
             "-p",
