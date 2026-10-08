@@ -1456,6 +1456,56 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **The EDA core, as battle-tested (#293).** A fulfilment day in the
+  `eda_fulfilment` example as an operations team lives it: 1,000 orders
+  through TWO service replicas on one SQLite file and one bus, with
+  duplicates and poison interleaved; the relay killed -9 after the broker
+  accepted a row and before it was marked sent; a consumer killed -9
+  after the snapshot save and before the outbox flush; `xsm dlq list /
+  show / replay / purge` end to end against the dead letters the day
+  produced; a dirty bus (credential-bearing extensions, non-object
+  `data`, a bad `traceparent`, a non-string `type`); a 10,000-envelope
+  soak (`examples/integrations/eda_fulfilment/tests/
+  test_battle_293_scenario.py`, `tests/eda/test_battle_293_a.py`,
+  `tests/persistence/test_battle_293_a_outbox_kill.py`, `tests/tests_cli/
+  test_battle_293_b_dlq.py`). Found and fixed: **two relays draining one
+  outbox published every row twice** -- `OutboxRelay` now LEASES the rows
+  it publishes (`claim()` / `release()` on `SQLiteOutboxStore`,
+  `SQLAlchemyOutboxStore` -- `FOR UPDATE SKIP LOCKED` on Postgres -- and
+  `MemoryOutboxStore`; `OutboxRelay(owner=, lease_s=)`,
+  `DEFAULT_CLAIM_LEASE_S` 30 s; a relay that RAISES hands its unsent rows
+  back at once, a relay that DIES loses its lease; still at-least-once,
+  never N-times-once; existing SQLite tables gain the two columns on
+  open, SQLAlchemy users run a migration -- `sqlalchemy_orders` ships it
+  as `0003`; `outbox_relay_task(owner=, lease_s=)`); a user
+  `machine_for_type` / `key_for` that raised was requeued FOREVER (the
+  attempt counter only counted failures inside the machine) -- counted
+  now, dead-lettered as `max_attempts` at the limit, requeued (never
+  acked unrecorded) when the dead-letter store itself is down;
+  `Envelope.from_json` on input nested too deeply to parse let
+  `RecursionError` escape into the consumer loop (dead-lettered as
+  `corrupt` now; `to_json` on self-referencing / extremely deep `data`
+  raises `EnvelopeCorruptError` too); `xsm dlq` and `xsm asyncapi`
+  answered operator mistakes with tracebacks -- a missing or non-SQLite
+  `--dlq` / `--store` file (which also silently CREATED an empty database
+  and reported "no dead letters"), a missing or invalid `--machine`
+  JSON, an `--logic` module that cannot be imported, a bad `--older-than`
+  / `--limit`, an unknown id -- all one line and exit 2 now (exit 1 is
+  reserved for "the replay ran and the machine refused it"); the example
+  README's `xsm dlq replay --logic logic` died on `shipOrder` (the module
+  exposes `ship_order`). Docs: the EDA guide gains "Several relays on one
+  outbox (leases)", an Operations section (sizing, lease tuning, what to
+  alert on), a Troubleshooting table covering every dead-letter reason,
+  `EnvelopeCorruptError` message and `ReplayRefusedError` case, and the
+  Reference names every public symbol; the SQLAlchemy guide notes the
+  `claimed_by` / `claimed_until` migration; `cli.md` lists the exit
+  codes; the example README gains "Operate it" with the exact commands
+  (tested). Held: per-subject order under `max_in_flight` with both
+  locks, threads on one sync dispatcher, lease takeover across
+  processes, the outbox kill -9 windows (snapshot and rows always agree),
+  dead-letter redaction, replay racing a live dispatcher, `new_id`
+  monotonic across threads, the size cap inclusive with multi-byte UTF-8,
+  no growth on the dispatcher / outbox hot paths.
 - **Examples and comparisons, as battle-tested (#286).** The six example
   apps as a newcomer has them -- each README's own `pip install` line
   run against the built wheel in a FRESH venv (3.9 and current), the app
