@@ -152,6 +152,7 @@ class TestDlqList(_Fixture):
 
     def test_empty_and_bare_path(self) -> None:
         empty = str(self.dir / "empty.db")
+        SQLiteDeadLetterStore(empty).close()
         code, out = _run(["dlq", "--dlq", empty, "list"])
         self.assertEqual(code, 0)
         self.assertIn("no dead letters", out)

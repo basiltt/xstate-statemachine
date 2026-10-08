@@ -20,6 +20,8 @@ from __future__ import annotations
 
 import json
 import re
+import sqlite3
+import sys
 import time
 from pathlib import Path
 from typing import Any, List, Optional
@@ -32,42 +34,96 @@ __all__ = ["open_dlq", "parse_age", "run_dlq"]
 
 _AGE = re.compile(r"^(\d+(?:\.\d+)?)([smhd])$")
 _UNITS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
+#: Exit status of every refused operator input (argparse's usage code).
+#: 1 is reserved for "a real replay ran and did not succeed".
+EXIT_USAGE = 2
+
+
+def _fail(msg: str) -> SystemExit:
+    """One line on stderr, exit 2 -- never a traceback for bad input."""
+    # 📝 stderr, so `--json > out.json` never captures an error line.
+    print(f"xsm dlq: error: {msg}", file=sys.stderr)
+    return SystemExit(EXIT_USAGE)
 
 
 def parse_age(text: str) -> float:
-    """``90s`` / ``15m`` / ``12h`` / ``7d`` → seconds."""
+    """Convert ``90s`` / ``15m`` / ``12h`` / ``7d`` to seconds.
+
+    Args:
+        text: A number followed by one of ``s m h d``.
+
+    Returns:
+        The age in seconds.
+
+    Raises:
+        SystemExit: Exit code 2 when *text* is not a valid age.
+    """
     m = _AGE.match(text.strip())
     if not m:
-        raise SystemExit(f"invalid age {text!r}: use e.g. 90s, 15m, 12h, 7d")
+        raise _fail(f"invalid age {text!r}: use e.g. 90s, 15m, 12h, 7d")
     return float(m.group(1)) * _UNITS[m.group(2)]
 
 
 def open_dlq(url: str) -> Any:
-    """``sqlite:///path.db`` (or a bare path) → `SQLiteDeadLetterStore`."""
-    from ...eda.dead_letter import SQLiteDeadLetterStore
+    """Open an EXISTING dead-letter store.
 
-    path = url
-    if url.startswith("sqlite:"):
-        store = open_store(url)
-        return SQLiteDeadLetterStore(store)
-    if "://" in url:
-        raise SystemExit(
+    Args:
+        url: ``sqlite:///path.db`` (three slashes relative, four
+            absolute) or a bare file path.
+
+    Returns:
+        A `SQLiteDeadLetterStore`.
+
+    Raises:
+        SystemExit: Exit code 2 for an unsupported scheme, a missing file
+            (a typo must not create an empty store that reports "no dead
+            letters") or a file that is not a SQLite database.
+    """
+    from ...eda.dead_letter import SQLiteDeadLetterStore
+    from ...exceptions import StoreError
+
+    if "://" in url and not url.startswith("sqlite:"):
+        raise _fail(
             f"unsupported dead-letter store {url!r}: use sqlite:///path.db"
         )
-    return SQLiteDeadLetterStore(Path(path))
+    try:
+        if url.startswith("sqlite:"):
+            return SQLiteDeadLetterStore(open_store(url, must_exist=True))
+        if not Path(url).is_file():
+            raise _fail(f"no such dead-letter database file: {url!r}")
+        return SQLiteDeadLetterStore(Path(url))
+    except (StoreError, OSError, sqlite3.Error) as exc:
+        raise _fail(f"cannot open dead-letter store {url!r}: {exc}") from None
+
+
+def _load_machine(path: str, logic: Optional[str]) -> Any:
+    """Build one ``--machine`` chart; every bad input is exit 2."""
+    from ...exceptions import XStateMachineError
+    from ...factory import create_machine
+
+    try:
+        cfg = json.loads(Path(path).read_text(encoding="utf-8"))
+        if not isinstance(cfg, dict):
+            raise _fail(f"{path!r} is not a machine (not a JSON object)")
+        return create_machine(cfg, logic_modules=[logic] if logic else None)
+    except ImportError as exc:
+        raise _fail(
+            f"cannot import --logic {logic!r}: {exc} (a dotted module path "
+            f"importable from the current directory or PYTHONPATH)"
+        ) from None
+    except (OSError, ValueError, RecursionError, XStateMachineError) as exc:
+        raise _fail(f"cannot load machine {path!r}: {exc}") from None
 
 
 def _dispatcher(
     store_url: str, machine_files: List[str], logic: Optional[str]
 ) -> Any:
     from ...eda.dispatcher import InboundDispatcher
-    from ...factory import create_machine
     from ...persistence import SQLiteInbox, SQLiteStore
 
     machines = {}
     for f in machine_files:
-        cfg = json.loads(Path(f).read_text(encoding="utf-8"))
-        m = create_machine(cfg, logic_modules=[logic] if logic else None)
+        m = _load_machine(f, logic)
         machines[str(m.id)] = m
 
     def machine_for(envelope_type: str) -> Any:
@@ -78,7 +134,7 @@ def _dispatcher(
             return next(iter(machines.values()))
         return None
 
-    store = open_store(store_url)
+    store = open_store(store_url, must_exist=True)
     inbox = SQLiteInbox(store) if isinstance(store, SQLiteStore) else None
     return InboundDispatcher(store, machine_for, inbox=inbox, max_attempts=1)
 
@@ -137,7 +193,7 @@ def _list(dlq: Any, *, include_resolved: bool, limit: int, as_json: bool):
 def _show(dlq: Any, record_id: str) -> None:
     rec = dlq.get(record_id)
     if rec is None:
-        raise SystemExit(f"no dead letter with id {record_id!r}")
+        raise _fail(f"no dead letter with id {record_id!r}")
     get_console().print(json.dumps(rec.to_dict(), indent=2, default=str))
 
 
@@ -147,11 +203,11 @@ def _replay(dlq: Any, args: Any) -> None:
     c = get_console()
     dry_run = not bool(args.no_dry_run)
     if not dry_run and not args.yes:
-        raise SystemExit("refusing to replay without --yes")
+        raise _fail("refusing to replay without --yes")
     if not (args.reason or "").strip():
-        raise SystemExit('a replay needs --reason "why this is safe now"')
+        raise _fail('a replay needs --reason "why this is safe now"')
     if not args.store or not args.machine:
-        raise SystemExit("replay needs --store URL and --machine FILE")
+        raise _fail("replay needs --store URL and --machine FILE")
     disp = _dispatcher(args.store, args.machine, args.logic)
     try:
         res = replay_dead_letter(
@@ -163,8 +219,7 @@ def _replay(dlq: Any, args: Any) -> None:
             force=bool(args.force),
         )
     except ReplayRefusedError as exc:
-        c.error(str(exc))
-        raise SystemExit(2) from exc
+        raise _fail(str(exc)) from None
     for w in res.warnings:
         c.warn(w)
     if args.json:
@@ -183,11 +238,11 @@ def _replay(dlq: Any, args: Any) -> None:
 def _purge(dlq: Any, args: Any) -> None:
     c = get_console()
     if not args.yes:
-        raise SystemExit("refusing to purge without --yes")
+        raise _fail("refusing to purge without --yes")
     if not (args.reason or "").strip():
-        raise SystemExit("a purge needs --reason")
+        raise _fail("a purge needs --reason")
     if bool(args.record_id) == bool(args.older_than):
-        raise SystemExit("purge needs exactly one of --id or --older-than")
+        raise _fail("purge needs exactly one of --id or --older-than")
     if args.record_id:
         n = 1 if dlq.delete(args.record_id) else 0
         detail = {"id": args.record_id}
@@ -206,6 +261,19 @@ def _purge(dlq: Any, args: Any) -> None:
 
 
 def run_dlq(args: Any) -> None:
+    """Dispatch ``xsm dlq {list,show,replay,purge}``.
+
+    Exit codes: 0 success; 1 a real replay ran but did not end
+    ``processed`` / ``duplicate``; 2 refused input (bad store URL or
+    file, unknown id, bad age or ``--limit``, unloadable machine or
+    ``--logic``, a missing guard-rail flag, a refused replay).
+
+    Args:
+        args: The parsed ``argparse`` namespace.
+    """
+    limit = getattr(args, "limit", None)
+    if limit is not None and limit < 1:
+        raise _fail("--limit must be >= 1")
     dlq = open_dlq(args.dlq)
     try:
         if args.dlq_command == "list":
@@ -222,6 +290,6 @@ def run_dlq(args: Any) -> None:
         elif args.dlq_command == "purge":
             _purge(dlq, args)
         else:  # pragma: no cover - argparse enforces the choice
-            raise SystemExit("usage: xsm dlq {list,show,replay,purge}")
+            raise _fail("usage: xsm dlq {list,show,replay,purge}")
     finally:
         dlq.close()

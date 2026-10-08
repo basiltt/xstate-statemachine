@@ -679,6 +679,13 @@ class OutboxRelay:
             release(left, owner=self.owner)
 
     async def relay_once(self) -> int:
+        """Claim (or read) up to ``batch`` pending rows and publish them.
+
+        Returns:
+            How many rows the broker accepted and were marked sent. Rows
+            the broker refused are released for the next run, and the
+            broker's exception propagates.
+        """
         sent: List[int] = []
         taken: List[OutboxRecord] = []
         try:
@@ -693,6 +700,11 @@ class OutboxRelay:
         return len(sent)
 
     def relay_once_sync(self) -> int:
+        """`relay_once` for a `SyncBrokerAdapter` (no event loop).
+
+        Returns:
+            How many rows the broker accepted and were marked sent.
+        """
         sent: List[int] = []
         taken: List[OutboxRecord] = []
         try:

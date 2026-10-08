@@ -182,7 +182,9 @@ assert OutboxRelay(outbox, broker).relay_once_sync() == 1
 assert d.envelope.type == "invoice.paid" and d.envelope.data == {"n": 7}
 ```
 
-The relay marks a row sent only **after** the broker accepted it. A crash in between re-publishes that row with the **same envelope id** (at-least-once), so consumers dedup on `envelope.id`. The [`sqlalchemy_orders` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/sqlalchemy_orders) runs it end to end (`python sync_app.py relay`).
+The relay marks a row sent only **after** the broker accepted it. A crash in between re-publishes that row with the **same envelope id** (at-least-once), so consumers dedup on `envelope.id`. Several relays (one per replica) may drain one outbox: `claim()` leases rows through the `claimed_by` / `claimed_until` columns ([leases](../integration-eda/#several-relays-on-one-outbox-leases)).
+
+> ⚠️ **Upgrading from 0.11.0:** an `xsm_outbox` table created before the relay leases lacks `claimed_by VARCHAR(128) NULL` and `claimed_until FLOAT NULL`. `create_all` does not alter existing tables, so add an Alembic migration (the example's `migrations/versions/0003_xsm_outbox_relay_lease.py` is one). `SQLiteOutboxStore` adds the columns itself. The [`sqlalchemy_orders` example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/sqlalchemy_orders) runs it end to end (`python sync_app.py relay`).
 
 ## Guarantees
 
