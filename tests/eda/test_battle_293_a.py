@@ -486,5 +486,39 @@ class TestLeaks(unittest.TestCase):
         self.assertEqual(len(d._attempts), 0)
 
 
+class TestOutboxPluginBounds(unittest.TestCase):
+    def test_conflict_leaves_no_row_and_no_buffer(self) -> None:
+        from src.xstate_statemachine.eda import OutboxPlugin
+        from src.xstate_statemachine.persistence import persisted
+
+        from .test_outbox import _machine
+
+        st = MemoryStore()
+        ob = MemoryOutboxStore()
+        pl = OutboxPlugin(ob)
+        with persisted(st, "o", _machine(), plugins=[pl]):
+            pass
+        with self.assertRaises(Exception):
+            with persisted(st, "o", _machine(), plugins=[pl]) as i:
+                i.send("PAY")
+                with persisted(st, "o", _machine()) as j:  # 🔥 wins
+                    j.send("NOTE")
+        self.assertEqual(len(ob), 0)
+        self.assertEqual(pl._buffers, {})
+
+    def test_plugin_hot_path_holds_nothing(self) -> None:
+        from src.xstate_statemachine.eda import OutboxPlugin
+        from src.xstate_statemachine.persistence import persisted
+
+        from .test_outbox import _machine
+
+        st = MemoryStore()
+        pl = OutboxPlugin(MemoryOutboxStore())
+        for k in range(2000):
+            with persisted(st, f"o{k % 20}", _machine(), plugins=[pl]) as i:
+                i.send("TOUCH")
+        self.assertEqual((len(pl._buffers), len(pl._step)), (0, 0))
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
