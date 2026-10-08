@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import gc
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -455,7 +456,14 @@ def test_dirty_bus_is_refused_without_a_snapshot(tmp_path: Path) -> None:
 # -----------------------------------------------------------------------------
 # 6. resources: 10,000 envelopes, flat memory, no thread growth
 # -----------------------------------------------------------------------------
-def test_ten_thousand_envelopes_flat(tmp_path: Path) -> None:
+def test_ten_thousand_envelopes_flat(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # 📝 1,400 poison messages each log a traceback; pytest's log capture
+    #    would keep them all (118 MB) and the soak would measure pytest,
+    #    not the EDA core (adversary B).
+    caplog.set_level(logging.CRITICAL)
+    logging.disable(logging.CRITICAL)
     a = app.build_app("fake", tmp_path, celery=False, instruments=False)
     threads0 = threading.active_count()
     try:
@@ -498,4 +506,5 @@ def test_ten_thousand_envelopes_flat(tmp_path: Path) -> None:
         assert len(a.router.dispatcher._attempts) <= 10_000
         assert a.state_of("order:m-9999") == ["order.shipped"]
     finally:
+        logging.disable(logging.NOTSET)
         a.close()
