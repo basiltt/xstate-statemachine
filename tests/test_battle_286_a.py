@@ -335,25 +335,30 @@ needs_39 = pytest.mark.skipif(
 )
 
 
-@needs_39
-@pytest.mark.parametrize("name", APPS)
-def test_example_runs_on_python_39(name: str, tmp_path: Path) -> None:
+@pytest.fixture(scope="module")
+def wheel39(tmp_path_factory) -> Path:
+    """One wheel for every app (``build`` must be importable)."""
+    pytest.importorskip("build")
     from tests import test_battle_286_scenario as sc
 
-    dist = tmp_path / "dist"
+    dist = tmp_path_factory.mktemp("xsm-286a-dist")
     r = sc._run(
-        [
-            sys.executable,
-            "-m",
-            "build",
-            "--wheel",
-            "--outdir",
-            str(dist),
-            str(ROOT),
-        ]
+        [sys.executable, "-m", "build", "--wheel", "--outdir", str(dist)]
+        + [str(ROOT)]
     )
     assert r.returncode == 0, r.stderr[-2000:]
     [wheel] = dist.glob("*.whl")
+    return wheel
+
+
+@needs_39
+@pytest.mark.parametrize("name", APPS)
+def test_example_runs_on_python_39(
+    name: str, tmp_path: Path, wheel39: Path
+) -> None:
+    from tests import test_battle_286_scenario as sc
+
+    wheel = wheel39
     r = sc._run([PY39, "-m", "venv", str(tmp_path / "v")])
     assert r.returncode == 0, r.stderr
     scripts = "Scripts" if sys.platform == "win32" else "bin"
