@@ -50,6 +50,14 @@ class Command(BaseCommand):
         parser.add_argument("--machine-id", default=None)
         parser.add_argument("--batch", type=int, default=1000)
         parser.add_argument("--database", default="default")
+        parser.add_argument(
+            "--map",
+            action="append",
+            default=[],
+            metavar="OLD=NEW",
+            help="fold a legacy column value into a chart state "
+            "(repeatable); unknown values are reported and skipped",
+        )
 
     def handle(self, *args: Any, **opts: Any) -> None:
         from ...fsm import extract_chart, migrate_rows
@@ -67,6 +75,9 @@ class Command(BaseCommand):
         except (TypeError, ValueError, LookupError, FieldDoesNotExist) as exc:
             raise CommandError(str(exc)) from None
         text = json.dumps(chart, indent=2)
+        # 📝 `--dry-run` means "step 1 only, no DATA migration"; the chart
+        #    file is step 1's deliverable and IS written when asked (the
+        #    recipe: --dry-run to review, --write-chart to keep it).
         if opts["write_chart"]:
             out = Path(opts["write_chart"])
             out.parent.mkdir(parents=True, exist_ok=True)
@@ -78,6 +89,12 @@ class Command(BaseCommand):
                 RECIPE.format(label=opts["model"], field=opts["field"])
             )
             return
+        value_map = {}
+        for item in opts["map"]:
+            if "=" not in item:
+                raise CommandError(f"--map expects OLD=NEW, got {item!r}")
+            old_v, new_v = item.split("=", 1)
+            value_map[old_v] = new_v
         from ...mixin import StatechartModelMixin
 
         if not issubclass(model, StatechartModelMixin):
@@ -85,13 +102,19 @@ class Command(BaseCommand):
                 f"{opts['model']} has no StatechartField yet (step 2); run "
                 f"with --dry-run to see the chart and the recipe."
             )
-        done, batches = migrate_rows(
-            model,
-            opts["field"],
-            statechart_field=opts["statechart_field"],
-            batch=opts["batch"],
-            using=opts["database"],
-        )
+        unknown: dict = {}
+        try:
+            done, batches = migrate_rows(
+                model,
+                opts["field"],
+                statechart_field=opts["statechart_field"],
+                batch=opts["batch"],
+                using=opts["database"],
+                value_map=value_map,
+                unknown=unknown,
+            )
+        except ValueError as exc:
+            raise CommandError(str(exc)) from None
         remaining = (
             model._base_manager.using(opts["database"])
             .filter(**{f"{opts['statechart_field']}__isnull": True})
@@ -101,3 +124,16 @@ class Command(BaseCommand):
             f"migrated {done} row(s) in {batches} batch(es); "
             f"{remaining} remaining"
         )
+        if unknown:
+            self.stdout.write(
+                self.style.WARNING(
+                    f"skipped {sum(unknown.values())} row(s) whose "
+                    f"{opts['field']!r} value the chart does not know:"
+                )
+            )
+            for value, n in sorted(unknown.items(), key=lambda kv: -kv[1]):
+                self.stdout.write(f"  {value!r}: {n} row(s)")
+            self.stdout.write(
+                "fold renamed values in with --map OLD=NEW, or fix the "
+                "data, then run again"
+            )

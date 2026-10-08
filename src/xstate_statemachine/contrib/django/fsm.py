@@ -69,6 +69,19 @@ def guard_name(obj: Any) -> str:
     )
 
 
+def fsm_fields(model: Any) -> List[str]:
+    """Names of the model's FSMFields (for error messages / selection)."""
+    try:
+        from django_fsm import FSMFieldMixin
+    except ImportError:  # pragma: no cover - documented
+        return []
+    return [
+        f.name
+        for f in model._meta.get_fields()
+        if isinstance(f, FSMFieldMixin)
+    ]
+
+
 def _field(model: Any, field: str) -> Any:
     try:
         from django_fsm import FSMFieldMixin
@@ -76,7 +89,18 @@ def _field(model: Any, field: str) -> Any:
         raise ImportError(
             "xsm_migrate_fsm needs django-fsm-2 (pip install django-fsm-2)"
         ) from exc
-    f = model._meta.get_field(field)
+    from django.core.exceptions import FieldDoesNotExist
+
+    try:
+        f = model._meta.get_field(field)
+    except FieldDoesNotExist:
+        # 📝 #310 battle: name the candidates -- a team with `status`
+        #    instead of `state` should not have to read the model.
+        found = fsm_fields(model)
+        hint = f" FSMFields on the model: {', '.join(found)}." if found else ""
+        raise TypeError(
+            f"{model.__name__} has no field named {field!r}.{hint}"
+        ) from None
     if not isinstance(f, FSMFieldMixin):
         raise TypeError(f"{model.__name__}.{field} is not an FSMField")
     return f
@@ -172,6 +196,8 @@ def migrate_rows(
     context: Optional[Callable[[Any], Dict[str, Any]]] = None,
     using: str = "default",
     stop_after_batches: Optional[int] = None,
+    value_map: Optional[Dict[str, str]] = None,
+    unknown: Optional[Dict[str, int]] = None,
 ) -> Tuple[int, int]:
     """Step 3: fill empty snapshots from the FSM column.
 
@@ -179,6 +205,12 @@ def migrate_rows(
     transaction per batch, in pk order -- so an interrupted run resumes
     where it stopped and a second run is a no-op. Returns ``(migrated,
     batches)``. ``stop_after_batches`` exists to test the interruption.
+
+    🔥 #310 battle: a column holding a value the chart does not know (a
+    renamed legacy state, a typo, an empty string) used to kill the run
+    on that row with a traceback, half-migrated. Such rows are now
+    SKIPPED and counted per value in *unknown* (the caller reports them);
+    *value_map* folds renamed values (``{"open": "new"}``) in first.
     """
     import json as _json
 
@@ -189,34 +221,52 @@ def migrate_rows(
         raise ValueError("batch must be >= 1")
     if machine is None:
         machine = model().statechart_machine_node()
+    value_map = dict(value_map or {})
+    known = set(machine.states)
+    for src, dst in value_map.items():
+        if dst not in known:
+            raise ValueError(
+                f"--map {src}={dst}: the chart has no state {dst!r} "
+                f"(states: {', '.join(sorted(known))})"
+            )
     mgr = model._base_manager.using(using)
     vcol = f"{statechart_field}_version"
+    fcol = fsm_field
     done = batches = 0
+    skipped: Dict[str, int] = {} if unknown is None else unknown
+    skip_pks: List[Any] = []
     while stop_after_batches is None or batches < stop_after_batches:
-        rows = list(
-            mgr.filter(**{f"{statechart_field}__isnull": True})
-            .order_by("pk")
-            .only("pk", fsm_field)[:batch]
-        )
+        qs = mgr.filter(**{f"{statechart_field}__isnull": True})
+        if skip_pks:
+            qs = qs.exclude(pk__in=skip_pks)
+        rows = list(qs.order_by("pk").only("pk", fsm_field)[:batch])
         if not rows:
             break
         with transaction.atomic(using=using):
             for row in rows:
-                value = getattr(row, fsm_field)
+                raw = getattr(row, fsm_field)
+                value = value_map.get(raw, raw)
+                key = state_key(value) if value not in (None, "") else ""
+                if key not in known:
+                    skipped[str(raw)] = skipped.get(str(raw), 0) + 1
+                    skip_pks.append(row.pk)
+                    continue
                 snap = _json.loads(
                     from_state_ids(
-                        machine,
-                        [state_key(value)],
-                        context(row) if context else None,
+                        machine, [key], context(row) if context else None
                     )
                 )
                 values = sibling_values(statechart_field, snap)
                 values[statechart_field] = snap
                 values[vcol] = 0
-                # 🔒 Re-check NULL in the UPDATE: a concurrent run (or a
-                #    send that initialised it) is never overwritten.
+                # 🔒 Re-check NULL AND the FSM value in the UPDATE: a
+                #    concurrent run (or a send that initialised it) is never
+                #    overwritten, and a row a live writer moved since we
+                #    read it is left for the next pass (#310 battle: the
+                #    site is up during the migration).
                 done += mgr.filter(
-                    pk=row.pk, **{f"{statechart_field}__isnull": True}
+                    pk=row.pk,
+                    **{f"{statechart_field}__isnull": True, fcol: raw},
                 ).update(**values)
         batches += 1
     return done, batches
@@ -227,10 +277,83 @@ class FSMDualWriteMixin:
     leaf back into the old FSM column, so readers of ``instance.state``
     keep working for one release. Set ``fsm_dual_write_field`` and an
     optional ``fsm_value_for_state`` mapping (leaf id → FSM value;
-    default: the leaf's key)."""
+    default: the leaf's key).
+
+    🔥 #310 battle: the window is TWO-WAY. Old code still deployed moves
+    the FSM column through its ``@transition`` methods; the snapshot
+    must follow or the next ``send()`` starts from a stale state. On
+    ``save()``, when the FSM column disagrees with the snapshot's leaf,
+    the snapshot is re-adopted at the column's value (version bumped).
+    """
 
     fsm_dual_write_field: str = "state"
     fsm_value_for_state: Dict[str, Any] = {}
+
+    def save(self, *args: Any, **kwargs: Any) -> None:
+        # 📝 the mixin's save() deliberately never rewrites the statechart
+        #    columns; the re-adoption is a separate fenced UPDATE after it.
+        super().save(*args, **kwargs)  # type: ignore[misc]
+        self._xsm_adopt_fsm_value()
+
+    def _xsm_adopt_fsm_value(self) -> None:
+        """Re-adopt the snapshot when the FSM column moved without us."""
+        import json as _json
+
+        from ...persistence.adopt import from_state_ids
+        from .fields import sibling_values
+
+        field = self.fsm_dual_write_field
+        name = self.statechart_field_obj().name  # type: ignore[attr-defined]
+        value = self.__dict__.get(field, getattr(self, field, None))
+        if value in (None, "") or self.pk is None:  # type: ignore[attr-defined]
+            return
+        vcol = f"{name}_version"
+        # 📝 #310 battle (live writers): the instance may have been loaded
+        #    BEFORE the data migration filled its snapshot -- then saved
+        #    after an FSM @transition. Its in-memory snapshot is None /
+        #    stale; the ROW's is what must be compared and fenced on.
+        row = (
+            type(self)
+            ._base_manager.using(self._state.db or "default")  # type: ignore[attr-defined]
+            .filter(pk=self.pk)  # type: ignore[attr-defined]
+            .values(name, vcol)
+            .first()
+        )
+        if not row or row[name] is None:
+            return  # not migrated yet: the migration adopts the column
+        snap = row[name]
+        setattr(self, name, snap)
+        setattr(self, vcol, row[vcol])
+        ids = snap.get("state_ids") or []
+        if len(ids) != 1:
+            return
+        leaf = ids[0]
+        current = self.fsm_value_for_state.get(leaf, leaf.rsplit(".", 1)[-1])
+        if current == value:
+            return
+        machine = self.statechart_machine_node()  # type: ignore[attr-defined]
+        key = state_key(value)
+        if key not in machine.states:
+            return  # an unknown legacy value: leave the snapshot alone
+        new_snap = _json.loads(
+            from_state_ids(machine, [key], snap.get("context"))
+        )
+        values = sibling_values(name, new_snap)
+        values[name] = new_snap
+        expected = int(getattr(self, vcol, 0) or 0)
+        values[vcol] = expected + 1
+        using = self._state.db or "default"  # type: ignore[attr-defined]
+        # 🔒 fenced on the version: a concurrent send() wins, we do not
+        #    stomp a newer snapshot with a stale column
+        n = (
+            type(self)
+            ._base_manager.using(using)  # type: ignore[attr-defined]
+            .filter(pk=self.pk, **{vcol: expected})  # type: ignore[attr-defined]
+            .update(**values)
+        )
+        if n:
+            for k, v in values.items():
+                setattr(self, k, v)
 
     def _xsm_after_write(self, ctx: Dict[str, Any]) -> None:
         super()._xsm_after_write(ctx)  # type: ignore[misc]
