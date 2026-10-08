@@ -58,6 +58,9 @@ def outbox_table(metadata: Any) -> Table:
         Column("envelope", Text, nullable=False),
         Column("created_at", Float, nullable=False),
         Column("sent_at", Float, nullable=True),
+        # 🔁 #293 battle: relay lease (see `SQLiteOutboxStore.claim`)
+        Column("claimed_by", String(128), nullable=True),
+        Column("claimed_until", Float, nullable=True),
         Index("xsm_outbox_pending", "sent_at", "seq"),
     )
 
@@ -107,6 +110,61 @@ class SQLAlchemyOutboxStore:
             OutboxRecord(int(r[0]), r[1], Envelope.from_json(r[2]))
             for r in rows
         ]
+
+    def claim(
+        self, *, limit: int, owner: str, lease_s: float
+    ) -> List[OutboxRecord]:
+        """Lease pending rows to *owner* (see `SQLiteOutboxStore.claim`).
+        Rows are selected ``FOR UPDATE SKIP LOCKED`` where the dialect
+        supports it, so concurrent relays partition the outbox."""
+        from sqlalchemy import or_
+
+        t = self.t
+        now = time.time()
+        with self.store._tx() as conn:
+            q = (
+                select(t.c.seq, t.c.topic, t.c.envelope)
+                .where(t.c.sent_at.is_(None))
+                .where(
+                    or_(
+                        t.c.claimed_until.is_(None),
+                        t.c.claimed_until <= now,
+                        t.c.claimed_by == owner,
+                    )
+                )
+                .order_by(t.c.seq)
+                .limit(int(limit))
+            )
+            if conn.dialect.name in ("postgresql", "mysql"):
+                q = q.with_for_update(skip_locked=True)
+            rows = conn.execute(q).all()
+            seqs = [int(r[0]) for r in rows]
+            if seqs:
+                conn.execute(
+                    update(t)
+                    .where(t.c.seq.in_(seqs))
+                    .values(claimed_by=owner, claimed_until=now + lease_s)
+                )
+        return [
+            OutboxRecord(int(r[0]), r[1], Envelope.from_json(r[2]))
+            for r in rows
+        ]
+
+    def release(self, seqs: List[int], *, owner: str) -> int:
+        """Give *owner*'s leases on *seqs* back (see `SQLiteOutboxStore`)."""
+        if not seqs:
+            return 0
+        t = self.t
+        with self.store._tx() as conn:
+            return int(
+                conn.execute(
+                    update(t)
+                    .where(t.c.seq.in_([int(s) for s in seqs]))
+                    .where(t.c.claimed_by == owner)
+                    .values(claimed_by=None, claimed_until=None)
+                ).rowcount
+                or 0
+            )
 
     def mark_sent(self, seqs: List[int]) -> int:
         if not seqs:

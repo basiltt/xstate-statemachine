@@ -62,6 +62,13 @@ def ship_order_inline(i: Any, ctx: Dict[str, Any], e: Any) -> Dict[str, Any]:
     return {"trackingId": tracking_for(ctx.get("orderId"))}
 
 
+#: 📝 #293 battle: `xsm dlq replay --logic logic` (and `xsm simulate`)
+#:    bind the chart's names by auto-discovery -- `shipOrder` must exist
+#:    at module level as `ship_order`, or the operator's replay dies with
+#:    ImplementationMissingError before it can touch the dead letter.
+ship_order = ship_order_inline
+
+
 def order_logic(ship_service: Any = None) -> MachineLogic:
     return MachineLogic(
         actions={

@@ -273,14 +273,14 @@ def test_alembic_upgrade_no_diff_second_migration_downgrade(
     orders = models.Base.metadata.tables["orders"]
     orders.append_column(Column("coupon", String(40), nullable=True))
     try:
-        command.revision(cfg, "coupon", autogenerate=True, rev_id="0003")
-        [new] = list((mig / "versions").glob("0003_*.py"))
+        command.revision(cfg, "coupon", autogenerate=True, rev_id="0004")
+        [new] = list((mig / "versions").glob("0004_*.py"))
         body = new.read_text("utf-8")
         assert "add_column" in body and "coupon" in body
         assert "drop_table" not in body and "alter_column" not in body
         command.upgrade(cfg, "head")
         assert _diff(url, models.Base.metadata) == []
-        command.downgrade(cfg, "0002")
+        command.downgrade(cfg, "0003")
     finally:
         orders._columns.remove(orders.c.coupon)
     assert _diff(url, models.Base.metadata) == []

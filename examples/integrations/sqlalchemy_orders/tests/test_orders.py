@@ -67,7 +67,7 @@ class TestAlembic:
         try:
             with eng.connect() as conn:
                 mc = MigrationContext.configure(conn)
-                assert mc.get_current_revision() == "0002"
+                assert mc.get_current_revision() == "0003"
                 assert compare_metadata(mc, Base.metadata) == []
             # ✅ and the migrated schema actually runs the app
             oid = sync_app.create_order(eng, "zoe")

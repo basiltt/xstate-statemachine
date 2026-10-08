@@ -58,6 +58,7 @@ from .envelope import (
 )
 from .fake import BrokerPublishError, FakeBrokerAdapter, SyncFakeBrokerAdapter
 from .outbox import (
+    DEFAULT_CLAIM_LEASE_S,
     PUBLISH_TAG,
     MemoryOutboxStore,
     OutboxPlugin,
@@ -74,6 +75,7 @@ from ..patterns.dead_letter import DeadLetter, DeadLetterPlugin
 DeadLetterStore = DeadLetterStoreProtocol
 
 __all__ = [
+    "DEFAULT_CLAIM_LEASE_S",
     "ASYNCAPI_VERSION",
     "ATTEMPT_EXTENSION",
     "BrokerAdapter",
