@@ -13,9 +13,9 @@ people they are for actually use them.
   something only this repo has, fails here;
 * **the comparison pages against the competitors' current releases** --
   `docs/_data/comparisons.json` pins the version each row was checked
-  against; this test asks PyPI for the current release and, when it
-  moved, FAILS with the row list to re-check (a stale "checked" line is
-  a stale page); every "theirs" fence is `text`, every "ours" block ran
+  against; on the nightly schedule (``XSM_COMPARISON_DRIFT=1``) this
+  test asks PyPI for the current release and, when it moved, FAILS with
+  the row list to re-check (a stale "checked" line is a stale page); every "theirs" fence is `text`, every "ours" block ran
   (the docs harness), every row carries a source, the migration recipe
   the django page prints is the one `xsm_migrate_fsm` prints;
 * **the competitor probes** -- for django-fsm-2, transitions and
@@ -37,6 +37,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.error
 import urllib.request
 from typing import Dict, Iterator, List, Optional
 
@@ -53,10 +54,18 @@ needs_venv = pytest.mark.skipif(
     os.environ.get("XSM_ADOPTION_VENV") != "1",
     reason="set XSM_ADOPTION_VENV=1: builds a wheel and venvs (slow)",
 )
+# 📝 review #286: the PyPI drift check would turn every PR red the day a
+#    competitor releases (langgraph ships weekly). It is a MAINTENANCE
+#    signal, so it runs on the nightly schedule (ci.yml `comparisons`
+#    job) and on demand -- never in PR CI, never offline.
+needs_drift = pytest.mark.skipif(
+    os.environ.get("XSM_COMPARISON_DRIFT") != "1",
+    reason="set XSM_COMPARISON_DRIFT=1: asks PyPI for current releases",
+)
 #: README install lines name these extras; some apps need test helpers
 #: their README lists too -- the README is the contract, so nothing is
 #: added here beyond what the README's own `pip install` lines say.
-INSTALL_LINE = re.compile(r"^pip install (.+)$", re.M)
+INSTALL_LINE = re.compile(r"^(?:python -m )?pip install (.+)$", re.M)
 PYPI = {
     "django_fsm": "django-fsm-2",
     "transitions": "transitions",
@@ -219,15 +228,18 @@ def test_example_runs_from_a_fresh_venv_on_its_readme_extras(
 # 2. the comparison data vs the competitors' current releases
 # -----------------------------------------------------------------------------
 def _latest(pkg: str) -> Optional[str]:
+    # 📝 review #286: only "unreachable" is a skip; a changed JSON shape
+    #    or a proxy's HTML page is a real failure, not an offline run.
     try:
         with urllib.request.urlopen(
             f"https://pypi.org/pypi/{pkg}/json", timeout=15
         ) as f:
             return json.load(f)["info"]["version"]
-    except Exception:  # noqa: BLE001 - offline: skip, never fail
+    except (urllib.error.URLError, OSError):
         return None
 
 
+@needs_drift
 @pytest.mark.parametrize("key", sorted(PYPI))
 def test_checked_version_is_the_current_release(key: str) -> None:
     """A page checked against an OLD release is a stale page: when PyPI

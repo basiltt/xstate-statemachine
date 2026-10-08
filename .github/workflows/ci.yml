@@ -37,7 +37,8 @@ on:
     branches: [main]
   # 🖱️ Allow maintainers to trigger a run by hand from the Actions tab.
   workflow_dispatch:
-  # 📏 #307: only the perf job runs on the nightly schedule.
+  # 📏 #307: only the perf job (and #286's comparisons job) runs on the
+  #    nightly schedule.
   schedule:
     - cron: "17 3 * * *"
 
@@ -292,7 +293,15 @@ jobs:
             #    newcomer environments that found real defects.
             fastapi)
               export XSM_ADOPTION_VENV=1
-              targets="$targets tests/test_battle_309_adoption.py tests/test_battle_286_scenario.py" ;;&
+              targets="$targets tests/test_battle_309_adoption.py tests/test_battle_286_scenario.py"
+              # 🧪 #286: the competitor probes (langgraph, burr, django-fsm-2,
+              #    transitions, python-statemachine in throwaway venvs) and
+              #    the Python 3.9 fresh-venv run are Linux-only -- one copy
+              #    of that cost, where the README defects were found.
+              if [ "$RUNNER_OS" = "Linux" ]; then
+                targets="$targets tests/test_battle_286_b.py tests/test_battle_286_a.py"
+                export XSM_PY39="$(command -v python3.9 || true)"
+              fi ;;&
             # 🐘 #284: Postgres parity on the Linux cell (Docker present).
             #    (review: pytest-socket must let the Docker unix socket and
             #    testcontainers' `localhost` URL through on that cell)
@@ -648,6 +657,35 @@ jobs:
       - name: 🚬 Core stays clean, every contrib imports, every Quick start runs
         shell: bash
         run: '"$SMOKE_PY" scripts/verify/all_smoke.py'
+
+  # ---------------------------------------------------------------------------
+  # 📰 #286: comparison pages vs the competitors' CURRENT releases
+  #    (nightly / on demand; never blocks a pull request -- a competitor's
+  #    release is a maintenance signal, not a defect in the PR)
+  # ---------------------------------------------------------------------------
+  comparisons:
+    name: Comparison pages vs current competitor releases
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      - name: 📦 Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e . "pytest>=8.3.0"
+
+      - name: 📰 PyPI drift -- every "checked" line names the current release
+        env:
+          XSM_COMPARISON_DRIFT: "1"
+        run: python -m pytest tests/test_battle_286_scenario.py -k checked_version -q -rs
 
   # ---------------------------------------------------------------------------
   # 📏 Integration performance budgets (opt-in; never blocks a pull request)
