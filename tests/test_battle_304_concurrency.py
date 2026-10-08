@@ -577,3 +577,42 @@ class TestAsyncConcurrency(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_sync_interceptor_runs_before_the_not_running_refusal() -> None:
+    """#283 battle (parity with the async engine): a `on_before_send`
+    interceptor -- the idempotency inbox -- must answer a replayed key
+    even when the machine has since FINISHED; the sync engine refused
+    with `InterpreterStoppedError` first, so a retrying client got a 409
+    instead of its original receipt."""
+    from src.xstate_statemachine import (
+        PluginBase,
+        SyncInterpreter,
+        create_machine,
+    )
+    from src.xstate_statemachine.events import Receipt
+
+    cfg = {
+        "id": "f",
+        "initial": "a",
+        "states": {"a": {"on": {"GO": "done"}}, "done": {"type": "final"}},
+    }
+    seen = []
+
+    class Replay(PluginBase):
+        def on_before_send(self, interp, event):
+            seen.append(event.type)
+            if event.type == "GO":
+                return Receipt(
+                    frozenset({"f.done"}), True, None, duplicate=True
+                )
+            return None
+
+    i = SyncInterpreter(create_machine(cfg)).use(Replay()).start()
+    i.send("GO")  # intercepted (the plugin answers) -- machine stays in a
+    assert "f.a" in i.current_state_ids
+    i.stop()
+    assert i.status != "running"
+    r = i.send("GO", wait=True)
+    assert r is not None and r.duplicate is True, r
+    assert seen == ["GO", "GO"]

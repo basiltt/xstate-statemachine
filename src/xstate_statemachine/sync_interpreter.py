@@ -676,16 +676,31 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         fires first (#159).
         """
         if self.status != "running":
+            # ⛔ #283 battle (parity with the async engine, which intercepts
+            #    BEFORE the not-running refusal): an idempotency inbox must
+            #    answer a replayed key from its record even when the machine
+            #    has since finished -- a retrying client got a 409 instead
+            #    of its original receipt. Only a well-formed event reaches
+            #    the interceptors; a malformed one falls through to the drop.
+            try:
+                probe = self._prepare_event(event_or_type, **payload)
+            except Exception:  # noqa: BLE001 -- handled below as a drop
+                probe = None
+            if probe is not None:
+                intercepted = self._intercept_before_send(probe)
+                if intercepted is not None:
+                    return intercepted if wait else None
             # 🔔 #123: parity with the async engine -- a send to a stopped /
             #    done / errored machine is a DROP and fires the hook, so an
             #    audit trail built from plugin hooks sees it on both engines.
             logger.warning("🚫 Cannot send event. Interpreter is not running.")
             if not self._is_processing:
                 self._drain_mailbox()  # 🔔 report stranded producer events
-            try:
-                dropped = self._prepare_event(event_or_type, **payload)
-            except Exception:  # noqa: BLE001 -- malformed AND misdirected
-                return None
+            if probe is None:
+                return None  # malformed AND misdirected
+            # 📝 The SAME object the interceptors saw: a claim taken in
+            #    `on_before_send` is keyed by it and released on the drop.
+            dropped = probe
             for plugin in self._plugins:
                 plugin.on_event_dropped(self, dropped, "not_running")
             if wait:
@@ -1071,6 +1086,9 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             logger.warning(
                 "🚫 Cannot send events. Interpreter is not running."
             )
+            # 🔔 #283 battle: parity with `send()` -- each event is
+            #    offered to the interceptors, then its drop is reported.
+            self._drop_batch_not_running(events)
             return
 
         for event_or_type in events:

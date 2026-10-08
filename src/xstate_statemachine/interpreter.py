@@ -1893,6 +1893,8 @@ class Interpreter(BaseInterpreter[TContext]):
                 self.status,
                 len(events),
             )
+            # 🔔 #283 battle: parity with `send()` (`on_event_dropped`).
+            self._drop_batch_not_running(events)
             return
 
         for event in events:

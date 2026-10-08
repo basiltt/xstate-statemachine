@@ -36,7 +36,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from ...receipts import receipt_to_status
-from ..django._events import declared_events
+from ..django._events import declared_events, value_from_ids
 from ..django._problems import (
     IDEMPOTENCY_HEADER,
     PROBLEM_MEDIA_TYPE,
@@ -52,6 +52,9 @@ from .permissions import StatechartHistoryPermission
 __all__ = ["StatechartViewSetMixin", "event_slug", "problem_response"]
 
 RESERVED = ("send", "events", "history", "stream")
+#: The audit row's `reason`, sent as a HEADER (payload keys are data).
+REASON_HEADER = "X-XSM-Reason"
+MAX_REASON_CHARS = 2000
 
 
 def event_slug(event: str) -> str:
@@ -127,13 +130,46 @@ def _schema(**kw: Any) -> Callable[[Any], Any]:
 
 
 def _send_responses() -> Dict[int, Any]:
+    # 📝 #283 battle: 401 (an Idempotency-Key from nobody) and 503 (store /
+    #    inbox outage, #306) are real answers of every send route.
     return {
         200: ReceiptSerializer,
         202: ReceiptSerializer,
+        401: ProblemSerializer,
         403: ProblemSerializer,
         409: ReceiptSerializer,
         422: ProblemSerializer,
+        503: ProblemSerializer,
     }
+
+
+def _send_parameters() -> List[Any]:
+    """The two request headers every send route reads (schema only)."""
+    try:
+        from drf_spectacular.utils import OpenApiParameter
+    except ImportError:  # pragma: no cover - [drf] without spectacular
+        return []
+    return [
+        OpenApiParameter(
+            IDEMPOTENCY_HEADER,
+            str,
+            OpenApiParameter.HEADER,
+            description=(
+                "Retry key, scoped to the authenticated user: a replay "
+                "answers the original receipt (duplicate=true); the same "
+                "key with a different event or payload is 422."
+            ),
+        ),
+        OpenApiParameter(
+            REASON_HEADER,
+            str,
+            OpenApiParameter.HEADER,
+            description=(
+                "Audit reason recorded on the transition log row "
+                f"(max {MAX_REASON_CHARS} chars)."
+            ),
+        ),
+    ]
 
 
 # -----------------------------------------------------------------------------
@@ -154,7 +190,11 @@ class StatechartViewSetMixin:
             event's payload (422 on failure; `event_serializer` builds one
             from fields or a pydantic model).
         xsm_context_serializer: ``(context) -> JSON`` to include context in
-            response bodies (X0.1: off by default).
+            response bodies (X0.1: off by default). A receipt stores state
+            ids, not context: an ``Idempotency-Key`` replay renders the
+            ORIGINAL ``state`` / ``state_ids`` but the row's CURRENT
+            context.
+        Idempotency-Key with ``xsm_inbox = None`` is ignored (no dedup).
         xsm_inbox: An `InboxStore` for ``Idempotency-Key``; default a
             `DjangoInbox` (joins the send's transaction); ``None`` = off.
         xsm_history_permission_classes: Checked for ``history/`` (default
@@ -333,10 +373,22 @@ class StatechartViewSetMixin:
                 )
             payload["idempotency_key"] = idem
             plugins.append(IdempotencyPlugin(inbox, principal=lambda e: who))
+        # 📝 #283 battle: the admin's confirm form records WHY; an API
+        #    client could not -- `reason` is a reserved payload key (422).
+        #    A header is not payload: it is the audit row's `reason`.
+        reason = request.headers.get(REASON_HEADER) or None
+        if reason is not None and len(reason) > MAX_REASON_CHARS:
+            return problem_response(
+                422,
+                "Reason too long",
+                error="ReasonTooLongError",
+                limit=MAX_REASON_CHARS,
+            )
         try:
             receipt = obj.send(
                 event,
                 actor=request.user,
+                reason=reason,
                 lock=self.xsm_lock,
                 plugins=plugins,
                 payload=payload,
@@ -357,12 +409,24 @@ class StatechartViewSetMixin:
             resp.content_type = PROBLEM_MEDIA_TYPE
             return resp
         body = self._xsm_state(request, obj)
+        # 📝 #283 battle: `state` / `state_ids` describe the RECEIPT's step
+        #    (the FastAPI router's contract), not the row -- so a replayed
+        #    Idempotency-Key answers with exactly the original body even
+        #    after another role moved the row on. `GET /{id}/` is the
+        #    row's current state. Both fields come from the same ids.
         body["state_ids"] = sorted(receipt.state_ids)
+        body["state"] = value_from_ids(
+            type(obj).statechart_class_machine(), receipt.state_ids
+        )
         body.update(receipt_fields(receipt))
         return Response(body, status=status)
 
     # -- generic routes ---------------------------------------------------------------
-    @_schema(request=SendSerializer, responses=_send_responses())
+    @_schema(
+        request=SendSerializer,
+        responses=_send_responses(),
+        parameters=_send_parameters(),
+    )
     @action(
         detail=True, methods=["post"], url_path="send", url_name="xsm-send"
     )
@@ -507,6 +571,7 @@ def _event_action(event: str, slug: str, cls: Type[Any]) -> Any:
     return _schema(
         request=ser,
         responses=_send_responses(),
+        parameters=_send_parameters(),
         operation_id=f"{cls.__name__.lower()}_{slug.replace('-', '_')}",
         description=f"Send the `{event}` event.",
     )(handler)

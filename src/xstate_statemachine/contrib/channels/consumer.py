@@ -15,6 +15,8 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
+import logging
 import weakref
 from typing import Any, Dict, Optional
 
@@ -26,6 +28,11 @@ from ..django._events import declared_events
 from ..django._problems import problem_for_exception, receipt_fields
 from ..django.mixin import reserved_keys
 from ..django.permissions import has_event_permission, permitted_events
+from .broadcast import (
+    ensure_broadcaster,
+    group_name_for,
+    register_group_namer,
+)
 from ...context_keys import (
     public_context as _public_context,
 )  # 🔑 #265: no `_xsm_*` keys in API bodies
@@ -33,7 +40,24 @@ from ...context_keys import (
 __all__ = ["StatechartConsumer", "WS_POLICY_VIOLATION", "live_consumers"]
 
 WS_POLICY_VIOLATION = 1008
+logger = logging.getLogger(__name__)
 _LIVE: "weakref.WeakSet[StatechartConsumer]" = weakref.WeakSet()
+
+
+def _concrete_model(user: Any) -> Any:
+    """The user's model class, through a `SimpleLazyObject` proxy."""
+    cls = type(user)
+    if hasattr(cls, "_default_manager"):
+        return cls
+    from django.utils.functional import LazyObject, empty
+
+    if isinstance(user, LazyObject):
+        if user._wrapped is empty:
+            user._setup()
+        return type(user._wrapped)
+    from django.contrib.auth import get_user_model
+
+    return get_user_model()
 
 
 def live_consumers() -> int:
@@ -65,6 +89,42 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):
     heartbeat_s: float = 15.0
     context_serializer: Any = None
 
+    def __init_subclass__(cls, **kw: Any) -> None:
+        super().__init_subclass__(**kw)
+        # 📡 an overridden `group_name` is still addressed by the
+        #    broadcaster (#283 battle B).
+        if cls.model is None:
+            return
+        raw = inspect.getattr_static(cls, "group_name")
+        if isinstance(raw, (staticmethod, classmethod)):
+            namer = getattr(cls, "group_name")
+            if namer is group_name_for:
+                return
+        else:
+            # 📝 review #283: 0.11.0 shipped `group_name` as a staticmethod
+            #    and a project may have overridden it with a plain
+            #    instance method (`def group_name(self, instance)`). That
+            #    must keep IMPORTING -- a TypeError here takes the ASGI app
+            #    down on upgrade. The broadcaster has no consumer to pass,
+            #    so it calls the override with ``self=None``; an override
+            #    that really needs `self` is logged once and still joins
+            #    its own group (it just gets no cross-source pushes).
+            fn = raw
+
+            def namer(instance: Any, _fn: Any = fn, _cls: Any = cls) -> str:
+                try:
+                    return _fn(None, instance)
+                except Exception:  # noqa: BLE001 -- needs a consumer
+                    logger.warning(
+                        "%s.group_name needs a consumer instance; make it a "
+                        "@staticmethod so broadcasts from the admin / REST "
+                        "API reach its sockets",
+                        _cls.__name__,
+                    )
+                    raise
+
+        register_group_namer(cls.model, namer)
+
     # -- hooks -------------------------------------------------------------------
     def get_instance(self) -> Any:
         """The row for this connection (sync; runs in a worker thread)."""
@@ -80,10 +140,9 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):
         perm = f"{opts.app_label}.view_{opts.model_name}"
         return bool(user.has_perm(perm) or user.has_perm(perm, instance))
 
-    @staticmethod
-    def group_name(instance: Any) -> str:
-        opts = instance._meta
-        return f"xsm.{opts.app_label}.{opts.model_name}.{instance.pk}"
+    #: ``xsm.<app>.<model>.<pk>`` (shared with the broadcaster). An
+    #: override (a staticmethod) is registered with the broadcaster.
+    group_name = staticmethod(group_name_for)
 
     # -- lifecycle ---------------------------------------------------------------
     async def connect(self) -> None:
@@ -91,6 +150,12 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):
         self.group: Optional[str] = None
         self._beat: Optional[asyncio.Task] = None  # type: ignore[type-arg]
         user = self.scope.get("user")
+        if user is None:
+            logger.warning(
+                "%s: no 'user' in the scope -- wrap the router in "
+                "AuthMiddlewareStack; closing with 1008",
+                type(self).__name__,
+            )
         if user is None or not getattr(user, "is_authenticated", False):
             # 🔐 No AuthMiddlewareStack, or an anonymous user.
             await self.close(code=WS_POLICY_VIOLATION)
@@ -145,7 +210,15 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):
             return False
         try:
             if getattr(user, "pk", None) is not None:
-                user = type(user)._default_manager.get(pk=user.pk)
+                # 🔥 #283 battle: under `AuthMiddlewareStack` the scope
+                #    user is a `SimpleLazyObject`; `type(user)` is the
+                #    proxy class (no `_default_manager`), so this raised
+                #    and EVERY push closed the socket with 1008 -- every
+                #    dashboard subscriber was kicked on the first
+                #    transition. The communicator tests set a concrete
+                #    user and never saw it. Resolve the real model class.
+                model = _concrete_model(user)
+                user = model._default_manager.get(pk=user.pk)
                 self.scope["user"] = user
         except Exception:  # noqa: BLE001 - deleted user
             return False
@@ -156,6 +229,29 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):
         return bool(self.authorize(user, inst))
 
     # -- inbound -----------------------------------------------------------------
+    async def receive(
+        self,
+        text_data: Optional[str] = None,
+        bytes_data: Optional[bytes] = None,
+        **kwargs: Any,
+    ) -> None:
+        # 🔥 #283 battle B: a malformed JSON frame (or any binary frame)
+        #    raised inside Channels' `receive` -- the consumer task died,
+        #    the socket dropped with 1011 and `disconnect` never ran, so
+        #    the connection stayed in its group and in `live_consumers()`.
+        #    Answer with an error frame; the socket stays open.
+        if self.instance is None:
+            return
+        if text_data is None:
+            await self._error(422, "Binary frames are not supported")
+            return
+        try:
+            content = await self.decode_json(text_data)
+        except ValueError:
+            await self._error(422, "Malformed JSON")
+            return
+        await self.receive_json(content, **kwargs)
+
     async def receive_json(self, content: Any, **kwargs: Any) -> None:
         if self.instance is None:
             return
@@ -190,15 +286,11 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):
             await self.send_json({"kind": "error", **result["problem"]})
             return
         await self.send_json({"kind": "receipt", **result["body"]})
-        if result["changed"]:
-            await self.channel_layer.group_send(
-                self.group,
-                {
-                    "type": "xsm.transition",
-                    "event": etype,
-                    "version": result["version"],
-                },
-            )
+        # 📡 #283 battle: the push to the group is the broadcaster's job --
+        #    a `post_transition(on_commit=True)` receiver that fires for a
+        #    transition committed ANYWHERE (admin, REST API, a command, this
+        #    socket). Pushing here too delivered socket-made transitions
+        #    twice.
 
     def _send(self, etype: str, payload: Dict[str, Any]) -> Dict[str, Any]:
         if not self._still_allowed():
@@ -284,3 +376,7 @@ def _problem(status: int, title: str, error: Optional[str]) -> Dict[str, Any]:
     if error:
         body["error"] = error
     return body
+
+
+# 📡 committed transitions from anywhere reach the groups (idempotent)
+ensure_broadcaster()

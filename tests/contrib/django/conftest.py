@@ -26,3 +26,27 @@ def order(db):
     from shop.models import Order
 
     return Order.objects.create(title="t")
+
+
+@pytest.fixture(autouse=True)
+def _isolated_post_transition_receivers():
+    """#283: `contrib.channels` registers a permanent `post_transition`
+    broadcaster on import; the signal tests here count receivers from
+    zero. Save and restore the receiver list around every test."""
+    try:
+        from xstate_statemachine.contrib.django.signals import (
+            post_transition,
+        )
+    except Exception:  # pragma: no cover - extra absent
+        yield
+        return
+    saved = list(post_transition.receivers)
+    post_transition.receivers = [
+        r for r in saved if "xsm.channels.broadcast" not in str(r[0])
+    ]
+    post_transition.sender_receivers_cache.clear()
+    try:
+        yield
+    finally:
+        post_transition.receivers = saved
+        post_transition.sender_receivers_cache.clear()

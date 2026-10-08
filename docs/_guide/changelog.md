@@ -1456,6 +1456,53 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **Django REST Framework and Channels, as battle-tested (#283).** The
+  API and the WebSocket under a company's load -- 200 API clients
+  approving with every request retried under an `Idempotency-Key`, the
+  401 / 403 / 409 / 422 matrix per role, the OpenAPI schema, a hundred
+  subscribers on one expense each receiving every transition once,
+  auth / origin refusals, the example's `config.asgi` under a real
+  uvicorn and daphne driven end to end -- on SQLite and Postgres
+  (`examples/integrations/django_approvals/tests/test_battle_283_
+  scenario.py`, `tests/contrib/drf/test_battle_283_a.py`,
+  `tests/contrib/channels/test_battle_283_b.py`,
+  `tests/test_battle_283_send_ordering.py`). Found and fixed -- in the
+  CORE: the sync engine refused a send to a stopped / finished machine
+  BEFORE the `on_before_send` interceptors ran, so a replayed
+  `Idempotency-Key` got a 409 `InterpreterStoppedError` instead of its
+  original receipt once the approval had finished; it now intercepts
+  first, like the async engine; a fresh key sent to a finished machine
+  then stayed "in flight" for the inbox TTL (every retry 409) --
+  `IdempotencyPlugin` releases its claim when the engine drops the
+  event (both engines); `send_events()` on a stopped machine dropped the
+  batch silently -- it now intercepts and fires `on_event_dropped` per
+  event like `send()` (both engines). DRF: a replay's body described the
+  row's CURRENT state, not the original receipt's (`state` / `state_ids`
+  now come from the receipt via `value_from_ids`; `context` is the row's
+  current, documented); `X-XSM-Reason` header carries the audit reason
+  (`reason` is a reserved payload key); the schema documents
+  `Idempotency-Key` / `X-XSM-Reason` and 401 / 503, and types
+  `StatechartSerializerField` as the state body. Channels: a transition
+  committed in the admin, through the REST API or a command never
+  reached WebSocket subscribers -- `contrib.channels.broadcast` (a
+  `post_transition(on_commit=True)` receiver) pushes committed
+  transitions from anywhere, scheduling on a running loop when there is
+  one, and the consumer no longer pushes its own; under
+  `AuthMiddlewareStack` the scope user is a `SimpleLazyObject` and the
+  per-push re-authorisation raised, closing EVERY subscriber 1008 on the
+  first transition (the concrete model is resolved through the proxy); a
+  malformed JSON or binary frame killed the consumer with 1011 and left
+  it in its group (now a 422 error frame, socket open); a consumer
+  overriding `group_name` received no broadcasts (`register_group_namer`
+  / `group_names_for`; a plain instance-method override still imports
+  and is addressed when it does not need `self`); a
+  missing `AuthMiddlewareStack` is logged as a warning. Not ours:
+  daphne on Windows stalls authenticated DRF requests (uvicorn serves
+  the same app; documented). Docs: DRF/Channels guide gains where
+  pushes come from, error frames and close codes, origins with a
+  separate-frontend recipe, the `filter_backends` / `get_object()`
+  gotcha, the idempotency semantics; API index, extras row and the
+  example README (status page updates from any source) updated.
 - **Django admin and management commands, as battle-tested (#282).**
   An ops team's day -- fifty reviewers in the admin at once seeing only
   their role's buttons and never a 500, a 200-row bulk action reporting

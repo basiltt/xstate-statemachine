@@ -45,6 +45,38 @@ def state_body(
     return body
 
 
+def _state_schema(cls: Any) -> Any:
+    """📝 #283 battle: without this drf-spectacular typed the field as
+    ``string``; it is the state-body object (FastAPI ``StateModel``)."""
+    try:
+        from drf_spectacular.utils import extend_schema_field
+    except ImportError:  # pragma: no cover - [drf] without spectacular
+        return cls
+    return extend_schema_field(
+        {
+            "type": "object",
+            "readOnly": True,
+            "required": [
+                "state",
+                "state_ids",
+                "available_events",
+                "machine_version",
+            ],
+            "properties": {
+                "state": {},
+                "state_ids": {"type": "array", "items": {"type": "string"}},
+                "available_events": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                },
+                "machine_version": {"type": "string", "nullable": True},
+                "context": {},
+            },
+        }
+    )(cls)
+
+
+@_state_schema
 class StatechartSerializerField(serializers.Field):
     """Read-only: the statechart of the instance as the FastAPI state body.
 
