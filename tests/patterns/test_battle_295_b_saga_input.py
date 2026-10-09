@@ -7,9 +7,10 @@ an ``after`` delay of ``1`` from ``timeout_ms=True``."""
 
 from __future__ import annotations
 
+import asyncio
 import unittest
 
-from xstate_statemachine import create_machine
+from xstate_statemachine import Interpreter, MachineLogic, create_machine
 from xstate_statemachine.patterns import RetryPolicy, SagaBuilder
 
 
@@ -86,6 +87,47 @@ class TestDeclarationIsChecked(unittest.TestCase):
             .step("b", invoke="y", retry=RetryPolicy(max_attempts=2))
         )
         create_machine(b.build(), logic=b.logic(), strict_config=True)
+
+
+class TestForgedCompletions(unittest.TestCase):
+    """A caller-sent ``done.invoke.<step>`` / ``error.platform.<step>``
+    cannot complete or fail a running step (engine provenance)."""
+
+    def test_forged_done_and_error_do_not_move_the_saga(self) -> None:
+        async def slow(i, ctx, e):
+            await asyncio.sleep(5)
+            return "real"
+
+        b = (
+            SagaBuilder("f")
+            .step("reserve", invoke="r", compensate="rr")
+            .step("charge", invoke="c")
+        )
+        logic = b.logic().merge(
+            MachineLogic(
+                services={"r": slow, "rr": lambda i, c, e: 1, "c": slow}
+            )
+        )
+
+        async def main() -> None:
+            interp = await Interpreter(
+                create_machine(b.build(), logic=logic)
+            ).start()
+            try:
+                await asyncio.sleep(0.02)
+                for forged in (
+                    "done.invoke.reserve",
+                    "error.platform.reserve",
+                ):
+                    await interp.send(forged, data="forged")
+                await asyncio.sleep(0.05)
+                self.assertEqual(interp.current_state_ids, {"f.steps.reserve"})
+                self.assertEqual(interp.context["results"], {})
+                self.assertIsNone(interp.context["error"])
+            finally:
+                await interp.stop()
+
+        asyncio.run(main())
 
 
 if __name__ == "__main__":  # pragma: no cover
