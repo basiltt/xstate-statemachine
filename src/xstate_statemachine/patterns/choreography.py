@@ -88,10 +88,12 @@ class ChoreographyRouter:
 
     # -- routing --------------------------------------------------------------
     def machine_for(self, envelope_type: str) -> Any:
+        """The machine routed for *envelope_type*, or ``None`` (acked)."""
         route = self.routes.get(envelope_type)
         return route.machine if route else None
 
     def event_for(self, envelope: Envelope) -> str:
+        """The machine event an envelope becomes (route EVENT or default)."""
         route = self.routes.get(envelope.type)
         if route is not None and route.event:
             return route.event
@@ -99,10 +101,12 @@ class ChoreographyRouter:
 
     @staticmethod
     def instance_key(envelope: Envelope, machine: Any) -> str:
+        """Store key ``<machine id>:<subject>`` (one key, many machines)."""
         return f"{machine.id}:{envelope.subject}"
 
     # -- running --------------------------------------------------------------
     async def run_once(self, broker: Any) -> DispatchResult:
+        """One dispatcher pass over every topic; the merged result."""
         total = DispatchResult()
         for topic in self.topics:
             total.add(await self.dispatcher.run_once(broker, topic))
@@ -111,21 +115,34 @@ class ChoreographyRouter:
     async def run_until_quiet(
         self, broker: Any, *, max_rounds: int = MAX_ROUNDS
     ) -> DispatchResult:
-        """Pump every topic until one round handles nothing."""
+        """Pump every topic until one round handles nothing.
+
+        Args:
+            broker: The bus (`FakeBrokerAdapter` in tests).
+            max_rounds: Loop guard; must be >= 1.
+
+        Returns:
+            Every round's outcomes merged.
+
+        Raises:
+            ValueError: *max_rounds* < 1.
+            RuntimeError: traffic was still flowing after *max_rounds* --
+                usually two machines publishing at each other forever.
+        """
+        _check_rounds(max_rounds)
         total = DispatchResult()
         for _ in range(max_rounds):
             res = await self.run_once(broker)
             total.add(res)
             if not res.outcomes:
                 return total
-        raise RuntimeError(
-            f"choreography did not settle in {max_rounds} rounds "
-            f"(an event loop between machines?)"
-        )
+        raise _unsettled(max_rounds)
 
     def run_until_quiet_sync(
         self, broker: Any, *, max_rounds: int = MAX_ROUNDS
     ) -> DispatchResult:
+        """Blocking twin of `run_until_quiet` (a `SyncBrokerAdapter`)."""
+        _check_rounds(max_rounds)
         total = DispatchResult()
         for _ in range(max_rounds):
             res = DispatchResult()
@@ -134,6 +151,19 @@ class ChoreographyRouter:
             total.add(res)
             if not res.outcomes:
                 return total
-        raise RuntimeError(
-            f"choreography did not settle in {max_rounds} rounds"
-        )
+        raise _unsettled(max_rounds)
+
+
+def _check_rounds(max_rounds: int) -> None:
+    if isinstance(max_rounds, bool) or not isinstance(max_rounds, int):
+        raise ValueError(f"max_rounds must be an int, got {max_rounds!r}")
+    if max_rounds < 1:
+        raise ValueError(f"max_rounds must be >= 1, got {max_rounds}")
+
+
+def _unsettled(max_rounds: int) -> RuntimeError:
+    # 📝 Same text from both engines so one runbook line matches either.
+    return RuntimeError(
+        f"choreography did not settle in {max_rounds} rounds "
+        f"(an event loop between machines?)"
+    )
