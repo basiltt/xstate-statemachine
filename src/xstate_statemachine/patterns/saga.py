@@ -34,6 +34,7 @@
 
 from __future__ import annotations
 
+import numbers
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -44,6 +45,49 @@ from .retry import RetryPolicy
 __all__ = ["SagaBuilder", "SagaStep"]
 
 _NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+#: Prefixes of events only the engine mints; a start event named like one
+#: could never be sent by a caller (#79/#195 provenance checks).
+_ENGINE_PREFIXES = ("done.", "error.", "xstate.", "after.")
+
+
+def _check_key(what: str, key: Any) -> None:
+    """Refuse an empty / non-string service or action key at declaration."""
+    if not isinstance(key, str) or not key.strip():
+        raise ValueError(f"{what} must be a non-empty string, got {key!r}")
+
+
+def _check_timeout(value: Any) -> Optional[int]:
+    """A positive whole number of milliseconds (``5000``, ``5000.0`` and
+    numpy ints all count; ``True``, ``0``, ``"abc"`` and ``1.5`` do not)."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"timeout_ms must be a positive int, got {value!r}")
+    if isinstance(value, numbers.Integral):
+        n = int(value)
+    elif isinstance(value, numbers.Real) and float(value).is_integer():
+        n = int(float(value))
+    else:
+        raise ValueError(f"timeout_ms must be a positive int, got {value!r}")
+    if n <= 0:
+        raise ValueError(f"timeout_ms must be a positive int, got {value!r}")
+    return n
+
+
+def _check_event(event: Any) -> None:
+    """Refuse a start event a caller could never deliver."""
+    _check_key("start_event", event)
+    if event.startswith(_ENGINE_PREFIXES):
+        raise ValueError(
+            f"start_event {event!r} is an engine-reserved event name"
+        )
+    if "*" in event or any(ch.isspace() for ch in event):
+        # 📝 review M5: a wildcard or whitespace name is never a concrete
+        #    event a producer sends (and `consumed_events` drops it)
+        raise ValueError(
+            f"start_event {event!r} must be a concrete event name "
+            "(no wildcards or whitespace)"
+        )
 
 
 def _camel(name: str) -> str:
@@ -88,13 +132,16 @@ class SagaBuilder:
     Args:
         name: The machine id (also the event-type prefix).
         start_event: When set, the saga waits in ``idle`` for this event
-            (the shape an `InboundDispatcher` drives); by default it starts
+            (the shape an `InboundDispatcher` drives) and keeps its payload
+            in ``context.input`` for the services; by default it starts
             the first step as soon as the interpreter starts.
     """
 
     def __init__(self, name: str, *, start_event: Optional[str] = None):
-        if not _NAME.match(name):
+        if not isinstance(name, str) or not _NAME.match(name):
             raise ValueError(f"saga name {name!r} must be an identifier")
+        if start_event is not None:
+            _check_event(start_event)
         self.name = name
         self.start_event = start_event
         self._steps: List[SagaStep] = []
@@ -110,30 +157,73 @@ class SagaBuilder:
         timeout_ms: Optional[int] = None,
         retry: Optional[RetryPolicy] = None,
     ) -> "SagaBuilder":
-        if not _NAME.match(name):
-            raise ValueError(f"step name {name!r} must be an identifier")
-        if any(s.name == name for s in self._steps):
-            raise ValueError(f"duplicate step {name!r}")
-        if timeout_ms is not None and int(timeout_ms) <= 0:
-            raise ValueError("timeout_ms must be > 0")
-        self._steps.append(
-            SagaStep(
-                name,
-                invoke,
-                compensate,
-                int(timeout_ms) if timeout_ms is not None else None,
-                retry,
+        """Append a step (steps run in declaration order).
+
+        Args:
+            name: Step identifier; also the ``invoke`` id and the middle of
+                its event types (``<saga>.<name>.completed``).
+            invoke: Service key that performs the step. Its return value
+                lands in ``context.results[name]``; raising fails the step.
+            compensate: Service key that undoes the step after a LATER
+                step fails. Must be idempotent: a restart mid-compensation
+                runs it again.
+            timeout_ms: Fail the step after this many milliseconds (a
+                positive ``int``).
+            retry: Re-run a failed or timed-out step per this policy
+                before compensating.
+
+        Returns:
+            The builder (fluent).
+
+        Raises:
+            ValueError: a non-identifier or duplicate name, a name that
+                collides with a generated ``<step>Retrying`` state, an
+                empty service key, a non-positive or non-integer
+                ``timeout_ms``, or a *retry* that is not a `RetryPolicy`.
+        """
+        self._check_step_name(name)
+        if retry is not None and f"{name}Retrying" in {
+            s.name for s in self._steps
+        }:
+            raise ValueError(
+                f"step {name!r} with retry= collides with step "
+                f"'{name}Retrying' (its generated waiting state)"
             )
+        _check_key("invoke", invoke)
+        if compensate is not None:
+            _check_key("compensate", compensate)
+        timeout_ms = _check_timeout(timeout_ms)
+        if retry is not None and not isinstance(retry, RetryPolicy):
+            raise ValueError(
+                f"retry must be a RetryPolicy, got {type(retry).__name__}"
+            )
+        self._steps.append(
+            SagaStep(name, invoke, compensate, timeout_ms, retry)
         )
         return self
 
+    def _check_step_name(self, name: str) -> None:
+        if not isinstance(name, str) or not _NAME.match(name):
+            raise ValueError(f"step name {name!r} must be an identifier")
+        taken = {s.name for s in self._steps}
+        taken |= {f"{s.name}Retrying" for s in self._steps if s.retry}
+        if name in taken:
+            raise ValueError(f"duplicate step {name!r}")
+
     def on_failure(self, *actions: str) -> "SagaBuilder":
-        """Actions run on entering ``failed`` (after compensation)."""
+        """Actions run on entering ``failed`` (after compensation).
+
+        Raises:
+            ValueError: an action name that is not a non-empty string.
+        """
+        for a in actions:
+            _check_key("on_failure action", a)
         self._on_failure.extend(actions)
         return self
 
     @property
     def steps(self) -> List[SagaStep]:
+        """The declared steps, in order (a copy)."""
         return list(self._steps)
 
     # -- JSON ---------------------------------------------------------------------
@@ -149,9 +239,23 @@ class SagaBuilder:
         for s in self._steps:
             if s.retry is not None:
                 ctx[s.attempt_key] = 0
+        # 🐛 #295-a: the start event's payload was silently dropped
+        #    (services could not see START's data); `sagaStart` keeps it
+        #    in ``context.input``. Review H2: the key exists in BOTH
+        #    shapes -- a saga that starts immediately has no START, so
+        #    its services read ``None`` (or what the caller put in the
+        #    initial context), never a `KeyError`.
+        ctx["input"] = None
         states: Dict[str, Any] = {}
         if self.start_event:
-            states["idle"] = {"on": {self.start_event: "steps"}}
+            states["idle"] = {
+                "on": {
+                    self.start_event: {
+                        "target": "steps",
+                        "actions": ["sagaStart"],
+                    }
+                }
+            }
         states["steps"] = {
             "initial": self._steps[0].name,
             "states": self._step_states(),
@@ -306,6 +410,7 @@ class SagaBuilder:
         """
         merged: MachineLogic[Any] = MachineLogic(
             actions={
+                "sagaStart": _start,
                 "sagaRecord": _record,
                 "sagaFail": _fail,
                 "sagaCompensated": _compensated,
@@ -322,6 +427,11 @@ class SagaBuilder:
 def _params(a: Any) -> Dict[str, Any]:
     p = getattr(a, "params", None)
     return p if isinstance(p, dict) else {}
+
+
+def _start(i: Any, ctx: Dict[str, Any], e: Any, a: Any) -> None:
+    payload = getattr(e, "payload", None)
+    ctx["input"] = dict(payload) if isinstance(payload, dict) else None
 
 
 def _record(i: Any, ctx: Dict[str, Any], e: Any, a: Any) -> None:

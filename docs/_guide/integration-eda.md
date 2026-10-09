@@ -234,6 +234,71 @@ The generated shape: `steps.<name>` invokes the step's service, with an `after` 
 
 To make completion idempotent when the upstream event may be re-minted with a new id, give the dispatcher `inbox=` and `dedup_key=lambda e: e.causationid or e.id`.
 
+**A saga driven from the bus.** In production a saga is one persisted instance per business key, started by a command. Build it with `start_event=`, map `xsm.<saga>.<START>` to it in an `InboundDispatcher`, and give it the four stores. Two rules a newcomer trips over:
+
+* **START's payload lives in `context["input"]`.** Each step's service receives its own `invoke.<step>` event, not the command -- read the data the saga was started with from `ctx["input"]` (the start event's payload, copied by the generated `sagaStart` action; `None` until START). The instance's identity is the envelope `subject`, which the dispatcher sets as `interp.store_key`.
+* **`compensationFailed` is final.** A failing compensation parks the instance there, and `DeadLetterPlugin` writes a chart-state dead letter. That record is the operator's ticket: fix the cause by hand. A redelivered START does nothing (the instance is done).
+
+```python
+from xstate_statemachine import MachineLogic, create_machine
+from xstate_statemachine.eda import (
+    DeadLetterPlugin, Envelope, InboundDispatcher, MemoryDeadLetterStore,
+    MemoryOutboxStore, OutboxPlugin, SyncFakeBrokerAdapter,
+)
+from xstate_statemachine.patterns import SagaBuilder
+from xstate_statemachine.persistence import MemoryInbox, MemoryStore
+
+saga = (
+    SagaBuilder("fulfil", start_event="START")
+    .step("reserve", invoke="reserveStock", compensate="releaseStock")
+    .step("charge", invoke="chargeCard")
+)
+seen = []
+
+
+def reserve(i, ctx, e):
+    seen.append(i.store_key)          # the order id comes from the subject
+    return {"hold": f"h-{i.store_key}"}
+
+
+def charge(i, ctx, e):
+    raise RuntimeError("card declined")
+
+
+def release(i, ctx, e):               # idempotent: a restart may re-run it
+    raise RuntimeError("warehouse API down")
+
+
+machine = create_machine(saga.build(), logic=saga.logic().merge(MachineLogic(
+    services={"reserveStock": reserve, "chargeCard": charge,
+              "releaseStock": release},
+)), strict_config=True)
+store, bus, dlq = MemoryStore(), SyncFakeBrokerAdapter(), MemoryDeadLetterStore()
+dispatcher = InboundDispatcher(
+    store, {"xsm.fulfil.START": machine}, inbox=MemoryInbox(),
+    plugins=[OutboxPlugin(MemoryOutboxStore(), topic="sagas"),
+             DeadLetterPlugin(dlq)],
+    dead_letters=dlq, on_unknown="ignore",
+)
+start = Envelope.new(type="xsm.fulfil.START", subject="o-42")
+bus.publish("commands", start)
+dispatcher.run_once_sync(bus, "commands")
+
+assert seen == ["o-42"]
+[letter] = dlq.list()                             # the operator's ticket
+assert letter.state_id == "fulfil.compensationFailed"
+assert [e["message"] for e in letter.errors] == [
+    "card declined", "warehouse API down",        # cause, then the stuck undo
+]
+bus.publish("commands", start)                    # redelivered: a no-op
+assert dispatcher.run_once_sync(bus, "commands").duplicates == 1
+assert len(dlq.list()) == 1
+```
+
+`context.error` holds the **last** failure (here the compensation's); the dead letter's `errors` keeps the whole sequence.
+
+`examples/integrations/eda_fulfilment/tests/test_battle_295_scenario.py` runs the same shape at scale (`SagaApp`): 90 SQLite-persisted sagas, a third failing at a different step, plus a `kill -9` in the middle of a compensation.
+
 ### Choreography
 
 In choreography there is no orchestrator: each machine reacts to the integration events it cares about. `patterns.ChoreographyRouter` is an `InboundDispatcher` with a `type → (machine, EVENT)` mapping, instances stored as `<machine id>:<subject>` so several machines can share one business key, and unrouted types acked (a shared bus carries other services' events).
@@ -283,7 +348,14 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
-**Orchestration or choreography?** Use a saga when one business process owns the steps, needs compensation in a defined order, and someone must be able to answer "where is order 42?" by looking at one instance. Use choreography when services are owned by different teams and each only needs to react to facts, not to a plan. Choreography scales organisationally but spreads the process across machines, so the causation chain is the only thing that ties it together. Keep `correlationid` on every envelope.
+**Orchestration or choreography?** Use a saga when one business process owns the steps, needs compensation in a defined order, and someone must be able to answer "where is order 42?" by looking at one instance. Use choreography when services are owned by different teams and each only needs to react to facts, not to a plan. Choreography scales organisationally but spreads the process across machines, so the causation chain is the only thing that ties it together. Keep `correlationid` on every envelope. Choreography has no compensation of its own: an undo is just another event each service must handle, and nothing guarantees the order. A cycle between two routes is not caught by the engine's `RunawayChainError` (that guards one machine's internal chain); `run_until_quiet` stops it after `max_rounds` with a `RuntimeError`, and in production it simply loops on the bus.
+
+| `xstate_statemachine.patterns` name | What it is |
+|:--|:--|
+| `SagaBuilder` | Fluent builder: `.step()`, `.on_failure()`, `.build()` → chart JSON, `.logic()` → the generic actions. |
+| `SagaStep` | Frozen dataclass of one declared step (`name`, `invoke`, `compensate`, `timeout_ms`, `retry`); `SagaBuilder.steps` returns them. |
+| `ChoreographyRouter` | `InboundDispatcher` over a `type → machine` map; `run_once`, `run_until_quiet`, `run_until_quiet_sync`. |
+| `Route` | `NamedTuple(machine, event=None)`; the explicit form of a route value. |
 
 ### AsyncAPI
 
@@ -330,6 +402,8 @@ The rest of `xstate_statemachine.eda.__all__`, for readers who grep. Everything 
 >
 > **What this does not do:** no exactly-once **publish**. The relay publishes then marks sent, so a crash in between publishes twice; consumers must dedup on the envelope id (the dispatcher does). Several relays may drain one outbox: row leases (`claim()` / `lease_s`) stop two live relays publishing the same row at once, but they do not make publishing exactly-once. A relay that dies mid-batch, or one that is still publishing when its lease expires, leaves rows another relay publishes again -- the duplicate window is **one batch per expired lease**, so size `lease_s` above the slowest batch you expect (`batch` × the broker's worst publish latency). A custom `OutboxStore` without `claim()` still needs **one** relay per outbox. The direct-broker sink is at-most-once-ish. There is no global order across subjects, and the leases do not order rows *across* relays. An `OptimisticLock` outbox is only transactional on stores whose save and outbox write share one transaction.
 >
+> **Sagas (`SagaBuilder`):** when step *k* fails (its service raises, or its `timeout_ms` fires), the compensations of the completed steps run in reverse, **once each per run**: entering a compensating state runs its invoke once. Step results are in `context.results[<step>]`, compensated steps in `context.compensated`, the last failure in `context.error`. A step with `retry=` re-runs after the policy's delay up to `max_attempts`, then compensates; a timeout counts as a failed attempt. The timeout **does not cancel** the service's work in an external system: the invoke is abandoned, so a late success is lost and the compensation must cope with a step that may have half-happened. **Compensations must be idempotent**: a process killed mid-compensation restarts the saga from its last snapshot and runs that compensation again. A failing compensation ends in `compensationFailed`, which is **final**: no retry, and a chart-state dead letter is written for a human. Services receive their own `invoke.<step>` event; the START event's payload is in `context.input` (present in both chart shapes, `None` until START or for a saga that starts immediately) and identity comes from the instance key (`interp.store_key`). **Upgrading a saga built by an earlier `SagaBuilder`:** the generated chart gained the `sagaStart` action on the START transition and an `input` context key, so its structure hash changed -- a snapshot saved from the older chart does not load against the new one without `verify_machine_hash=False` (or `expected_machine_hash=<old>`); drain in-flight sagas before upgrading, or restore them once that way. Under `OptimisticLock` a replica that loses the save race has already run the step's service (at-least-once): use `PessimisticLock` or idempotent services.
+>
 > See the programme-wide [Guarantees](../guarantees/) and [Security](../security/) pages ([#303](https://github.com/basiltt/xstate-statemachine/issues/303)).
 
 ## Threat model
@@ -339,6 +413,8 @@ The rest of `xstate_statemachine.eda.__all__`, for readers who grep. Everything 
 > **What it exposes:** envelopes are size-capped **before** parsing and shape-validated before `to_event()` (X0.4); a malformed or unknown envelope is dead-lettered, never raised. Credential-bearing extension names are refused, transport headers other than `ce-*` never become extensions, and `traceparent` is validated (X0.8). Poison messages cannot loop: an attempt counter dead-letters and acks after `max_attempts`, and `max_in_flight` bounds concurrency (X0.8). Dead letters, state-tag `data` and audit details are `redact()`ed before they are written; `SQLiteDeadLetterStore` / `SQLiteOutboxStore` files are created `0600` (X0.5).
 >
 > **You must configure:** an `inbox` in production (without one, redeliveries re-run); broker-level authentication and ACLs on who may publish which `type`; a `source` your consumers trust as the idempotency principal; DLQ replay only through `--no-dry-run --yes --reason` by an operator with access to the audit table; retention (`xsm dlq purge --older-than`, `SQLiteOutboxStore.purge_sent`).
+>
+> **Sagas and choreography on a shared bus:** a forged `done.invoke.<step>` / `error.platform.<step>` envelope cannot complete or fail a saga step. With the usual `{type: machine}` mapping such a type is unknown (acked or dead-lettered per `on_unknown`). Even a catch-all mapping that turns `xsm.fulfil.done.invoke.reserve` into the event `done.invoke.reserve` only delivers **user** traffic, and the engine drives `onDone` / `onError` / `after` from engine-minted events alone (provenance, #195/#203) — `tests/patterns/test_battle_295_b_saga_input.py::TestForgedCompletions`. Event *names* are a namespace, not a secret: anyone allowed to publish `xsm.fulfil.START` can start a saga, so the ACL on that type is the authorisation. Prefix saga and choreography types with your service (`fulfil.*`, `order.*`) so two teams on one bus cannot collide, and keep `on_unknown="ignore"` only on topics that really are shared.
 
 ## Compatibility
 
@@ -373,6 +449,19 @@ The rest of `xstate_statemachine.eda.__all__`, for readers who grep. Everything 
 | `sqlite3.OperationalError: no such column: claimed_by` | never on `SQLiteOutboxStore`: it adds the lease columns to a 0.11.0 `xsm_outbox` table on open | if you see it, a raw query ran before any store was opened; open the store first |
 | SQLAlchemy: `StoreError: xsm_outbox lacks claimed_by, claimed_until` at startup (`create_table=False`) | the `xsm_outbox` table was created before the relay leases; with `create_table=True` the store adds the columns itself | add a migration with `claimed_by VARCHAR(128) NULL` and `claimed_until FLOAT NULL` (see `examples/integrations/sqlalchemy_orders` migration `0003`) |
 | Pending outbox rows stay pending for `lease_s` after a relay crash | a dead relay cannot release its lease | expected; lower `lease_s` if that delay matters (not below one batch's publish time) |
+| `ValueError: step name … must be an identifier` / `duplicate step` / `collides with step '<x>Retrying'` | `SagaBuilder.step()` names are state keys; a `retry=` step owns a generated `<step>Retrying` state | rename the step (`reserve_stock`, not `reserve-stock`) |
+| `ValueError: timeout_ms must be a positive int` / `retry must be a RetryPolicy` / `invoke must be a non-empty string` / `start_event … is an engine-reserved event name` | a declaration the builder refuses up front rather than emit JSON that fails later | pass `timeout_ms=5000`, `retry=RetryPolicy(...)`, a service key, a plain event name such as `START` |
+| `ValueError: a saga needs at least one step` | `build()` before any `.step()` | declare the steps first |
+| A saga instance sits in `compensationFailed` and a dead letter (`reason` `dead_letter_state`) appeared | a compensation raised; the state is final by design | fix the external system by hand, then resolve the record (`xsm dlq … purge`); never "retry" by resending START (the instance is done) |
+| A compensation ran twice for one saga | the process died mid-compensation and the saga restarted from its snapshot | expected: compensations must be idempotent (key them by `interp.store_key`) |
+| A step service raises `KeyError` looking for the order id in `e.data` | services receive `invoke.<step>`, not the command | read `ctx["input"]` (START's payload) or `interp.store_key` (the envelope `subject`) |
+| Two replicas under `OptimisticLock` ran a step's service twice | the replica that lost the save race had already run the service in memory (at-least-once, as the persistence guide says) | drive sagas under `PessimisticLock`, or make step services idempotent |
+| `RuntimeError: choreography did not settle in N rounds (an event loop between machines?)` | two routes publish at each other forever (A's event routes to B, B's back to A), or a test bus never drains | break the cycle (a final state, a guard), or raise `max_rounds` for a genuinely long conversation |
+| `ValueError: max_rounds must be >= 1` | `run_until_quiet(max_rounds=0)` | pass a positive count |
+| A saga START is acked but nothing happens, `DispatchResult.ignored` grows | the shared bus dispatcher has no route for `xsm.<saga>.START` and `on_unknown="ignore"` (with `"dead_letter"` it is DLQ reason `unknown_event`) | add the type to the dispatcher's mapping |
+| `MissingExtraError: jsonschema is not installed` (`validate_asyncapi`) / `xsm asyncapi: error: --validate needs jsonschema` | schema validation is optional | `pip install jsonschema` (the message also names an `[asyncapi]` extra that this release does not ship; install `jsonschema` directly); generation itself needs nothing |
+| `jsonschema.ValidationError` from `validate_asyncapi` / `xsm asyncapi: error: document is not valid AsyncAPI 3.0: …` | a hand-edited document, or a `server=` dict missing `host` / `protocol` | fix the named field; `asyncapi_document` output itself always validates |
+| `xsm asyncapi` exits 2: `cannot load machine` / `cannot write` / `--server must not be empty` | a missing or invalid machine file, an unwritable `-o`, an empty option | fix the path or option (exit codes in the [CLI reference](../cli/)) |
 
 ## Operations
 
@@ -389,6 +478,15 @@ The rest of `xstate_statemachine.eda.__all__`, for readers who grep. Everything 
 | Outbox pending age | `SELECT MIN(created_at) FROM xsm_outbox WHERE sent_at IS NULL` | older than a few `lease_s` (the relays are stuck or the broker is down) |
 | Leased (`locked`) rows | `SELECT COUNT(*) FROM xsm_outbox WHERE sent_at IS NULL AND claimed_until > <now>` | stays above `batch` × relays (leases are not being released) |
 | Dispatcher outcomes | `DispatchResult.retried` / `.dead_lettered` per `run_once` | `retried` keeps rising (an infrastructure fault) |
+
+**Sagas in production.** A saga is a normal dispatcher-driven machine, so it scales like one: **one dispatcher per topic partition, not one per saga key**. Every instance lives in the shared store under its `subject`, the broker keeps per-subject order, and the `PessimisticLock` serialises the rare overlap. Run as many replicas as the topic has partitions. Step services run inside the dispatcher's delivery, so a slow step holds that subject's slot (one of `max_in_flight`) until it finishes or its `timeout_ms` fires. Give every step that calls a remote system a `timeout_ms`. Choreography is the same: one `ChoreographyRouter` per consumer group; its instances are keyed `<machine id>:<subject>`.
+
+| Saga signal | How to read it | Alert when |
+|:--|:--|:--|
+| Stuck compensations | dead letters with `state_id` ending `.compensationFailed` (`xsm dlq … list --json`) | **any** — each one is money or stock in an inconsistent state, and only a human can close it |
+| Compensation rate | `fulfil.*.compensated` events on the outbox topic vs `fulfil.*.completed` | the ratio jumps (a downstream outage is turning orders into refunds) |
+| Saga age | instances not in a final state whose `StoredSnapshot` save time is older than the sum of the step timeouts plus retry delays | any — a saga that outlives its own timeouts is not being driven (no consumer, or a lost START) |
+| Retry pressure | `context.attempt_<step>` above 1 at completion | sustained — the step is flaky, not failing |
 
 **Retention.** Purge sent outbox rows with `SQLiteOutboxStore.purge_sent(older_than_s=86400)`. Purge resolved dead letters with `xsm dlq --dlq … purge --older-than 30d --yes --reason retention` (the purge is audited).
 

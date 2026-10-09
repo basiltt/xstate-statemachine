@@ -611,6 +611,97 @@ def f4_asyncapi() -> None:
     )
 
 
+def f4_saga_operator() -> None:
+    step("#295 battle: persisted saga, stuck compensation, asyncapi CLI")
+    from xstate_statemachine import MachineLogic, create_machine
+    from xstate_statemachine.eda import (
+        DeadLetterPlugin,
+        Envelope,
+        InboundDispatcher,
+        SQLiteDeadLetterStore,
+        SQLiteOutboxStore,
+        OutboxPlugin,
+        SyncFakeBrokerAdapter,
+    )
+    from xstate_statemachine.patterns import SagaBuilder
+    from xstate_statemachine.persistence import SQLiteInbox, SQLiteStore
+
+    saga = (
+        SagaBuilder("fulfil", start_event="START")
+        .step("reserve", invoke="reserve", compensate="release")
+        .step("charge", invoke="charge")
+    )
+
+    def boom(msg: str) -> Any:
+        def run(i: Any, c: Any, e: Any) -> None:
+            raise RuntimeError(msg)
+
+        return run
+
+    machine = create_machine(
+        saga.build(),
+        logic=saga.logic().merge(
+            MachineLogic(
+                services={
+                    "reserve": lambda i, c, e: i.store_key,
+                    "charge": boom("declined"),
+                    "release": boom("warehouse down"),
+                }
+            )
+        ),
+        strict_config=True,
+    )
+    store = SQLiteStore(TMP / "saga.db")
+    dlq = SQLiteDeadLetterStore(store)
+    outbox = SQLiteOutboxStore(store)
+    bus = SyncFakeBrokerAdapter()
+    d = InboundDispatcher(
+        store,
+        {"xsm.fulfil.START": machine},
+        inbox=SQLiteInbox(store),
+        plugins=[OutboxPlugin(outbox, topic="sagas"), DeadLetterPlugin(dlq)],
+        dead_letters=dlq,
+        on_unknown="ignore",
+    )
+    start = Envelope.new(type="xsm.fulfil.START", subject="o-1")
+    for _ in range(2):  # the second delivery is a redelivery
+        bus.publish("commands", start)
+        d.run_once_sync(bus, "commands")
+    stuck = [
+        r for r in dlq.list() if r.state_id.endswith("compensationFailed")
+    ]
+    assert len(stuck) == 1, dlq.list()
+    rec = store.load("o-1")
+    assert rec is not None
+    snap = json.loads(rec.snapshot)
+    assert snap["context"]["results"] == {"reserve": "o-1"}
+    assert snap["state_ids"] == ["fulfil.compensationFailed"]
+    types = [r.envelope.type for r in outbox.pending()]
+    assert "fulfil.reserve.completed" in types, types
+    store.close()
+    print("  one stuck saga -> one dead letter; redelivery a no-op")
+
+    (TMP / "saga_op.json").write_text(
+        json.dumps(saga.build()), encoding="utf-8"
+    )
+    assert xsm("validate", "saga_op.json").returncode == 0
+    for bad, needle in (
+        (("-o", str(TMP / "no" / "dir" / "a.json")), "cannot write"),
+        (("--server", ""), "--server"),
+    ):
+        r = xsm("asyncapi", "saga_op.json", *bad)
+        assert r.returncode == 2 and needle in r.stderr, r.stderr
+        assert "Traceback" not in r.stderr, r.stderr
+    try:
+        import jsonschema  # noqa: F401
+    except ImportError:
+        print("  (jsonschema not installed: --validate skipped)")
+        return
+    r = xsm("asyncapi", "saga_op.json", "--server", "b:9092", "--validate")
+    assert r.returncode == 0, r.stderr
+    print("  xsm validate + asyncapi --validate on the saga JSON: OK")
+
+
 def main() -> None:
     run_tests()
     b5_fake_broker()
@@ -624,6 +715,7 @@ def main() -> None:
     f4_saga()
     f4_choreography()
     f4_asyncapi()
+    f4_saga_operator()
     print("\nALL OK")
 
 
