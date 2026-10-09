@@ -72,7 +72,7 @@ A fallback that polls the result backend, for when signals are not available (th
 
 ### `@statechart_task(app, store, machine_for_key, *, lock=None, plugins=(), name=None, max_retries=10, **task_options)`
 
-Registers `fn(interp, *args, **kwargs)` as a task whose first argument is the instance key. The body runs inside `persisted(store, key, machine)`. `ConflictError` is retried through Celery's own `autoretry_for`, with exponential backoff from 1 s (Celery rounds `retry_backoff` up to whole seconds) to 2 s, with jitter. A retry **re-runs `fn` from the start**, including any side effect it performed outside the machine, so keep side effects in machine actions or make them idempotent.
+Registers `fn(interp, *args, **kwargs)` as a task whose first argument is the instance key. The body runs inside `persisted(store, key, machine)`. `ConflictError` and `LockTimeoutError` are retried through Celery's own `autoretry_for`, with exponential backoff from 1 s (Celery rounds `retry_backoff` up to whole seconds) to 2 s, with jitter. A retry **re-runs `fn` from the start**, including any side effect it performed outside the machine, so keep side effects in machine actions or make them idempotent.
 
 ```python
 @statechart_task(app, store, order_machine)
@@ -112,6 +112,7 @@ When does this matter?
 |:--|:--|
 | One worker process, one app (production) | nothing: the default names are fine |
 | Two apps in one process (tests, a multi-tenant worker) | nothing: each app gets its own `xsm.deadlines.scan` |
+| A worker that builds a **different** app object from a factory (not the module-level `app` the producer imported) | the task exists only on the app object that registered it (`shared=False`): call the same helper (`DurableTimerScheduler(...)`, `outbox_relay_task(...)`, `@statechart_task`) in the worker's app module too, or `celery -A mod:app worker` on the SAME module |
 | Two schedulers / relays / statechart tasks on **one** app (two stores, two outboxes) | pass distinct names: `DurableTimerScheduler(app, eu_store, m, name="eu.deadlines.scan", fire_name="eu.deadlines.fire")`, `outbox_relay_task(app, o, b, name="eu.relay")`, `@statechart_task(..., name="eu.pay")` |
 
 <!-- doc-requires: celery -->
@@ -201,7 +202,7 @@ The rest of `xstate_statemachine.contrib.celery.__all__`:
 | `InvalidConfigError: a Celery task named '…' is already registered on this app` | a second scheduler / relay / statechart task with the default name on one app | pass `name=` (and `fire_name=` for a scheduler); see `register_task` in the Reference |
 | `RuntimeError: Never call result.get() within a task!` | your code calls `.get()` on a task result from inside a task. Common in eager tests, where a task calls another eager task; this is Celery's guard | do not block on a sub-task, let `celery_service` deliver it. In eager test suites reset Celery's flag between tests: `celery._state._set_task_join_will_block(False)` |
 | Task `FAILURE` with `ConflictError` | `@statechart_task` exhausted `max_retries` on a hot key | raise `max_retries`, spread the load, or pass a pessimistic `lock=` |
-| `LockTimeoutError` | a pessimistic `lock=` was not acquired in time; it is **not** auto-retried (only `ConflictError` is) | add it: `@statechart_task(..., autoretry_for=(ConflictError, LockTimeoutError))`, or raise the lock timeout |
+| `LockTimeoutError` (task FAILURE after `max_retries`) | a pessimistic `lock=` was not acquired in time on every attempt; it IS auto-retried (with `ConflictError`, #292 battle) | raise the lock `timeout=`, lower contention on that key, or `max_retries`; the JSON result backend rebuilds the exception as its base `StoreError` |
 | "celery completion … arrived before its record; parked for poll_results" | the worker finished before the caller's `persisted()` block saved | expected; `poll_results(pending=...)` applies it. If it never clears, the caller never saves |
 | "parked celery completion … evicted" / "giving up parked celery completion" | the pending table hit `max_items` or `PENDING_TTL_S` | `poll_results` still reads the result backend; look for forged headers or a caller that never saves |
 | `on_event_dropped(..., "stale_invocation")` | a completion for a left / re-entered / never-active invocation, or a forged header | expected for late results; a burst means forged traffic |
