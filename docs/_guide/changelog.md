@@ -1457,6 +1457,56 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **LangGraph interop, as battle-tested (#288).** The support bot's
+  `TOOL_LOOP` dropped INTO a 3-node LangGraph graph as a
+  `statechart_node`: 100 checkpointed threads (`MemorySaver`) each
+  driven in two separate `invoke()` calls with a process "restart" in
+  between -- byte-identical snapshot round trips, `route_by_statechart`
+  picking the edge from the active state, the refund gate parking in
+  `awaiting_human` and resuming on the approval, one refund each, a
+  second approval a no-op; a FORGED graph-state snapshot (approval flag
+  flipped, the tool renamed, the amount a string) cannot run a tool (the
+  node re-enters `run_tool`); another machine's snapshot refused with a
+  typed error; `langgraph_service` running a graph that raises, hangs
+  and is cancelled by a state exit, or returns a huge output;
+  `LangChainCallbackPlugin` never leaking secrets; 1,000 node calls flat
+  (`examples/integrations/agents_support_bot/tests/
+  test_battle_288_scenario.py`, `tests/contrib/agents/
+  test_battle_288_{a,integrator}.py`, the example's
+  `test_readme_langgraph.py`).
+  Found and fixed: **a graph that called `interrupt()` was read as
+  DONE** -- `ainvoke` returns normally with the partial state and an
+  `__interrupt__` key, so the chart saw `onDone` for a graph that is
+  paused and asking a human; `langgraph_service` now surfaces it as
+  `onError` with `GraphInterruptedError` (`.interrupts`, `.state`; resume
+  the graph with `Command(resume=...)` once the chart has decided;
+  `on_interrupt="done"` keeps the old shape); `route_by_statechart`
+  never matched a mapping key naming a PARENT state (`"g.a"` for a leaf
+  at `g.a.b`) although the docs promised it -- the router walks from the
+  leaf up, most specific key wins, and with parallel regions the choice
+  is deterministic (sorted ids); a list where the snapshot should be
+  crashed the router with a bare `AttributeError` (`AgentConfigError`);
+  the STREAM chunk docs pointed at `event.data["data"]` (it is
+  `event.data`) and omitted `stream_mode=` / `config=`. Docs: the
+  "human approval gate" recipe is now a runnable 3-node example on a
+  checkpointer (resumes with `HUMAN_APPROVED`, refunds once); the
+  Guarantees box states the node's contract (X0.13 preserved; plain
+  JSON snapshot; ONE macrostep per call so `after` timers never fire
+  inside a node -- `DueTimerScanner` or an explicit event; two runs on
+  one `thread_id` are last-write-wins at the checkpointer, serialise per
+  thread); Threat model (graph state is untrusted input, a graph's
+  output is untrusted output); Troubleshooting rows for every
+  LangGraph-visible error; the compatibility table says langgraph is
+  NOT pinned by any extra and records the decision "in-tree soft
+  import"; `docs/api/index.md` listed 0 of the module's public names
+  (all listed); the example README gains "Drop the bot into a LangGraph
+  graph" (tested). Held: 200 node calls across 8 threads on different
+  `thread_id`s; an edited chart between invocations is
+  `SnapshotDriftError`; a non-event from `event_from_state` is
+  `InvalidEventError`; `input_from` / `output_to` raising → `onError`; a
+  LangChain message in a STREAM payload snapshots; a raising callback
+  handler is contained; the version guard reads `importlib.metadata`
+  (langgraph has no `__version__`).
 - **`[agents]`, as battle-tested (#287).** The `agents_support_bot`
   example on a support day: 200 tickets through two bot replicas (half
   refunds parked for a human, lookups, hostile and broken ones); the

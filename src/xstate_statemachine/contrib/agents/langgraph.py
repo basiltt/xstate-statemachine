@@ -48,9 +48,11 @@ from ...factory import create_machine
 from ...models import MachineNode
 from ...plugins import PluginBase
 from .._compat import require_extra
-from .messages import AgentConfigError
+from .messages import AgentConfigError, AgentError
 
 __all__ = [
+    "INTERRUPT_KEY",
+    "GraphInterruptedError",
     "LANGGRAPH_TESTED",
     "LangChainCallbackPlugin",
     "check_langgraph_version",
@@ -65,6 +67,7 @@ LANGGRAPH_TESTED: Tuple[Tuple[int, int], Tuple[int, int]] = ((0, 2), (2, 0))
 
 
 def _parse(version: str) -> Tuple[int, int]:
+    """``"1.2.0rc1"`` → ``(1, 2)``; missing or non-numeric parts are 0."""
     parts = []
     for piece in version.split(".")[:2]:
         digits = "".join(ch for ch in piece if ch.isdigit())
@@ -75,8 +78,17 @@ def _parse(version: str) -> Tuple[int, int]:
 
 
 def check_langgraph_version(version: str) -> None:
-    """Raise `ImportError` naming the tested range when *version* is
-    outside `LANGGRAPH_TESTED`."""
+    """Refuse a LangGraph version outside `LANGGRAPH_TESTED`.
+
+    Called at import time with the installed version; public so an
+    operator can check a candidate pin before upgrading.
+
+    Args:
+        version: A LangGraph version string (``"0.6.4"``, ``"1.2.0rc1"``).
+
+    Raises:
+        ImportError: Naming the tested range and the found version.
+    """
     lo, hi = LANGGRAPH_TESTED
     if not (lo <= _parse(version) < hi):
         raise ImportError(
@@ -149,6 +161,17 @@ def statechart_node(
         event_from_state: Graph state → event (type string, event dict,
             `Event`, or ``None``).
         result_to_state: Optional extra graph-state updates.
+
+    Returns:
+        The node function, named ``statechart_<machine id>``.
+
+    Raises:
+        AgentConfigError: A built `MachineNode` together with *logic*, or
+            (per call) a ``state[state_key]`` that is not a dict / string.
+        SnapshotDriftError: (per call) a snapshot from another machine.
+
+    📝 One call is one macrostep: the interpreter is stopped before the
+    node returns, so ``after`` timers never fire inside a node.
     """
     built = _machine(machine, logic)
 
@@ -192,8 +215,21 @@ def route_by_statechart(
     """A conditional-edge router: active state id → next LangGraph node.
 
     *mapping* keys are full state ids (``"g.review"``) or leaf keys
-    (``"review"``); the first active state that matches wins. Without a
+    (``"review"``) -- an ancestor key (``"g.a"`` / ``"a"``) routes every
+    leaf beneath it, the deepest match winning. Active ids are scanned in
+    sorted order, so with parallel regions the result is deterministic
+    (alphabetically first region that matches). Without a
     match, *default* -- or a loud `AgentConfigError` (no silent END).
+
+    Args:
+        machine: The chart dict or built `MachineNode` the node runs
+            (only its id is used, for the error message).
+        mapping: State id or leaf key → LangGraph node name (or ``END``).
+        state_key: Graph-state key holding the snapshot.
+        default: Node for an active state missing from *mapping*.
+
+    Returns:
+        The router, for ``StateGraph.add_conditional_edges``.
     """
     built = machine if isinstance(machine, MachineNode) else None
     root = (
@@ -204,16 +240,39 @@ def route_by_statechart(
     table = dict(mapping)
 
     def route(state: Dict[str, Any]) -> str:
-        snap = state.get(state_key) or {}
-        if isinstance(snap, str):
-            snap = json.loads(snap)
+        raw = _snapshot_of(state, state_key)
+        try:
+            snap = json.loads(raw) if raw is not None else {}
+        except ValueError as exc:  # review M1: a JSON string that is not
+            raise AgentConfigError(
+                f"state[{state_key!r}] is not valid snapshot JSON: {exc}"
+            ) from None
+        if not isinstance(snap, Mapping):
+            raise AgentConfigError(
+                f"state[{state_key!r}] is not a snapshot object"
+            )
         ids = sorted(snap.get("state_ids") or [])
-        for sid in ids:
-            if sid in table:
-                return table[sid]
-            leaf = sid.rsplit(".", 1)[-1]
-            if leaf in table:
-                return table[leaf]
+        # 📝 #288-a: a key naming a compound state ("a" / "g.a") routes
+        #    every leaf under it. Review M2: candidates are ranked ACROSS
+        #    all active ids by depth (deepest first, then sorted id), so
+        #    with parallel regions the most specific key really wins; the
+        #    root (the machine id) is never a match -- a key equal to it
+        #    would swallow every state and `default` would be dead.
+        best = None  # (depth, index, target)
+        for index, sid in enumerate(ids):
+            parts = sid.split(".")
+            for depth in range(len(parts), 1, -1):
+                for key in (".".join(parts[:depth]), parts[depth - 1]):
+                    if key in table:
+                        cand = (depth, -index, table[key])
+                        if best is None or cand[:2] > best[:2]:
+                            best = cand
+                        break
+                else:
+                    continue
+                break
+        if best is not None:
+            return best[2]
         if default is not None:
             return default
         raise AgentConfigError(
@@ -235,6 +294,7 @@ def langgraph_service(
     stream: bool = False,
     stream_mode: str = "values",
     config: Optional[Mapping[str, Any]] = None,
+    on_interrupt: str = "error",
 ) -> Callable[..., Any]:
     """A compiled LangGraph as an `invoke` service (async engine).
 
@@ -244,14 +304,65 @@ def langgraph_service(
     ``astream`` chunk is sent as a ``STREAM`` event (``event.data``) via
     `from_async_iterator`, and ``onDone`` receives the last chunk. An
     exception is ``onError``; exiting the state cancels the graph run.
+
+    Args:
+        compiled_graph: ``StateGraph(...).compile()`` (anything with
+            ``ainvoke`` / ``astream``).
+        input_from: ``(ctx, event)`` → graph input.
+        output_to: Optional final state (or last chunk) → ``onDone`` data.
+        stream: Stream chunks as ``STREAM`` events.
+        stream_mode: Passed to ``astream``.
+        config: Passed to LangGraph as-is (``recursion_limit``, ...).
+        on_interrupt: What a graph that called ``interrupt()`` means:
+            ``"error"`` (default) -- ``onError`` with
+            `GraphInterruptedError` carrying the interrupt payload(s), so
+            the chart decides (park in its own waiting state, escalate);
+            ``"done"`` -- ``onDone`` with the partial state (the
+            ``__interrupt__`` key is left in place for the caller).
+
+    Returns:
+        An async service for ``MachineLogic(services=...)``.
+
+    Raises:
+        AgentConfigError: *on_interrupt* is not ``"error"`` / ``"done"``.
+
+    🔥 #288 battle (B): a graph that calls ``interrupt()`` RETURNS
+    normally from ``ainvoke`` -- the partial state carries an
+    ``__interrupt__`` key -- so the chart saw ``onDone`` and read a
+    paused graph as a finished one. The default now surfaces it as
+    ``onError`` (`GraphInterruptedError`); "the model proposes, the
+    machine decides" needs the machine to SEE the pause.
     """
+    if on_interrupt not in ("error", "done"):
+        raise AgentConfigError(
+            f"on_interrupt must be 'error' or 'done', got {on_interrupt!r}"
+        )
+    if (
+        stream
+        and on_interrupt == "error"
+        and stream_mode not in _INTERRUPT_VISIBLE_MODES
+    ):
+        # 🔥 review M3: in "messages" / "debug" / list modes no chunk
+        #    carries `__interrupt__`, so the pause could not be seen and
+        #    the run would silently end in onDone -- refuse up front.
+        raise AgentConfigError(
+            f"on_interrupt='error' cannot see an interrupt with "
+            f"stream_mode={stream_mode!r}; use 'values' or 'updates', or "
+            f"on_interrupt='done'"
+        )
     cfg = dict(config) if config is not None else None
+
+    def _settle(out: Any) -> Any:
+        if on_interrupt == "error" and _interrupted(out):
+            raise GraphInterruptedError(out)
+        return output_to(out) if output_to is not None else out
 
     if not stream:
 
         async def run_graph(i: Any, ctx: Any, e: Any) -> Any:
-            out = await compiled_graph.ainvoke(input_from(ctx, e), cfg)
-            return output_to(out) if output_to is not None else out
+            return _settle(
+                await compiled_graph.ainvoke(input_from(ctx, e), cfg)
+            )
 
         return run_graph
 
@@ -264,10 +375,45 @@ def langgraph_service(
     inner = from_async_iterator(chunks)
 
     async def stream_graph(i: Any, ctx: Any, e: Any) -> Any:
-        last = await inner(i, ctx, e)
-        return output_to(last) if output_to is not None else last
+        return _settle(await inner(i, ctx, e))
 
     return stream_graph
+
+
+INTERRUPT_KEY = "__interrupt__"
+#: Stream modes whose LAST chunk carries ``__interrupt__`` after a pause.
+_INTERRUPT_VISIBLE_MODES = ("values", "updates")
+
+
+def _interrupted(out: Any) -> bool:
+    """Did LangGraph pause this run (``interrupt()``)?"""
+    return isinstance(out, Mapping) and bool(out.get(INTERRUPT_KEY))
+
+
+class GraphInterruptedError(AgentError):
+    """The inner LangGraph called ``interrupt()`` -- it is PAUSED, not done.
+
+    ``interrupts`` holds LangGraph's ``Interrupt`` objects (their ``value``
+    is what the graph asked a human); ``state`` is the partial graph
+    state. Resume the graph with ``Command(resume=...)`` on the same
+    ``thread_id`` once the chart has decided.
+    """
+
+    def __init__(self, state: Any) -> None:
+        self.state = state
+        self.interrupts = list(
+            state.get(INTERRUPT_KEY) or ()
+            if isinstance(state, Mapping)
+            else ()
+        )
+        # 🔐 review M4: the payload (what the graph asked a human -- PII,
+        #    amounts, any size) stays on `.interrupts`; `str(exc)` lands in
+        #    snapshots, logs and dead letters, so it carries the COUNT only.
+        n = len(self.interrupts)
+        super().__init__(
+            f"LangGraph interrupt(): the graph is paused ({n} interrupt"
+            f"{'' if n == 1 else 's'} pending; see .interrupts)"
+        )
 
 
 # -----------------------------------------------------------------------------
@@ -279,6 +425,13 @@ class LangChainCallbackPlugin(PluginBase[Any]):
     ``xsm.service_error``) -- they appear in LangSmith traces.
 
     Payloads carry state ids and event types only, never context.
+
+    Args:
+        handler: A ``langchain_core`` ``BaseCallbackHandler``.
+        run_id: The run id events are reported under (default: random).
+
+    Raises:
+        AgentConfigError: *handler* is not a ``BaseCallbackHandler``.
     """
 
     def __init__(self, handler: Any, *, run_id: Any = None) -> None:
