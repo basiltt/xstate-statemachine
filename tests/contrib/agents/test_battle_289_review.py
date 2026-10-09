@@ -146,6 +146,7 @@ def test_r3_serializer_failure_is_an_invalid_reply() -> None:
 
 
 def test_r4_jsonable_handles_bytes_and_unknown_classes() -> None:
+    pytest.importorskip("pydantic_ai")
     from src.xstate_statemachine.contrib.agents.pydantic_ai import _jsonable
 
     class K:
