@@ -9,7 +9,7 @@ permalink: /guide/vs-burr/
 Burr (Apache, incubating) models an application as actions and transitions over a state object, with persisters, a tracking UI and OpenTelemetry. It is the closest in spirit: explicit state machines for LLM apps.
 
 {% assign c = site.data.comparisons.competitors.burr %}
-This table is generated from [`docs/_data/comparisons.json`](https://github.com/basiltt/xstate-statemachine/blob/main/docs/_data/comparisons.json), and corrections are welcome as PRs against that file. Every row carries a source note. It was checked against {{ c.checked }}; see [{{ c.name }}]({{ c.url }}) for the current state.
+This table is generated from [`docs/_data/comparisons.json`](https://github.com/basiltt/xstate-statemachine/blob/main/docs/_data/comparisons.json), and corrections are welcome as PRs against that file. Every row carries a source note. It was checked against {{ c.checked }}; see [{{ c.name }}]({{ c.url }}) for the current state. A test (`tests/test_battle_291_a.py`) fails the build when this check is more than 180 days old, or when the installed release's major version is newer than the one checked, so the table cannot silently go stale.
 
 ## Feature table
 

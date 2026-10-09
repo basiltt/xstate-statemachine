@@ -3,17 +3,17 @@
     "langgraph": {
       "name": "LangGraph",
       "url": "https://github.com/langchain-ai/langgraph",
-      "checked": "langgraph 1.2.14, 2026-10-08"
+      "checked": "langgraph 1.2.14, 2026-10-10"
     },
     "burr": {
       "name": "Burr",
       "url": "https://github.com/apache/burr",
-      "checked": "burr 0.42.0, 2026-10-08"
+      "checked": "apache-burr 0.43.0 (PyPI; formerly `burr`, last 0.42.0), 2026-10-10"
     },
     "statelyai_agent": {
       "name": "@statelyai/agent",
       "url": "https://github.com/statelyai/agent",
-      "checked": "@statelyai/agent 1.1.6 (npm latest, published 2024-09-28), 2026-10-08"
+      "checked": "@statelyai/agent 1.1.6 (npm latest, published 2024-09-28; a 2.0 line on XState 6 is in alpha, 2.0.0-alpha.28 on 2026-10-08), 2026-10-10"
     }
   },
   "rows": [
@@ -25,8 +25,8 @@
       "statelyai_agent": "Yes (XState v5, TypeScript)",
       "source": {
         "langgraph": "langgraph 1.2.14: compiled `StateGraph` added as a node; no compound/parallel state type",
-        "burr": "burr 0.42.0: `burr.core.graph.GraphBuilder`; sub-applications via `burr.core.parallelism.RunnableGraph`",
-        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): package.json deps `xstate ^5.18.2`, `ai ^3.4.6`, `zod`; README \"powered by XState\""
+        "burr": "apache-burr 0.43.0: `burr.core.graph.GraphBuilder`; sub-applications via `burr.core.parallelism.RunnableGraph`",
+        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): deps `xstate ^5.18.2`, `ai ^3.4.6` (Vercel AI SDK); `zod` is a dev dependency used in its examples"
       }
     },
     {
@@ -37,8 +37,8 @@
       "statelyai_agent": "Yes (XState v5)",
       "source": {
         "langgraph": "langgraph 1.2.14: `langgraph.types.Send`; parallel nodes in a superstep",
-        "burr": "burr 0.42.0: `burr.core.parallelism.MapStates` / `MapActions`",
-        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): package.json deps `xstate ^5.18.2`, `ai ^3.4.6`, `zod`; README \"powered by XState\""
+        "burr": "apache-burr 0.43.0: `burr.core.parallelism.MapStates` / `MapActions`",
+        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): deps `xstate ^5.18.2`, `ai ^3.4.6` (Vercel AI SDK); `zod` is a dev dependency used in its examples"
       }
     },
     {
@@ -49,8 +49,8 @@
       "statelyai_agent": "XState guards; tool policy is app code",
       "source": {
         "langgraph": "langgraph 1.2.14: `add_conditional_edges` routing functions",
-        "burr": "burr 0.42.0: `burr.core.when`, `expr`, `default`",
-        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): package.json deps `xstate ^5.18.2`, `ai ^3.4.6`, `zod`; README \"powered by XState\""
+        "burr": "apache-burr 0.43.0: `burr.core.when`, `expr`, `default`",
+        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): deps `xstate ^5.18.2`, `ai ^3.4.6` (Vercel AI SDK); `zod` is a dev dependency used in its examples"
       }
     },
     {
@@ -61,8 +61,8 @@
       "statelyai_agent": "XState `after` (in-process)",
       "source": {
         "langgraph": "langgraph 1.2.14: `StateGraph.add_node(timeout=, retry_policy=)`, `langgraph.types.TimeoutPolicy`",
-        "burr": "burr 0.42.0: no timer / delay API in `burr.core`",
-        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): package.json deps `xstate ^5.18.2`, `ai ^3.4.6`, `zod`; README \"powered by XState\""
+        "burr": "apache-burr 0.43.0: no timer / delay API in `burr.core`",
+        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): deps `xstate ^5.18.2`, `ai ^3.4.6` (Vercel AI SDK); `zod` is a dev dependency used in its examples"
       }
     },
     {
@@ -73,56 +73,56 @@
       "statelyai_agent": "Model it as a state; persistence is yours",
       "source": {
         "langgraph": "langgraph 1.2.14: `langgraph.types.interrupt`, `Command(resume=)`",
-        "burr": "burr 0.42.0: `Application.run(halt_before=, halt_after=)` + persisters",
-        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): package.json deps `xstate ^5.18.2`, `ai ^3.4.6`, `zod`; README \"powered by XState\""
+        "burr": "apache-burr 0.43.0: `Application.run(halt_before=, halt_after=)` + persisters",
+        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): deps `xstate ^5.18.2`, `ai ^3.4.6` (Vercel AI SDK); `zod` is a dev dependency used in its examples"
       }
     },
     {
       "feature": "Persistence / replay",
-      "ours": "Snapshots in SQLite / Redis / Postgres stores, versioned layout, event log replay",
+      "ours": "Snapshots in SQLite / Redis / SQLAlchemy (e.g. Postgres) stores, versioned layout, transition-log `replay()`",
       "langgraph": "Checkpointers with time travel (strong)",
       "burr": "Persisters + tracking UI replay (strong)",
       "statelyai_agent": "XState snapshots; storage is yours",
       "source": {
         "langgraph": "langgraph 1.2.14: `langgraph.checkpoint` savers, `get_state_history`",
-        "burr": "burr 0.42.0: `burr.core.persistence`, `burr.integrations.persisters` (Postgres, Redis, Mongo, SQLite)",
-        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): package.json deps `xstate ^5.18.2`, `ai ^3.4.6`, `zod`; README \"powered by XState\""
+        "burr": "apache-burr 0.43.0: `burr.core.persistence`, `burr.integrations.persisters` (Postgres, Redis, Mongo, SQLite)",
+        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): deps `xstate ^5.18.2`, `ai ^3.4.6` (Vercel AI SDK); `zod` is a dev dependency used in its examples"
       }
     },
     {
       "feature": "Visual editor",
-      "ours": "Stately editor round-trip (the chart is XState JSON)",
+      "ours": "Opens in the Stately editor (the chart is XState JSON; tool policy in `meta`, plus one engine key, `actionErrorPolicy`)",
       "langgraph": "LangSmith Studio, formerly LangGraph Studio (graph view, debugging)",
       "burr": "Burr UI (tracking, graph view)",
       "statelyai_agent": "Stately editor",
       "source": {
         "langgraph": "langgraph 1.2.14: LangSmith Studio docs",
-        "burr": "burr 0.42.0: `burr[tracking]` UI",
-        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): package.json deps `xstate ^5.18.2`, `ai ^3.4.6`, `zod`; README \"powered by XState\""
+        "burr": "apache-burr 0.43.0: `burr[tracking]` UI",
+        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): deps `xstate ^5.18.2`, `ai ^3.4.6` (Vercel AI SDK); `zod` is a dev dependency used in its examples"
       }
     },
     {
       "feature": "Typed context / events",
       "ours": "Pydantic context + event schemas (`[pydantic]`), strict tool-argument schemas",
       "langgraph": "TypedDict / Pydantic graph state",
-      "burr": "State object; typed via Pydantic integration",
+      "burr": "State object; typed via the Pydantic integration",
       "statelyai_agent": "TypeScript types + Zod",
       "source": {
         "langgraph": "langgraph 1.2.14: `StateGraph(state_schema)` TypedDict / Pydantic",
-        "burr": "burr 0.42.0: `burr.integrations.pydantic.PydanticTypingSystem`",
-        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): package.json deps `xstate ^5.18.2`, `ai ^3.4.6`, `zod`; README \"powered by XState\""
+        "burr": "apache-burr 0.43.0: `burr.integrations.pydantic.PydanticTypingSystem`",
+        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): deps `xstate ^5.18.2`, `ai ^3.4.6` (Vercel AI SDK); `zod` is a dev dependency used in its examples"
       }
     },
     {
       "feature": "Observability",
-      "ours": "JSONL trace with `gen_ai.*` fields, OTel plugin, no content by default, secret redaction",
+      "ours": "JSONL trace with `gen_ai.*` fields, OTel spans (`on_span=\"otel\"`), no content by default, secret-key redaction",
       "langgraph": "LangSmith (strong)",
       "burr": "Burr UI + OTel",
       "statelyai_agent": "XState inspection",
       "source": {
         "langgraph": "langgraph 1.2.14: LangSmith tracing",
-        "burr": "burr 0.42.0: `burr.tracking`, `burr.integrations.opentelemetry`",
-        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): package.json deps `xstate ^5.18.2`, `ai ^3.4.6`, `zod`; README \"powered by XState\""
+        "burr": "apache-burr 0.43.0: `burr.tracking`, `burr.integrations.opentelemetry`",
+        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): deps `xstate ^5.18.2`, `ai ^3.4.6` (Vercel AI SDK); `zod` is a dev dependency used in its examples"
       }
     },
     {
@@ -133,8 +133,8 @@
       "statelyai_agent": "Multiple agents as actors",
       "source": {
         "langgraph": "langgraph 1.2.14: langgraph-supervisor / langgraph-swarm packages, subgraphs",
-        "burr": "burr 0.42.0: `RunnableGraph` / sub-applications",
-        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): package.json deps `xstate ^5.18.2`, `ai ^3.4.6`, `zod`; README \"powered by XState\""
+        "burr": "apache-burr 0.43.0: `RunnableGraph` / sub-applications",
+        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): deps `xstate ^5.18.2`, `ai ^3.4.6` (Vercel AI SDK); `zod` is a dev dependency used in its examples"
       }
     },
     {
@@ -145,8 +145,8 @@
       "statelyai_agent": "Drop into any XState app",
       "source": {
         "langgraph": "langgraph 1.2.14: `langgraph.func.entrypoint` / `task`",
-        "burr": "burr 0.42.0: `@action` decorates any function",
-        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): package.json deps `xstate ^5.18.2`, `ai ^3.4.6`, `zod`; README \"powered by XState\""
+        "burr": "apache-burr 0.43.0: `@action` decorates any function",
+        "statelyai_agent": "@statelyai/agent 1.1.6 (npm): deps `xstate ^5.18.2`, `ai ^3.4.6` (Vercel AI SDK); `zod` is a dev dependency used in its examples"
       }
     }
   ],

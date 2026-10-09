@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import re
 import sys
 import uuid
@@ -38,7 +39,11 @@ def _args(argv: Optional[List[str]]) -> argparse.Namespace:
     src.add_argument("--fake", action="store_true", help="offline FakeModel")
     src.add_argument("--provider", choices=["openai", "anthropic"])
     p.add_argument("--prompt", default="refund order 42")
-    p.add_argument("--db", default="support.db")
+    p.add_argument(
+        "--db",
+        default=os.environ.get("XSM_SUPPORT_BOT_DB", "support.db"),
+        help="SQLite file (default: $XSM_SUPPORT_BOT_DB or ./support.db)",
+    )
     p.add_argument("--trace", default="support-trace.jsonl")
     p.add_argument("--reject", action="store_true", help="human says no")
     return p.parse_args(argv)
@@ -55,7 +60,11 @@ async def main(argv: Optional[List[str]] = None) -> int:
         except ProviderUnavailable as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
-    bot = SupportBot(model, db=a.db, trace=a.trace)
+    try:
+        bot = SupportBot(model, db=a.db, trace=a.trace)
+    except OSError as exc:  # 🔥 unwritable cwd / --db directory
+        print(f"error: cannot open {a.db!r}: {exc}", file=sys.stderr)
+        return 2
     key = f"ticket:{uuid.uuid4().hex[:8]}"
     try:
         res = await bot.ticket(key, a.prompt)
