@@ -31,6 +31,7 @@ from bot import (  # noqa: E402
     provider_model,
 )
 from xstate_statemachine.contrib.agents import pending_approval  # noqa: E402
+from xstate_statemachine.exceptions import StoreError  # noqa: E402
 
 
 def _args(argv: Optional[List[str]]) -> argparse.Namespace:
@@ -47,7 +48,8 @@ def _args(argv: Optional[List[str]]) -> argparse.Namespace:
     p.add_argument(
         "--trace",
         default=os.environ.get("XSM_SUPPORT_BOT_TRACE", "support-trace.jsonl"),
-        help="JSONL trace (default: $XSM_SUPPORT_BOT_TRACE or ./support-trace.jsonl)",
+        help="JSONL trace (default: $XSM_SUPPORT_BOT_TRACE or "
+        "./support-trace.jsonl)",
     )
     p.add_argument("--reject", action="store_true", help="human says no")
     return p.parse_args(argv)
@@ -64,9 +66,18 @@ async def main(argv: Optional[List[str]] = None) -> int:
         except ProviderUnavailable as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
+    # 🔥 #291 review (5): an unwritable --trace failed SILENTLY (the plugin's
+    #    open() raised inside an action, which the engine contains) and the
+    #    run printed zero usage with exit 0. Probe it before anything runs.
+    try:
+        with open(a.trace, "a", encoding="utf-8"):
+            pass
+    except OSError as exc:
+        print(f"error: cannot open {a.trace!r}: {exc}", file=sys.stderr)
+        return 2
     try:
         bot = SupportBot(model, db=a.db, trace=a.trace)
-    except OSError as exc:  # 🔥 unwritable cwd / --db directory
+    except (OSError, StoreError) as exc:  # 🔥 unwritable / directory --db
         print(f"error: cannot open {a.db!r}: {exc}", file=sys.stderr)
         return 2
     key = f"ticket:{uuid.uuid4().hex[:8]}"

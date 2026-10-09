@@ -43,6 +43,14 @@ PAGES = ROOT / "docs" / "_guide" / "comparisons"
 EXAMPLE = ROOT / "examples" / "integrations" / "agents_support_bot"
 AGENT_KEYS = ("langgraph", "burr", "statelyai_agent")
 MAX_AGE_DAYS = 180
+# 📝 #291 review (1/2): the two DRIFT checks below depend on today's date
+#    and on the installed competitor release, not on this repo's code --
+#    on a pull request they would go red with no change. They run in the
+#    nightly `comparisons` CI job (`XSM_COMPARISON_DRIFT=1`), like #286's.
+needs_drift = pytest.mark.skipif(
+    os.environ.get("XSM_COMPARISON_DRIFT") != "1",
+    reason="competitor drift check: nightly comparisons job only",
+)
 
 pytest.importorskip("pydantic")
 
@@ -78,6 +86,7 @@ def _steps() -> Any:
 # -----------------------------------------------------------------------------
 # 1. the pages cannot silently rot
 # -----------------------------------------------------------------------------
+@needs_drift
 @pytest.mark.parametrize("key", AGENT_KEYS)
 def test_checked_date_is_recent(key: str) -> None:
     checked = _data()["competitors"][key]["checked"]
@@ -86,6 +95,7 @@ def test_checked_date_is_recent(key: str) -> None:
     assert 0 <= age <= MAX_AGE_DAYS, f"{key}: re-check, {checked!r}"
 
 
+@needs_drift
 def test_installed_langgraph_major_equals_checked_major() -> None:
     pytest.importorskip("langgraph")
     checked = _data()["competitors"]["langgraph"]["checked"]

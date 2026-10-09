@@ -52,9 +52,7 @@ def test_kit_is_present() -> None:
 
 
 def test_every_repo_path_in_the_kit_exists() -> None:
-    paths = re.findall(
-        r"`((?:examples|docs|src|tests)/[^`\s]+)`", _kit_text()
-    )
+    paths = re.findall(r"`((?:examples|docs|src|tests)/[^`\s]+)`", _kit_text())
     assert paths
     for p in paths:
         assert (ROOT / p).exists(), p

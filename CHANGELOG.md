@@ -1492,7 +1492,15 @@ _No unreleased changes yet._
   `XSM_SUPPORT_BOT_DB` (every run wrote `support.db` into the cwd) and
   crashed with a `PermissionError` traceback on an unwritable `--db`
   (one `error:` line, exit 2; `--trace` / `XSM_SUPPORT_BOT_TRACE`
-  override added); the example README promised "2 minutes" without a
+  override added); **review:** the 180-day freshness and
+  LangGraph-major checks were time bombs on every pull request -- they
+  are nightly-only now (`XSM_COMPARISON_DRIFT=1`, run by the
+  `comparisons` CI job, which installs langgraph for it; the pages say
+  "nightly", not "the build"); `tomllib` in two scenario tests broke
+  Python 3.9 / 3.10 (skip-guarded); `run.py --db <directory>` was a
+  `StoreError` traceback (one line, exit 2); an unwritable `--trace`
+  ran SILENTLY with zero usage and exit 0 -- the trace path is probed
+  before the run (one line, exit 2); the example README promised "2 minutes" without a
   measured time (~2 s cold) and did not say what the example writes or
   that the SQLite snapshot holds the conversation (`context.messages`,
   prompt included); the README's "Find your way" table had no agents

@@ -685,12 +685,17 @@ jobs:
       - name: 📦 Install
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -e . "pytest>=8.3.0"
+          python -m pip install -e ".[agents]" "pytest>=8.3.0" "langgraph>=0.2"
 
       - name: 📰 PyPI drift -- every "checked" line names the current release
         env:
           XSM_COMPARISON_DRIFT: "1"
         run: python -m pytest tests/test_battle_286_scenario.py tests/test_battle_286_b.py -k "checked_version or npm_metadata or step_functions_docs" -q -rs
+
+      - name: 🤖 Agent comparison drift -- checked within 180 days, LangGraph major unchanged (#291)
+        env:
+          XSM_COMPARISON_DRIFT: "1"
+        run: python -m pytest tests/test_battle_291_a.py -k "checked_date_is_recent or installed_langgraph_major" -q -rs
 
   # ---------------------------------------------------------------------------
   # 📏 Integration performance budgets (opt-in; never blocks a pull request)

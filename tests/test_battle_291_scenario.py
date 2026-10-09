@@ -408,7 +408,7 @@ def test_launch_kit_library_claims_match_the_code() -> None:
 
     text = "\n".join(f.read_text("utf-8") for f in LAUNCH.glob("*.md"))
     # every extra named in the drafts is a real extra
-    import tomllib
+    tomllib = pytest.importorskip("tomllib")  # 3.11+
 
     extras = tomllib.loads((ROOT / "pyproject.toml").read_text("utf-8"))[
         "project"
@@ -432,7 +432,7 @@ def test_launch_kit_library_claims_match_the_code() -> None:
 # 6. README "For LLM agents" + PyPI keywords
 # -----------------------------------------------------------------------------
 def test_readme_for_llm_agents_section_and_keywords() -> None:
-    import tomllib
+    tomllib = pytest.importorskip("tomllib")  # 3.11+
 
     readme = (ROOT / "README.md").read_text("utf-8")
     assert "### 🤖 For LLM agents" in readme
