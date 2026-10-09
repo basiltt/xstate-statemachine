@@ -479,9 +479,13 @@ class TestSpawnAgent:
             FakeModel([{"text": "a"}] * 3, is_async=False),
             budget={"max_turns": 1},
         )
-        i = SyncInterpreter(
-            create_machine(parent_chart([]), logic=lg.merge(noter(got)))
-        ).use(p).start()
+        i = (
+            SyncInterpreter(
+                create_machine(parent_chart([]), logic=lg.merge(noter(got)))
+            )
+            .use(p)
+            .start()
+        )
         i.send("TASK", task="1")
         i.send("TASK", task="2")
         assert len(got) == 1
@@ -591,8 +595,10 @@ class TestCharts:
         import os
 
         env = {**os.environ, "PYTHONPATH": "src", "PYTHONUTF8": "1"}
-        for args in (["validate", str(f)], ["inspect", str(f), "--plain",
-                                            "--no-events"]):
+        for args in (
+            ["validate", str(f)],
+            ["inspect", str(f), "--plain", "--no-events"],
+        ):
             r = subprocess.run(
                 env_cmd + args, capture_output=True, text=True, env=env
             )
@@ -660,9 +666,7 @@ class TestCharts:
         return out
 
     def test_held_pipeline_max_revisions_zero(self) -> None:
-        s, ctx = self._pipeline(
-            FakeModel([{"text": "no"}], is_async=False), 0
-        )
+        s, ctx = self._pipeline(FakeModel([{"text": "no"}], is_async=False), 0)
         assert s == {"pipeline.failed"} and ctx["revisions"] == 0
 
     def test_held_pipeline_reviewer_fails(self) -> None:

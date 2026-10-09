@@ -1498,7 +1498,18 @@ _No unreleased changes yet._
   `AgentTracePlugin` JSONL printed one `? ""` row per line and exited 0
   (exit 1 now, naming `InspectorPlugin(JsonLinesSink)` /
   `xsm sim --record`); the supervisor chart's description claimed a
-  `sendTo`/`raise` handoff that does not exist. Docs: the
+  `sendTo`/`raise` handoff that does not exist; **review:** one `inf`
+  token count made `exceeded()` raise inside the fail-open hook on
+  every later report (the global budget was permanently disabled --
+  non-finite counts are 0 now); a report to an already-stopped parent
+  was still charged; the de-dup ring held up to 10,000 report payloads
+  (transcripts) -- released once the parent dequeues the report; a
+  child chart reporting from `exit` / a transition's `actions` /
+  `onDone` was wrongly refused as "never reports" (every action list is
+  scanned); a `strict: true` parent without `BUDGET_EXCEEDED` lost the
+  trip silently (`check_budget_event_declared`, run by `spawn_agent`
+  inside its action, loudly); plugin de-dup state shared across threads
+  is locked. Docs: the
   `BudgetPlugin` reference described the old dequeue-time rollup;
   Guarantees (seven multi-agent promises, each with a test anchor, and
   what is NOT promised: reports that never arrive are not counted,

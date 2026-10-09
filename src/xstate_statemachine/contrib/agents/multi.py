@@ -29,6 +29,7 @@ import inspect
 import itertools
 import logging
 import math
+import threading
 from collections import OrderedDict
 from typing import (
     Any,
@@ -60,7 +61,12 @@ from .tools import ALL_TOOLS, ToolRegistry
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["BudgetPlugin", "handoff_guard", "spawn_agent"]
+__all__ = [
+    "BudgetPlugin",
+    "check_budget_event_declared",
+    "handoff_guard",
+    "spawn_agent",
+]
 
 _USAGE_KEYS = ("turns", "input_tokens", "output_tokens", "cost_usd")
 _SEEN_MAX = 10_000  # de-dup ring for reports seen by both hooks
@@ -143,7 +149,14 @@ def spawn_agent(
     action_name = "spawn" + name[:1].upper() + name[1:]
     counter = itertools.count(1)
 
+    checked: Set[int] = set()
+
     def _prepare(i: Any, ctx: Dict[str, Any], e: Any) -> Optional[Any]:
+        if id(i) not in checked:
+            checked.add(id(i))
+            if len(checked) > 64:
+                checked.clear()
+            check_budget_event_declared(i)  # loud: inside an action
         if ctx.get("budget_exceeded"):
             logger.warning(
                 "🛑 %s: global budget exceeded; not spawning", action_name
@@ -274,9 +287,12 @@ class BudgetPlugin(PluginBase[Any]):
         #    engine's `wait=True` envelope copy. Bounded FIFO.
         self._seen: "OrderedDict[int, Any]" = OrderedDict()
         self._tripped: Dict[int, Any] = {}
+        # 📝 #290 review (5): one plugin may be `.use()`d by several sync
+        #    supervisors on different threads; the de-dup maps are shared.
+        self._lock = threading.Lock()
 
     def exceeded(self, totals: Mapping[str, Any]) -> bool:
-        tokens = int(totals.get("input_tokens", 0)) + int(
+        tokens = _num(totals.get("input_tokens", 0)) + _num(
             totals.get("output_tokens", 0)
         )
         if self.max_total_tokens is not None and (
@@ -284,7 +300,7 @@ class BudgetPlugin(PluginBase[Any]):
         ):
             return True
         return self.max_total_usd is not None and (
-            float(totals.get("cost_usd", 0.0)) >= self.max_total_usd
+            _num(totals.get("cost_usd", 0.0)) >= self.max_total_usd
         )
 
     def guards(self) -> MachineLogic:
@@ -292,6 +308,19 @@ class BudgetPlugin(PluginBase[Any]):
             return not ctx.get("budget_exceeded", False)
 
         return MachineLogic(guards={"underGlobalBudget": under})
+
+    def on_interpreter_start(self, interpreter: Any) -> None:
+        # 🔥 #290 review (6): `BUDGET_EXCEEDED` is sent from a hook; under
+        #    `strict: true` an undeclared event raises there, the error is
+        #    swallowed and the trip is lost while the flag stays True.
+        #    Plugin hooks are fail-open, so this cannot stop `start()`
+        #    itself -- it logs here and `spawn_agent` re-checks inside
+        #    its action (which DOES fail loudly) before the first spawn.
+        try:
+            check_budget_event_declared(interpreter)
+        except AgentConfigError as exc:
+            logger.error("🔥 %s", exc)
+            raise
 
     def on_before_send(self, interpreter: Any, event: Any) -> Optional[Any]:
         # 🔥 #290 battle: the rollup ran in `on_event_received`, i.e. when
@@ -305,7 +334,12 @@ class BudgetPlugin(PluginBase[Any]):
         #    event itself is sent when the report is dequeued (below) so
         #    it queues AFTER the report: the result that tripped the
         #    budget is still collected. Returns None: never blocks.
-        self._rollup(interpreter, event)
+        # 🔥 #290 review (2): this hook also fires for a report the parent
+        #    will DROP (already stopped); counting it inflated the totals
+        #    of a finished run. Only a running parent is charged here; a
+        #    report that still enters the machine is counted on dequeue.
+        if getattr(interpreter, "status", "running") == "running":
+            self._rollup(interpreter, event)
         return None
 
     def on_event_received(self, interpreter: Any, event: Any) -> None:
@@ -314,8 +348,16 @@ class BudgetPlugin(PluginBase[Any]):
         #    remembers the events it has already seen.
         self._rollup(interpreter, event)
         p = getattr(event, "payload", None)
-        if self._tripped.get(id(p), self) is p:
-            del self._tripped[id(p)]
+        with self._lock:
+            # 📝 #290 review (3): a report that reached the machine needs
+            #    no further de-dup -- release its payload (transcripts
+            #    may be large) instead of holding 10k of them.
+            if self._seen.get(id(p), self) is p:
+                del self._seen[id(p)]
+            tripped = self._tripped.get(id(p), self) is p
+            if tripped:
+                del self._tripped[id(p)]
+        if tripped:
             interpreter.send(
                 "BUDGET_EXCEEDED",
                 total_usage=dict(interpreter.context.get("total_usage") or {}),
@@ -330,11 +372,12 @@ class BudgetPlugin(PluginBase[Any]):
         if not isinstance(payload, Mapping):
             payload = {}
         key = id(payload)
-        if self._seen.get(key, self) is payload:
-            return
-        self._seen[key] = payload
-        while len(self._seen) > _SEEN_MAX:
-            self._seen.popitem(last=False)
+        with self._lock:
+            if self._seen.get(key, self) is payload:
+                return
+            self._seen[key] = payload
+            while len(self._seen) > _SEEN_MAX:
+                self._seen.popitem(last=False)
         usage = payload.get("usage") if isinstance(payload, Mapping) else {}
         usage = usage if isinstance(usage, Mapping) else {}
         ctx = interpreter.context
@@ -357,7 +400,25 @@ class BudgetPlugin(PluginBase[Any]):
         ctx["usage_by_agent"] = by_agent
         if not ctx.get("budget_exceeded") and self.exceeded(totals):
             ctx["budget_exceeded"] = True
-            self._tripped[key] = payload
+            with self._lock:
+                self._tripped[key] = payload
+
+
+def check_budget_event_declared(interpreter: Any) -> None:
+    """Raise `AgentConfigError` when a ``strict`` parent chart does not
+    declare ``BUDGET_EXCEEDED`` -- `BudgetPlugin` could never deliver it.
+    """
+    machine = getattr(interpreter, "machine", None)
+    known = getattr(machine, "is_known_event", None)
+    if (
+        getattr(interpreter, "strict", False)
+        and callable(known)
+        and not known("BUDGET_EXCEEDED", user_sent=True)
+    ):
+        raise AgentConfigError(
+            "BudgetPlugin: a strict chart must declare the BUDGET_EXCEEDED "
+            "event it will receive"
+        )
 
 
 def _check_limit(name: str, v: Any, int_only: bool) -> None:
@@ -377,10 +438,13 @@ def _require_reporting(machine: MachineNode) -> None:
     """🔥 #290 battle (A): a child chart with no ``notifyParent`` entry
     never reports, so the parent waited for AGENT_DONE forever (and the
     BudgetPlugin never saw its spend). Refused at construction."""
+    # 📝 #290 review (4): `entry` only would wrongly refuse a chart that
+    #    reports from `exit`, a transition's `actions`, `onDone`/`onError`
+    #    or `always` -- every action list is scanned.
     stack: List[Any] = [machine]
     while stack:
         node = stack.pop()
-        for ad in getattr(node, "entry", None) or []:
+        for ad in _all_actions(node):
             if getattr(ad, "type", None) == "notifyParent":
                 return
         stack.extend((getattr(node, "states", None) or {}).values())
@@ -390,12 +454,40 @@ def _require_reporting(machine: MachineNode) -> None:
     )
 
 
+def _all_actions(node: Any) -> Iterable[Any]:
+    """Every `ActionDefinition` reachable from one state node."""
+    yield from getattr(node, "entry", None) or ()
+    yield from getattr(node, "exit", None) or ()
+    transitions: List[Any] = []
+    for attr in ("on", "after", "on_done", "on_error"):
+        value = getattr(node, attr, None)
+        if isinstance(value, Mapping):  # `on` holds `always` under ""
+            for t in value.values():
+                transitions.extend(t if isinstance(t, list) else [t])
+        elif isinstance(value, list):
+            transitions.extend(value)
+        elif value is not None:
+            transitions.append(value)
+    inv = getattr(node, "invoke", None)
+    for i in inv if isinstance(inv, list) else ([inv] if inv else []):
+        for attr in ("on_done", "on_error"):
+            t = getattr(i, attr, None)
+            transitions.extend(
+                t if isinstance(t, list) else ([t] if t else [])
+            )
+    for t in transitions:
+        yield from getattr(t, "actions", None) or ()
+
+
 def _num(value: Any) -> Any:
     """A usage number from a child's report: non-numeric / bool / NaN /
     negative counts never reduce or poison the rollup (0)."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return 0
-    if value != value or value < 0:
+    # 🔥 #290 review (1): `inf` passed; `exceeded()` then raised
+    #    OverflowError inside a fail-open hook on EVERY later report --
+    #    the global budget was permanently disabled by one bad number.
+    if not math.isfinite(value) or value < 0:
         return 0
     return value
 
