@@ -113,6 +113,50 @@ def test_readme_operate_commands_work(fulfilment):
     assert fulfilment.dead_letters.list() == []
 
 
+def _saga_commands():
+    """The `xsm asyncapi` lines of the README's "Sagas" block."""
+    text = (HERE / "README.md").read_text("utf-8")
+    section = text[text.index("## Sagas") :]
+    block = re.search(r"```bash\n(.*?)```", section, flags=re.S).group(1)
+    lines = [ln.split("  #")[0].strip() for ln in block.splitlines()]
+    return [ln for ln in lines if ln.startswith("xsm asyncapi")]
+
+
+def test_readme_asyncapi_commands_work(tmp_path):
+    # 🐛 #295 battle (B): the README never showed `xsm asyncapi`.
+    import shlex
+    import shutil
+
+    for name in ("machine.json", "warehouse.json"):
+        shutil.copy(HERE / name, tmp_path / name)
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(ROOT / "src")] + [p for p in [env.get("PYTHONPATH")] if p]
+    )
+    env["PYTHONUTF8"] = "1"
+    commands = _saga_commands()
+    assert len(commands) == 3, commands
+    for line in commands:
+        argv = shlex.split(line)
+        if "--validate" in argv:
+            pytest.importorskip("jsonschema")
+        proc = subprocess.run(
+            [sys.executable, "-m", "xstate_statemachine", "--plain"]
+            + argv[1:],
+            cwd=str(tmp_path),
+            env=env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=120,
+        )
+        out = proc.stdout + proc.stderr
+        assert proc.returncode == 0 and "Traceback" not in out, (line, out)
+    doc = json.loads((tmp_path / "asyncapi.json").read_text("utf-8"))
+    assert doc["servers"]["default"]["host"] == "localhost:9092"
+    assert any(k.startswith("consume.") for k in doc["components"]["messages"])
+
+
 #: What each offline stand-in needs (mirrors tests/test_all_brokers.py).
 _OFFLINE_NEEDS = {
     "redis-streams": ("redis", "fakeredis"),

@@ -187,7 +187,7 @@ class TestCli(unittest.TestCase):
         with mock.patch.object(
             asyncapi_mod, "validate_asyncapi", side_effect=bad
         ):
-            self.assertIn("invalid AsyncAPI", self._exit2(validate=True))
+            self.assertIn("not valid AsyncAPI", self._exit2(validate=True))
 
     def test_missing_jsonschema_message_names_a_real_install(self) -> None:
         # 🐛 told users to `pip install "xstate-statemachine[asyncapi]"` --
