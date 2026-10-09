@@ -41,8 +41,14 @@ def test_unknown_adapter_option_is_named_with_a_hint() -> None:
     with pytest.raises(TypeError) as ei:
         SyncBroker(_T(), sasl_plain_password="s3cret", max_bytes=10)
     msg = str(ei.value)
-    assert "sasl_plain_password" in msg and "client_kw" in msg
+    assert "sasl_plain_password" in msg and "client=" in msg
     assert "s3cret" not in msg  # the VALUE never appears
+    # the Kafka adapter names ITS client option (review L2)
+    pytest.importorskip("aiokafka")
+    from xstate_statemachine.contrib.brokers.kafka import KafkaBroker
+
+    with pytest.raises(TypeError, match="client_kw"):
+        KafkaBroker(bootstrap_servers="x:1", sasl_plain_password="s3cret")
 
 
 def _xsm(*args: str) -> "subprocess.CompletedProcess[str]":

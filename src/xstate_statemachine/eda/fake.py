@@ -274,7 +274,11 @@ class _Core:
             self.nacked.append(d.envelope)
             if requeue:
                 # 📝 As every real adapter (`_base._requeue`): the
-                #    redelivery carries ``attempt + 1``.
+                #    redelivery carries ``attempt + 1``. ⚠️ Unlike them,
+                #    the fake has no broker-side count and so keeps a
+                #    WIRE attempt a producer set (#294: the real adapters
+                #    reset it to the broker's count -- a test that forges
+                #    `xsmattempt` passes here and is reset there).
                 env = pristine.with_attempt(pristine.attempt + 1)
                 self._queues.setdefault(d.topic, deque()).appendleft(env)
 

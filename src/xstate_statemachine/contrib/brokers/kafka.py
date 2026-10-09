@@ -270,6 +270,10 @@ class KafkaBroker(AsyncBroker):
             `contrib.brokers`.
     """
 
+    CLIENT_HINT = (
+        "`client_kw=` (aiokafka options) or `producer=` / `consumer_factory=`"
+    )
+
     def __init__(
         self,
         *,

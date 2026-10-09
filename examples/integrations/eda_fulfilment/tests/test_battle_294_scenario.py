@@ -237,7 +237,7 @@ def test_outage_mid_run_is_observable_and_loses_nothing(
 # -----------------------------------------------------------------------------
 # 3. two consumers on one topic
 # -----------------------------------------------------------------------------
-def test_two_consumers_share_the_topic_once_each_in_order(
+def test_two_consumers_share_the_topic_once_each(
     broker_name: str, stand_in: Any, tmp_path: Path
 ) -> None:
     a = _build(broker_name, tmp_path, stand_in, "c-1")
@@ -250,10 +250,17 @@ def test_two_consumers_share_the_topic_once_each_in_order(
         errors: List[str] = []
 
         def pump(replica: Any) -> None:
+            # 📝 until quiet with a deadline (review L4): a fixed round
+            #    count stopped early on a slow runner
+            deadline = time.monotonic() + 240
+            idle = 0
             try:
-                for _ in range(40):
+                while time.monotonic() < deadline and idle < 6:
                     s = replica.pump()
-                    if not s["processed"] and not s["duplicates"]:
+                    if s["processed"] or s["duplicates"]:
+                        idle = 0
+                    else:
+                        idle += 1
                         time.sleep(0.05)
             except Exception as exc:  # noqa: BLE001 - reported
                 errors.append(repr(exc)[:200])
@@ -263,6 +270,7 @@ def test_two_consumers_share_the_topic_once_each_in_order(
             t.start()
         for t in ts:
             t.join(300)
+        assert not any(t.is_alive() for t in ts), "a replica hung"
         assert errors == [], errors
         a.pump()
         b.pump()
@@ -270,6 +278,12 @@ def test_two_consumers_share_the_topic_once_each_in_order(
             oid = f"o-{i % 6}-{i}"
             assert a.state_of("order:" + oid) == ["order.shipped"], oid
             assert a.transitions("order:" + oid, "PAY") == 1, oid
+            # 📝 one command per subject: this checks each order's OWN
+            #    chain, not inter-command order under contention (the
+            #    guide says competing consumers on one stream / queue /
+            #    durable can reorder a subject; the inbox + lock make the
+            #    outcome converge -- `test_many_orders...` covers one
+            #    consumer, where the order claim holds)
             assert _events_in_order(a, "order:" + oid) == [
                 "PAY",
                 "PACKED",

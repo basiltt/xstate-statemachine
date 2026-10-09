@@ -208,6 +208,8 @@ class RabbitMQBroker(AsyncBroker):
             `contrib.brokers`.
     """
 
+    CLIENT_HINT = "`connect_kw=` (aio-pika options) or `connection=`"
+
     def __init__(
         self,
         *,

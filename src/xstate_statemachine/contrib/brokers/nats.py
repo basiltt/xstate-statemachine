@@ -197,6 +197,8 @@ class NatsBroker(AsyncBroker):
             `contrib.brokers`.
     """
 
+    CLIENT_HINT = "`connect_kw=` (nats-py options) or `js=`"
+
     def __init__(
         self,
         *,

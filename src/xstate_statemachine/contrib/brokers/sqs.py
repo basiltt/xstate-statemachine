@@ -151,6 +151,10 @@ class SyncSqsBroker(SyncBroker):
             `contrib.brokers`. SQS caps a message at 256 KiB anyway.
     """
 
+    CLIENT_HINT = (
+        "the boto3 `client=` you build (credentials, endpoint, region)"
+    )
+
     def __init__(
         self,
         client: Any = None,

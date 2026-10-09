@@ -126,6 +126,10 @@ def _notify(callback: Optional[Callable[..., Any]], *args: Any) -> None:
 class _Core:
     """Thread-safe local state shared by the sync and async bases."""
 
+    #: Where this adapter takes its client's own options (named in the
+    #: unknown-option error); subclasses override.
+    CLIENT_HINT = "the client object you pass in (`client=`)"
+
     def __init__(
         self,
         *,
@@ -143,10 +147,9 @@ class _Core:
             names = ", ".join(sorted(unknown))
             raise TypeError(
                 f"unknown broker option(s): {names}. Client options "
-                "(TLS, SASL, credentials) go in `client_kw=` / "
-                "`connect_kw=` / `client=`; the adapter's own options are "
-                "max_bytes, on_disconnect, on_reconnect, on_undecodable, "
-                "dead_letters."
+                f"(TLS, SASL, credentials) go in {self.CLIENT_HINT}; the "
+                "adapter's own options are max_bytes, on_disconnect, "
+                "on_reconnect, on_undecodable, dead_letters."
             )
         self.max_bytes = int(max_bytes)
         self.on_disconnect = on_disconnect

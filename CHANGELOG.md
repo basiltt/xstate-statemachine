@@ -27,7 +27,8 @@ _No unreleased changes yet._
   boto3: FIFO `MessageGroupId` = subject, `MessageDeduplicationId` =
   envelope id, `extend_visibility`). One shared core gives every adapter
   local requeue-to-head, settle-once, broker redelivery counts stamped as
-  envelope attempts (so poison reaches the DLQ across restarts, X0.8),
+  envelope attempts (so poison reaches the DLQ across restarts, X0.8 --
+  except on Kafka, which keeps no delivery count),
   the size cap before parsing (X0.4), undecodable messages dropped never
   looped, and `healthy` / `on_disconnect` / `on_reconnect`. Every adapter
   passes `AsyncBrokerContract` in CI (fakeredis, moto, in-memory client

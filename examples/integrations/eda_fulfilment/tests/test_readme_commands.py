@@ -52,6 +52,7 @@ def test_python_dash_m_exits_zero():
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=300,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
@@ -95,6 +96,7 @@ def test_readme_operate_commands_work(fulfilment):
             env=env,
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=120,
         )
         out = proc.stdout + proc.stderr
@@ -161,6 +163,7 @@ def test_readme_broker_table_commands_run_offline(line, monkeypatch):
         env=env,
         capture_output=True,
         text=True,
+        encoding="utf-8",
         timeout=300,
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr

@@ -31,18 +31,18 @@ EXIT_USAGE = 2
 _SCAN_ALL = 2**62
 
 
-#: The command name error lines are prefixed with; `xsm dlq` borrows
-#: `open_store` and sets its own (#294 review: it said "xsm snapshots").
-_PROG = ["xsm snapshots"]
+PROG = "xsm snapshots"
 
 
-def _fail(msg: str) -> "SystemExit":
+def _fail(msg: str, prog: str = PROG) -> "SystemExit":
     # 📝 stderr, so `--json > out.json` never captures an error line.
-    print(f"{_PROG[0]}: error: {msg}", file=sys.stderr)
+    #    *prog* names the command the operator ran -- `xsm dlq` borrows
+    #    `open_store` (#294 review: its errors said "xsm snapshots").
+    print(f"{prog}: error: {msg}", file=sys.stderr)
     return SystemExit(EXIT_USAGE)
 
 
-def open_store(url: str, *, must_exist: bool = False) -> Any:
+def open_store(url: str, *, must_exist: bool = False, prog: str = PROG) -> Any:
     """``sqlite:///path.db`` → `SQLiteStore`; ``file:///dir`` → `FileStore`;
     ``memory://`` → a fresh (empty) `MemoryStore`.
 
@@ -50,6 +50,7 @@ def open_store(url: str, *, must_exist: bool = False) -> Any:
         url: The store URL.
         must_exist: Refuse a database file / directory that does not exist
             (the `xsm snapshots` inspection path must never create one).
+        prog: The command name error lines are prefixed with.
     """
     from ...persistence import FileStore, MemoryStore, SQLiteStore
 
@@ -70,12 +71,13 @@ def open_store(url: str, *, must_exist: bool = False) -> Any:
         if must_exist:
             # 📝 #263 battle: a fresh in-process store is always empty --
             #    listing it answered "store is empty", exit 0, a lie.
-            raise _fail("memory:// is a new empty store in this process")
+            raise _fail("memory:// is a new empty store in this process", prog)
         return MemoryStore()
     if scheme not in ("sqlite", "file"):
         raise _fail(
             f"unsupported store URL {url!r}: use sqlite:///path.db or "
-            f"file:///dir"
+            f"file:///dir",
+            prog,
         )
     if must_exist:
         # 📝 #263 battle: SQLiteStore/FileStore CREATE a missing target --
@@ -84,7 +86,7 @@ def open_store(url: str, *, must_exist: bool = False) -> Any:
         ok = p.is_file() if scheme == "sqlite" else p.is_dir()
         if not ok:
             what = "database file" if scheme == "sqlite" else "directory"
-            raise _fail(f"no such {what}: {path!r}")
+            raise _fail(f"no such {what}: {path!r}", prog)
     return SQLiteStore(path) if scheme == "sqlite" else FileStore(path)
 
 

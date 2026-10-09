@@ -293,6 +293,8 @@ class SyncRedisStreamsBroker(SyncBroker):
             `contrib.brokers`.
     """
 
+    CLIENT_HINT = "`url=` / `client=` (a redis-py client)"
+
     def __init__(
         self,
         client: Any = None,
