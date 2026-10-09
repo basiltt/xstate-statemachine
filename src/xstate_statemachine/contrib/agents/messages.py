@@ -141,11 +141,25 @@ class Usage:
     @classmethod
     def from_dict(cls, d: Optional[Mapping[str, Any]]) -> "Usage":
         d = d or {}
+        # 📝 #287 battle (B's note): a provider's "nan" / garbage string
+        #    crashed `int()` -- a usage number that is not a number is
+        #    sanitised downstream (`budgets._spent` fails closed), so it is
+        #    carried through as-is here rather than raising in the parser
         return cls(
-            input_tokens=int(d.get("input_tokens", 0) or 0),
-            output_tokens=int(d.get("output_tokens", 0) or 0),
-            cost_usd=float(d.get("cost_usd", 0.0) or 0.0),
+            input_tokens=_num(d.get("input_tokens"), int),
+            output_tokens=_num(d.get("output_tokens"), int),
+            cost_usd=_num(d.get("cost_usd"), float),
         )
+
+
+def _num(value: Any, kind: Any) -> Any:
+    """``kind(value)`` or ``nan`` when the provider sent garbage."""
+    if value is None or value == "":
+        return kind(0)
+    try:
+        return kind(value)
+    except (TypeError, ValueError, OverflowError):
+        return float("nan")
 
 
 @dataclass(frozen=True)

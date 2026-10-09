@@ -120,3 +120,33 @@ def test_gitignore_covers_what_run_py_writes(copy):
         if p.is_file() and not (HERE / p.name).exists()
     }
     assert made and made <= set(ignored)
+
+
+# -----------------------------------------------------------------------------
+# 🛠️ "Operate it": the ops day, literally, in separate processes
+# -----------------------------------------------------------------------------
+def _ops_block() -> List[str]:
+    sec = README.split("## Operate it", 1)[1]
+    cmds = re.search(r"```bash\n(.*?)```", sec, re.S).group(1)
+    return [c for c in cmds.splitlines() if c.startswith("python ops.py")]
+
+
+def test_operate_it_commands_match_the_transcript(copy):
+    # Arrange
+    cmds = _ops_block()
+    assert cmds, "README lost its Operate it commands"
+    shown = re.search(
+        r"```text\n(.*?)```", README.split("## Operate it", 1)[1], re.S
+    ).group(1)
+
+    # Act: every command is its own process on the same support.db
+    outs, codes = [], []
+    for cmd in cmds:
+        res = _run(copy, cmd)
+        assert "Traceback" not in res.stderr, (cmd, res.stderr)
+        codes.append(res.returncode)
+        outs.append(res.stdout + res.stderr)
+
+    # Assert: transcript as shown, the double approval refused (exit 2)
+    assert "".join(outs) == shown
+    assert codes == [0, 0, 0, 0, 2, 0, 0]

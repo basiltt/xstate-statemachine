@@ -81,6 +81,14 @@ def to_anthropic_messages(
 
 
 def to_anthropic_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Tool descriptors → Anthropic ``tools=`` (``input_schema``).
+
+    Args:
+        tools: ``{name, description, parameters}`` from `Tool.schema`.
+
+    Returns:
+        The list to pass as ``tools=``.
+    """
     return [
         {
             "name": t["name"],
@@ -94,6 +102,15 @@ def to_anthropic_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 def from_anthropic_response(
     resp: Any, *, prices: Optional[Mapping[str, float]] = None
 ) -> ModelResponse:
+    """An Anthropic message (SDK object or dict) → `ModelResponse`.
+
+    Args:
+        resp: The ``messages.create`` result.
+        prices: ``{"input_per_mtok", "output_per_mtok"}``; ``None`` → $0.
+
+    Returns:
+        Text blocks joined, ``tool_use`` blocks as tool calls, usage.
+    """
     texts: List[str] = []
     calls: List[ToolCall] = []
     for block in field(resp, "content") or []:

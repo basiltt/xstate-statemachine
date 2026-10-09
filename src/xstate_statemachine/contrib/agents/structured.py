@@ -27,7 +27,7 @@ from typing import Any, Callable, Dict, Optional, Tuple
 
 from pydantic import BaseModel
 
-from .core import _parse_json_text, _resolve_model, _validate_output
+from ._output import _parse_json_text, _resolve_model, _validate_output
 from .messages import AgentConfigError
 
 __all__ = [
