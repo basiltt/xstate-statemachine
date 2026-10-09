@@ -1457,6 +1457,67 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **`[agents]`, as battle-tested (#287).** The `agents_support_bot`
+  example on a support day: 200 tickets through two bot replicas (half
+  refunds parked for a human, lookups, hostile and broken ones); the
+  provider raising, returning garbage, hanging past `model_timeout_s`,
+  naming unknown tools, sending the wrong argument types and 50 tool
+  calls in one turn; a restart followed by the SAME approval from two
+  replicas at once; a human who never comes; prompt injection, a 1 MB
+  prompt, refund amounts of -1 / 10**12 / `"all"`; a 1,000-ticket soak
+  (`examples/integrations/agents_support_bot/tests/
+  test_battle_287_scenario.py`, `tests/contrib/agents/
+  test_battle_287_{scenario_unit,a,b}.py`). Found and fixed -- X0.13
+  gaps first: **tool arguments were validated only in `run_tool`, AFTER
+  the human gate** -- a reviewer was asked to approve
+  `refund_order(amount_cents="all")`, a call that could never run (the
+  `toolAllowed` guard validates against the tool's schema first; the
+  error names the field, never the value); **value ranges declared as
+  `Annotated[int, Field(gt=0, le=...)]` were silently dropped** (type
+  hints were read without `include_extras`), so the obvious way to
+  refuse a -1-cent refund did nothing; **a model that reused an earlier
+  tool-call id could get a replayed `HUMAN_APPROVED` to approve a
+  DIFFERENT side-effect call** (any id already in the conversation is a
+  duplicate: denied); **provider usage numbers were trusted** -- negative
+  tokens or cost REFUNDED the budget (`input_tokens=-1000` bought ~65
+  extra turns under `max_tokens=20`) and a NaN cost made every later
+  total NaN (negatives spend 0, NaN / inf / garbage exhaust the budget,
+  `Usage.from_dict` no longer crashes on `"nan"`); `Budget` limits were
+  never validated (`"20"` read as exhausted, `True` was a turn limit of
+  1, NaN refused every turn; `AgentConfigError` now, including unknown
+  keys); tool `arguments` that were a list of pairs were coerced into an
+  object and the tool RAN on input that was never an object, a string /
+  int argument crashed `denyTool` mid-transition, 1,500-deep arguments
+  raised `RecursionError` and were retried and billed again (all
+  `tool_denied`); a bad `"module:Model"` `output_model` leaked a raw
+  `ModuleNotFoundError`; a hung SYNC model under `run_agent` could not
+  be timed out (`model_timeout_s` waited inline; it now runs on a worker
+  thread and the hung call is abandoned -- documented) and
+  `run_agent(timeout_s=)` bounded only the final wait, not the sends;
+  the Anthropic adapter ran a tool with no parameters on a malformed
+  `input`; both adapters could send a tool result whose proposing turn
+  `max_messages` had trimmed (the provider APIs reject that). Also:
+  `core.py` was 937 lines (split into `budgets.py`, `_output.py`,
+  `_allowlist.py`); the `[agents]` CI cell never ran the example's
+  tests (gated on the FastAPI stack by mistake) and `G8_agents.py`
+  tested the main checkout's install instead of the worktree. Docs: the
+  agents guide names every public symbol, its Guarantees box states
+  exactly what X0.13 gives (args checked before the gate; value ranges
+  are the tool's job -- `Field(gt=0)` example; a side effect after
+  `timeout_s` may still land; a sync model's hung call is abandoned),
+  gains an Operations section (one `DueTimerScanner` per store for
+  `awaiting_human` deadlines -- a plain reload re-arms the timer, it
+  does not fire it; what to alert on; sizing; trace rotation) and
+  Troubleshooting for every provoked error; the example gains `ops.py`
+  (`open` / `pending` / `approve` / `reject` / `scan`, each its own
+  process on one `support.db`; a second approval exits 2) and an
+  "Operate it" README section, tested. Held: tool names differing in
+  case / trailing space / fullwidth Unicode are denied; partial, extra
+  or duplicated `call_ids` are refused; `HUMAN_APPROVED` outside
+  `awaiting_human` is ignored; `"*"` means registered tools only; the
+  system prompt and the original task survive `max_messages` trimming;
+  `sk-...` / Bearer values are scrubbed from tool results; no leak over
+  2,000 runs.
 - **`[celery]`, as battle-tested (#292).** The Celery bridge on a
   fulfilment day: 100 orders through `@statechart_task` as two
   interleaved delivery streams with DUPLICATES (`acks_late`); a worker
