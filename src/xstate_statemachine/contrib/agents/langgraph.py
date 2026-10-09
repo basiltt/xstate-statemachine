@@ -65,6 +65,7 @@ LANGGRAPH_TESTED: Tuple[Tuple[int, int], Tuple[int, int]] = ((0, 2), (2, 0))
 
 
 def _parse(version: str) -> Tuple[int, int]:
+    """``"1.2.0rc1"`` → ``(1, 2)``; missing or non-numeric parts are 0."""
     parts = []
     for piece in version.split(".")[:2]:
         digits = "".join(ch for ch in piece if ch.isdigit())
@@ -75,8 +76,17 @@ def _parse(version: str) -> Tuple[int, int]:
 
 
 def check_langgraph_version(version: str) -> None:
-    """Raise `ImportError` naming the tested range when *version* is
-    outside `LANGGRAPH_TESTED`."""
+    """Refuse a LangGraph version outside `LANGGRAPH_TESTED`.
+
+    Called at import time with the installed version; public so an
+    operator can check a candidate pin before upgrading.
+
+    Args:
+        version: A LangGraph version string (``"0.6.4"``, ``"1.2.0rc1"``).
+
+    Raises:
+        ImportError: Naming the tested range and the found version.
+    """
     lo, hi = LANGGRAPH_TESTED
     if not (lo <= _parse(version) < hi):
         raise ImportError(
@@ -149,6 +159,17 @@ def statechart_node(
         event_from_state: Graph state → event (type string, event dict,
             `Event`, or ``None``).
         result_to_state: Optional extra graph-state updates.
+
+    Returns:
+        The node function, named ``statechart_<machine id>``.
+
+    Raises:
+        AgentConfigError: A built `MachineNode` together with *logic*, or
+            (per call) a ``state[state_key]`` that is not a dict / string.
+        SnapshotDriftError: (per call) a snapshot from another machine.
+
+    📝 One call is one macrostep: the interpreter is stopped before the
+    node returns, so ``after`` timers never fire inside a node.
     """
     built = _machine(machine, logic)
 
@@ -197,6 +218,16 @@ def route_by_statechart(
     sorted order, so with parallel regions the result is deterministic
     (alphabetically first region that matches). Without a
     match, *default* -- or a loud `AgentConfigError` (no silent END).
+
+    Args:
+        machine: The chart dict or built `MachineNode` the node runs
+            (only its id is used, for the error message).
+        mapping: State id or leaf key → LangGraph node name (or ``END``).
+        state_key: Graph-state key holding the snapshot.
+        default: Node for an active state missing from *mapping*.
+
+    Returns:
+        The router, for ``StateGraph.add_conditional_edges``.
     """
     built = machine if isinstance(machine, MachineNode) else None
     root = (
@@ -254,6 +285,21 @@ def langgraph_service(
     ``astream`` chunk is sent as a ``STREAM`` event (``event.data``) via
     `from_async_iterator`, and ``onDone`` receives the last chunk. An
     exception is ``onError``; exiting the state cancels the graph run.
+
+    Args:
+        compiled_graph: ``StateGraph(...).compile()`` (anything with
+            ``ainvoke`` / ``astream``).
+        input_from: ``(ctx, event)`` → graph input.
+        output_to: Optional final state (or last chunk) → ``onDone`` data.
+        stream: Stream chunks as ``STREAM`` events.
+        stream_mode: Passed to ``astream``.
+        config: Passed to LangGraph as-is (``recursion_limit``, ...).
+
+    Returns:
+        An async service for ``MachineLogic(services=...)``.
+
+    ⚠️ A graph that calls ``interrupt()`` returns normally: ``onDone``
+    receives the partial state with an ``__interrupt__`` key.
     """
     cfg = dict(config) if config is not None else None
 
@@ -289,6 +335,13 @@ class LangChainCallbackPlugin(PluginBase[Any]):
     ``xsm.service_error``) -- they appear in LangSmith traces.
 
     Payloads carry state ids and event types only, never context.
+
+    Args:
+        handler: A ``langchain_core`` ``BaseCallbackHandler``.
+        run_id: The run id events are reported under (default: random).
+
+    Raises:
+        AgentConfigError: *handler* is not a ``BaseCallbackHandler``.
     """
 
     def __init__(self, handler: Any, *, run_id: Any = None) -> None:

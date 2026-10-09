@@ -55,6 +55,55 @@ the fix (`pip install openai` / `OPENAI_API_KEY`); no ticket is started.
 
 Only the model changes. The allow-list, budgets and human gate stay exactly as they were.
 
+## Drop the bot into a LangGraph graph
+
+Already on LangGraph? Keep your graph and make this bot **one node**: its
+snapshot rides in the graph state, so your checkpointer persists the parked
+refund, and the allow-list, budgets and human gate still apply inside the
+node. Needs `pip install langgraph` (not part of `[agents]`).
+
+<!-- doc-requires: langgraph -->
+```python
+import json
+from typing import TypedDict
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, StateGraph
+import bot
+from xstate_statemachine import create_machine
+from xstate_statemachine.contrib.agents import FakeModel, agent_logic, pending_approval
+from xstate_statemachine.contrib.agents.langgraph import route_by_statechart, statechart_node
+
+refunds = []
+model = FakeModel([{"tool": "refund_order", "args": {"order_id": 7, "amount_cents": 500}},
+                   {"text": "Order 7 refunded."}], is_async=False)
+machine = create_machine(
+    json.loads((bot.HERE / "machine.json").read_text("utf-8")),
+    logic=agent_logic(model, bot.build_tools(bot.stub_orders(), refunds),
+                      budgets=bot.BUDGETS, system_prompt=bot.SYSTEM_PROMPT))
+
+class S(TypedDict, total=False):
+    xsm: dict
+    event: dict
+
+g = StateGraph(S)
+g.add_node("bot", statechart_node(machine, event_from_state=lambda s: s.get("event")))
+g.set_entry_point("bot")
+g.add_conditional_edges("bot", route_by_statechart(machine, {}, default=END))
+app = g.compile(checkpointer=MemorySaver())
+cfg = {"configurable": {"thread_id": "ticket-7"}}
+
+out = app.invoke({"event": {"type": "START", "prompt": "Refund order 7"}}, cfg)
+print(out["xsm"]["value"])                      # awaiting_human -- nothing refunded
+ids = [c["id"] for c in pending_approval(out["xsm"]["context"])]
+out = app.invoke({"event": {"type": "HUMAN_APPROVED", "call_ids": ids}}, cfg)
+print(out["xsm"]["value"], len(refunds))        # done 1
+```
+
+`tests/test_battle_288_scenario.py` runs the three-node version
+(classify → bot → reply) through a hundred threads and a restart, and shows
+a forged snapshot cannot run the refund. Recipes and troubleshooting:
+[LangGraph interop](https://basiltt.github.io/xstate-statemachine/guide/integration-agents/#langgraph-interop).
+
 ## Tests
 
 ```bash
