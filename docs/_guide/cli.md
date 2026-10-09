@@ -461,7 +461,7 @@ xsm [-h] [-v] [--plain] [--no-color] [--no-anim] [--verbose]
 | `snapshots` | — | Ops view of a persistence store: keys, labels, status, age; [`--stale`](#snapshots) is the drain list for a deploy, `--fail-if-stale` the gate |
 | `coverage` | — | Render a statechart coverage report written by `pytest --xsm-coverage` and gate on it ([`--fail-under`](#coverage)) |
 | `dlq` | — | List / show / replay / purge dead-lettered messages (see [Event-driven architecture](../integration-eda/#dead-letters)). Exit codes: `0` ok, `1` a real replay ran and did not succeed, `2` refused input (missing / non-SQLite store file, unknown id, bad `--older-than`, unloadable `--machine` / `--logic`, missing `--yes` / `--reason`, a refused replay); errors are one stderr line |
-| `asyncapi` | — | An AsyncAPI 3.0 document from a chart (`-o`, `--validate`); exit `2` for a missing or invalid machine file |
+| `asyncapi` | — | An AsyncAPI 3.0 document from a chart (`-o`, `--validate`); exit `0` ok, `2` refused input (a missing or invalid machine file, an empty `--server` / `--inbound` / `--outbound`, an unwritable `-o`, `--validate` without `jsonschema` or a document the schema rejects); errors are one stderr line |
 
 Every command that reports facts also has a `--json` switch (`validate`, `inspect`, `paths`, `simulate`, `list-templates`, `info`, `snapshots`, `dlq`, `coverage`) so the same information can be consumed by scripts.
 

@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 import re
 from importlib import resources
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from .outbox import publish_specs
 
@@ -43,6 +43,11 @@ __all__ = [
 ASYNCAPI_VERSION = "3.0.0"
 _SCHEMA_FILE = "_asyncapi_schema.json"
 _KEY = re.compile(r"[^A-Za-z0-9_.\-]")
+_NO_JSONSCHEMA = (
+    "`jsonschema` is not installed (AsyncAPI validation only): "
+    "pip install jsonschema"
+)
+_CONTENT_TYPE = "application/cloudevents+json"
 _ENGINE_PREFIXES = ("done.", "error.", "xstate.", "after.")
 
 
@@ -67,11 +72,12 @@ def validate_asyncapi(document: Dict[str, Any]) -> None:
     except ImportError as exc:  # pragma: no cover - depends on env
         from ..exceptions import MissingExtraError
 
-        raise MissingExtraError(
-            "asyncapi",
-            "jsonschema",
-            hint="(validation only): pip install jsonschema",
-        ) from exc
+        # 🐛 #295-a: there is NO ``asyncapi`` extra; the default
+        #    MissingExtraError text told users to install one (pip fails).
+        err = MissingExtraError("asyncapi", "jsonschema")
+        err.msg = _NO_JSONSCHEMA
+        err.args = (_NO_JSONSCHEMA,)
+        raise err from exc
     jsonschema.Draft7Validator(load_asyncapi_schema()).validate(document)
 
 
@@ -95,6 +101,21 @@ def consumed_events(machine: Any) -> List[str]:
 
 def _key(text: str) -> str:
     return _KEY.sub("_", text)
+
+
+def _unique_key(text: str, taken: Dict[str, Any]) -> str:
+    """A component key for *text* not already in *taken*.
+
+    🐛 #295-a: sanitising maps distinct names onto one key (``"GO NOW"``
+    and ``"GO_NOW"`` → ``consume.GO_NOW``); the second message used to
+    overwrite (consumed) or silently skip (published) the first, so the
+    document omitted an event the chart handles. Suffix instead.
+    """
+    base = _key(text)
+    key, n = base, 2
+    while key in taken:
+        key, n = f"{base}_{n}", n + 1
+    return key
 
 
 def _cloudevent_schema() -> Dict[str, Any]:
@@ -133,7 +154,7 @@ def _message(
         "name": ce_type,
         "title": ce_type,
         "summary": summary,
-        "contentType": "application/cloudevents+json",
+        "contentType": _CONTENT_TYPE,
         "payload": {
             "allOf": [
                 {"$ref": "#/components/schemas/CloudEvent"},
@@ -174,57 +195,30 @@ def asyncapi_document(
     carry the type the chart declares.
     """
     mid = str(machine.id)
-    inbound = inbound_topic or mid
-    messages: Dict[str, Any] = {}
-    in_msgs: Dict[str, Any] = {}
-    out_msgs: Dict[str, Any] = {}
-    for ev in consumed_events(machine):
-        ce_type = f"xsm.{mid}.{ev}"
-        key = _key(f"consume.{ev}")
-        messages[key] = _message(ce_type, f"Command: send {ev!r}.", None)
-        in_msgs[key] = {"$ref": f"#/components/messages/{key}"}
-    for spec in publish_specs(machine):
-        key = _key(f"publish.{spec['type']}")
-        if key in messages:
-            continue
-        origin = (
-            f"on {spec['event']!r} from {spec['from']}"
-            if spec["source"] == "transition"
-            else f"on entering {spec['from']}"
-        )
-        messages[key] = _message(
-            spec["type"], f"Published {origin}.", spec["fields"]
-        )
-        out_msgs[key] = {"$ref": f"#/components/messages/{key}"}
-
+    messages, in_msgs, out_msgs = _messages(machine, mid)
     channels: Dict[str, Any] = {}
     operations: Dict[str, Any] = {}
     if in_msgs:
-        channels["inbound"] = {
-            "address": inbound,
-            "description": f"Commands consumed by {mid}.",
-            "messages": in_msgs,
-        }
-        operations[f"consume_{_key(mid)}"] = {
-            "action": "receive",
-            "channel": {"$ref": "#/channels/inbound"},
-            "messages": [
-                {"$ref": f"#/channels/inbound/messages/{k}"} for k in in_msgs
-            ],
-        }
+        _add_channel(
+            channels,
+            operations,
+            (
+                "inbound",
+                inbound_topic or mid,
+                "receive",
+                f"consume_{_key(mid)}",
+            ),
+            f"Commands consumed by {mid}.",
+            in_msgs,
+        )
     if out_msgs:
-        channels["outbound"] = {
-            "address": outbound_topic,
-            "description": f"Integration events published by {mid}.",
-            "messages": out_msgs,
-        }
-        operations[f"publish_{_key(mid)}"] = {
-            "action": "send",
-            "channel": {"$ref": "#/channels/outbound"},
-            "messages": [
-                {"$ref": f"#/channels/outbound/messages/{k}"} for k in out_msgs
-            ],
-        }
+        _add_channel(
+            channels,
+            operations,
+            ("outbound", outbound_topic, "send", f"publish_{_key(mid)}"),
+            f"Integration events published by {mid}.",
+            out_msgs,
+        )
     doc: Dict[str, Any] = {
         "asyncapi": ASYNCAPI_VERSION,
         "info": {
@@ -234,7 +228,7 @@ def asyncapi_document(
                 f"Generated by xstate-statemachine from machine {mid!r}."
             ),
         },
-        "defaultContentType": "application/cloudevents+json",
+        "defaultContentType": _CONTENT_TYPE,
         "channels": channels,
         "operations": operations,
         "components": {
@@ -245,3 +239,69 @@ def asyncapi_document(
     if server:
         doc["servers"] = {"default": dict(server)}
     return doc
+
+
+def _ref(path: str) -> Dict[str, str]:
+    return {"$ref": path}
+
+
+def _messages(machine: Any, mid: str) -> Tuple[Dict[str, Any], ...]:
+    """``(components.messages, consumed refs, published refs)``.
+
+    Consumed events are keyed ``consume.<EVENT>`` (CloudEvents type
+    ``xsm.<machine>.<EVENT>``); publications ``publish.<type>``. A type
+    published from several transitions is listed once.
+    """
+    messages: Dict[str, Any] = {}
+    in_msgs: Dict[str, Any] = {}
+    out_msgs: Dict[str, Any] = {}
+    for ev in consumed_events(machine):
+        ce_type = f"xsm.{mid}.{ev}"
+        key = _unique_key(f"consume.{ev}", messages)
+        messages[key] = _message(ce_type, f"Command: send {ev!r}.", None)
+        in_msgs[key] = _ref(f"#/components/messages/{key}")
+    published = set()
+    for spec in publish_specs(machine):
+        if spec["type"] in published:
+            continue  # 📝 one message per published type
+        published.add(spec["type"])
+        key = _unique_key(f"publish.{spec['type']}", messages)
+        origin = (
+            f"on {spec['event']!r} from {spec['from']}"
+            if spec["source"] == "transition"
+            else f"on entering {spec['from']}"
+        )
+        messages[key] = _message(
+            spec["type"], f"Published {origin}.", spec["fields"]
+        )
+        out_msgs[key] = _ref(f"#/components/messages/{key}")
+    return messages, in_msgs, out_msgs
+
+
+def _add_channel(
+    channels: Dict[str, Any],
+    operations: Dict[str, Any],
+    names: Tuple[str, str, str, str],
+    description: str,
+    msgs: Dict[str, Any],
+) -> None:
+    """Register one channel and the operation that uses it.
+
+    Args:
+        channels: ``doc["channels"]`` being built.
+        operations: ``doc["operations"]`` being built.
+        names: ``(channel id, address, action, operation id)``.
+        description: The channel description.
+        msgs: Message refs on the channel.
+    """
+    channel, address, action, op_id = names
+    channels[channel] = {
+        "address": address,
+        "description": description,
+        "messages": msgs,
+    }
+    operations[op_id] = {
+        "action": action,
+        "channel": _ref(f"#/channels/{channel}"),
+        "messages": [_ref(f"#/channels/{channel}/messages/{k}") for k in msgs],
+    }

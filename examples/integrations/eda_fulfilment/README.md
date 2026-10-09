@@ -203,6 +203,31 @@ dedups any re-publication.
 `tests/test_battle_293_scenario.py` runs 1,000 orders through two
 replicas this way, including `kill -9` of a relay and of a consumer.
 
+## Sagas
+
+`tests/test_battle_295_scenario.py` adds a third service, `SagaApp`: an
+orchestrated `SagaBuilder` saga (reserve → charge → ship, each with a
+compensation) persisted in SQLite and driven by an `InboundDispatcher`
+on `xsm.fulfil.START`. The saga's identity is the envelope `subject`
+(`interp.store_key`); no step service sees START's payload. Its
+compensations are **idempotent**: a `kill -9` mid-compensation restarts
+the saga and runs that compensation again. A compensation that fails
+parks the saga in the final `compensationFailed` state and writes a
+chart-state dead letter, which is the operator's ticket.
+
+Each chart's event contract is an AsyncAPI 3.0 document. Every command
+below is run by `tests/test_readme_commands.py`:
+
+```bash
+xsm asyncapi machine.json                                # to stdout
+xsm asyncapi warehouse.json -o asyncapi.json --server localhost:9092 --protocol kafka
+xsm asyncapi machine.json --validate                     # needs jsonschema
+```
+
+Handled events appear as `consume.<EVENT>` messages (type
+`xsm.order.<EVENT>`), published ones as `publish.<type>`. See
+[EDA: sagas](https://basiltt.github.io/xstate-statemachine/guide/integration-eda/#sagas).
+
 ## How each piece maps to the guides
 
 | Piece | Where | Guide |
