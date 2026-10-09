@@ -23,13 +23,10 @@
 from __future__ import annotations
 
 import copy
-import importlib
 import inspect
 import json
 import logging
-import math
 import re
-from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     Any,
@@ -43,11 +40,16 @@ from typing import (
     Union,
 )
 
-from pydantic import BaseModel, ValidationError
-
 from ...machine_logic import MachineLogic
 from ...patterns.retry import RetryPolicy
 from ...plugins import redact
+from ._output import (
+    _meta_output_model,
+    _resolve_model,
+    _task_of,
+    _validate_output,
+)
+from .budgets import Budget, _spent_tokens, _spent_usd, budget_guards
 from .messages import (
     AgentConfigError,
     Message,
@@ -132,61 +134,6 @@ TOOL_LOOP: Dict[str, Any] = load_chart("tool_loop")
 
 
 # -----------------------------------------------------------------------------
-# 💰 Budgets
-# -----------------------------------------------------------------------------
-@dataclass(frozen=True)
-class Budget:
-    """Per-agent limits. ``None`` means "no limit on this axis"."""
-
-    max_tokens: Optional[int] = None
-    max_usd: Optional[float] = None
-    max_turns: Optional[int] = 10
-
-    @classmethod
-    def coerce(
-        cls, value: Union["Budget", Mapping[str, Any], None]
-    ) -> "Budget":
-        if value is None:
-            return cls()
-        if isinstance(value, Budget):
-            return value
-        return cls(**dict(value))
-
-
-def budget_guards(
-    max_tokens: Optional[int] = None,
-    max_usd: Optional[float] = None,
-    max_turns: Optional[int] = None,
-) -> MachineLogic:
-    """``underTokenBudget`` / ``underCostBudget`` / ``underTurnLimit``.
-
-    Each is ``True`` while the SPENT amount is strictly below the limit, so
-    a turn is refused once the limit is reached -- the chart checks them on
-    the only way into `awaiting_model`.
-    """
-
-    def under_tokens(ctx: Dict[str, Any], e: Any) -> bool:
-        if max_tokens is None:
-            return True
-        spent = int(ctx.get("tokens_in", 0)) + int(ctx.get("tokens_out", 0))
-        return spent < max_tokens
-
-    def under_cost(ctx: Dict[str, Any], e: Any) -> bool:
-        return max_usd is None or float(ctx.get("cost_usd", 0.0)) < max_usd
-
-    def under_turns(ctx: Dict[str, Any], e: Any) -> bool:
-        return max_turns is None or int(ctx.get("turns", 0)) < max_turns
-
-    return MachineLogic(
-        guards={
-            "underTokenBudget": under_tokens,
-            "underCostBudget": under_cost,
-            "underTurnLimit": under_turns,
-        }
-    )
-
-
-# -----------------------------------------------------------------------------
 # 🗺️ Allow-lists (meta.tools)
 # -----------------------------------------------------------------------------
 def _check_tools_meta(state_id: str, value: Any) -> List[str]:
@@ -240,81 +187,6 @@ def validate_agent_chart(machine: Any, registry: ToolRegistry) -> None:
 
 
 # -----------------------------------------------------------------------------
-# 🧾 Structured output
-# -----------------------------------------------------------------------------
-def _resolve_model(spec: Any) -> Optional[type]:
-    if spec is None:
-        return None
-    if isinstance(spec, type) and issubclass(spec, BaseModel):
-        return spec
-    if isinstance(spec, str) and ":" in spec:
-        mod, _, attr = spec.partition(":")
-        obj = getattr(importlib.import_module(mod), attr)
-        if isinstance(obj, type) and issubclass(obj, BaseModel):
-            return obj
-    raise AgentConfigError(
-        f"output_model must be a pydantic BaseModel or 'module:Model' "
-        f"(got {spec!r})"
-    )
-
-
-def _meta_output_model(interp: Any, event: Any) -> Any:
-    """``meta.output_model`` of the state hosting this invoke, if any."""
-    etype = getattr(event, "type", "") or ""
-    if etype.startswith("invoke."):
-        node = interp.machine.get_state_by_id(etype[len("invoke.") :])
-        if node is not None and (node.meta or {}).get("output_model"):
-            return node.meta["output_model"]
-    for meta in interp.get_meta().values():
-        if isinstance(meta, dict) and meta.get("output_model"):
-            return meta["output_model"]
-    return None
-
-
-def _task_of(ctx: Mapping[str, Any]) -> Optional[str]:
-    """The task a spawned agent starts on: ``context["task"]`` or
-    ``context["input"]["prompt"]``."""
-    task = ctx.get("task")
-    if not task and isinstance(ctx.get("input"), Mapping):
-        task = ctx["input"].get("prompt")
-    return str(task) if task else None
-
-
-def _parse_json_text(text: str) -> Any:
-    t = text.strip()
-    if t.startswith("```"):
-        t = t.strip("`")
-        t = t[4:] if t.lower().startswith("json") else t
-    return json.loads(t)
-
-
-def _validate_output(
-    model: Optional[type],
-    text: str,
-    parser: Optional[Callable[[str], Any]] = None,
-) -> Tuple[bool, Any]:
-    """``(ok, value_or_error_text)``. *parser* turns the reply text into
-    the JSON value to validate (default: strict JSON, code fence allowed).
-    """
-    if model is None:
-        return True, text
-    try:
-        obj = model.model_validate(  # type: ignore[attr-defined]
-            (parser or _parse_json_text)(text)
-        )
-    except (ValueError, ValidationError) as exc:
-        if isinstance(exc, ValidationError):
-            detail = "; ".join(
-                f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}"
-                for e in exc.errors(include_input=False, include_url=False)
-            )
-        else:
-            detail = "not valid JSON"
-        return False, detail
-    return True, obj.model_dump(mode="json")
-
-
-# -----------------------------------------------------------------------------
 # 🏭 agent_logic
 # -----------------------------------------------------------------------------
 def _is_async_model(model: Any) -> bool:
@@ -324,28 +196,6 @@ def _is_async_model(model: Any) -> bool:
     return inspect.iscoroutinefunction(model) or inspect.iscoroutinefunction(
         getattr(model, "__call__", None)
     )
-
-
-def _spent_tokens(value: Any) -> int:
-    """A provider-reported token count, clamped to ``>= 0``.
-
-    🔐 Usage numbers come from the provider (or a proxy in front of it):
-    a negative count would REFUND the budget, so it is spent as zero.
-    """
-    return max(0, int(value or 0))
-
-
-def _spent_usd(value: Any) -> float:
-    """A reported cost: negative → 0, NaN → +inf (fail closed).
-
-    📝 NaN would otherwise make every later total NaN; ``inf`` makes the
-    cost guard refuse the next turn, which is the honest outcome when the
-    spend is unknowable.
-    """
-    cost = float(value or 0.0)
-    if math.isnan(cost):
-        return math.inf
-    return max(0.0, cost)
 
 
 def _usage_totals(ctx: Mapping[str, Any]) -> Dict[str, Any]:
