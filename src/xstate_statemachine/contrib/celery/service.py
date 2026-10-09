@@ -76,11 +76,22 @@ HEADER_INVOCATION = "xsm_invocation_id"
 POLL_S = 0.05
 #: How long a parked early completion is retried before it is given up.
 PENDING_TTL_S = 3600.0
+#: Most parked completions one process holds (#292 battle B): the headers
+#: are broker input, so a flood of forged ``xsm_store_key`` values must
+#: not grow worker memory without bound. The oldest entry is evicted.
+PENDING_MAX_ITEMS = 10_000
 
 
 @dataclass(frozen=True)
 class CeleryInvocation:
-    """What `poll_results` found for one pending invocation."""
+    """What `poll_results` found for one pending invocation.
+
+    Attributes:
+        key: The store key of the persisted instance.
+        invocation_id: The ``invoke`` id recorded under ``_xsm_celery``.
+        task_id: The Celery task id the instance is waiting for.
+        deadline: Wall-clock ``timeout_s`` deadline, or ``None``.
+    """
 
     key: str
     invocation_id: str
@@ -328,16 +339,34 @@ class MemoryPendingResults:
     result backend -- that is the durable path.
     """
 
-    def __init__(self, ttl_s: float = PENDING_TTL_S) -> None:
+    def __init__(
+        self,
+        ttl_s: float = PENDING_TTL_S,
+        max_items: int = PENDING_MAX_ITEMS,
+    ) -> None:
         self.ttl_s = float(ttl_s)
+        self.max_items = int(max_items)
         self._lock = threading.Lock()
         self._items: Dict[str, PendingResult] = {}
 
     def add(self, item: PendingResult) -> None:
+        """Park *item*; evicts (and logs) the oldest entry when full."""
         with self._lock:
+            self._items.pop(item.task_id, None)
             self._items[item.task_id] = item
+            while len(self._items) > self.max_items:
+                old = next(iter(self._items))
+                self._items.pop(old)
+                logger.warning(
+                    "🔥 parked celery completion %s evicted (table full, "
+                    "max_items=%d); poll_results reads it from the "
+                    "result backend",
+                    old,
+                    self.max_items,
+                )
 
     def take_all(self) -> List[PendingResult]:
+        """Remove and return every parked completion."""
         with self._lock:
             items, self._items = list(self._items.values()), {}
         return items

@@ -30,7 +30,7 @@ from typing import Any, Dict, List, Optional
 
 from ...eda.outbox import OutboxRelay
 from ...persistence.timers import DueTimerScanner
-from .worker import register_task
+from .worker import assert_json_serializer, register_task
 
 __all__ = [
     "DurableTimerScheduler",
@@ -66,6 +66,9 @@ class DurableTimerScheduler:
         fire_name: str = DEFAULT_FIRE_TASK,
         **scanner_kw: Any,
     ) -> None:
+        # 🔐 #292 battle B: the guide promised "every entry point" refuses
+        #    pickle; the Beat tasks were the two that did not check.
+        assert_json_serializer(app)
         self.app = app
         self.store = store
         mfk = machine_for_key
@@ -184,7 +187,12 @@ def outbox_relay_task(
     left one broker connection behind per tick. `close_relay_loop` (the
     returned task's ``close`` attribute) closes the broker and the loop
     -- call it from ``worker_process_shutdown``.
+
+    Raises:
+        InvalidConfigError: *app* accepts pickle / YAML, or *name* is
+            already a task on *app* (`register_task`).
     """
+    assert_json_serializer(app)
     relay_kw: Dict[str, Any] = {"batch": batch}
     if owner is not None:
         relay_kw["owner"] = owner
