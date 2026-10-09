@@ -156,6 +156,40 @@ waiting --> packed : PACK / publish OrderPacked
 packed --> [*]
 ```
 
+## Operate it
+
+The poison `PAYMENT_FAILED` the demo sends ends up in the dead-letter
+table of `state.db`, the same SQLite file as the state, outbox and inbox.
+Run the commands from `examples/integrations/eda_fulfilment`, so that
+`--logic logic` imports this folder's `logic.py`. Every command below is
+run by `tests/test_readme_commands.py`:
+
+```bash
+DB=sqlite:///path/to/workdir/state.db   # FulfilmentApp(workdir) -> workdir/state.db
+xsm dlq --dlq $DB list                                   # the poison, reason max_attempts
+xsm dlq --dlq $DB list --json                            # {"count": 1, "dead_letters": [...]}
+xsm dlq --dlq $DB show <id>                              # the redacted envelope + error chain
+xsm dlq --dlq $DB replay <id> --store $DB \
+    --machine machine.json --logic logic --reason "producer fixed"        # dry run
+xsm dlq --dlq $DB replay <id> --store $DB \
+    --machine machine.json --logic logic --no-dry-run --yes --reason "producer fixed"
+xsm dlq --dlq $DB purge --id <id> --yes --reason "obsolete"              # audited
+```
+
+A replay of data that is still poison exits `1` and leaves the record
+unresolved. A replay against a changed `machine.json` exits `2` until you
+add `--force`. Every refused input is one line on stderr with exit `2`.
+
+**Two replicas.** Run `FulfilmentApp(workdir, consumer="fulfilment-1")`
+and `consumer="fulfilment-2"` on the same `state.db` and the same broker.
+Each replica has its own `OutboxRelay`. The relays **lease** outbox rows
+(`claimed_by` / `claimed_until`, `lease_s=30` by default), so they never
+publish the same row at the same time. A relay killed mid-batch leaves
+its rows to the other relay once the lease expires. The consumers' inbox
+dedups any re-publication.
+`tests/test_battle_293_scenario.py` runs 1,000 orders through two
+replicas this way, including `kill -9` of a relay and of a consumer.
+
 ## How each piece maps to the guides
 
 | Piece | Where | Guide |

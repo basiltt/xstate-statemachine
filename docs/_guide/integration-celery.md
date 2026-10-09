@@ -93,9 +93,11 @@ Double firing (the `eta` job plus the scan) is idempotent: the scanner re-checks
 
 > ⚠️ **Run exactly one Beat process.** Two Beats are still correct, but they double the scan traffic. With zero Beats, the `after` timers of discarded instances never fire.
 
-### `outbox_relay_task(app, outbox, broker, *, name="xsm.outbox.relay", batch=100)`
+### `outbox_relay_task(app, outbox, broker, *, name="xsm.outbox.relay", batch=100, owner=None, lease_s=None)`
 
-A task that runs `OutboxRelay.relay_once` (the async form for an async broker, the sync form otherwise). Schedule it with Beat. An async broker is driven from **one private event loop per worker process**, never a new loop per tick. Call `task.close_relay_loop()` from `worker_process_shutdown` to close the broker and the loop.
+A task that runs `OutboxRelay.relay_once` (the async form for an async broker, the sync form otherwise). Schedule it with Beat. Several workers may run it against one outbox: each run **leases** the rows it publishes (`owner` names this worker's relay -- pass a stable name such as the hostname so a restarted worker reclaims its own rows at once; `lease_s` defaults to `DEFAULT_CLAIM_LEASE_S`, 30 s; see the [EDA guide](../integration-eda/)). An async broker is driven from **one private event loop per worker process**, never a new loop per tick. Call `task.close_relay_loop()` from `worker_process_shutdown` to close the broker and the loop.
+
+Every worker process gets its own `OutboxRelay`, so several workers draining one outbox is safe. On the bundled outbox stores the relays [lease their rows](../integration-eda/#several-relays-on-one-outbox-leases) (default lease 30 s, owner `host:pid:id`). A worker killed mid-batch leaves its rows to another worker when the lease expires, and consumers dedup the rare re-publication on the envelope id.
 
 ### `assert_json_serializer(app)`
 

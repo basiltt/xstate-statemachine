@@ -229,21 +229,24 @@ class InboundDispatcher:
         consumer loop and the other subjects keep running (X0.8).
         """
         res = DispatchResult()
+        outcome: Optional[str]
         try:
             outcome = self._handle(envelope, topic)
         except _Retry:
             res.retried += 1
             res.outcomes.append((envelope.id, "retry"))
             return res
-        except Exception:  # noqa: BLE001 - infrastructure / user hooks
+        except Exception as exc:  # noqa: BLE001 - infrastructure / user hooks
             logger.exception(
                 "🔥 dispatching envelope %s failed outside the machine; "
                 "requeueing",
                 envelope.id,
             )
-            res.retried += 1
-            res.outcomes.append((envelope.id, "retry"))
-            return res
+            outcome = self._outside_failure(envelope, topic, exc)
+            if outcome is None:
+                res.retried += 1
+                res.outcomes.append((envelope.id, "retry"))
+                return res
         if outcome == "duplicate":
             res.duplicates += 1
         elif outcome == "processed":
@@ -254,6 +257,35 @@ class InboundDispatcher:
             res.dead_lettered += 1
         res.outcomes.append((envelope.id, outcome))
         return res
+
+    def _outside_failure(
+        self, env: Envelope, topic: Optional[str], exc: Exception
+    ) -> Optional[str]:
+        """Count a failure OUTSIDE the machine; dead-letter at the cap.
+
+        🔥 #293-a battle: a ``machine_for_type`` / ``key_for`` that raised
+        for one envelope requeued it forever -- the attempt counter was
+        only bumped for failures inside the machine (X0.8: never an
+        infinite redelivery loop). Returns ``None`` to requeue. If the
+        dead-letter store itself is down the delivery is requeued (never
+        acked without a record).
+        """
+        from ..persistence.store import StoreError
+
+        if isinstance(exc, StoreError):
+            # 📝 review M4: an inbox / state-store OUTAGE is not the
+            #    message's fault -- it keeps being redelivered (bounded by
+            #    the broker's own policy), never dead-lettered as poison.
+            return None
+        if self._bump(env) < self.max_attempts:
+            return None
+        try:
+            return self._dead_letter(env, topic, "max_attempts", exc, None)
+        except Exception:  # noqa: BLE001 - DLQ down: keep the message
+            logger.exception(
+                "🔥 dead-lettering envelope %s failed; requeueing", env.id
+            )
+            return None
 
     def _handle(self, env: Envelope, topic: Optional[str]) -> str:
         try:
@@ -402,6 +434,21 @@ class InboundDispatcher:
                 mhash = None
             mversion = getattr(machine, "version", None)
         data = env.data if isinstance(env.data, dict) else {}
+        try:
+            payload = redact(dict(data))
+            envelope_dict = redact(env.to_dict())
+        except (RecursionError, ValueError, TypeError) as inner:
+            # 🔥 #293 review C1: a record is ALWAYS written -- a payload
+            #    the redactor cannot walk is replaced by its attributes
+            #    (the body is lost; the id/type/source are what a replay
+            #    needs to find the producer).
+            payload = {"_unrecorded": type(inner).__name__}
+            envelope_dict = {
+                "id": env.id,
+                "type": env.type,
+                "source": env.source,
+                "subject": env.subject,
+            }
         record = DeadLetter(
             machine_id=str(
                 getattr(machine, "id", None) or env.machineid or "?"
@@ -409,7 +456,7 @@ class InboundDispatcher:
             state_id="",
             event={
                 "type": env.type,
-                "payload": redact(dict(data)),
+                "payload": payload,
             },
             attempts=max(self.attempts_of(env), 1),
             errors=[
@@ -424,7 +471,7 @@ class InboundDispatcher:
             taken_at=time.time(),
             id=env.id,
             reason=reason,
-            envelope=redact(env.to_dict()),
+            envelope=envelope_dict,
             topic=topic,
             machine_hash=mhash,
             machine_version=mversion,
@@ -560,6 +607,17 @@ class ReplayRefusedError(XStateMachineError):
 
 @dataclass
 class ReplayResult:
+    """What `replay_dead_letter` did.
+
+    Attributes:
+        record_id: The dead letter's id (the envelope id).
+        dry_run: ``True`` when nothing was sent.
+        outcome: ``would_replay`` (dry run) or the dispatcher outcome:
+            ``processed`` / ``duplicate`` resolve the record; anything
+            else (``retry``, ``dead_lettered:<reason>``) leaves it open.
+        warnings: Machine mismatches overridden with ``force``.
+    """
+
     record_id: str
     dry_run: bool
     outcome: str

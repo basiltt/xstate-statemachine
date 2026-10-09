@@ -14,7 +14,9 @@ then end-to-end checks straight from the issues:
 * #293: the issue's snippet; 1,000 envelopes across 10 subjects (order
   kept, duplicates dropped, none lost); poison → DLQ + ack; SQLite outbox
   rolled back with its snapshot; CloudEvents binary + structured round
-  trip; `xsm dlq` dry-run default, guarded replay, id reuse, audit.
+  trip; `xsm dlq` dry-run default, guarded replay, id reuse, audit;
+  two relays on one outbox (a killed relay's lease expires, no row
+  published twice); bad operator input is exit 2 with one line.
 * #295: `SagaBuilder` compensates in reverse exactly once; Order + Payment
   choreography from ONE envelope with the causation chain; `xsm asyncapi`
   output validates against the vendored AsyncAPI 3.0.0 schema.
@@ -57,6 +59,7 @@ def run_tests() -> None:
             "tests/contrib/sqlalchemy/test_sqlalchemy_outbox.py",
             "tests/contrib/testing/test_fake_broker.py",
             "tests/tests_cli/test_eda_cli.py",
+            "tests/tests_cli/test_battle_293_b_dlq.py",
             "tests/contrib/test_extras_matrix.py",
             "-q",
             "-p",
@@ -399,6 +402,68 @@ def f2_dlq_cli() -> None:
     print("  double replay deduplicated by the reused envelope id")
 
 
+def f2_relay_leases() -> None:
+    step("#293 battle: two relays on one SQLite outbox -- leases")
+    from xstate_statemachine.eda import (
+        Envelope,
+        OutboxRelay,
+        SQLiteOutboxStore,
+        SyncFakeBrokerAdapter,
+    )
+
+    outbox = SQLiteOutboxStore(TMP / "outbox.db")
+    broker = SyncFakeBrokerAdapter()
+    for n in range(50):
+        outbox.add("orders", Envelope.new(type="t", subject=f"s-{n}"))
+    # relay A claims a batch and "dies" (kill -9: no release)
+    dead = outbox.claim(limit=20, owner="relay-a", lease_s=0.2)
+    relay_b = OutboxRelay(outbox, broker, owner="relay-b", lease_s=30)
+    assert relay_b.relay_once_sync() == 30  # skips A's live lease
+    assert relay_b.relay_once_sync() == 0
+    import time
+
+    time.sleep(0.3)  # A's lease expires
+    assert relay_b.relay_once_sync() == 20
+    ids = [e.id for e in broker.published_on("orders")]
+    assert len(ids) == len(set(ids)) == 50, "a row was published twice"
+    assert {r.envelope.id for r in dead} <= set(ids)
+    assert outbox.count(pending_only=True) == 0
+    outbox.close()
+    print("  50 rows, relay A killed holding 20: B published 30, then the")
+    print("  20 after the lease expired -- none twice, none lost")
+
+
+def f2_dlq_operator_input() -> None:
+    step("#293 battle: xsm dlq / asyncapi refuse bad input with exit 2")
+    ghost = (TMP / "typo.db").as_posix()
+    junk = TMP / "junk.db"
+    junk.write_text("not sqlite", encoding="utf-8")
+    cases = [
+        ["dlq", "--dlq", f"sqlite:///{ghost}", "list"],
+        ["dlq", "--dlq", "redis://x", "list"],
+        ["dlq", "--dlq", str(junk), "list"],
+        ["dlq", "--dlq", str(TMP / "dlq.db"), "show", "nope"],
+        [
+            "dlq",
+            "--dlq",
+            str(TMP / "dlq.db"),
+            "purge",
+            "--older-than",
+            "7w",
+            "--yes",
+            "--reason",
+            "r",
+        ],
+        ["asyncapi", str(TMP / "none.json")],
+    ]
+    for argv in cases:
+        r = xsm(*argv)
+        out = r.stdout + r.stderr
+        assert r.returncode == 2 and "Traceback" not in out, (argv, out)
+    assert not (TMP / "typo.db").exists(), "a typo created a store"
+    print(f"  {len(cases)} bad inputs: one line each, exit 2, no file created")
+
+
 # -----------------------------------------------------------------------------
 # #295
 # -----------------------------------------------------------------------------
@@ -554,6 +619,8 @@ def main() -> None:
     f2_poison_and_outbox()
     f2_cloudevents()
     f2_dlq_cli()
+    f2_relay_leases()
+    f2_dlq_operator_input()
     f4_saga()
     f4_choreography()
     f4_asyncapi()

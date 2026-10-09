@@ -387,6 +387,7 @@ class FulfilmentApp:
         redis_client: Any = None,
         stand_in: Any = None,
         consumer: str = "fulfilment-1",
+        instruments: bool = True,
     ) -> None:
         self.workdir = Path(workdir)
         self.store = SQLiteStore(self.workdir / "state.db")
@@ -406,7 +407,10 @@ class FulfilmentApp:
         self.relay = OutboxRelay(
             self.outbox, _Recorder(self.broker, self.sent)
         )
-        self.instruments = instrument()
+        # 📝 #293 battle: the demo's sinks are IN-MEMORY (OTel span
+        #    exporter, inspector message list) and grow with every event;
+        #    a soak passes ``instruments=False`` to measure the EDA core.
+        self.instruments = instrument() if instruments else Instruments()
         self.outbox_plugin = OutboxPlugin(self.outbox, topic=TOPIC)
         self.plugins = [
             self.outbox_plugin,

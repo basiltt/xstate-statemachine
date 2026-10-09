@@ -163,9 +163,17 @@ def outbox_relay_task(
     *,
     name: str = DEFAULT_OUTBOX_TASK,
     batch: int = 100,
+    owner: Optional[str] = None,
+    lease_s: Optional[float] = None,
 ) -> Any:
     """Register a task that drains *outbox* to *broker* once per call
     (schedule it with Beat). Works with a sync or an async broker.
+
+    Several workers may run the task against ONE outbox: each run leases
+    the rows it publishes (#293 battle, `OutboxRelay`). *owner* names
+    this worker's relay (default ``host:pid:id``; pass a stable name so a
+    restarted worker reclaims its own rows at once) and *lease_s* is the
+    lease length (default `DEFAULT_CLAIM_LEASE_S`).
 
     An async broker's clients belong to one event loop. Review H2: the
     task keeps ONE private loop per worker process (created lazily,
@@ -174,7 +182,12 @@ def outbox_relay_task(
     returned task's ``close`` attribute) closes the broker and the loop
     -- call it from ``worker_process_shutdown``.
     """
-    relay = OutboxRelay(outbox, broker, batch=batch)
+    relay_kw: Dict[str, Any] = {"batch": batch}
+    if owner is not None:
+        relay_kw["owner"] = owner
+    if lease_s is not None:
+        relay_kw["lease_s"] = lease_s
+    relay = OutboxRelay(outbox, broker, **relay_kw)
     state: Dict[str, Any] = {"loop": None}
     lock = threading.Lock()
 

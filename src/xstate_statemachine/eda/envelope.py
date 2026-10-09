@@ -81,6 +81,12 @@ _CORE = (
 )
 _KNOWN_EXT = ("correlationid", "causationid", "machineid", "machineversion")
 _MAX_ATTR = 1024
+#: 🔥 #293 review C1: `json.loads` parses ~950 nested levels but every
+#:    later consumer (`redact`, `deepcopy`, the dead-letter writer) is
+#:    recursive too and gave up at ~600 -- a parseable-but-deep envelope
+#:    could neither be processed NOR dead-lettered, so it was redelivered
+#:    forever. No real event is 64 levels deep.
+MAX_DATA_DEPTH = 64
 
 
 class EnvelopeCorruptError(XStateMachineError, ValueError):
@@ -180,6 +186,30 @@ def _check_extensions(ext: Mapping[str, Any]) -> None:
             raise EnvelopeCorruptError(
                 f"{ATTEMPT_EXTENSION} must be a non-negative integer"
             )
+
+
+def _reject_constant(name: str) -> Any:
+    # 📝 review L4: Python's parser accepts NaN / Infinity, which are not
+    #    JSON -- `to_json` would re-emit them and every other consumer on
+    #    the bus would refuse the envelope.
+    raise ValueError(f"{name} is not valid JSON")
+
+
+def _check_depth(value: Any) -> None:
+    """`EnvelopeCorruptError` when *value* nests deeper than
+    `MAX_DATA_DEPTH` (iterative on the breadth, recursive on the depth,
+    which is bounded by the very limit it enforces)."""
+    stack = [(value, 0)]
+    while stack:
+        item, depth = stack.pop()
+        if depth > MAX_DATA_DEPTH:
+            raise EnvelopeCorruptError(
+                f"envelope data is nested deeper than {MAX_DATA_DEPTH}"
+            )
+        if isinstance(item, dict):
+            stack.extend((v, depth + 1) for v in item.values())
+        elif isinstance(item, (list, tuple)):
+            stack.extend((v, depth + 1) for v in item)
 
 
 def default_event_name(envelope_type: str) -> str:
@@ -294,6 +324,7 @@ class Envelope:
     # -- validation ---------------------------------------------------------
     def validate(self) -> "Envelope":
         """Raise `EnvelopeCorruptError` unless the shape is valid."""
+        _check_depth(self.data)
         if self.specversion != SPECVERSION:
             raise EnvelopeCorruptError(
                 f"unsupported specversion {self.specversion!r}"
@@ -350,7 +381,18 @@ class Envelope:
         return out
 
     def to_json(self, *, max_bytes: int = DEFAULT_MAX_SNAPSHOT_BYTES) -> str:
-        text = json.dumps(self.to_dict(), separators=(",", ":"), default=str)
+        try:
+            text = json.dumps(
+                self.to_dict(),
+                separators=(",", ":"),
+                default=str,
+            )
+        except (RecursionError, ValueError) as exc:
+            # 🔥 #293-a battle: a self-referencing (ValueError) or absurdly
+            #    deep ``data`` must not escape as a bare RecursionError.
+            raise EnvelopeCorruptError(
+                f"envelope {self.id} data is not encodable JSON: {exc}"
+            ) from exc
         if len(text.encode("utf-8")) > max_bytes:
             raise EnvelopeTooLargeError(
                 f"envelope {self.id} is larger than {max_bytes} bytes"
@@ -391,9 +433,16 @@ class Envelope:
                 f"envelope is {size} bytes; the limit is {max_bytes}"
             )
         try:
-            raw = json.loads(text)
+            raw = json.loads(text, parse_constant=_reject_constant)
         except ValueError as exc:
             raise EnvelopeCorruptError(f"envelope is not JSON: {exc}") from exc
+        except RecursionError as exc:
+            # 🔥 #293-a battle: `[[[[...` within the byte cap blew the
+            #    C parser's recursion limit -- a RecursionError escaped
+            #    into the consumer loop instead of a dead letter.
+            raise EnvelopeCorruptError(
+                "envelope is nested too deeply"
+            ) from exc
         return cls.from_dict(raw)
 
     @staticmethod

@@ -37,7 +37,7 @@ from ._schema import SCHEMA_VERSION, xsm_sqlalchemy_ddl  # noqa: E402
 from .inbox_log import SQLAlchemyInbox, SQLAlchemyLog  # noqa: E402
 from .mixin import StatechartMixin, send_with_retry  # noqa: E402
 from .model_store import ModelStore  # noqa: E402
-from .outbox import SQLAlchemyOutboxStore  # noqa: E402
+from .outbox import LEASE_COLUMNS, SQLAlchemyOutboxStore  # noqa: E402
 from .store import AsyncSQLAlchemyStore, SQLAlchemyStore  # noqa: E402
 from .types import StatechartType, render_statechart_type  # noqa: E402
 
@@ -47,6 +47,7 @@ __all__ = [
     "SCHEMA_VERSION",
     "SQLAlchemyInbox",
     "SQLAlchemyLog",
+    "LEASE_COLUMNS",
     "SQLAlchemyOutboxStore",
     "SQLAlchemyStore",
     "StatechartMixin",
