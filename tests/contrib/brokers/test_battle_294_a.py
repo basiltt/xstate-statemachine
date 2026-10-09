@@ -267,11 +267,14 @@ class TestAsync(unittest.TestCase):
 
 class TestKafkaPartition(unittest.TestCase):
     def test_out_of_order_ack_never_commits_past_a_gap(self) -> None:
-        # 📝 the Kafka module needs aiokafka (CI core cells lack it)
-        kafka = pytest.importorskip(
-            "src.xstate_statemachine.contrib.brokers.kafka"
-        )
-        p = kafka._Partition()
+        # 📝 the Kafka module needs aiokafka (CI core cells lack it);
+        #    `require_extra` raises MissingExtraError, which is an
+        #    ImportError -- but importorskip only catches ImportError
+        #    raised while FINDING the module, so skip on it explicitly
+        pytest.importorskip("aiokafka")
+        from src.xstate_statemachine.contrib.brokers.kafka import _Partition
+
+        p = _Partition()
         for off in range(5):
             p.track(off)
         p.settled.update({1, 2, 4})
@@ -294,17 +297,25 @@ class TestLeak(unittest.TestCase):
                 d.ack()
             t.acked.clear()
 
+        import gc
+
         run(2000)
         tracemalloc.start()
         try:
-            base = tracemalloc.get_traced_memory()[0]
             run(5000)
+            gc.collect()
             mid = tracemalloc.get_traced_memory()[0]
             run(5000)
+            gc.collect()
             end = tracemalloc.get_traced_memory()[0]
         finally:
             tracemalloc.stop()
-        self.assertLess(end - base, (mid - base) * 1.5 + 200_000)
+        # 📝 N/2 vs N (HANDOVER §2.3): the second 5,000 round trips must
+        #    not retain more than a bounded slice over the first (the
+        #    local deque / inflight map are empty afterwards); a
+        #    tracemalloc-vs-tracemalloc delta, not a ratio of totals
+        #    (which CI's allocator noise made fail at 1.37x).
+        self.assertLess(end - mid, 512 * 1024, (mid, end))
         self.assertEqual((b.in_flight, b.held("t")), (0, 0))
 
 
