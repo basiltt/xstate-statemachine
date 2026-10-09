@@ -1457,6 +1457,86 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **Multi-agent recipes, as battle-tested (#290).** The support bot as
+  a SUPERVISOR: a planner hands 100 tickets to a worker region that
+  spawns one `TOOL_LOOP` sub-agent per ticket with its OWN budget;
+  every worker reports `AGENT_DONE` / `AGENT_FAILED` with usage,
+  `total_usage` is the exact sum, `usage_by_agent` has 100 distinct
+  ids, no result ever carries a conversation; X0.13 across the tree (a
+  worker registry wider than the parent's allow-list refused at
+  construction, wider than the spawning state's `meta.tools` refused at
+  spawn, a worker's model proposing a tool outside its own list is
+  `tool_denied` in the child and `AGENT_FAILED` in the parent, which
+  carries on); a sub-agent exhausting ITS budget fails alone; the global
+  `BudgetPlugin` trips once; `worker → judge` and a `HANDOFF` without
+  `from` are `Receipt.denied`; the PIPELINE's review loop ends `failed`
+  after exactly `max_revisions` rewrites; a DEBATE whose CON debater
+  fails still reaches the judge; async children cancelled with the
+  parent; 1,000 spawns flat
+  (`examples/integrations/agents_support_bot/tests/
+  test_battle_290_scenario.py`, `tests/contrib/agents/
+  test_battle_290_a.py`, `tests/test_battle_290_docs.py`). Found and
+  fixed: **`BudgetPlugin` rolled usage up when the parent DEQUEUED a
+  report** -- a planner handing off a batch had every `HANDOFF` queued
+  before the first `AGENT_DONE` was processed, so all 20 workers
+  spawned against a budget that allowed one; the rollup now lands when
+  the child SENDS (`on_before_send`) and `BUDGET_EXCEEDED` is queued
+  AFTER the tripping report, so that result is still collected; the
+  plugin de-duplicated reports by `id(event)` without holding the
+  event (addresses were reused -- 200 reports summed to 16 turns); a
+  string / bool / NaN / negative limit made `exceeded()` raise inside a
+  swallowed hook (the global budget was silently never enforced --
+  `AgentConfigError` at construction now); hostile child counts
+  (negative, NaN, `"junk"`) poisoned the totals (sanitised); the DEBATE
+  chart had no `AGENT_FAILED` arm, so one failing debater stalled the
+  judge forever (a failed debater "states" its failure); a duplicate
+  `event.id` while that child was running replaced it in `_actors` and
+  the orphan kept spending after the parent stopped (refused); a dict
+  task was `str()`-ed into the prompt (refused); a child chart that
+  never runs `notifyParent` was accepted and the parent waited forever
+  (refused); a sync model under the async `Interpreter` dropped the
+  spawn coroutine -- no child, no error (`AgentConfigError`);
+  `handoff_guard({"planner": "worker"})` treated the string as a set of
+  letters (`"w"` allowed, `"worker"` denied -- refused at construction;
+  matching is exact, non-string names denied); `usage_by_agent` grew
+  without bound (`max_tracked_agents=10_000`, oldest evicted;
+  `total_usage` never trimmed); `xsm replay` fed an
+  `AgentTracePlugin` JSONL printed one `? ""` row per line and exited 0
+  (exit 1 now, naming `InspectorPlugin(JsonLinesSink)` /
+  `xsm sim --record`); the supervisor chart's description claimed a
+  `sendTo`/`raise` handoff that does not exist; **review:** one `inf`
+  token count made `exceeded()` raise inside the fail-open hook on
+  every later report (the global budget was permanently disabled --
+  non-finite counts are 0 now); a report to an already-stopped parent
+  was still charged; the de-dup ring held up to 10,000 report payloads
+  (transcripts) -- released once the parent dequeues the report; a
+  child chart reporting from `exit` / a transition's `actions` /
+  `onDone` was wrongly refused as "never reports" (every action list is
+  scanned); a `strict: true` parent without `BUDGET_EXCEEDED` lost the
+  trip silently (`check_budget_event_declared`, run by `spawn_agent`
+  inside its action, loudly); plugin de-dup state shared across threads
+  is locked. Docs: the
+  `BudgetPlugin` reference described the old dequeue-time rollup;
+  Guarantees (seven multi-agent promises, each with a test anchor, and
+  what is NOT promised: reports that never arrive are not counted,
+  children already running overshoot, `cost_usd` is what the adapter
+  reports, an unhandled `BUDGET_EXCEEDED` leaves the chart `running`),
+  Operations (alert on the `AGENT_FAILED` rate, `budget_exceeded`,
+  `usage_by_agent` growth; `AgentTracePlugin.totals()` / `parent_id`
+  name the spender), Troubleshooting rows for every provoked error
+  (incl. "a `HANDOFF` without a task STOPS the supervisor under
+  `actionErrorPolicy: fail`"), "Without a model" (`xsm inspect` renders
+  the regions; `xsm simulate` walks them with stub actions; a real run
+  replays only from an inspector recording), API index descriptions,
+  the example README's "Supervisor: many tickets, one budget" (tested).
+  Held: a grandchild wider than its child is refused; a tool output
+  shaped like `HANDOFF` cannot make the parent hand off (the model never
+  sends parent events); `max_total_tokens=0` trips on the first
+  report; two parents sharing one plugin keep separate totals; a late
+  report to a stopped parent is dropped without raising; 1,000 async
+  children leave `_actors` empty; `xsm validate` / `inspect` accept all
+  three charts; the pipeline with `max_revisions=0` or a failing
+  reviewer ends `failed`.
 - **pydantic-ai and structured output, as battle-tested (#289).** The
   support bot's intake with a per-state schema: 100 tickets whose model
   answers valid JSON, invalid JSON, JSON of the WRONG state's schema,

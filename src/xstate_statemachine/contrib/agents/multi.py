@@ -25,13 +25,19 @@
 
 from __future__ import annotations
 
+import inspect
 import itertools
 import logging
+import math
+import threading
+from collections import OrderedDict
 from typing import (
     Any,
     Callable,
     Dict,
+    FrozenSet,
     Iterable,
+    List,
     Mapping,
     Optional,
     Set,
@@ -55,9 +61,15 @@ from .tools import ALL_TOOLS, ToolRegistry
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["BudgetPlugin", "handoff_guard", "spawn_agent"]
+__all__ = [
+    "BudgetPlugin",
+    "check_budget_event_declared",
+    "handoff_guard",
+    "spawn_agent",
+]
 
 _USAGE_KEYS = ("turns", "input_tokens", "output_tokens", "cost_usd")
+_SEEN_MAX = 10_000  # de-dup ring for reports seen by both hooks
 
 
 def _names(tools: Union[ToolRegistry, Iterable[str], None]) -> Set[str]:
@@ -131,12 +143,20 @@ def spawn_agent(
     chart = dict(child_chart) if child_chart is not None else TOOL_LOOP
     child_machine = create_machine(chart, logic=child_logic)
     validate_agent_chart(child_machine, registry)
+    _require_reporting(child_machine)
 
     service_key = f"agent_{name}"
     action_name = "spawn" + name[:1].upper() + name[1:]
     counter = itertools.count(1)
 
+    checked: Set[int] = set()
+
     def _prepare(i: Any, ctx: Dict[str, Any], e: Any) -> Optional[Any]:
+        if id(i) not in checked:
+            checked.add(id(i))
+            if len(checked) > 64:
+                checked.clear()
+            check_budget_event_declared(i)  # loud: inside an action
         if ctx.get("budget_exceeded"):
             logger.warning(
                 "🛑 %s: global budget exceeded; not spawning", action_name
@@ -161,10 +181,25 @@ def spawn_agent(
             raise AgentConfigError(
                 f"{action_name}: no task (event.task or context[{task_key!r}])"
             )
+        # 🔥 #290 battle (A): a dict / list task was `str()`-ed into the
+        #    prompt (silent acceptance). The prompt is text: refuse.
+        if not isinstance(task, str):
+            raise AgentConfigError(
+                f"{action_name}: task must be a str, "
+                f"got {type(task).__name__}"
+            )
         # 🆔 Always unique: a sync child can finish (and free its id)
         #    inside this very action, so "reuse when free" would give
         #    every sequential sub-agent the same id in traces and rollups.
         aid = payload.get("id") or f"{name}-{next(counter)}"
+        # 🔥 #290 battle (A): a caller-supplied id that is still LIVE was
+        #    re-registered over the running child -- the first child was
+        #    orphaned (gone from `_actors`, so the parent's `stop()` never
+        #    cancelled it and it kept spending after the parent stopped).
+        if f"{i.id}:{aid}" in i._actors:
+            raise AgentConfigError(
+                f"{action_name}: sub-agent id {aid!r} is already running"
+            )
         # 📝 Engine-internal spawn leaf: the same path the `spawn_<key>`
         #    action prefix takes, so the child is registered, persisted
         #    and addressable (`sendTo(aid)`) exactly like any actor.
@@ -187,8 +222,18 @@ def spawn_agent(
 
         def _spawn_sync(i: Any, ctx: Any, e: Any, a: Any) -> None:
             ad = _prepare(i, ctx, e)
-            if ad is not None:
-                i._spawn_actor(ad, e)
+            if ad is None:
+                return
+            done = i._spawn_actor(ad, e)
+            # 🔥 #290 battle (A): a SYNC model's action on the ASYNC
+            #    engine dropped the `_spawn_actor` coroutine -- nothing
+            #    spawned, no error, the parent waited forever. Loud now.
+            if inspect.iscoroutine(done):
+                done.close()
+                raise AgentConfigError(
+                    f"{action_name}: a sync model cannot be spawned from "
+                    "an async Interpreter; pass an async model"
+                )
 
         action = _spawn_sync
 
@@ -219,14 +264,35 @@ class BudgetPlugin(PluginBase[Any]):
         self,
         max_total_usd: Optional[float] = None,
         max_total_tokens: Optional[int] = None,
+        *,
+        max_tracked_agents: int = 10_000,
     ) -> None:
         if max_total_usd is None and max_total_tokens is None:
             raise AgentConfigError("BudgetPlugin needs at least one limit")
+        # 🔥 #290 battle (A): limits were never validated. "5" made
+        #    `exceeded()` raise inside a fail-open hook -- the global
+        #    budget was silently never enforced.
+        _check_limit("max_total_usd", max_total_usd, int_only=False)
+        _check_limit("max_total_tokens", max_total_tokens, int_only=True)
+        _check_limit("max_tracked_agents", max_tracked_agents, True)
         self.max_total_usd = max_total_usd
         self.max_total_tokens = max_total_tokens
+        self.max_tracked_agents = max_tracked_agents
+        # 🔥 #290 battle (A): de-dup was keyed on `id(event)` WITHOUT
+        #    holding the event. CPython reuses a freed object's id at once,
+        #    so a later, DIFFERENT report looked "seen" and was never
+        #    counted (200 reports rolled up as 16 turns). Now keyed on the
+        #    report's payload dict, held strongly so its id cannot be
+        #    reused while remembered; the payload also survives the async
+        #    engine's `wait=True` envelope copy. Bounded FIFO.
+        self._seen: "OrderedDict[int, Any]" = OrderedDict()
+        self._tripped: Dict[int, Any] = {}
+        # 📝 #290 review (5): one plugin may be `.use()`d by several sync
+        #    supervisors on different threads; the de-dup maps are shared.
+        self._lock = threading.Lock()
 
     def exceeded(self, totals: Mapping[str, Any]) -> bool:
-        tokens = int(totals.get("input_tokens", 0)) + int(
+        tokens = _num(totals.get("input_tokens", 0)) + _num(
             totals.get("output_tokens", 0)
         )
         if self.max_total_tokens is not None and (
@@ -234,7 +300,7 @@ class BudgetPlugin(PluginBase[Any]):
         ):
             return True
         return self.max_total_usd is not None and (
-            float(totals.get("cost_usd", 0.0)) >= self.max_total_usd
+            _num(totals.get("cost_usd", 0.0)) >= self.max_total_usd
         )
 
     def guards(self) -> MachineLogic:
@@ -243,23 +309,187 @@ class BudgetPlugin(PluginBase[Any]):
 
         return MachineLogic(guards={"underGlobalBudget": under})
 
+    def on_interpreter_start(self, interpreter: Any) -> None:
+        # 🔥 #290 review (6): `BUDGET_EXCEEDED` is sent from a hook; under
+        #    `strict: true` an undeclared event raises there, the error is
+        #    swallowed and the trip is lost while the flag stays True.
+        #    Plugin hooks are fail-open, so this cannot stop `start()`
+        #    itself -- it logs here and `spawn_agent` re-checks inside
+        #    its action (which DOES fail loudly) before the first spawn.
+        try:
+            check_budget_event_declared(interpreter)
+        except AgentConfigError as exc:
+            logger.error("🔥 %s", exc)
+            raise
+
+    def on_before_send(self, interpreter: Any, event: Any) -> Optional[Any]:
+        # 🔥 #290 battle: the rollup ran in `on_event_received`, i.e. when
+        #    the parent DEQUEUED the child's report. A planner that hands
+        #    off a batch (`handOffTasks` sends N HANDOFFs in one action)
+        #    had all N queued before the first AGENT_DONE was processed, so
+        #    every worker spawned however small the global budget. The
+        #    totals and `budget_exceeded` now land the moment the child
+        #    SENDS (this hook fires before the event is queued), so the
+        #    next HANDOFF dequeued refuses to spawn. The BUDGET_EXCEEDED
+        #    event itself is sent when the report is dequeued (below) so
+        #    it queues AFTER the report: the result that tripped the
+        #    budget is still collected. Returns None: never blocks.
+        # 🔥 #290 review (2): this hook also fires for a report the parent
+        #    will DROP (already stopped); counting it inflated the totals
+        #    of a finished run. Only a running parent is charged here; a
+        #    report that still enters the machine is counted on dequeue.
+        if getattr(interpreter, "status", "running") == "running":
+            self._rollup(interpreter, event)
+        return None
+
     def on_event_received(self, interpreter: Any, event: Any) -> None:
+        # 📝 Reports that bypassed `send()` (a restored queue, a direct
+        #    `_process_event`) are still counted exactly once: `_rollup`
+        #    remembers the events it has already seen.
+        self._rollup(interpreter, event)
+        p = getattr(event, "payload", None)
+        with self._lock:
+            # 📝 #290 review (3): a report that reached the machine needs
+            #    no further de-dup -- release its payload (transcripts
+            #    may be large) instead of holding 10k of them.
+            if self._seen.get(id(p), self) is p:
+                del self._seen[id(p)]
+            tripped = self._tripped.get(id(p), self) is p
+            if tripped:
+                del self._tripped[id(p)]
+        if tripped:
+            interpreter.send(
+                "BUDGET_EXCEEDED",
+                total_usage=dict(interpreter.context.get("total_usage") or {}),
+            )
+
+    def _rollup(self, interpreter: Any, event: Any) -> None:
+        """Add the report's usage to the parent context; flag the one
+        report that crosses the global limit."""
         if getattr(event, "type", None) not in ("AGENT_DONE", "AGENT_FAILED"):
             return
-        usage = (getattr(event, "payload", None) or {}).get("usage") or {}
+        payload = getattr(event, "payload", None)
+        if not isinstance(payload, Mapping):
+            payload = {}
+        key = id(payload)
+        with self._lock:
+            if self._seen.get(key, self) is payload:
+                return
+            self._seen[key] = payload
+            while len(self._seen) > _SEEN_MAX:
+                self._seen.popitem(last=False)
+        usage = payload.get("usage") if isinstance(payload, Mapping) else {}
+        usage = usage if isinstance(usage, Mapping) else {}
         ctx = interpreter.context
         totals = dict(ctx.get("total_usage") or {})
         for k in _USAGE_KEYS:
-            totals[k] = totals.get(k, 0) + usage.get(k, 0)
+            totals[k] = totals.get(k, 0) + _num(usage.get(k, 0))
         by_agent = dict(ctx.get("usage_by_agent") or {})
-        aid = (getattr(event, "payload", None) or {}).get("agent_id")
+        aid = payload.get("agent_id")
         if aid:
-            by_agent[str(aid)] = dict(usage)
+            # 🔥 #290 battle (A): stored raw (NaN / "x" / huge payloads
+            #    kept verbatim) and unbounded: a long-lived supervisor grew
+            #    forever. Sanitised like the totals; oldest evicted.
+            by_agent.pop(str(aid), None)
+            by_agent[str(aid)] = {
+                k: _num(usage.get(k, 0)) for k in _USAGE_KEYS
+            }
+            while len(by_agent) > self.max_tracked_agents:
+                by_agent.pop(next(iter(by_agent)))
         ctx["total_usage"] = totals
         ctx["usage_by_agent"] = by_agent
         if not ctx.get("budget_exceeded") and self.exceeded(totals):
             ctx["budget_exceeded"] = True
-            interpreter.send("BUDGET_EXCEEDED", total_usage=dict(totals))
+            with self._lock:
+                self._tripped[key] = payload
+
+
+def check_budget_event_declared(interpreter: Any) -> None:
+    """Raise `AgentConfigError` when a ``strict`` parent chart does not
+    declare ``BUDGET_EXCEEDED`` -- `BudgetPlugin` could never deliver it.
+    """
+    machine = getattr(interpreter, "machine", None)
+    known = getattr(machine, "is_known_event", None)
+    if (
+        getattr(interpreter, "strict", False)
+        and callable(known)
+        and not known("BUDGET_EXCEEDED", user_sent=True)
+    ):
+        raise AgentConfigError(
+            "BudgetPlugin: a strict chart must declare the BUDGET_EXCEEDED "
+            "event it will receive"
+        )
+
+
+def _check_limit(name: str, v: Any, int_only: bool) -> None:
+    if v is None:
+        return
+    ok = isinstance(v, (int, float)) and not isinstance(v, bool)
+    if int_only:
+        ok = ok and isinstance(v, int)
+    if not ok or not math.isfinite(v) or v < 0:
+        raise AgentConfigError(
+            f"BudgetPlugin {name} must be a non-negative finite "
+            f"{'int' if int_only else 'number'} (got {v!r})"
+        )
+
+
+def _require_reporting(machine: MachineNode) -> None:
+    """🔥 #290 battle (A): a child chart with no ``notifyParent`` entry
+    never reports, so the parent waited for AGENT_DONE forever (and the
+    BudgetPlugin never saw its spend). Refused at construction."""
+    # 📝 #290 review (4): `entry` only would wrongly refuse a chart that
+    #    reports from `exit`, a transition's `actions`, `onDone`/`onError`
+    #    or `always` -- every action list is scanned.
+    stack: List[Any] = [machine]
+    while stack:
+        node = stack.pop()
+        for ad in _all_actions(node):
+            if getattr(ad, "type", None) == "notifyParent":
+                return
+        stack.extend((getattr(node, "states", None) or {}).values())
+    raise AgentConfigError(
+        "spawn_agent: the child chart never runs 'notifyParent', so the "
+        "parent would never receive AGENT_DONE / AGENT_FAILED"
+    )
+
+
+def _all_actions(node: Any) -> Iterable[Any]:
+    """Every `ActionDefinition` reachable from one state node."""
+    yield from getattr(node, "entry", None) or ()
+    yield from getattr(node, "exit", None) or ()
+    transitions: List[Any] = []
+    for attr in ("on", "after", "on_done", "on_error"):
+        value = getattr(node, attr, None)
+        if isinstance(value, Mapping):  # `on` holds `always` under ""
+            for t in value.values():
+                transitions.extend(t if isinstance(t, list) else [t])
+        elif isinstance(value, list):
+            transitions.extend(value)
+        elif value is not None:
+            transitions.append(value)
+    inv = getattr(node, "invoke", None)
+    for i in inv if isinstance(inv, list) else ([inv] if inv else []):
+        for attr in ("on_done", "on_error"):
+            t = getattr(i, attr, None)
+            transitions.extend(
+                t if isinstance(t, list) else ([t] if t else [])
+            )
+    for t in transitions:
+        yield from getattr(t, "actions", None) or ()
+
+
+def _num(value: Any) -> Any:
+    """A usage number from a child's report: non-numeric / bool / NaN /
+    negative counts never reduce or poison the rollup (0)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    # 🔥 #290 review (1): `inf` passed; `exceeded()` then raised
+    #    OverflowError inside a fail-open hook on EVERY later report --
+    #    the global budget was permanently disabled by one bad number.
+    if not math.isfinite(value) or value < 0:
+        return 0
+    return value
 
 
 # -----------------------------------------------------------------------------
@@ -274,10 +504,36 @@ def handoff_guard(
     handoff transition; an unauthorised handoff yields
     ``Receipt.denied == True``.
     """
-    table = {k: frozenset(v) for k, v in allowed.items()}
+    # 🔥 #290 battle (A): `{"planner": "worker"}` became the CHARACTER
+    #    set {"w", "o", ...}: "worker" was refused and "w" allowed. Each
+    #    value must be a collection of str names; refused at construction.
+    table: Dict[str, FrozenSet[str]] = {}
+    for k, v in allowed.items():
+        if not isinstance(k, str) or isinstance(v, (str, bytes)):
+            raise AgentConfigError(
+                f"handoff_guard: {k!r} must map a str to a list of str"
+            )
+        try:
+            names = frozenset(v)
+        except TypeError:
+            raise AgentConfigError(
+                f"handoff_guard: allowed[{k!r}] is not iterable"
+            ) from None
+        if not all(isinstance(n, str) for n in names):
+            raise AgentConfigError(
+                f"handoff_guard: allowed[{k!r}] must hold str names"
+            )
+        table[k] = names
 
     def _guard(ctx: Dict[str, Any], e: Any) -> bool:
-        p = getattr(e, "payload", None) or {}
-        return p.get("to") in table.get(str(p.get("from")), frozenset())
+        p = getattr(e, "payload", None)
+        if not isinstance(p, Mapping):
+            return False
+        src, dst = p.get("from"), p.get("to")
+        # 📝 Exact str match only: None / int never match via `str()`,
+        #    and an unhashable list no longer raises inside the guard.
+        if not isinstance(src, str) or not isinstance(dst, str):
+            return False
+        return dst in table.get(src, frozenset())
 
     return MachineLogic(guards={name: _guard})

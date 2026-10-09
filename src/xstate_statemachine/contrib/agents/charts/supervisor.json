@@ -1,6 +1,6 @@
 {
   "id": "supervisor",
-  "description": "SUPERVISOR recipe (#290): a planner region and a worker region run in parallel. The planner hands each sub-task to the worker region (sendTo self via raise); the worker region spawns one TOOL_LOOP sub-agent per task with its own budget. done.state aggregates when both regions finish. Example chart only -- not a runtime.",
+  "description": "SUPERVISOR recipe (#290): a planner region and a worker region run in parallel. The planner hands each sub-task to the worker region as a HANDOFF event (from planner, to worker, task) that YOUR handOffTasks action sends to the machine itself; the handoffAllowed guard refuses any other pair; the worker region spawns one TOOL_LOOP sub-agent per task with its own budget. done.state aggregates when both regions finish; BUDGET_EXCEEDED ends the worker region. meta.tools [search, fetch] are PLACEHOLDERS -- replace them with your tool names (a worker may only hold tools listed there). Example chart only -- not a runtime.",
   "initial": "running",
   "actionErrorPolicy": "fail",
   "context": {
