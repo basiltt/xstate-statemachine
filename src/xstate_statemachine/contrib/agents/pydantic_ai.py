@@ -24,11 +24,12 @@ from __future__ import annotations
 import inspect
 from typing import Any, AsyncIterator, Callable, Dict, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, TypeAdapter
 
 from ...actor_logic import from_async_iterator
 from ...machine_logic import MachineLogic
 from .._compat import require_extra
+from .budgets import _spent_tokens
 
 require_extra("agents", "pydantic_ai", hint="or: pip install pydantic-ai")
 
@@ -40,9 +41,19 @@ __all__ = [
 
 
 def _jsonable(value: Any) -> Any:
+    # 🔥 #289 battle (A): only BaseModel was dumped; a dataclass /
+    #    TypedDict / dict output holding datetime, bytes or Decimal landed
+    #    raw in context and broke `get_snapshot()` (json.dumps). Every
+    #    output now goes through pydantic's JSON mode; anything pydantic
+    #    cannot serialise is kept as-is (never raises).
     if isinstance(value, BaseModel):
         return value.model_dump(mode="json")
-    return value
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    try:
+        return TypeAdapter(Any).dump_python(value, mode="json")
+    except Exception:  # noqa: BLE001 -- unserialisable: keep raw
+        return value
 
 
 def _usage(obj: Any) -> Dict[str, int]:
@@ -60,7 +71,11 @@ def _usage(obj: Any) -> Dict[str, int]:
         for name in (key, *alts):
             v = getattr(u, name, None)
             if v:
-                out[key] = int(v)
+                # 🔥 #289 battle (A): `int(v)` raised on NaN/garbage (the
+                #    run then went to onError) and passed negatives (a
+                #    hostile provider refunding budget). Reuse the budget
+                #    sanitiser: negative → 0, NaN/inf/junk → exhausting.
+                out[key] = _spent_tokens(v)
                 break
     return out
 
@@ -131,13 +146,19 @@ def usage_logic(name: str = "recordAgentUsage") -> MachineLogic:
     read."""
 
     def record(i: Any, ctx: Dict[str, Any], e: Any, a: Any) -> None:
-        data = getattr(e, "data", None) or {}
-        usage = data.get("usage") or {}
-        ctx["tokens_in"] = int(ctx.get("tokens_in", 0)) + int(
-            usage.get("input_tokens", 0)
+        # 🛡️ #289 battle (A): onDone data is untrusted (a hand-written
+        #    service, a hostile provider): non-dict data / usage, None,
+        #    negative, NaN or "junk" counts must neither raise (a stopped
+        #    machine) nor refund budget -- `_spent_tokens` clamps them.
+        data = getattr(e, "data", None)
+        data = data if isinstance(data, dict) else {"output": data}
+        usage = data.get("usage")
+        usage = usage if isinstance(usage, dict) else {}
+        ctx["tokens_in"] = _spent_tokens(ctx.get("tokens_in")) + (
+            _spent_tokens(usage.get("input_tokens"))
         )
-        ctx["tokens_out"] = int(ctx.get("tokens_out", 0)) + int(
-            usage.get("output_tokens", 0)
+        ctx["tokens_out"] = _spent_tokens(ctx.get("tokens_out")) + (
+            _spent_tokens(usage.get("output_tokens"))
         )
         ctx["turns"] = int(ctx.get("turns", 0)) + 1
         ctx["result"] = data.get("output")
