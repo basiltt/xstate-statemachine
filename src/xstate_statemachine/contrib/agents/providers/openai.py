@@ -28,8 +28,16 @@ __all__ = [
 
 def to_openai_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
+    proposed: set = set()
     for m in messages:
         role = m.get("role")
+        if role == "tool" and m.get("tool_call_id") not in proposed:
+            # 🔥 #287 battle (A): `max_messages` trimming can drop the
+            #    assistant turn that proposed this call; the provider
+            #    400s an orphan tool result -- skip it.
+            continue
+        if role == "assistant":
+            proposed.update(c.get("id") for c in m.get("tool_calls") or [])
         if role == "tool":
             out.append(
                 {

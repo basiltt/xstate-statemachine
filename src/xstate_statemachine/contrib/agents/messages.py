@@ -101,19 +101,26 @@ class ToolCall:
     arguments: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            "id": self.id,
-            "name": self.name,
-            "arguments": copy.deepcopy(self.arguments),
-        }
+        try:
+            args = copy.deepcopy(self.arguments)
+        except RecursionError:
+            # 🔥 #287 battle (A): arguments nested ~1000 deep raised out
+            #    of `callModel` as a generic failure, so the turn was
+            #    RETRIED (re-billed) instead of denied. Replace them with
+            #    a marker the tool schema refuses.
+            args = {"__unparseable__": "arguments nested too deeply"}
+        return {"id": self.id, "name": self.name, "arguments": args}
 
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> "ToolCall":
-        return cls(
-            id=str(d["id"]),
-            name=str(d["name"]),
-            arguments=dict(d.get("arguments") or {}),
-        )
+        # 🔥 #287 battle (A): `dict(arguments)` coerced a list of pairs
+        #    into an object (schema bypass) and crashed on a string/int.
+        #    A non-object is kept as-is so `Tool.validate` denies it.
+        raw = d.get("arguments")
+        args: Any = {} if raw is None else raw
+        if isinstance(args, Mapping):
+            args = dict(args)
+        return cls(id=str(d["id"]), name=str(d["name"]), arguments=args)
 
 
 @dataclass(frozen=True)

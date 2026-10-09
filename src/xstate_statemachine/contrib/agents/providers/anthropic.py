@@ -33,11 +33,19 @@ def to_anthropic_messages(
     """``(system, messages)`` for ``client.messages.create``."""
     system: List[str] = []
     out: List[Dict[str, Any]] = []
+    proposed: set = set()
     for m in messages:
         role = m.get("role")
         if role == "system":
             system.append(str(m.get("content", "")))
             continue
+        if role == "tool" and m.get("tool_call_id") not in proposed:
+            # 🔥 #287 battle (A): `max_messages` trimming can drop the
+            #    assistant turn that proposed this call; the provider
+            #    400s an orphan tool result -- skip it.
+            continue
+        if role == "assistant":
+            proposed.update(c.get("id") for c in m.get("tool_calls") or [])
         if role == "tool":
             block = {
                 "type": "tool_result",
@@ -93,15 +101,23 @@ def from_anthropic_response(
         if kind == "text":
             texts.append(str(field(block, "text") or ""))
         elif kind == "tool_use":
-            raw = field(block, "input") or {}
+            raw = field(block, "input")
+            raw = {} if raw is None else raw
             if not isinstance(raw, Mapping):
                 dump = getattr(raw, "model_dump", None)
-                raw = dump() if callable(dump) else {}
+                raw = dump() if callable(dump) else raw
+            # 🔥 #287 battle (A): a non-object `input` became `{}` -- a
+            #    malformed call to a tool with no required parameters
+            #    RAN. Now it is kept so the schema check denies it.
             calls.append(
                 ToolCall(
                     id=str(field(block, "id")),
                     name=str(field(block, "name")),
-                    arguments=dict(raw) if isinstance(raw, Mapping) else {},
+                    arguments=(
+                        dict(raw)
+                        if isinstance(raw, Mapping)
+                        else {"__unparseable__": raw}
+                    ),
                 )
             )
     usage = field(resp, "usage")
