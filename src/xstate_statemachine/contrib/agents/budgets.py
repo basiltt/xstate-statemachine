@@ -122,3 +122,12 @@ def _spent_tokens(value: Any) -> int:
 def _spent_usd(value: Any) -> float:
     """A reported cost: negative → 0, NaN / inf → budget-exhausting."""
     return float(_spent(value, False))
+
+
+def _usage_totals(ctx: Mapping[str, Any]) -> Dict[str, Any]:
+    return {
+        "turns": int(ctx.get("turns", 0)),
+        "input_tokens": int(ctx.get("tokens_in", 0)),
+        "output_tokens": int(ctx.get("tokens_out", 0)),
+        "cost_usd": round(float(ctx.get("cost_usd", 0.0)), 10),
+    }

@@ -235,7 +235,11 @@ class TestLoop:
             max_turns=20,
         )
         msgs = res.context["messages"]
-        assert len(msgs) == 5 and msgs[0]["content"] == "TASK"
+        # 📝 #287 review M2: the window is trimmed at a TURN boundary -- a
+        #    `tool` result whose assistant turn was cut is dropped too, so
+        #    the count may be below the cap; never above it
+        assert 3 <= len(msgs) <= 5 and msgs[0]["content"] == "TASK"
+        assert msgs[1]["role"] != "tool", "an orphan tool result survived"
 
     def test_summarise_hook(self) -> None:
         def ping() -> str:

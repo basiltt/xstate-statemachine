@@ -1490,7 +1490,17 @@ _No unreleased changes yet._
   `run_agent(timeout_s=)` bounded only the final wait, not the sends;
   the Anthropic adapter ran a tool with no parameters on a malformed
   `input`; both adapters could send a tool result whose proposing turn
-  `max_messages` had trimmed (the provider APIs reject that). Also:
+  `max_messages` had trimmed (the provider APIs reject that) -- and, from
+  the independent review, the window is now cut at a TURN boundary so
+  no orphan is produced at all (the model never loses a result it
+  needs); a hung SYNC model used the loop's default executor, whose few
+  workers a stuck call pins and which `asyncio.run` waits for on exit
+  (a daemon thread per call now, abandoned on timeout); `FakeModel`
+  ids collided after a store resume (`call_{n}_{k}` → unique per
+  instance) and the duplicate-id check now also remembers ids from
+  trimmed turns (`context.spent_call_ids`); a validation failure other
+  than `ToolDeniedError` escaped `denyTool` and left `pending_tool_calls`
+  stale; `"1.5"` token counts read as garbage. Also:
   `core.py` was 937 lines (split into `budgets.py`, `_output.py`,
   `_allowlist.py`); the `[agents]` CI cell never ran the example's
   tests (gated on the FastAPI stack by mistake) and `G8_agents.py`

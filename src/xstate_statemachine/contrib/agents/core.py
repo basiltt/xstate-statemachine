@@ -51,7 +51,14 @@ from ._output import (
     _task_of,
     _validate_output,
 )
-from .budgets import Budget, _spent, budget_guards
+from ._threads import _in_daemon_thread
+from .budgets import (
+    Budget,
+    _spent_tokens,
+    _spent_usd,
+    _usage_totals,
+    budget_guards,
+)
 from ._allowlist import (  # noqa: F401 -- re-exported for callers
     state_tools,
     validate_agent_chart,
@@ -142,6 +149,10 @@ TOOL_LOOP: Dict[str, Any] = load_chart("tool_loop")
 # -----------------------------------------------------------------------------
 # 🏭 agent_logic
 # -----------------------------------------------------------------------------
+#: How many tool-call ids are remembered for the duplicate check.
+_SPENT_IDS = 1000
+
+
 def _is_async_model(model: Any) -> bool:
     flag = getattr(model, "is_async", None)
     if isinstance(flag, bool):
@@ -149,19 +160,6 @@ def _is_async_model(model: Any) -> bool:
     return inspect.iscoroutinefunction(model) or inspect.iscoroutinefunction(
         getattr(model, "__call__", None)
     )
-
-
-#: What a non-finite / unparseable usage number counts as: enough to
-#: exhaust any budget (fail closed) while staying JSON-serialisable.
-
-
-def _usage_totals(ctx: Mapping[str, Any]) -> Dict[str, Any]:
-    return {
-        "turns": int(ctx.get("turns", 0)),
-        "input_tokens": int(ctx.get("tokens_in", 0)),
-        "output_tokens": int(ctx.get("tokens_out", 0)),
-        "cost_usd": round(float(ctx.get("cost_usd", 0.0)), 10),
-    }
 
 
 class _AgentLogic:
@@ -210,9 +208,15 @@ class _AgentLogic:
             return out
         # 📝 Keep the task (first message) and the most recent tail.
         head = messages[:1]
-        # ⚠️ The tail may begin with `tool` results whose assistant
-        #    message was dropped; the provider adapters skip such orphans.
-        return head + messages[-(self.max_messages - 1) :]
+        tail = messages[-(self.max_messages - 1) :]
+        # 📝 review M2: never strand `tool` results whose assistant turn
+        #    was cut -- the model would not see the result (a refund
+        #    confirmation) and might propose the call AGAIN. Drop the
+        #    orphans at the window's head instead of handing them to the
+        #    adapters to skip silently.
+        while tail and tail[0].get("role") == "tool":
+            tail = tail[1:]
+        return head + tail
 
     def _append(self, ctx: Dict[str, Any], *msgs: Message) -> None:
         ctx["messages"] = self._bound(
@@ -266,12 +270,16 @@ class _AgentLogic:
         #    by the (injectable) model. Re-using an id from an earlier
         #    batch would let a stale/replayed HUMAN_APPROVED naming that
         #    id approve a DIFFERENT call -- such a turn is denied.
-        seen = {
+        # 📝 review M1: ids are remembered in ``context["spent_call_ids"]``
+        #    (bounded ring) -- the message window is trimmed, the ring is
+        #    not, so an id from a trimmed turn is still a duplicate.
+        seen = set(ctx.get("spent_call_ids") or ())
+        seen.update(
             str(c.get("id"))
             for m in ctx.get("messages") or []
             for c in (m.get("tool_calls") or [])
             if isinstance(c, Mapping)
-        }
+        )
         if any(str(c.get("id")) in seen for c in data["tool_calls"]):
             data["duplicate_call_ids"] = True
         return data
@@ -324,10 +332,12 @@ class _AgentLogic:
             #    `modelTimeout` delay (and `run_agent(timeout_s=)`) could
             #    not fire. It runs on a worker thread now; on timeout the
             #    thread is abandoned (Python cannot kill it).
-            loop = asyncio.get_running_loop()
-            resp = await loop.run_in_executor(
-                None, self.model, messages, schemas
-            )
+            # 📝 review H1: NOT the loop's default executor -- a hung call
+            #    would pin one of its few workers (and `asyncio.run` waits
+            #    for that pool on exit, the very hang this removes). A
+            #    daemon thread per call, abandoned on timeout, like
+            #    `ToolRegistry.call_sync`.
+            resp = await _in_daemon_thread(self.model, messages, schemas)
         if inspect.isawaitable(resp):
             resp = await resp
         raw = self._response_data(resp, extra)
@@ -406,7 +416,7 @@ class _AgentLogic:
             if tool is not None:
                 try:
                     tool.validate(c.arguments)
-                except ToolDeniedError:
+                except Exception:  # noqa: BLE001 - any failure = denied
                     return False
         return True
 
@@ -452,17 +462,22 @@ class _AgentLogic:
     def a_record_response(
         self, i: Any, ctx: Dict[str, Any], e: Any, a: Any
     ) -> None:
+        ring = list(ctx.get("spent_call_ids") or ())
+        for call in self._data(e).get("tool_calls") or []:
+            if isinstance(call, Mapping) and call.get("id") is not None:
+                ring.append(str(call["id"]))
+        ctx["spent_call_ids"] = ring[-_SPENT_IDS:]
         d = self._data(e)
         usage = d.get("usage") or {}
         ctx["turns"] = int(ctx.get("turns", 0)) + 1
-        ctx["tokens_in"] = int(ctx.get("tokens_in", 0)) + _spent(
-            usage.get("input_tokens"), True
+        ctx["tokens_in"] = int(ctx.get("tokens_in", 0)) + _spent_tokens(
+            usage.get("input_tokens")
         )
-        ctx["tokens_out"] = int(ctx.get("tokens_out", 0)) + _spent(
-            usage.get("output_tokens"), True
+        ctx["tokens_out"] = int(ctx.get("tokens_out", 0)) + _spent_tokens(
+            usage.get("output_tokens")
         )
-        ctx["cost_usd"] = float(ctx.get("cost_usd", 0.0)) + _spent(
-            usage.get("cost_usd"), False
+        ctx["cost_usd"] = float(ctx.get("cost_usd", 0.0)) + _spent_usd(
+            usage.get("cost_usd")
         )
         ctx["attempt"] = 0  # a successful call resets the retry counter
         ctx["approved_call_ids"] = []  # approvals never outlive a batch
@@ -594,16 +609,25 @@ class _AgentLogic:
             self._fail(ctx, "tool_denied", f"tool(s) {bad} not allowed here")
             ctx["pending_tool_calls"] = []
             return
-        for c in calls_from(d.get("tool_calls") or []):
-            tool = self.tools.get(c.name)
-            if tool is None:
-                continue
-            try:
-                tool.validate(c.arguments)
-            except ToolDeniedError as exc:
-                self._fail(ctx, "tool_denied", str(exc))
-                break
-        ctx["pending_tool_calls"] = []
+        try:
+            for c in calls_from(d.get("tool_calls") or []):
+                tool = self.tools.get(c.name)
+                if tool is None:
+                    continue
+                try:
+                    tool.validate(c.arguments)
+                except ToolDeniedError as exc:
+                    self._fail(ctx, "tool_denied", str(exc))
+                    break
+                except Exception:  # noqa: BLE001 - review M3
+                    self._fail(
+                        ctx,
+                        "tool_denied",
+                        f"tool {c.name!r}: invalid arguments",
+                    )
+                    break
+        finally:
+            ctx["pending_tool_calls"] = []
 
     def a_record_failure(
         self, i: Any, ctx: Dict[str, Any], e: Any, a: Any
