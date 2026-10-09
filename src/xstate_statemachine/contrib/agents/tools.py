@@ -129,6 +129,13 @@ class Tool:
             raise ToolDeniedError(
                 self.name, f"invalid arguments ({detail})"
             ) from None
+        except RecursionError:
+            # 🔥 #287 battle (A): arguments nested ~1000 deep escaped as a
+            #    RecursionError -- the guard swallowed it, `runTool` raised
+            #    it as a generic failure and the turn was RETRIED. Denied.
+            raise ToolDeniedError(
+                self.name, "invalid arguments (nested too deeply)"
+            ) from None
         return {k: getattr(model, k) for k in type(model).model_fields}
 
 
@@ -140,7 +147,10 @@ def _description(fn: Callable[..., Any]) -> str:
 def _args_model(fn: Callable[..., Any], name: str) -> type:
     sig = inspect.signature(fn)
     try:
-        hints = get_type_hints(fn)
+        # ⚠️ include_extras: without it `Annotated[int, Field(gt=0)]` is
+        #    flattened to `int` and the tool's value-range constraints are
+        #    silently dropped from the schema the model AND `validate` use.
+        hints = get_type_hints(fn, include_extras=True)
     except Exception:  # noqa: BLE001 -- unresolvable forward refs
         hints = {}
     fields: Dict[str, Any] = {}

@@ -27,9 +27,26 @@ __all__ = [
 
 
 def to_openai_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Agent messages → OpenAI Chat Completions ``messages``.
+
+    Args:
+        messages: Provider-neutral agent messages (``role``/``content``/
+            ``tool_calls``/``tool_call_id``).
+
+    Returns:
+        The list to pass as ``messages=``.
+    """
     out: List[Dict[str, Any]] = []
+    proposed: set = set()
     for m in messages:
         role = m.get("role")
+        if role == "tool" and m.get("tool_call_id") not in proposed:
+            # 🔥 #287 battle (A): `max_messages` trimming can drop the
+            #    assistant turn that proposed this call; the provider
+            #    400s an orphan tool result -- skip it.
+            continue
+        if role == "assistant":
+            proposed.update(c.get("id") for c in m.get("tool_calls") or [])
         if role == "tool":
             out.append(
                 {
@@ -64,6 +81,14 @@ def to_openai_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def to_openai_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Tool descriptors → OpenAI ``tools=`` (``{"type": "function"}``).
+
+    Args:
+        tools: ``{name, description, parameters}`` from `Tool.schema`.
+
+    Returns:
+        The list to pass as ``tools=``.
+    """
     return [{"type": "function", "function": dict(t)} for t in tools]
 
 
@@ -82,6 +107,16 @@ def _arguments(raw: Any) -> Dict[str, Any]:
 def from_openai_response(
     resp: Any, *, prices: Optional[Mapping[str, float]] = None
 ) -> ModelResponse:
+    """An OpenAI chat completion (SDK object or dict) → `ModelResponse`.
+
+    Args:
+        resp: The ``chat.completions.create`` result.
+        prices: ``{"input_per_mtok", "output_per_mtok"}``; ``None`` → $0.
+
+    Returns:
+        Text, tool calls (malformed JSON arguments become an unknown key,
+        which the strict schema then denies) and usage.
+    """
     choice = (field(resp, "choices") or [None])[0]
     msg = field(choice, "message")
     calls = [

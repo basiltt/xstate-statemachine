@@ -22,13 +22,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
-import importlib
 import inspect
 import json
 import logging
+import math
 import re
-from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     Any,
@@ -42,11 +42,27 @@ from typing import (
     Union,
 )
 
-from pydantic import BaseModel, ValidationError
-
 from ...machine_logic import MachineLogic
 from ...patterns.retry import RetryPolicy
 from ...plugins import redact
+from ._output import (
+    _meta_output_model,
+    _resolve_model,
+    _task_of,
+    _validate_output,
+)
+from ._threads import _in_daemon_thread
+from .budgets import (
+    Budget,
+    _spent_tokens,
+    _spent_usd,
+    _usage_totals,
+    budget_guards,
+)
+from ._allowlist import (  # noqa: F401 -- re-exported for callers
+    state_tools,
+    validate_agent_chart,
+)
 from .messages import (
     AgentConfigError,
     Message,
@@ -131,191 +147,12 @@ TOOL_LOOP: Dict[str, Any] = load_chart("tool_loop")
 
 
 # -----------------------------------------------------------------------------
-# 💰 Budgets
-# -----------------------------------------------------------------------------
-@dataclass(frozen=True)
-class Budget:
-    """Per-agent limits. ``None`` means "no limit on this axis"."""
-
-    max_tokens: Optional[int] = None
-    max_usd: Optional[float] = None
-    max_turns: Optional[int] = 10
-
-    @classmethod
-    def coerce(
-        cls, value: Union["Budget", Mapping[str, Any], None]
-    ) -> "Budget":
-        if value is None:
-            return cls()
-        if isinstance(value, Budget):
-            return value
-        return cls(**dict(value))
-
-
-def budget_guards(
-    max_tokens: Optional[int] = None,
-    max_usd: Optional[float] = None,
-    max_turns: Optional[int] = None,
-) -> MachineLogic:
-    """``underTokenBudget`` / ``underCostBudget`` / ``underTurnLimit``.
-
-    Each is ``True`` while the SPENT amount is strictly below the limit, so
-    a turn is refused once the limit is reached -- the chart checks them on
-    the only way into `awaiting_model`.
-    """
-
-    def under_tokens(ctx: Dict[str, Any], e: Any) -> bool:
-        if max_tokens is None:
-            return True
-        spent = int(ctx.get("tokens_in", 0)) + int(ctx.get("tokens_out", 0))
-        return spent < max_tokens
-
-    def under_cost(ctx: Dict[str, Any], e: Any) -> bool:
-        return max_usd is None or float(ctx.get("cost_usd", 0.0)) < max_usd
-
-    def under_turns(ctx: Dict[str, Any], e: Any) -> bool:
-        return max_turns is None or int(ctx.get("turns", 0)) < max_turns
-
-    return MachineLogic(
-        guards={
-            "underTokenBudget": under_tokens,
-            "underCostBudget": under_cost,
-            "underTurnLimit": under_turns,
-        }
-    )
-
-
-# -----------------------------------------------------------------------------
-# 🗺️ Allow-lists (meta.tools)
-# -----------------------------------------------------------------------------
-def _check_tools_meta(state_id: str, value: Any) -> List[str]:
-    if not isinstance(value, list) or not all(
-        isinstance(v, str) for v in value
-    ):
-        raise AgentConfigError(
-            f"state {state_id!r}: meta.tools must be a list of tool names"
-        )
-    return list(value)
-
-
-def state_tools(interp: Any, event: Any = None) -> List[str]:
-    """The allow-list governing the current step.
-
-    For an invoked service, the hosting state's ``meta.tools`` (the default
-    invoke id IS the state id). Otherwise the union over active states.
-    No ``meta.tools`` anywhere → ``[]``: closed by default.
-    """
-    etype = getattr(event, "type", "") or ""
-    if etype.startswith("invoke."):
-        node = interp.machine.get_state_by_id(etype[len("invoke.") :])
-        if node is not None and "tools" in (node.meta or {}):
-            return _check_tools_meta(node.id, node.meta["tools"])
-    out: List[str] = []
-    for sid, meta in interp.get_meta().items():
-        if isinstance(meta, dict) and "tools" in meta:
-            out.extend(_check_tools_meta(sid, meta["tools"]))
-    return out
-
-
-def _walk(node: Any) -> Iterable[Any]:
-    yield node
-    for child in (getattr(node, "states", None) or {}).values():
-        yield from _walk(child)
-
-
-def validate_agent_chart(machine: Any, registry: ToolRegistry) -> None:
-    """Fail loudly when a state's ``meta.tools`` names an unregistered tool
-    (a typo would otherwise silently narrow the agent)."""
-    for node in _walk(machine):
-        meta = getattr(node, "meta", None) or {}
-        if "tools" not in meta:
-            continue
-        for name in _check_tools_meta(node.id, meta["tools"]):
-            if name != ALL_TOOLS and name not in registry:
-                raise AgentConfigError(
-                    f"state {node.id!r}: meta.tools lists {name!r}, which is "
-                    f"not in the tool registry {registry.names}"
-                )
-
-
-# -----------------------------------------------------------------------------
-# 🧾 Structured output
-# -----------------------------------------------------------------------------
-def _resolve_model(spec: Any) -> Optional[type]:
-    if spec is None:
-        return None
-    if isinstance(spec, type) and issubclass(spec, BaseModel):
-        return spec
-    if isinstance(spec, str) and ":" in spec:
-        mod, _, attr = spec.partition(":")
-        obj = getattr(importlib.import_module(mod), attr)
-        if isinstance(obj, type) and issubclass(obj, BaseModel):
-            return obj
-    raise AgentConfigError(
-        f"output_model must be a pydantic BaseModel or 'module:Model' "
-        f"(got {spec!r})"
-    )
-
-
-def _meta_output_model(interp: Any, event: Any) -> Any:
-    """``meta.output_model`` of the state hosting this invoke, if any."""
-    etype = getattr(event, "type", "") or ""
-    if etype.startswith("invoke."):
-        node = interp.machine.get_state_by_id(etype[len("invoke.") :])
-        if node is not None and (node.meta or {}).get("output_model"):
-            return node.meta["output_model"]
-    for meta in interp.get_meta().values():
-        if isinstance(meta, dict) and meta.get("output_model"):
-            return meta["output_model"]
-    return None
-
-
-def _task_of(ctx: Mapping[str, Any]) -> Optional[str]:
-    """The task a spawned agent starts on: ``context["task"]`` or
-    ``context["input"]["prompt"]``."""
-    task = ctx.get("task")
-    if not task and isinstance(ctx.get("input"), Mapping):
-        task = ctx["input"].get("prompt")
-    return str(task) if task else None
-
-
-def _parse_json_text(text: str) -> Any:
-    t = text.strip()
-    if t.startswith("```"):
-        t = t.strip("`")
-        t = t[4:] if t.lower().startswith("json") else t
-    return json.loads(t)
-
-
-def _validate_output(
-    model: Optional[type],
-    text: str,
-    parser: Optional[Callable[[str], Any]] = None,
-) -> Tuple[bool, Any]:
-    """``(ok, value_or_error_text)``. *parser* turns the reply text into
-    the JSON value to validate (default: strict JSON, code fence allowed).
-    """
-    if model is None:
-        return True, text
-    try:
-        obj = model.model_validate(  # type: ignore[attr-defined]
-            (parser or _parse_json_text)(text)
-        )
-    except (ValueError, ValidationError) as exc:
-        if isinstance(exc, ValidationError):
-            detail = "; ".join(
-                f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}"
-                for e in exc.errors(include_input=False, include_url=False)
-            )
-        else:
-            detail = "not valid JSON"
-        return False, detail
-    return True, obj.model_dump(mode="json")
-
-
-# -----------------------------------------------------------------------------
 # 🏭 agent_logic
 # -----------------------------------------------------------------------------
+#: How many tool-call ids are remembered for the duplicate check.
+_SPENT_IDS = 1000
+
+
 def _is_async_model(model: Any) -> bool:
     flag = getattr(model, "is_async", None)
     if isinstance(flag, bool):
@@ -323,15 +160,6 @@ def _is_async_model(model: Any) -> bool:
     return inspect.iscoroutinefunction(model) or inspect.iscoroutinefunction(
         getattr(model, "__call__", None)
     )
-
-
-def _usage_totals(ctx: Mapping[str, Any]) -> Dict[str, Any]:
-    return {
-        "turns": int(ctx.get("turns", 0)),
-        "input_tokens": int(ctx.get("tokens_in", 0)),
-        "output_tokens": int(ctx.get("tokens_out", 0)),
-        "cost_usd": round(float(ctx.get("cost_usd", 0.0)), 10),
-    }
 
 
 class _AgentLogic:
@@ -380,7 +208,15 @@ class _AgentLogic:
             return out
         # 📝 Keep the task (first message) and the most recent tail.
         head = messages[:1]
-        return head + messages[-(self.max_messages - 1) :]
+        tail = messages[-(self.max_messages - 1) :]
+        # 📝 review M2: never strand `tool` results whose assistant turn
+        #    was cut -- the model would not see the result (a refund
+        #    confirmation) and might propose the call AGAIN. Drop the
+        #    orphans at the window's head instead of handing them to the
+        #    adapters to skip silently.
+        while tail and tail[0].get("role") == "tool":
+            tail = tail[1:]
+        return head + tail
 
     def _append(self, ctx: Dict[str, Any], *msgs: Message) -> None:
         ctx["messages"] = self._bound(
@@ -426,6 +262,28 @@ class _AgentLogic:
         data.update(extra)
         return data
 
+    @staticmethod
+    def _flag_reused_ids(
+        data: Dict[str, Any], ctx: Mapping[str, Any]
+    ) -> Dict[str, Any]:
+        # 🔥 #287 battle (A): approval is by call id, and ids are chosen
+        #    by the (injectable) model. Re-using an id from an earlier
+        #    batch would let a stale/replayed HUMAN_APPROVED naming that
+        #    id approve a DIFFERENT call -- such a turn is denied.
+        # 📝 review M1: ids are remembered in ``context["spent_call_ids"]``
+        #    (bounded ring) -- the message window is trimmed, the ring is
+        #    not, so an id from a trimmed turn is still a duplicate.
+        seen = set(ctx.get("spent_call_ids") or ())
+        seen.update(
+            str(c.get("id"))
+            for m in ctx.get("messages") or []
+            for c in (m.get("tool_calls") or [])
+            if isinstance(c, Mapping)
+        )
+        if any(str(c.get("id")) in seen for c in data["tool_calls"]):
+            data["duplicate_call_ids"] = True
+        return data
+
     def _bounded(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Cap what a (possibly injected) response can put in context:
         text truncated like tool output, arguments scrubbed. Too many tool
@@ -460,20 +318,31 @@ class _AgentLogic:
             )
         raw = self._response_data(resp, extra)
         self._trace(i, "model_call", response=raw, messages=messages)
-        data = self._bounded(raw)
-        return data
+        return self._flag_reused_ids(self._bounded(raw), ctx)
 
     async def call_model_async(
         self, i: Any, ctx: Dict[str, Any], e: Any
     ) -> Any:
         messages, schemas, extra = self._model_request(i, ctx, e)
-        resp = self.model(messages, schemas)
+        if _is_async_model(self.model):
+            resp = self.model(messages, schemas)
+        else:
+            # 🔥 #287 battle (A): a SYNC model under `Interpreter` ran ON
+            #    the event loop -- a hung SDK call froze the loop, so the
+            #    `modelTimeout` delay (and `run_agent(timeout_s=)`) could
+            #    not fire. It runs on a worker thread now; on timeout the
+            #    thread is abandoned (Python cannot kill it).
+            # 📝 review H1: NOT the loop's default executor -- a hung call
+            #    would pin one of its few workers (and `asyncio.run` waits
+            #    for that pool on exit, the very hang this removes). A
+            #    daemon thread per call, abandoned on timeout, like
+            #    `ToolRegistry.call_sync`.
+            resp = await _in_daemon_thread(self.model, messages, schemas)
         if inspect.isawaitable(resp):
             resp = await resp
         raw = self._response_data(resp, extra)
         self._trace(i, "model_call", response=raw, messages=messages)
-        data = self._bounded(raw)
-        return data
+        return self._flag_reused_ids(self._bounded(raw), ctx)
 
     def _authorise_all(
         self, i: Any, ctx: Dict[str, Any], e: Any
@@ -537,6 +406,18 @@ class _AgentLogic:
         for c in calls_from(d.get("tool_calls") or []):
             if c.name not in self.tools or c.name not in allowed:
                 return False
+            # 🔥 #287 battle: arguments were validated only in `run_tool`,
+            #    AFTER the human gate -- a reviewer was asked to approve
+            #    `refund_order(amount_cents="all")`, a call that could
+            #    never run. Schema-invalid arguments are denied here,
+            #    before anything is shown to a human or executed
+            #    (`run_tool` re-validates: defence in depth).
+            tool = self.tools.get(c.name)
+            if tool is not None:
+                try:
+                    tool.validate(c.arguments)
+                except Exception:  # noqa: BLE001 - any failure = denied
+                    return False
         return True
 
     def g_needs_human(self, ctx: Dict[str, Any], e: Any) -> bool:
@@ -581,17 +462,22 @@ class _AgentLogic:
     def a_record_response(
         self, i: Any, ctx: Dict[str, Any], e: Any, a: Any
     ) -> None:
+        ring = list(ctx.get("spent_call_ids") or ())
+        for call in self._data(e).get("tool_calls") or []:
+            if isinstance(call, Mapping) and call.get("id") is not None:
+                ring.append(str(call["id"]))
+        ctx["spent_call_ids"] = ring[-_SPENT_IDS:]
         d = self._data(e)
         usage = d.get("usage") or {}
         ctx["turns"] = int(ctx.get("turns", 0)) + 1
-        ctx["tokens_in"] = int(ctx.get("tokens_in", 0)) + int(
-            usage.get("input_tokens", 0)
+        ctx["tokens_in"] = int(ctx.get("tokens_in", 0)) + _spent_tokens(
+            usage.get("input_tokens")
         )
-        ctx["tokens_out"] = int(ctx.get("tokens_out", 0)) + int(
-            usage.get("output_tokens", 0)
+        ctx["tokens_out"] = int(ctx.get("tokens_out", 0)) + _spent_tokens(
+            usage.get("output_tokens")
         )
-        ctx["cost_usd"] = float(ctx.get("cost_usd", 0.0)) + float(
-            usage.get("cost_usd", 0.0)
+        ctx["cost_usd"] = float(ctx.get("cost_usd", 0.0)) + _spent_usd(
+            usage.get("cost_usd")
         )
         ctx["attempt"] = 0  # a successful call resets the retry counter
         ctx["approved_call_ids"] = []  # approvals never outlive a batch
@@ -719,8 +605,29 @@ class _AgentLogic:
             for c in calls_from(d.get("tool_calls") or [])
             if c.name not in self.tools or c.name not in allowed
         ]
-        self._fail(ctx, "tool_denied", f"tool(s) {bad} not allowed here")
-        ctx["pending_tool_calls"] = []
+        if bad:
+            self._fail(ctx, "tool_denied", f"tool(s) {bad} not allowed here")
+            ctx["pending_tool_calls"] = []
+            return
+        try:
+            for c in calls_from(d.get("tool_calls") or []):
+                tool = self.tools.get(c.name)
+                if tool is None:
+                    continue
+                try:
+                    tool.validate(c.arguments)
+                except ToolDeniedError as exc:
+                    self._fail(ctx, "tool_denied", str(exc))
+                    break
+                except Exception:  # noqa: BLE001 - review M3
+                    self._fail(
+                        ctx,
+                        "tool_denied",
+                        f"tool {c.name!r}: invalid arguments",
+                    )
+                    break
+        finally:
+            ctx["pending_tool_calls"] = []
 
     def a_record_failure(
         self, i: Any, ctx: Dict[str, Any], e: Any, a: Any

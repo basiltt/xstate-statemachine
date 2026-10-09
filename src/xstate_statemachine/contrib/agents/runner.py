@@ -245,6 +245,12 @@ async def run_agent(
         budgets = dict(logic_kw.pop("budgets", None) or {})
         budgets["max_turns"] = logic_kw.pop("max_turns")
         logic_kw["budgets"] = budgets
+    if logic is None and model is not None:
+        # 🔥 #287 battle (A): a SYNC model became a plain-`def` service,
+        #    which the async engine's macrostep awaits inline (#149) --
+        #    `modelTimeout` could not pre-empt a hung SDK call. The async
+        #    flavour runs it on a worker thread the timeout can abandon.
+        logic_kw.setdefault("sync", False)
     machine = _build(machine_or_chart, logic, model, tools, logic_kw)
     stop_at = tuple(until)
 
@@ -252,11 +258,16 @@ async def run_agent(
         # 🧾 `wait=True`: the async `send()` only QUEUES; without the
         #    receipt the rest check below could see the pre-event state
         #    (e.g. still `awaiting_human`) and return at once.
-        if _start_payload(interp, prompt):
-            await interp.send("START", prompt=prompt, wait=True)
-        for ev in _resume_events(interp, event, approve):
-            await interp.send(ev, wait=True)
-        await _until_rest(interp, stop_at, timeout_s)
+        # 🔥 #287 battle (A): `timeout_s` bounded only the rest wait, not
+        #    the sends -- a step blocked in a model call overran it.
+        async def _steps() -> None:
+            if _start_payload(interp, prompt):
+                await interp.send("START", prompt=prompt, wait=True)
+            for ev in _resume_events(interp, event, approve):
+                await interp.send(ev, wait=True)
+            await _until_rest(interp, stop_at, None)
+
+        await asyncio.wait_for(_steps(), timeout_s)
         return _result(interp)
 
     if store is not None:
