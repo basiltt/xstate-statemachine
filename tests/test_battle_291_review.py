@@ -28,7 +28,12 @@ EXAMPLE = ROOT / "examples" / "integrations" / "agents_support_bot"
 
 
 def _run(*args: str, tmp: Path) -> subprocess.CompletedProcess:
-    env = dict(os.environ, PYTHONPATH=str(ROOT / "src"), PYTHONUTF8="1")
+    env = dict(
+        os.environ,
+        PYTHONPATH=str(ROOT / "src"),
+        PYTHONUTF8="1",
+        PYTHONWARNINGS="ignore",  # third-party DeprecationWarnings on stderr
+    )
     env["XSM_SUPPORT_BOT_DB"] = str(tmp / "ok.db")
     env["XSM_SUPPORT_BOT_TRACE"] = str(tmp / "ok.jsonl")
     return subprocess.run(
@@ -42,7 +47,12 @@ def _run(*args: str, tmp: Path) -> subprocess.CompletedProcess:
 
 
 def test_r1_drift_checks_skip_without_the_nightly_flag() -> None:
-    env = dict(os.environ, PYTHONPATH=str(ROOT / "src"), PYTHONUTF8="1")
+    env = dict(
+        os.environ,
+        PYTHONPATH=str(ROOT / "src"),
+        PYTHONUTF8="1",
+        PYTHONWARNINGS="ignore",  # third-party DeprecationWarnings on stderr
+    )
     env.pop("XSM_COMPARISON_DRIFT", None)
     proc = subprocess.run(
         [

@@ -204,7 +204,12 @@ def test_charts_open_in_stately(name: str, tmp_path: Path) -> None:
     # what Stately exports (plain JSON) passes `xsm validate`
     path = tmp_path / f"{name}.json"
     path.write_text(json.dumps(chart), "utf-8")
-    env = dict(os.environ, PYTHONPATH=str(ROOT / "src"), PYTHONUTF8="1")
+    env = dict(
+        os.environ,
+        PYTHONPATH=str(ROOT / "src"),
+        PYTHONUTF8="1",
+        PYTHONWARNINGS="ignore",  # third-party DeprecationWarnings on stderr
+    )
     proc = subprocess.run(
         [sys.executable, "-m", "xstate_statemachine", "validate", path.name],
         capture_output=True,
@@ -303,7 +308,12 @@ def test_snippets_strict_and_outside_repo(slug: str, tmp_path: Path) -> None:
     text = (PAGES / f"{slug}.md").read_text("utf-8")
     blocks = re.findall(r"```python\n(.*?)```", text, re.S)
     assert blocks
-    env = dict(os.environ, PYTHONPATH=str(ROOT / "src"), PYTHONUTF8="1")
+    env = dict(
+        os.environ,
+        PYTHONPATH=str(ROOT / "src"),
+        PYTHONUTF8="1",
+        PYTHONWARNINGS="ignore",  # third-party DeprecationWarnings on stderr
+    )
     env.pop("PYDANTIC_AI_NO_BANNER", None)
     for block in blocks:
         extra = ""
@@ -330,7 +340,12 @@ def test_snippets_strict_and_outside_repo(slug: str, tmp_path: Path) -> None:
 # 5. the example app under hostile conditions
 # -----------------------------------------------------------------------------
 def _run(tmp: Path, *args: str, pre: str = "", **env_kw: str) -> Any:
-    env = dict(os.environ, PYTHONPATH=str(ROOT / "src"), PYTHONUTF8="1")
+    env = dict(
+        os.environ,
+        PYTHONPATH=str(ROOT / "src"),
+        PYTHONUTF8="1",
+        PYTHONWARNINGS="ignore",  # third-party DeprecationWarnings on stderr
+    )
     for var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "XSM_SUPPORT_BOT_DB"):
         env.pop(var, None)
     env.update(env_kw)

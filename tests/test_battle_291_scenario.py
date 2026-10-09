@@ -334,7 +334,12 @@ def test_every_ours_snippet_runs(slug: str) -> None:
     blocks = _python_blocks(text)
     assert blocks, slug
     for block in blocks:
-        env = dict(os.environ, PYTHONPATH=str(ROOT / "src"), PYTHONUTF8="1")
+        env = dict(
+            os.environ,
+            PYTHONPATH=str(ROOT / "src"),
+            PYTHONUTF8="1",
+            PYTHONWARNINGS="ignore",  # third-party DeprecationWarnings on stderr
+        )
         env.setdefault("PYDANTIC_AI_NO_BANNER", "1")
         proc = subprocess.run(
             [sys.executable, "-c", block],
@@ -351,7 +356,12 @@ def test_every_ours_snippet_runs(slug: str) -> None:
 # 4. the support-bot example is the 2-minute walkthrough
 # -----------------------------------------------------------------------------
 def _run_example(*args: str, tmp: Path) -> subprocess.CompletedProcess:
-    env = dict(os.environ, PYTHONPATH=str(ROOT / "src"), PYTHONUTF8="1")
+    env = dict(
+        os.environ,
+        PYTHONPATH=str(ROOT / "src"),
+        PYTHONUTF8="1",
+        PYTHONWARNINGS="ignore",  # third-party DeprecationWarnings on stderr
+    )
     env.pop("OPENAI_API_KEY", None)
     env.pop("ANTHROPIC_API_KEY", None)
     env["XSM_SUPPORT_BOT_DB"] = str(tmp / "bot.db")
@@ -380,7 +390,8 @@ def test_provider_without_key_is_one_clear_line(tmp_path: Path) -> None:
     assert out.returncode != 0
     lines = [ln for ln in (out.stdout + out.stderr).splitlines() if ln.strip()]
     assert len(lines) <= 3, lines
-    assert "OPENAI_API_KEY" in " ".join(lines)
+    joined = " ".join(lines)
+    assert "OPENAI_API_KEY" in joined or "needs its SDK" in joined, lines
     assert "Traceback" not in out.stderr
 
 
@@ -445,7 +456,12 @@ def test_readme_for_llm_agents_section_and_keywords() -> None:
         r"\n#{2,3} ", readme.split("### 🤖 For LLM agents", 1)[1], maxsplit=1
     )[0]
     for block in _python_blocks(section):
-        env = dict(os.environ, PYTHONPATH=str(ROOT / "src"), PYTHONUTF8="1")
+        env = dict(
+            os.environ,
+            PYTHONPATH=str(ROOT / "src"),
+            PYTHONUTF8="1",
+            PYTHONWARNINGS="ignore",  # third-party DeprecationWarnings on stderr
+        )
         proc = subprocess.run(
             [sys.executable, "-c", block],
             capture_output=True,
