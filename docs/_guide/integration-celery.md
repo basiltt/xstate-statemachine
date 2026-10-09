@@ -110,6 +110,7 @@ The rest of `xstate_statemachine.contrib.celery.__all__`:
 | Name | Kind | What it is / when you use it |
 |:--|:--|:--|
 | `HEADER_KEY` = `"xsm_store_key"`, `HEADER_INVOCATION` = `"xsm_invocation_id"` | constants | The two task headers `celery_service` attaches so a worker can find the persisted instance and the invocation. `deliver_result` trusts them only after the instance itself confirms the task id. |
+| `register_task(app, fn, **options)` | function | What every task here is registered through: ``shared=False`` (a Celery task is `shared=True` by default and is RE-CREATED on every app built later, with the FIRST app's closure -- a second app's Beat scan ran against the first app's store, #292 battle) and a taken name is refused with `InvalidConfigError` instead of silently returning the existing task. Pass `name=` to register two schedulers / relays / statechart tasks on one app. |
 | `UNSAFE_CONTENT` | constant | The serializer names and MIME types `assert_json_serializer` refuses (`pickle`, `application/x-python-serialize`, `yaml`, `application/x-yaml`, …). |
 | `CeleryInvocation` | dataclass | What `poll_results` found for one pending invocation: `key`, `invocation_id`, `task_id`, `deadline`. Useful when you write your own poller or dashboard. |
 | `PendingResult` | dataclass | A completion that arrived before its `_xsm_celery` record was saved: `key`, `invocation_id`, `task_id`, `result` / `error`, `parked_at`. |

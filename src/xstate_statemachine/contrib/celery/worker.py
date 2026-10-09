@@ -26,7 +26,12 @@ from typing import Any, Callable, Iterable, Optional
 
 from ...exceptions import ConflictError, InvalidConfigError
 
-__all__ = ["UNSAFE_CONTENT", "assert_json_serializer", "statechart_task"]
+__all__ = [
+    "register_task",
+    "UNSAFE_CONTENT",
+    "assert_json_serializer",
+    "statechart_task",
+]
 
 #: Serializer names / MIME types that execute or construct arbitrary
 #: objects on deserialisation.
@@ -46,6 +51,35 @@ def _unsafe(values: Optional[Iterable[Any]]) -> list:
         for v in (values or ())
         if any(bad in str(v).lower() for bad in UNSAFE_CONTENT)
     ]
+
+
+def register_task(app: Any, fn: Any, **options: Any) -> Any:
+    """``app.task(shared=False, **options)(fn)``, refusing a taken name.
+
+    🔥 #292 battle: Celery tasks are ``shared=True`` by default -- a task
+    registered on app A is RE-CREATED on every app built later, with A's
+    closure (its store, its machine, its outbox). The example's second
+    `FulfilmentApp` ran the FIRST app's Beat scan against the first
+    app's database and reported "0 woken" for its own. These tasks are
+    bound to one store, so they are registered ``shared=False``; and
+    because ``app.task`` silently returns an existing task of the same
+    name, a genuine same-app duplicate is refused -- pass ``name=`` to
+    register more than one on an app.
+
+    Raises:
+        InvalidConfigError: the name is already a task on *app*.
+    """
+    name = options.get("name") or app.gen_task_name(fn.__name__, fn.__module__)
+    # 📝 `app.tasks` (not the private `_tasks`): it finalises the app,
+    #    so pending shared registrations from OTHER apps are visible too
+    if name in app.tasks:
+        raise InvalidConfigError(
+            f"a Celery task named {name!r} is already registered on this "
+            f"app; pass a distinct name= (the existing task would "
+            f"otherwise be returned with ITS store / machine / outbox)"
+        )
+    options.setdefault("shared", False)
+    return app.task(**options)(fn)
 
 
 def assert_json_serializer(app: Any) -> None:
@@ -139,6 +173,6 @@ def statechart_task(
         options.update(task_options)
         if name is not None:
             options["name"] = name
-        return app.task(**options)(run)
+        return register_task(app, run, **options)
 
     return decorate

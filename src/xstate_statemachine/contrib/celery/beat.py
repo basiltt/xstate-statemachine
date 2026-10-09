@@ -30,6 +30,7 @@ from typing import Any, Dict, List, Optional
 
 from ...eda.outbox import OutboxRelay
 from ...persistence.timers import DueTimerScanner
+from .worker import register_task
 
 __all__ = [
     "DurableTimerScheduler",
@@ -82,8 +83,10 @@ class DurableTimerScheduler:
         def fire(key: str, state_id: str, entry_seq: int) -> bool:
             return self.fire(key, state_id, entry_seq)
 
-        self.task = app.task(name=name, serializer="json")(scan)
-        self.fire_task = app.task(name=fire_name, serializer="json")(fire)
+        self.task = register_task(app, scan, name=name, serializer="json")
+        self.fire_task = register_task(
+            app, fire, name=fire_name, serializer="json"
+        )
 
     def run_once(self) -> int:
         """One safety-net scan; returns how many machines were woken."""
@@ -218,6 +221,6 @@ def outbox_relay_task(
                 loop.close()
                 state["loop"] = None
 
-    task = app.task(name=name, serializer="json")(relay_once)
+    task = register_task(app, relay_once, name=name, serializer="json")
     task.close_relay_loop = close
     return task

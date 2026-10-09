@@ -59,6 +59,7 @@ from .service import (  # noqa: E402
 from .worker import (  # noqa: E402
     UNSAFE_CONTENT,
     assert_json_serializer,
+    register_task,
     statechart_task,
 )
 
@@ -76,6 +77,7 @@ __all__ = [
     "deliver_result",
     "outbox_relay_task",
     "poll_results",
+    "register_task",
     "statechart_task",
     "xsm_deadlines_every",
 ]
