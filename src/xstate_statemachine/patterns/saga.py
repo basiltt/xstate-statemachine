@@ -44,6 +44,24 @@ from .retry import RetryPolicy
 __all__ = ["SagaBuilder", "SagaStep"]
 
 _NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+#: Prefixes of events only the engine mints; a start event named like one
+#: could never be sent by a caller (#79/#195 provenance checks).
+_ENGINE_PREFIXES = ("done.", "error.", "xstate.", "after.")
+
+
+def _check_key(what: str, key: Any) -> None:
+    """Refuse an empty / non-string service or action key at declaration."""
+    if not isinstance(key, str) or not key.strip():
+        raise ValueError(f"{what} must be a non-empty string, got {key!r}")
+
+
+def _check_event(event: Any) -> None:
+    """Refuse a start event a caller could never deliver."""
+    _check_key("start_event", event)
+    if event.startswith(_ENGINE_PREFIXES):
+        raise ValueError(
+            f"start_event {event!r} is an engine-reserved event name"
+        )
 
 
 def _camel(name: str) -> str:
@@ -93,8 +111,10 @@ class SagaBuilder:
     """
 
     def __init__(self, name: str, *, start_event: Optional[str] = None):
-        if not _NAME.match(name):
+        if not isinstance(name, str) or not _NAME.match(name):
             raise ValueError(f"saga name {name!r} must be an identifier")
+        if start_event is not None:
+            _check_event(start_event)
         self.name = name
         self.start_event = start_event
         self._steps: List[SagaStep] = []
@@ -110,30 +130,80 @@ class SagaBuilder:
         timeout_ms: Optional[int] = None,
         retry: Optional[RetryPolicy] = None,
     ) -> "SagaBuilder":
-        if not _NAME.match(name):
-            raise ValueError(f"step name {name!r} must be an identifier")
-        if any(s.name == name for s in self._steps):
-            raise ValueError(f"duplicate step {name!r}")
-        if timeout_ms is not None and int(timeout_ms) <= 0:
-            raise ValueError("timeout_ms must be > 0")
-        self._steps.append(
-            SagaStep(
-                name,
-                invoke,
-                compensate,
-                int(timeout_ms) if timeout_ms is not None else None,
-                retry,
+        """Append a step (steps run in declaration order).
+
+        Args:
+            name: Step identifier; also the ``invoke`` id and the middle of
+                its event types (``<saga>.<name>.completed``).
+            invoke: Service key that performs the step. Its return value
+                lands in ``context.results[name]``; raising fails the step.
+            compensate: Service key that undoes the step after a LATER
+                step fails. Must be idempotent: a restart mid-compensation
+                runs it again.
+            timeout_ms: Fail the step after this many milliseconds (a
+                positive ``int``).
+            retry: Re-run a failed or timed-out step per this policy
+                before compensating.
+
+        Returns:
+            The builder (fluent).
+
+        Raises:
+            ValueError: a non-identifier or duplicate name, a name that
+                collides with a generated ``<step>Retrying`` state, an
+                empty service key, a non-positive or non-integer
+                ``timeout_ms``, or a *retry* that is not a `RetryPolicy`.
+        """
+        self._check_step_name(name)
+        if retry is not None and f"{name}Retrying" in {
+            s.name for s in self._steps
+        }:
+            raise ValueError(
+                f"step {name!r} with retry= collides with step "
+                f"'{name}Retrying' (its generated waiting state)"
             )
+        _check_key("invoke", invoke)
+        if compensate is not None:
+            _check_key("compensate", compensate)
+        if timeout_ms is not None and (
+            isinstance(timeout_ms, bool)
+            or not isinstance(timeout_ms, int)
+            or timeout_ms <= 0
+        ):
+            raise ValueError(
+                f"timeout_ms must be a positive int, got {timeout_ms!r}"
+            )
+        if retry is not None and not isinstance(retry, RetryPolicy):
+            raise ValueError(
+                f"retry must be a RetryPolicy, got {type(retry).__name__}"
+            )
+        self._steps.append(
+            SagaStep(name, invoke, compensate, timeout_ms, retry)
         )
         return self
 
+    def _check_step_name(self, name: str) -> None:
+        if not isinstance(name, str) or not _NAME.match(name):
+            raise ValueError(f"step name {name!r} must be an identifier")
+        taken = {s.name for s in self._steps}
+        taken |= {f"{s.name}Retrying" for s in self._steps if s.retry}
+        if name in taken:
+            raise ValueError(f"duplicate step {name!r}")
+
     def on_failure(self, *actions: str) -> "SagaBuilder":
-        """Actions run on entering ``failed`` (after compensation)."""
+        """Actions run on entering ``failed`` (after compensation).
+
+        Raises:
+            ValueError: an action name that is not a non-empty string.
+        """
+        for a in actions:
+            _check_key("on_failure action", a)
         self._on_failure.extend(actions)
         return self
 
     @property
     def steps(self) -> List[SagaStep]:
+        """The declared steps, in order (a copy)."""
         return list(self._steps)
 
     # -- JSON ---------------------------------------------------------------------
