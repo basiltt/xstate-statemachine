@@ -24,7 +24,11 @@ from __future__ import annotations
 import functools
 from typing import Any, Callable, Iterable, Optional
 
-from ...exceptions import ConflictError, InvalidConfigError
+from ...exceptions import (
+    ConflictError,
+    InvalidConfigError,
+    LockTimeoutError,
+)
 
 __all__ = [
     "register_task",
@@ -72,7 +76,15 @@ def register_task(app: Any, fn: Any, **options: Any) -> Any:
     name = options.get("name") or app.gen_task_name(fn.__name__, fn.__module__)
     # 📝 `app.tasks` (not the private `_tasks`): it finalises the app,
     #    so pending shared registrations from OTHER apps are visible too
-    if name in app.tasks:
+    # 🔥 #292-a battle: on an ``autofinalize=False`` app (the pattern for
+    #    apps configured after import) `app.tasks` raises "Contract breach:
+    #    app not finalized" -- every helper failed to register. Read the
+    #    registry without finalising there.
+    finalized = getattr(app, "finalized", True) or getattr(
+        app, "autofinalize", True
+    )
+    registry = app.tasks if finalized else app._tasks
+    if name in registry:
         raise InvalidConfigError(
             f"a Celery task named {name!r} is already registered on this "
             f"app; pass a distinct name= (the existing task would "
@@ -140,7 +152,8 @@ def statechart_task(
         app: The Celery app (JSON-only, see `assert_json_serializer`).
         store: A `StateStore` every worker can reach.
         machine_for_key: A `MachineNode`, or ``(key) -> MachineNode``.
-        lock: A `LockStrategy`; default optimistic (conflict -> retry).
+        lock: A `LockStrategy`; default optimistic. A `ConflictError` or
+            a `LockTimeoutError` retries the task.
         plugins: Attached to every instance.
         name / max_retries / task_options: Passed to ``app.task``.
     """
@@ -161,7 +174,11 @@ def statechart_task(
                 return fn(interp, *args, **kwargs)
 
         options = {
-            "autoretry_for": (ConflictError,),
+            # 🔥 #292-a battle: a `PessimisticLock` that could not be
+            #    taken in time is as transient as a lost optimistic race
+            #    (`LockTimeoutError` is documented "Retryable"); it used to
+            #    FAIL the task on the first contended lock.
+            "autoretry_for": (ConflictError, LockTimeoutError),
             # 📝 Celery computes `int(max(1.0, retry_backoff))` -- a
             #    sub-second value is silently 1 s; say so honestly.
             "retry_backoff": 1,
