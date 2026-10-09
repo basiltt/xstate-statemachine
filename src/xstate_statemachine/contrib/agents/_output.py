@@ -124,7 +124,7 @@ def _field_names(model: Any) -> "set[str]":
         if m in seen or not (isinstance(m, type) and issubclass(m, BaseModel)):
             continue
         seen.add(m)
-        for name, field in m.model_fields.items():
+        for name, field in m.model_fields.items():  # type: ignore[attr-defined]
             names.add(name)
             if field.alias:
                 names.add(field.alias)
