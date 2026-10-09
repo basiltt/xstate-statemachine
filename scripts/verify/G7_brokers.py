@@ -455,6 +455,69 @@ def f1_beat() -> None:
     print("  woke once, second scan and late eta job were no-ops")
 
 
+def f1_register_and_duplicates() -> None:
+    step("#292-b register_task two apps; duplicate delivery applied once")
+    from celery import Celery
+
+    from xstate_statemachine import create_machine
+    from xstate_statemachine.contrib.celery import (
+        DurableTimerScheduler,
+        MemoryPendingResults,
+        deliver_result,
+    )
+    from xstate_statemachine.exceptions import InvalidConfigError
+    from xstate_statemachine.persistence import MemoryStore, persisted
+
+    idle = create_machine({"id": "o", "initial": "a", "states": {"a": {}}})
+    a = Celery("v-a", broker="memory://", backend="cache+memory://")
+    b = Celery("v-b", broker="memory://", backend="cache+memory://")
+    sa = DurableTimerScheduler(a, MemoryStore(), idle)
+    sb = DurableTimerScheduler(b, MemoryStore(), idle)
+    assert a.tasks[sa.task.name] is not b.tasks[sb.task.name]
+    try:
+        DurableTimerScheduler(a, MemoryStore(), idle)
+        raise AssertionError("taken name accepted")
+    except InvalidConfigError:
+        pass
+    print("  two apps keep their own scan task; a taken name is refused")
+
+    # 📬 a completion delivered twice (signal + poll) applies once
+    m = create_machine(
+        {
+            "id": "p",
+            "initial": "w",
+            "context": {"n": 0},
+            "states": {
+                "w": {"invoke": {"id": "j", "src": "j", "onDone": "d"}},
+                "d": {},
+            },
+        },
+        logic=__import__("xstate_statemachine").MachineLogic(
+            services={"j": lambda i, c, e: _pending_handle(i, c, e)}
+        ),
+    )
+    store = MemoryStore()
+    with persisted(store, "k", m):
+        pass
+    pend = MemoryPendingResults()
+    first = deliver_result(store, m, "k", "j", "T1", result=1, pending=pend)
+    second = deliver_result(store, m, "k", "j", "T1", result=1, pending=pend)
+    assert (first, second) == (True, False), (first, second)
+    print("  duplicate completion: applied once, second dropped as stale")
+
+
+def _pending_handle(interp: Any, ctx: Any, event: Any) -> Any:
+    """A service that records task id ``T1`` and never finishes."""
+    from xstate_statemachine.actor_logic import RunningLogic, _invocation_of
+
+    inv = _invocation_of(interp, event)
+    ctx.setdefault("_xsm_celery", {})[inv.id] = {
+        "task_id": "T1",
+        "deadline": None,
+    }
+    return RunningLogic(interp, inv, None, completes=True)
+
+
 def maybe_live() -> None:
     if os.environ.get("XSM_CONTAINERS") != "1":
         print("\n== live brokers skipped (set XSM_CONTAINERS=1 + Docker)")
@@ -487,6 +550,7 @@ def main() -> None:
     f1_issue_snippet()
     f1_statechart_task()
     f1_beat()
+    f1_register_and_duplicates()
     maybe_live()
     print("\nALL OK")
 

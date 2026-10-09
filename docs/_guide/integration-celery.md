@@ -99,9 +99,46 @@ A task that runs `OutboxRelay.relay_once` (the async form for an async broker, t
 
 Every worker process gets its own `OutboxRelay`, so several workers draining one outbox is safe. On the bundled outbox stores the relays [lease their rows](../integration-eda/#several-relays-on-one-outbox-leases) (default lease 30 s, owner `host:pid:id`). A worker killed mid-batch leaves its rows to another worker when the lease expires, and consumers dedup the rare re-publication on the envelope id.
 
+### `register_task(app, fn, **options)`
+
+Every task this module creates (the `@statechart_task` body, the two `DurableTimerScheduler` tasks, the `outbox_relay_task`) is registered through `register_task`, and you can use it for your own store-bound tasks. It does two things that plain `@app.task` does not:
+
+- **`shared=False`.** A Celery task is `shared=True` by default: it is re-created on *every* app built later in the process, with the closure of the first one. These tasks close over one store, one machine, one outbox, so a second app would silently get the first app's scan task, running against the first app's database. With `shared=False` each app keeps its own.
+- **A taken name is refused** with `InvalidConfigError: a Celery task named '…' is already registered on this app`. Plain `@app.task` silently *returns the existing task*, so the second registration would run with the first one's store.
+
+When does this matter?
+
+| Situation | What to do |
+|:--|:--|
+| One worker process, one app (production) | nothing: the default names are fine |
+| Two apps in one process (tests, a multi-tenant worker) | nothing: each app gets its own `xsm.deadlines.scan` |
+| Two schedulers / relays / statechart tasks on **one** app (two stores, two outboxes) | pass distinct names: `DurableTimerScheduler(app, eu_store, m, name="eu.deadlines.scan", fire_name="eu.deadlines.fire")`, `outbox_relay_task(app, o, b, name="eu.relay")`, `@statechart_task(..., name="eu.pay")` |
+
+<!-- doc-requires: celery -->
+```python
+from celery import Celery
+from xstate_statemachine import create_machine
+from xstate_statemachine.contrib.celery import DurableTimerScheduler
+from xstate_statemachine.exceptions import InvalidConfigError
+from xstate_statemachine.persistence import MemoryStore
+
+m = create_machine({"id": "t", "initial": "a", "states": {"a": {}}})
+app = Celery("one", broker="memory://", backend="cache+memory://")
+DurableTimerScheduler(app, MemoryStore(), m)
+try:
+    DurableTimerScheduler(app, MemoryStore(), m)
+except InvalidConfigError as exc:
+    assert "already registered" in str(exc)
+else:
+    raise AssertionError("a taken name was accepted")
+eu = DurableTimerScheduler(app, MemoryStore(), m,
+                           name="eu.deadlines.scan", fire_name="eu.deadlines.fire")
+assert eu.task.name == "eu.deadlines.scan"
+```
+
 ### `assert_json_serializer(app)`
 
-Raises `InvalidConfigError` unless `task_serializer` and `result_serializer` are `"json"` and neither `accept_content` nor `result_accept_content` admits pickle or YAML, by name or by MIME type (`application/x-python-serialize`, `application/x-yaml`; see `UNSAFE_CONTENT`). `result.get()` deserialises with the *result* settings, so both matter. `celery_service`, `@statechart_task`, `connect_signals` and `poll_results` all call it. See [Event-driven architecture](../integration-eda/).
+Raises `InvalidConfigError` unless `task_serializer` and `result_serializer` are `"json"` and neither `accept_content` nor `result_accept_content` admits pickle or YAML, by name or by MIME type (`application/x-python-serialize`, `application/x-yaml`; see `UNSAFE_CONTENT`). `result.get()` deserialises with the *result* settings, so both matter. `celery_service`, `@statechart_task`, `connect_signals`, `poll_results`, `DurableTimerScheduler` and `outbox_relay_task` all call it. See [Event-driven architecture](../integration-eda/).
 
 ### Every other public name
 
@@ -110,28 +147,41 @@ The rest of `xstate_statemachine.contrib.celery.__all__`:
 | Name | Kind | What it is / when you use it |
 |:--|:--|:--|
 | `HEADER_KEY` = `"xsm_store_key"`, `HEADER_INVOCATION` = `"xsm_invocation_id"` | constants | The two task headers `celery_service` attaches so a worker can find the persisted instance and the invocation. `deliver_result` trusts them only after the instance itself confirms the task id. |
-| `register_task(app, fn, **options)` | function | What every task here is registered through: ``shared=False`` (a Celery task is `shared=True` by default and is RE-CREATED on every app built later, with the FIRST app's closure -- a second app's Beat scan ran against the first app's store, #292 battle) and a taken name is refused with `InvalidConfigError` instead of silently returning the existing task. Pass `name=` to register two schedulers / relays / statechart tasks on one app. |
 | `UNSAFE_CONTENT` | constant | The serializer names and MIME types `assert_json_serializer` refuses (`pickle`, `application/x-python-serialize`, `yaml`, `application/x-yaml`, …). |
 | `CeleryInvocation` | dataclass | What `poll_results` found for one pending invocation: `key`, `invocation_id`, `task_id`, `deadline`. Useful when you write your own poller or dashboard. |
 | `PendingResult` | dataclass | A completion that arrived before its `_xsm_celery` record was saved: `key`, `invocation_id`, `task_id`, `result` / `error`, `parked_at`. |
-| `MemoryPendingResults(ttl_s=...)` | class | The per-process table `connect_signals` parks a `PendingResult` in and `poll_results(pending=...)` drains; entries older than `ttl_s` are given up and logged. Completions that must survive a worker restart rely on `poll_results` reading the result backend. |
+| `MemoryPendingResults(ttl_s=3600.0, max_items=10_000)` | class | The per-process table `connect_signals` parks a `PendingResult` in and `poll_results(pending=...)` drains; entries older than `ttl_s` (`PENDING_TTL_S`, one hour) are given up and logged. At `max_items` the oldest entry is evicted and logged ("evicted"), so a flood of forged headers cannot grow worker memory. Completions that must survive a worker restart rely on `poll_results` reading the result backend. |
 | `xsm_deadlines_every(scheduler, seconds=10.0)` | function | Builds the `beat_schedule` entry for `DurableTimerScheduler.task`: `app.conf.beat_schedule = xsm_deadlines_every(scheduler, 10)`. |
 
 ## Guarantees
 
 > **What this does:** at-least-once completion delivery for `celery_service` (signals, `poll_results` and the live watcher are all idempotent, because a completion for a finished or replaced invocation is ignored); no lost update for `@statechart_task` under concurrent workers (an optimistic save and a Celery retry); matured `after` deadlines fire exactly once per state-entry generation while a Beat process runs; JSON-only task messages.
 >
-> **What this does not do:** it does not make your task idempotent (with `acks_late=True` a worker crash re-runs it, so make `fn` safe to repeat or dedup with an inbox). `revoke()` is best effort: a task that has already started keeps running, and its late result is discarded as stale. There is no exactly-once delivery, and no ordering between two different instances.
+> **What this does not do:** it does not make your task idempotent (with `acks_late=True` a worker crash re-runs it, so make `fn` safe to repeat or dedup with an inbox). `revoke()` is best effort: a task that has already started keeps running, and its late result is discarded as stale. There is no exactly-once delivery, and no ordering between two different instances. Exactly-once *processing* is not given by this module either: a duplicate delivery of a `@statechart_task` message runs `fn` again on the then-current instance (an event the machine no longer accepts in that state is a no-op; one it still accepts is applied twice). For exactly-once, dedup on a message id with an inbox ([EDA guide](../integration-eda/)) inside `fn`.
 >
 > See the programme-wide [Guarantees](../guarantees/) and [Security](../security/) pages ([#303](https://github.com/basiltt/xstate-statemachine/issues/303)).
 
 ## Threat model
 
-> **Who can call this:** anyone who can publish to your Celery broker can run your tasks. The `xsm_*` headers are **not** trusted as delivered: `deliver_result` checks them against the persisted instance (key exists, invocation active, task id matches) before any completion is applied.
+> **Who can call this:** anyone who can publish to your Celery broker can run your tasks. The `xsm_*` headers are **not** trusted as delivered: `deliver_result` checks them against the persisted instance (key exists, invocation active, task id matches) before any completion is applied. A forged `xsm_store_key` naming another tenant's instance that **exists** neither reads nor changes it: the invocation id must be an `invoke` active right now *and* the recorded task id must match, otherwise the completion is dropped as `stale_invocation` (only a matching task id of an already-left invoke is retired). Nothing from the instance goes back to the sender. A forged key that does **not** exist is parked at most `max_items` deep and never applied.
 >
 > **What it exposes:** task arguments and results travel through the broker and the result backend in clear JSON. Keep secrets out of `args_from` and task results, and use TLS on the broker (`rediss://`, `amqps://`).
 >
-> **You must configure:** JSON-only task **and** result serialisation (`task_serializer`, `result_serializer`, `accept_content`, `result_accept_content` with no pickle or YAML; enforced by every entry point); broker credentials, TLS and ACLs; exactly one Beat process; a result backend for the live watcher and `poll_results`.
+> **You must configure:** JSON-only task **and** result serialisation (`task_serializer`, `result_serializer`, `accept_content`, `result_accept_content` with no pickle or YAML; refused with `InvalidConfigError` by every entry point: `celery_service`, `@statechart_task`, `connect_signals`, `poll_results`, `DurableTimerScheduler`, `outbox_relay_task`); broker credentials, TLS and ACLs; exactly one Beat process; a result backend for the live watcher and `poll_results`.
+
+## Operations
+
+**Processes.** Run your workers (`celery -A yourapp worker`) and **exactly one** Beat (`celery -A yourapp beat`). Beat carries three schedules: `xsm_deadlines_every(scheduler, seconds)` (the `after` safety net), `poll_results` (the durable completion path; wrap it in your own `@app.task`), and the `outbox_relay_task`. Two Beats are still correct (every step is idempotent) but double the traffic; with zero Beats, stored `after` timers and durable completions never arrive.
+
+**A shared result backend.** The live watcher, `poll_results` and `deliver_result` read task results from the result backend. `cache+memory://` (used in every snippet here) lives **inside one process**: a worker in another process writes its results where your caller never sees them, and the instance waits forever. In production use Redis, a database or RPC that both sides reach.
+
+**Timing.** The scan interval bounds how late an `after` fires on a discarded instance: `after: 1000` with `xsm_deadlines_every(scheduler, 10)` fires up to about 10 s late. For tighter timing call `scheduler.schedule_exact(key)` after each save (one `eta` job per deadline) and keep the scan as the net. The `poll_results` cadence is the same trade-off for completions when signals are not wired; with `connect_signals` it is only a backstop.
+
+**Tunables.** `PENDING_TTL_S` (1 h) and `max_items` (10 000) on `MemoryPendingResults`; `max_retries` (10) and the 1-2 s backoff on `@statechart_task`; `batch` (100), `owner` and `lease_s` (30 s) on `outbox_relay_task`. Give `owner` a stable per-host name so a restarted worker reclaims its own leased rows at once.
+
+**Alert on:** the log lines "arrived before its record; parked" (rising: callers save slowly, or never), "giving up parked celery completion" and "evicted" (completions left to the result backend), "stale celery completion" (expected after timeouts; a burst means forged headers or a revoke storm), `@statechart_task` retries (Flower, the `task_retry` signal) and `FAILURE` with `ConflictError` (`max_retries` exhausted on a hot key), and the outbox dead-letter count (`xsm dlq`).
+
+**Sizing.** One `@statechart_task` run is one `load` plus one `save`. Concurrent tasks on the *same* key serialise through optimistic retries, so per-key throughput is bounded by store round-trips: spread hot keys, or pass a pessimistic `lock=`.
 
 ## Compatibility
 
@@ -148,3 +198,11 @@ The rest of `xstate_statemachine.contrib.celery.__all__`:
 | The instance never leaves the invoking state after a `persisted()` block | durable mode with no delivery path | schedule `poll_results` (the durable path); `connect_signals` only speeds it up |
 | "stale celery completion … ignored" in the logs | the state was left (or re-entered) before the task finished | expected: the late result is discarded |
 | `after` timers of stored instances never fire | no Beat process runs the scan task | add `xsm_deadlines_every(scheduler)` to `beat_schedule` |
+| `InvalidConfigError: a Celery task named '…' is already registered on this app` | a second scheduler / relay / statechart task with the default name on one app | pass `name=` (and `fire_name=` for a scheduler); see `register_task` in the Reference |
+| `RuntimeError: Never call result.get() within a task!` | your code calls `.get()` on a task result from inside a task. Common in eager tests, where a task calls another eager task; this is Celery's guard | do not block on a sub-task, let `celery_service` deliver it. In eager test suites reset Celery's flag between tests: `celery._state._set_task_join_will_block(False)` |
+| Task `FAILURE` with `ConflictError` | `@statechart_task` exhausted `max_retries` on a hot key | raise `max_retries`, spread the load, or pass a pessimistic `lock=` |
+| `LockTimeoutError` | a pessimistic `lock=` was not acquired in time; it is **not** auto-retried (only `ConflictError` is) | add it: `@statechart_task(..., autoretry_for=(ConflictError, LockTimeoutError))`, or raise the lock timeout |
+| "celery completion … arrived before its record; parked for poll_results" | the worker finished before the caller's `persisted()` block saved | expected; `poll_results(pending=...)` applies it. If it never clears, the caller never saves |
+| "parked celery completion … evicted" / "giving up parked celery completion" | the pending table hit `max_items` or `PENDING_TTL_S` | `poll_results` still reads the result backend; look for forged headers or a caller that never saves |
+| `on_event_dropped(..., "stale_invocation")` | a completion for a left / re-entered / never-active invocation, or a forged header | expected for late results; a burst means forged traffic |
+| A real worker runs, but the instance never leaves the invoking state | `backend="cache+memory://"` is per process; the worker's results are invisible to the caller | use a shared result backend (Redis, a database) |
