@@ -11,8 +11,8 @@ decides.
 | Tools | `bot.py`: `lookup_order` calls the [FastAPI orders example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/fastapi_orders) `GET /orders/{id}` through an in-process `TestClient` (or a local stub when it cannot be imported); `refund_order` is `side_effect=True` |
 | Human approval | `refund_order` parks the agent in `awaiting_human`, a normal persisted state with a one-hour escalation deadline |
 | Budgets | 6 turns, 20k tokens, $0.05 per ticket (`BUDGETS`) |
-| Persistence | `SQLiteStore("support.db")` (override with `--db` or `XSM_SUPPORT_BOT_DB`): each ticket is a key, and approval resumes the stored run |
-| Trace | `support-trace.jsonl`: one JSON line per model/tool step, `gen_ai.*` field names, no prompt content |
+| Persistence | `SQLiteStore("support.db")` (override with `--db` or `XSM_SUPPORT_BOT_DB`): each ticket is a key, and approval resumes the stored run. The snapshot holds the conversation (`context.messages`, prompt included) -- that is what a resume needs; treat the database like the transcript it is |
+| Trace | `support-trace.jsonl` (override with `--trace` or `XSM_SUPPORT_BOT_TRACE`): one JSON line per model/tool step, `gen_ai.*` field names, no prompt content |
 
 ## 2-minute walkthrough (no API key)
 

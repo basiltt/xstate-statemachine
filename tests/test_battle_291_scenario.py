@@ -355,6 +355,7 @@ def _run_example(*args: str, tmp: Path) -> subprocess.CompletedProcess:
     env.pop("OPENAI_API_KEY", None)
     env.pop("ANTHROPIC_API_KEY", None)
     env["XSM_SUPPORT_BOT_DB"] = str(tmp / "bot.db")
+    env["XSM_SUPPORT_BOT_TRACE"] = str(tmp / "trace.jsonl")
     return subprocess.run(
         [sys.executable, "run.py", *args],
         capture_output=True,
@@ -441,7 +442,7 @@ def test_readme_for_llm_agents_section_and_keywords() -> None:
     for kw in ("llm-agents", "agent-orchestration"):
         assert kw in proj["keywords"]
     section = re.split(
-        r"\n#{2,3} ", readme.split("### 🤖 For LLM agents", 1)[1], 1
+        r"\n#{2,3} ", readme.split("### 🤖 For LLM agents", 1)[1], maxsplit=1
     )[0]
     for block in _python_blocks(section):
         env = dict(os.environ, PYTHONPATH=str(ROOT / "src"), PYTHONUTF8="1")

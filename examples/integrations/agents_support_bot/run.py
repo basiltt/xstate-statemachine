@@ -44,7 +44,11 @@ def _args(argv: Optional[List[str]]) -> argparse.Namespace:
         default=os.environ.get("XSM_SUPPORT_BOT_DB", "support.db"),
         help="SQLite file (default: $XSM_SUPPORT_BOT_DB or ./support.db)",
     )
-    p.add_argument("--trace", default="support-trace.jsonl")
+    p.add_argument(
+        "--trace",
+        default=os.environ.get("XSM_SUPPORT_BOT_TRACE", "support-trace.jsonl"),
+        help="JSONL trace (default: $XSM_SUPPORT_BOT_TRACE or ./support-trace.jsonl)",
+    )
     p.add_argument("--reject", action="store_true", help="human says no")
     return p.parse_args(argv)
 
