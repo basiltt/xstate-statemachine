@@ -11,6 +11,8 @@ import random
 import threading
 import tracemalloc
 import unittest
+
+import pytest
 from typing import Any, List
 
 from src.xstate_statemachine.contrib.brokers._base import (
@@ -19,7 +21,6 @@ from src.xstate_statemachine.contrib.brokers._base import (
     SyncBroker,
     ThreadedTransport,
 )
-from src.xstate_statemachine.contrib.brokers.kafka import _Partition
 from src.xstate_statemachine.eda import Envelope
 
 from .test_base import MemTransport, env
@@ -266,7 +267,11 @@ class TestAsync(unittest.TestCase):
 
 class TestKafkaPartition(unittest.TestCase):
     def test_out_of_order_ack_never_commits_past_a_gap(self) -> None:
-        p = _Partition()
+        # 📝 the Kafka module needs aiokafka (CI core cells lack it)
+        kafka = pytest.importorskip(
+            "src.xstate_statemachine.contrib.brokers.kafka"
+        )
+        p = kafka._Partition()
         for off in range(5):
             p.track(off)
         p.settled.update({1, 2, 4})
