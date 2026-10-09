@@ -38,6 +38,23 @@ def _machine(path: str) -> Any:
         raise _fail(f"cannot load machine {path!r}: {exc}") from None
 
 
+def _validate(doc: Any, validate_asyncapi: Any) -> None:
+    """Validate, mapping failures to one line + exit 2 (#295-a: a missing
+    ``jsonschema`` or an invalid document was a traceback)."""
+    from ...exceptions import MissingExtraError
+
+    try:
+        validate_asyncapi(doc)
+    except MissingExtraError as exc:
+        raise _fail(str(exc)) from None
+    except Exception as exc:  # noqa: BLE001 - jsonschema.ValidationError
+        if type(exc).__name__ != "ValidationError":
+            raise
+        where = "/".join(str(p) for p in getattr(exc, "absolute_path", ()))
+        msg = getattr(exc, "message", str(exc))
+        raise _fail(f"invalid AsyncAPI at /{where}: {msg}") from None
+
+
 def run_asyncapi(
     json_file: str,
     *,
@@ -72,10 +89,14 @@ def run_asyncapi(
         outbound_topic=outbound,
     )
     if validate:
-        validate_asyncapi(doc)
+        _validate(doc, validate_asyncapi)
     text = json.dumps(doc, indent=2) + "\n"
     if output is None:
         c.print(text.rstrip("\n"))
         return
-    Path(output).write_text(text, encoding="utf-8")
+    try:
+        Path(output).write_text(text, encoding="utf-8")
+    except OSError as exc:
+        # 🐛 #295-a: an unwritable -o path was a traceback.
+        raise _fail(f"cannot write {output!r}: {exc}") from None
     c.info(f"wrote {output}")

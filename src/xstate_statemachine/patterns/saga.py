@@ -88,7 +88,8 @@ class SagaBuilder:
     Args:
         name: The machine id (also the event-type prefix).
         start_event: When set, the saga waits in ``idle`` for this event
-            (the shape an `InboundDispatcher` drives); by default it starts
+            (the shape an `InboundDispatcher` drives) and keeps its payload
+            in ``context.input`` for the services; by default it starts
             the first step as soon as the interpreter starts.
     """
 
@@ -151,7 +152,18 @@ class SagaBuilder:
                 ctx[s.attempt_key] = 0
         states: Dict[str, Any] = {}
         if self.start_event:
-            states["idle"] = {"on": {self.start_event: "steps"}}
+            # 🐛 #295-a: the start event's payload was silently dropped
+            #    (services could not see START's data); `sagaStart` keeps
+            #    it in ``context.input``.
+            ctx["input"] = None
+            states["idle"] = {
+                "on": {
+                    self.start_event: {
+                        "target": "steps",
+                        "actions": ["sagaStart"],
+                    }
+                }
+            }
         states["steps"] = {
             "initial": self._steps[0].name,
             "states": self._step_states(),
@@ -306,6 +318,7 @@ class SagaBuilder:
         """
         merged: MachineLogic[Any] = MachineLogic(
             actions={
+                "sagaStart": _start,
                 "sagaRecord": _record,
                 "sagaFail": _fail,
                 "sagaCompensated": _compensated,
@@ -322,6 +335,11 @@ class SagaBuilder:
 def _params(a: Any) -> Dict[str, Any]:
     p = getattr(a, "params", None)
     return p if isinstance(p, dict) else {}
+
+
+def _start(i: Any, ctx: Dict[str, Any], e: Any, a: Any) -> None:
+    payload = getattr(e, "payload", None)
+    ctx["input"] = dict(payload) if isinstance(payload, dict) else None
 
 
 def _record(i: Any, ctx: Dict[str, Any], e: Any, a: Any) -> None:
