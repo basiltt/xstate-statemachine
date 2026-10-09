@@ -99,6 +99,30 @@ def default_on_undecodable(topic: str, raw: Raw, exc: Exception) -> None:
     )
 
 
+def _native_attempts(value: Any) -> int:
+    """A transport's redelivery count, coerced: ``None`` / negative /
+    non-numeric (a buggy or hostile transport) count as a first delivery
+    instead of raising mid-batch and stranding everything fetched."""
+    if isinstance(value, bool):
+        return int(value)
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def _notify(callback: Optional[Callable[..., Any]], *args: Any) -> None:
+    """Run a health callback; a raising one is logged, never propagated
+    (it fired AFTER a fetch succeeded: raising there lost the batch, and
+    on failure it masked the transport's own exception)."""
+    if callback is None:
+        return
+    try:
+        callback(*args)
+    except Exception:  # noqa: BLE001 - user hook
+        logger.warning("🔥 broker health callback failed", exc_info=True)
+
+
 class _Core:
     """Thread-safe local state shared by the sync and async bases."""
 
@@ -131,19 +155,19 @@ class _Core:
         return self._healthy
 
     def _io_ok(self) -> None:
-        if not self._healthy:
-            self._healthy = True
+        with self._lock:
+            flipped, self._healthy = not self._healthy, True
+        if flipped:
             logger.info("✅ broker connection healthy again")
-            if self.on_reconnect is not None:
-                self.on_reconnect()
+            _notify(self.on_reconnect)
 
     def _io_failed(self, exc: Exception) -> None:
-        if self._healthy:
-            self._healthy = False
+        with self._lock:
+            flipped, self._healthy = self._healthy, False
+        if flipped:
             # 🔐 type only: client errors may embed URLs with credentials
             logger.warning("🔥 broker call failed: %s", type(exc).__name__)
-            if self.on_disconnect is not None:
-                self.on_disconnect(exc)
+            _notify(self.on_disconnect, exc)
 
     # -- local queue ----------------------------------------------------------
     def _hold_s(self) -> Optional[float]:
@@ -182,22 +206,32 @@ class _Core:
                 forget(native)
         return item
 
-    def _decode(self, topic: str, raws: List[Raw]) -> List[Tuple[Any, Any]]:
-        """Decode fetched messages; returns ``(envelope | None, native)``
-        (``None`` = undecodable: the caller drops the native message)."""
-        out: List[Tuple[Any, Any]] = []
-        for raw in raws:
-            try:
-                env = Envelope.from_json(raw.body, max_bytes=self.max_bytes)
-            except EnvelopeCorruptError as exc:
-                self._dead_letter_raw(topic, raw, exc)
-                self.on_undecodable(topic, raw, exc)
-                out.append((None, raw.native))
-                continue
-            if raw.attempts > env.attempt:
-                env = env.with_attempt(raw.attempts)
-            out.append((env, raw.native))
-        return out
+    def _decode_one(self, topic: str, raw: Raw) -> Optional[Envelope]:
+        """One fetched message -> envelope, or ``None`` if undecodable.
+
+        🔐 battle #294-a: the attempt is the BROKER's count only. The
+        wire ``xsmattempt`` is producer-controlled (a forged ``10**9``
+        dead-lettered a healthy message on its first transient failure,
+        and a re-published envelope carried a stale count); local
+        requeues and the dispatcher's own counter cover the rest.
+        """
+        try:
+            env = Envelope.from_json(raw.body, max_bytes=self.max_bytes)
+        except EnvelopeCorruptError as exc:
+            # 💡 the DLQ record and the user hook are best-effort: a
+            #    failure in either must not lose the rest of the batch
+            for report in (self._dead_letter_raw, self.on_undecodable):
+                try:
+                    report(topic, raw, exc)
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "🔥 reporting an undecodable message on %r failed",
+                        topic,
+                        exc_info=True,
+                    )
+            return None
+        n = _native_attempts(raw.attempts)
+        return env if env.attempt == n else env.with_attempt(n)
 
     def _stash_decoded(self, topic: str, raws: List[Raw]) -> List[Any]:
         """Stash every decodable message FIRST; return the natives of the
@@ -207,11 +241,12 @@ class _Core:
         good: List[Tuple[Envelope, Any]] = []
         bad: List[Any] = []
         try:
-            for env, native in self._decode(topic, raws):
+            for raw in raws:
+                env = self._decode_one(topic, raw)
                 if env is None:
-                    bad.append(native)
+                    bad.append(raw.native)
                 else:
-                    good.append((env, native))
+                    good.append((env, raw.native))
         finally:
             self._stash(topic, good)
         return bad
