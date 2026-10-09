@@ -9,6 +9,7 @@ code snippet named in ``docs/research/launch`` must exist / run today.
 # -------------------------------------------------------------------------
 # 📦 Standard Library Imports
 # -------------------------------------------------------------------------
+import json
 import os
 import re
 import subprocess
@@ -77,9 +78,15 @@ def test_every_xsm_command_in_the_kit_is_real() -> None:
 
 
 def test_kit_names_only_real_chart_states() -> None:
-    from xstate_statemachine.contrib.agents import load_chart
-
-    states = set(load_chart()["states"])
+    # 📝 read the chart file directly: this test must run in the core CI
+    #    cells, where pydantic (and so the agents package) is absent
+    chart = json.loads(
+        (
+            ROOT
+            / "src/xstate_statemachine/contrib/agents/charts/tool_loop.json"
+        ).read_text("utf-8")
+    )
+    states = set(chart["states"])
     named = re.findall(r"`(idle|[a-z]+_[a-z_]+)`", _kit_text())
     for s in named:
         if s.startswith(("awaiting_", "checking_", "timed_")):
@@ -95,6 +102,8 @@ def test_no_kit_snippet_imports_a_missing_module() -> None:
         re.M,
     )
     for mod in mods:
+        if ".contrib.agents" in mod:
+            pytest.importorskip("pydantic")  # the extra's one dependency
         __import__(mod)
 
 
