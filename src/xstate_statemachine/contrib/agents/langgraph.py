@@ -192,7 +192,10 @@ def route_by_statechart(
     """A conditional-edge router: active state id → next LangGraph node.
 
     *mapping* keys are full state ids (``"g.review"``) or leaf keys
-    (``"review"``); the first active state that matches wins. Without a
+    (``"review"``) -- an ancestor key (``"g.a"`` / ``"a"``) routes every
+    leaf beneath it, the deepest match winning. Active ids are scanned in
+    sorted order, so with parallel regions the result is deterministic
+    (alphabetically first region that matches). Without a
     match, *default* -- or a loud `AgentConfigError` (no silent END).
     """
     built = machine if isinstance(machine, MachineNode) else None
@@ -204,16 +207,23 @@ def route_by_statechart(
     table = dict(mapping)
 
     def route(state: Dict[str, Any]) -> str:
-        snap = state.get(state_key) or {}
-        if isinstance(snap, str):
-            snap = json.loads(snap)
+        raw = _snapshot_of(state, state_key)
+        snap = json.loads(raw) if raw is not None else {}
+        if not isinstance(snap, Mapping):
+            raise AgentConfigError(
+                f"state[{state_key!r}] is not a snapshot object"
+            )
         ids = sorted(snap.get("state_ids") or [])
+        # 📝 #288-a: deepest match first, then ancestors -- a key naming a
+        #    compound state ("a" / "g.a") routes every leaf under it.
         for sid in ids:
-            if sid in table:
-                return table[sid]
-            leaf = sid.rsplit(".", 1)[-1]
-            if leaf in table:
-                return table[leaf]
+            parts = sid.split(".")
+            for depth in range(len(parts), 0, -1):
+                full = ".".join(parts[:depth])
+                if full in table:
+                    return table[full]
+                if parts[depth - 1] in table:
+                    return table[parts[depth - 1]]
         if default is not None:
             return default
         raise AgentConfigError(
