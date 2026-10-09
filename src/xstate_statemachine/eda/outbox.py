@@ -34,6 +34,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import logging
 import sqlite3
@@ -745,7 +746,18 @@ class OutboxRelay:
         try:
             taken = self._take()
             for rec in taken:
-                self.broker.publish(rec.topic, rec.envelope)
+                result = self.broker.publish(rec.topic, rec.envelope)
+                if inspect.isawaitable(result):
+                    # 🔥 #292-a battle: a plain ``def publish`` returning a
+                    #    coroutine was never awaited, yet the row was
+                    #    marked SENT -- a silently lost message.
+                    close = getattr(result, "close", None)
+                    if callable(close):
+                        close()
+                    raise TypeError(
+                        "broker.publish returned an awaitable on the sync "
+                        "relay path; use relay_once() (an async broker)"
+                    )
                 sent.append(rec.seq)
         except BaseException:
             self._settle(taken, sent, failing=True)

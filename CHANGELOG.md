@@ -1451,6 +1451,71 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **`[celery]`, as battle-tested (#292).** The Celery bridge on a
+  fulfilment day: 100 orders through `@statechart_task` as two
+  interleaved delivery streams with DUPLICATES (`acks_late`); a worker
+  killed -9 after the step ran and before the save; a shipping result
+  landing via the `task_success` signal after the instance was saved
+  and discarded, via `poll_results` when the signal was lost, and
+  refused when it arrives again; TWO Beat processes scanning the same
+  deadlines; forged `xsm_store_key` / `xsm_invocation_id` headers and a
+  pickle-accepting app; two `outbox_relay_task`s on one outbox (`examples/
+  integrations/eda_fulfilment/tests/test_battle_292_scenario.py`,
+  `tests/contrib/celery/test_battle_292_{scenario_unit,a,b}.py`). Found
+  and fixed: **Celery tasks are `shared=True` by default** -- a
+  `DurableTimerScheduler`, `outbox_relay_task` or `@statechart_task`
+  registered on one app was RE-CREATED on every app built later in the
+  process with the FIRST app's closure (its store, machine, outbox): a
+  second `FulfilmentApp`'s Beat scan ran against the first app's
+  database and reported 0 woken -- `register_task` registers
+  `shared=False` and refuses a taken name with `InvalidConfigError`
+  (plain `app.task` silently returns the existing task; pass `name=`
+  for two on one app); a contended `PessimisticLock` failed a
+  `@statechart_task` on the first attempt (`LockTimeoutError` is now
+  retried with `ConflictError`); one instance whose `load` /
+  `machine_for_key` / delivery raised stopped the whole `poll_results`
+  scan (per-key isolation now), and a parked early completion whose
+  delivery failed was lost with every one after it (re-parked); a
+  stale or forged completion still opened `persisted()` and SAVED an
+  unchanged instance with a new version (10,000 forged signals = 10,000
+  writes and `ConflictError`s for real writers) -- refused without a
+  load or write; `relay_once_sync` on a broker whose plain `publish`
+  returned a coroutine marked the row sent without awaiting it (the
+  message was lost) -- `TypeError`, row released; `register_task` on an
+  app created with `autofinalize=False` raised "Contract breach";
+  `DurableTimerScheduler` and `outbox_relay_task` did not refuse a
+  pickle-accepting app (every entry point does now);
+  `MemoryPendingResults` grew without bound on forged keys
+  (`PENDING_MAX_ITEMS` 10,000, oldest evicted and logged); the example
+  hard-coded `memory://` so a real worker could never run it
+  (`CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND`); and from the
+  independent review: on an `autofinalize=False` app a registration is
+  a `PromiseProxy` -- the duplicate check saw nothing, and `finalize()`
+  would have kept whichever task it built first (`register_task` now
+  remembers the names it claimed per app and refuses a `@shared_task`
+  of the same name too), and `outbox_relay_task` setting the closer on
+  the proxy raised "Contract breach" (`close_relay_loop(app, name)`;
+  the closer is attached after `finalize()`); a completion whose record
+  names another task is PARKED when a pending table is given (a
+  re-entered invoke's new task finishing before its record is saved
+  looked stale -- `poll_results` settles it), and
+  `MemoryPendingResults(max_items=0)` / `ttl_s<=0` are refused. Docs: the Celery
+  guide gains a `register_task` section (including the factory-built
+  worker app case), an Operations section (ONE Beat and its three
+  schedules, the per-process `cache+memory://` trap, `after` precision
+  vs the scan interval, tunables, what to alert on, sizing), a complete
+  Guarantees box (exactly-once PROCESSING is not given -- a duplicate
+  task delivery runs `fn` again; use an inbox), the six pickle-refusing
+  entry points in the Threat model, and Troubleshooting rows for every
+  operator-visible error including Celery's own "Never call
+  result.get() within a task" (a module-global flag that eager tasks run
+  from several THREADS leave stuck -- the scenario hit it); the example
+  README gains "Operate it: Celery" with a real in-process worker test.
+  Held: 8 concurrent `@statechart_task` sends on one key under a REAL
+  worker end at n=8; 4 threads delivering the same completion apply it
+  once; a real key with another machine's task id is refused; 500
+  live-watcher start/stop cycles leak no threads; `disconnect()` is
+  idempotent and foreign tasks' signals are ignored.
 - **The broker adapters, as battle-tested (#294).** Redis Streams,
   Kafka, RabbitMQ, NATS JetStream and SQS on a fulfilment day, each on
   its offline stand-in (the same adapter classes a live deployment

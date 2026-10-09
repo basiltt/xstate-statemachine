@@ -51,6 +51,7 @@ from ...events import (
     _engine_done,
     _engine_error,
 )
+from ...exceptions import InvalidConfigError
 from ...plugins import PluginBase
 from .worker import assert_json_serializer
 
@@ -76,11 +77,22 @@ HEADER_INVOCATION = "xsm_invocation_id"
 POLL_S = 0.05
 #: How long a parked early completion is retried before it is given up.
 PENDING_TTL_S = 3600.0
+#: Most parked completions one process holds (#292 battle B): the headers
+#: are broker input, so a flood of forged ``xsm_store_key`` values must
+#: not grow worker memory without bound. The oldest entry is evicted.
+PENDING_MAX_ITEMS = 10_000
 
 
 @dataclass(frozen=True)
 class CeleryInvocation:
-    """What `poll_results` found for one pending invocation."""
+    """What `poll_results` found for one pending invocation.
+
+    Attributes:
+        key: The store key of the persisted instance.
+        invocation_id: The ``invoke`` id recorded under ``_xsm_celery``.
+        task_id: The Celery task id the instance is waiting for.
+        deadline: Wall-clock ``timeout_s`` deadline, or ``None``.
+    """
 
     key: str
     invocation_id: str
@@ -328,16 +340,39 @@ class MemoryPendingResults:
     result backend -- that is the durable path.
     """
 
-    def __init__(self, ttl_s: float = PENDING_TTL_S) -> None:
+    def __init__(
+        self,
+        ttl_s: float = PENDING_TTL_S,
+        max_items: int = PENDING_MAX_ITEMS,
+    ) -> None:
+        if not ttl_s > 0 or int(max_items) < 1:
+            raise InvalidConfigError(
+                "MemoryPendingResults needs ttl_s > 0 and max_items >= 1"
+            )
         self.ttl_s = float(ttl_s)
+        self.max_items = int(max_items)
         self._lock = threading.Lock()
         self._items: Dict[str, PendingResult] = {}
 
     def add(self, item: PendingResult) -> None:
+        """Park *item*; when full, the LEAST RECENTLY (re-)parked entry
+        is evicted and logged (a re-park moves an item to the back)."""
         with self._lock:
+            self._items.pop(item.task_id, None)
             self._items[item.task_id] = item
+            while len(self._items) > self.max_items:
+                old = next(iter(self._items))
+                self._items.pop(old)
+                logger.warning(
+                    "🔥 parked celery completion %s evicted (table full, "
+                    "max_items=%d); poll_results reads it from the "
+                    "result backend",
+                    old,
+                    self.max_items,
+                )
 
     def take_all(self) -> List[PendingResult]:
+        """Remove and return every parked completion."""
         with self._lock:
             items, self._items = list(self._items.values()), {}
         return items
@@ -371,6 +406,22 @@ def _dropped(interp: Any, invocation_id: str, why: str) -> None:
     event = Event(type=f"done.invoke.{invocation_id}", payload={})
     for plugin in getattr(interp, "_plugins", ()):
         plugin.on_event_dropped(interp, event, "stale_invocation")
+
+
+def _dropped_unloaded(key: str, invocation_id: str, plugins: Any) -> None:
+    """`_dropped` without an instance: the plugins see ``interpreter=None``
+    (nothing was loaded); a raising plugin is logged, never propagated."""
+    logger.warning(
+        "🔥 stale celery completion for %r on %r ignored: another task",
+        invocation_id,
+        key,
+    )
+    event = Event(type=f"done.invoke.{invocation_id}", payload={})
+    for plugin in plugins or ():
+        try:
+            plugin.on_event_dropped(None, event, "stale_invocation")
+        except Exception:  # noqa: BLE001 - a plugin bug is not ours
+            logger.exception("on_event_dropped of %r raised", plugin)
 
 
 def _recorded_task(store: Any, key: str, invocation_id: str) -> Any:
@@ -436,6 +487,25 @@ def deliver_result(
                 key,
             )
         return False
+    if recorded != task_id:
+        # 🔥 #292-a battle: a stale / forged completion used to open
+        #    `persisted()` just to refuse it -- a no-op save, version + 1,
+        #    per call (10 000 forged signals = 10 000 writes, each one a
+        #    `ConflictError` for a legitimate writer). The stored record
+        #    already says it is not ours: refuse it without writing.
+        # 📝 review M2: with a pending table the completion is PARKED
+        #    instead -- a re-entered invoke whose new task finished
+        #    before its record was saved looks exactly like this, and
+        #    `_retry_parked` settles it against the final record (a
+        #    truly stale one is then refused for good; bounded by
+        #    max_items / ttl_s, so forged signals cannot grow memory).
+        if pending is not None:
+            pending.add(
+                PendingResult(key, invocation_id, task_id, result, error)
+            )
+            return False
+        _dropped_unloaded(key, invocation_id, plugins)
+        return False
     machine = _machine(machine_for_key, key)
 
     def act(interp: Any) -> bool:
@@ -472,7 +542,11 @@ def pending_invocations(store: Any, *, prefix: str = "") -> List[Any]:
     """Every ``_xsm_celery`` record in *store* (reads snapshots only)."""
     out: List[CeleryInvocation] = []
     for key in store.list_keys(prefix=prefix):
-        rec = store.load(key)
+        try:
+            rec = store.load(key)
+        except Exception:  # noqa: BLE001 - one key must not stop the scan
+            logger.exception("🔥 celery poll: loading %r failed", key)
+            continue
         if rec is None:
             continue
         try:
@@ -505,21 +579,64 @@ def _retry_parked(
                 item.key,
             )
             continue
-        if _recorded_task(store, item.key, item.invocation_id) is None:
-            pending.add(item)  # still no record: keep it
-            continue
-        if deliver_result(
+        # 🔥 #292-a battle: `take_all` empties the table, so an exception
+        #    here (a store blip, an unknown machine type) used to DROP
+        #    every parked item behind it. Re-park this one and go on.
+        try:
+            if _recorded_task(store, item.key, item.invocation_id) is None:
+                pending.add(item)  # still no record: keep it
+                continue
+            if deliver_result(
+                store,
+                machine_for_key,
+                item.key,
+                item.invocation_id,
+                item.task_id,
+                result=item.result,
+                error=item.error,
+                **kw,
+            ):
+                applied += 1
+        except Exception:  # noqa: BLE001 - retried on the next poll
+            logger.exception("🔥 parked celery completion %s", item.task_id)
+            pending.add(item)
+    return applied
+
+
+def _poll_one(
+    p: CeleryInvocation,
+    store: Any,
+    machine_for_key: Any,
+    app: Any,
+    clock: Callable[[], float],
+    kw: Dict[str, Any],
+) -> bool:
+    """Deliver one finished / timed-out invocation; ``False`` = not yet."""
+    from celery.result import AsyncResult
+
+    res = AsyncResult(p.task_id, app=app)
+    outcome: Dict[str, Any] = {}
+    if _is_ready(res):
+        try:
+            outcome["result"] = _value(res)
+        except Exception as exc:  # noqa: BLE001 - the task failed
+            outcome["error"] = exc
+    elif p.deadline is not None and clock() > p.deadline:
+        _revoke(res)
+        outcome["error"] = TimeoutError(f"celery task {p.task_id} timed out")
+    else:
+        return False
+    return bool(
+        deliver_result(
             store,
             machine_for_key,
-            item.key,
-            item.invocation_id,
-            item.task_id,
-            result=item.result,
-            error=item.error,
+            p.key,
+            p.invocation_id,
+            p.task_id,
             **kw,
-        ):
-            applied += 1
-    return applied
+            **outcome,
+        )
+    )
 
 
 def poll_results(
@@ -541,8 +658,6 @@ def poll_results(
     invocations past their ``timeout_s`` deadline. Returns how many
     completions were applied.
     """
-    from celery.result import AsyncResult
-
     assert_json_serializer(app)
     clock = now or time.time
     kw: Dict[str, Any] = {"lock": lock, "plugins": plugins}
@@ -550,30 +665,14 @@ def poll_results(
     if pending is not None:
         applied += _retry_parked(store, machine_for_key, pending, clock, kw)
     for p in pending_invocations(store, prefix=prefix):
-        res = AsyncResult(p.task_id, app=app)
-        outcome: Dict[str, Any] = {}
-        if _is_ready(res):
-            try:
-                outcome["result"] = _value(res)
-            except Exception as exc:  # noqa: BLE001 - the task failed
-                outcome["error"] = exc
-        elif p.deadline is not None and clock() > p.deadline:
-            _revoke(res)
-            outcome["error"] = TimeoutError(
-                f"celery task {p.task_id} timed out"
-            )
-        else:
-            continue
-        if deliver_result(
-            store,
-            machine_for_key,
-            p.key,
-            p.invocation_id,
-            p.task_id,
-            **kw,
-            **outcome,
-        ):
-            applied += 1
+        # 🔥 #292-a battle: one key whose delivery raises (a store blip,
+        #    ``machine_for_key`` not knowing an old type) aborted the whole
+        #    scan, starving every later instance on every Beat tick.
+        try:
+            if _poll_one(p, store, machine_for_key, app, clock, kw):
+                applied += 1
+        except Exception:  # noqa: BLE001 - next tick retries this key
+            logger.exception("🔥 celery poll: delivering %r failed", p.key)
     return applied
 
 

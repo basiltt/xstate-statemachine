@@ -4,8 +4,15 @@ Beat timer scan and the outbox relay task.
 Every app here is JSON-only (`assert_json_serializer`); the demo runs in
 ``task_always_eager`` mode against the in-memory transport, so no worker
 or broker process is needed.
+
+For a REAL worker, a broker and a result backend that BOTH the worker and
+the caller reach are required: ``cache+memory://`` lives inside one
+process, so a worker elsewhere would write results nobody reads. Set
+``CELERY_BROKER_URL`` / ``CELERY_RESULT_BACKEND`` (for example
+``redis://localhost:6379/0`` for both) and build with ``eager=False``.
 """
 
+import os
 from typing import Any
 
 from celery import Celery
@@ -22,7 +29,21 @@ import logic
 
 
 def make_celery(*, eager: bool = True, name: str = "fulfilment") -> Celery:
-    app = Celery(name, broker="memory://", backend="cache+memory://")
+    """A JSON-only Celery app.
+
+    Args:
+        eager: ``task_always_eager`` (the demo); ``False`` for a worker.
+        name: The app name (two apps in one process need two names).
+
+    Returns:
+        The app; broker / backend come from ``CELERY_BROKER_URL`` /
+        ``CELERY_RESULT_BACKEND`` (default: in-process, demo only).
+    """
+    app = Celery(
+        name,
+        broker=os.environ.get("CELERY_BROKER_URL", "memory://"),
+        backend=os.environ.get("CELERY_RESULT_BACKEND", "cache+memory://"),
+    )
     app.conf.update(
         task_always_eager=eager,
         task_serializer="json",
@@ -81,4 +102,5 @@ def timer_scheduler(
 
 
 def relay_task(app: Celery, outbox: Any, broker: Any) -> Any:
+    """The outbox relay as a Celery task (schedule it with Beat)."""
     return outbox_relay_task(app, outbox, broker, name="fulfilment.relay")
