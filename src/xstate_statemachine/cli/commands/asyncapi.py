@@ -23,6 +23,7 @@ def _fail(msg: str) -> SystemExit:
 
 
 def _machine(path: str) -> Any:
+    """Build the chart at *path* with stub logic (documentation only)."""
     from ...exceptions import XStateMachineError
     from ...factory import create_machine
     from ...testing_utils import stub_logic
@@ -38,6 +39,38 @@ def _machine(path: str) -> Any:
         raise _fail(f"cannot load machine {path!r}: {exc}") from None
 
 
+def _nonblank(flag: str, value: Optional[str]) -> Optional[str]:
+    """Refuse an empty / whitespace-only option instead of dropping it."""
+    if value is not None and not value.strip():
+        raise _fail(f"{flag} must not be empty")
+    return value
+
+
+def _validated(doc: Any) -> None:
+    """`validate_asyncapi`, with every failure as one line (exit 2)."""
+    from ...eda.asyncapi import validate_asyncapi
+    from ...exceptions import MissingExtraError
+
+    try:
+        validate_asyncapi(doc)
+    except MissingExtraError as exc:
+        raise _fail(f"--validate needs jsonschema: {exc}") from None
+    except Exception as exc:  # jsonschema.ValidationError (no hard import)
+        if not type(exc).__module__.startswith("jsonschema"):
+            raise
+        msg = getattr(exc, "message", None) or str(exc).splitlines()[0]
+        raise _fail(f"document is not valid AsyncAPI 3.0: {msg}") from None
+
+
+def _write(output: str, text: str) -> None:
+    try:
+        Path(output).write_text(text, encoding="utf-8")
+    except OSError as exc:
+        raise _fail(
+            f"cannot write {output!r}: {exc.strerror or exc}"
+        ) from None
+
+
 def run_asyncapi(
     json_file: str,
     *,
@@ -50,8 +83,11 @@ def run_asyncapi(
 ) -> None:
     """Print (or write to *output*) the AsyncAPI 3.0 document of a chart.
 
-    Exit codes: 0 success; 2 a missing, unreadable or invalid machine
-    file.
+    Exit codes: 0 success; 2 refused input -- a missing, unreadable or
+    invalid machine file, an empty ``--server`` / ``--inbound`` /
+    ``--outbound``, an unwritable ``-o``, ``--validate`` without
+    ``jsonschema`` or a document the schema rejects. Errors are one
+    stderr line, never a traceback.
 
     Args:
         json_file: The machine JSON file.
@@ -62,8 +98,11 @@ def run_asyncapi(
         outbound: Topic published events go to.
         validate: Validate against the AsyncAPI 3.0 schema.
     """
-    from ...eda.asyncapi import asyncapi_document, validate_asyncapi
+    from ...eda.asyncapi import asyncapi_document
 
+    _nonblank("--server", server)
+    _nonblank("--inbound", inbound)
+    _nonblank("--outbound", outbound)
     c = get_console()
     doc = asyncapi_document(
         _machine(json_file),
@@ -72,10 +111,11 @@ def run_asyncapi(
         outbound_topic=outbound,
     )
     if validate:
-        validate_asyncapi(doc)
-    text = json.dumps(doc, indent=2) + "\n"
+        _validated(doc)
+    text = json.dumps(doc, indent=2)
     if output is None:
-        c.print(text.rstrip("\n"))
+        c.print(text)
         return
-    Path(output).write_text(text, encoding="utf-8")
+    text += "\n"
+    _write(output, text)
     c.info(f"wrote {output}")
