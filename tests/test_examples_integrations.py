@@ -47,6 +47,9 @@ REQUIRES = {
     #    so a [kafka]-only cell runs the Kafka tests (and the core demo)
     #    and skips the rest -- never the whole suite.
     "eda_fulfilment": (),
+    # 🤖 #287 battle: the support bot needs only [agents] (= pydantic);
+    #    its FastAPI lookup test importorskips fastapi/httpx itself.
+    "agents_support_bot": ("pydantic",),
 }
 DEFAULT_REQUIRES = ("fastapi", "httpx")
 

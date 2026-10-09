@@ -281,7 +281,9 @@ jobs:
           # 📝 #286: [sqlalchemy] and [flask] run theirs (sqlalchemy_orders,
           #    flask_wizard); the test skips suites whose extra is missing.
           case "${{ matrix.extra }}" in
-            fastapi|sqlalchemy|flask|celery)
+            # 🤖 #287 battle: [agents] runs the support-bot suite (offline
+            #    FakeModel; the real-provider smoke tests skip without keys).
+            fastapi|sqlalchemy|flask|celery|agents)
               targets="$targets tests/test_examples_integrations.py" ;;&
             # 🧭 #309: the adoption kit -- a fresh venv with the built wheel
             #    runs the journey page, the scaffold and the action/hook
