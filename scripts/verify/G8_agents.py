@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -43,6 +44,16 @@ def run_tests() -> None:
             "no:cacheprovider",
         ],
         cwd=str(ROOT),
+        # 📝 #287 battle: the child must import THIS checkout too -- an
+        #    editable install of another worktree silently tested old code.
+        env=dict(
+            os.environ,
+            PYTHONPATH=os.pathsep.join(
+                p
+                for p in (str(ROOT / "src"), os.environ.get("PYTHONPATH"))
+                if p
+            ),
+        ),
     )
     assert proc.returncode == 0, "agents tests failed"
 
