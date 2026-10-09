@@ -2678,6 +2678,16 @@ Integration authors gate a subpackage with `xstate_statemachine.contrib._compat.
 | `[drf]` | `xstate_statemachine.contrib.drf` | `StatechartViewSetMixin`, `StatechartSerializerField`, `event_serializer`, `StatechartEventPermission`, `StatechartHistoryPermission`, `problem_response` | [DRF & Channels](../guide/integration-drf/) |
 | `[channels]` | `xstate_statemachine.contrib.channels` | `StatechartConsumer`, `WS_POLICY_VIOLATION`, `live_consumers`; `contrib.channels.broadcast`: `ensure_broadcaster`, `group_name_for`, `group_names_for`, `register_group_namer` | [DRF & Channels](../guide/integration-drf/#statechartconsumer-channels) |
 
+**Multi-agent names (`contrib.agents`, #290):**
+
+| Name | What |
+|:--|:--|
+| `spawn_agent(child_chart, model, tools=None, *, budget, parent_tools=None, name="agent", task_key="task", tracer=None, **agent_logic_kw)` | `MachineLogic` with action `spawn<Name>`: one `TOOL_LOOP` sub-agent per task, its own required `budget`, tools ⊆ the parent's allow-list; reports `AGENT_DONE` / `AGENT_FAILED`. |
+| `BudgetPlugin(max_total_usd=None, max_total_tokens=None)` | Rolls children's usage into `total_usage` / `usage_by_agent` at send time; trips once (`budget_exceeded`, `BUDGET_EXCEEDED`); `.guards()` → `underGlobalBudget`. |
+| `handoff_guard(allowed, *, name="handoffAllowed")` | Guard allowing only the listed `from → to` handoffs; anything else is `Receipt.denied`. |
+| `AgentTracePlugin.totals()` | `{"agents": {agent_id: usage}, "total": usage}` across the actor tree (one row per agent that called a model). |
+| `load_chart("supervisor" \| "pipeline" \| "debate")` | Reference multi-agent charts (examples, not a runtime; their `meta.tools` are placeholders). |
+
 The `xsm` CLI grows with them: `xsm gt --with-api --with-models` emits a FastAPI router and Pydantic event models you own ([templates](../guide/cli-templates/)); `xsm new --template fastapi` scaffolds a project from the example app; `xsm paths` lists a path to every reachable configuration ([CLI](../guide/cli/)).
 
 ---

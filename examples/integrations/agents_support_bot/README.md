@@ -123,6 +123,66 @@ assert res.context["output_retries"] == 1
 
 See [Structured output per state](https://basiltt.github.io/xstate-statemachine/guide/integration-agents/#structured-output-per-state).
 
+## Supervisor: many tickets, one budget
+
+`load_chart("supervisor")` runs a planner and a worker pool in parallel
+regions; `spawn_agent` gives every ticket its own `TOOL_LOOP` sub-agent with
+its **own** `max_turns`, and one `BudgetPlugin` caps the **whole tree**.
+Workers get `lookup_order` only: a worker can never refund, because its
+tools must be a subset of the spawning state's `meta.tools` (the chart ships
+`["search", "fetch"]` as placeholders -- replace them with your tools).
+
+<!-- doc-requires: pydantic -->
+```python
+import bot
+from xstate_statemachine import MachineLogic, SyncInterpreter, create_machine
+from xstate_statemachine.contrib.agents import (
+    BudgetPlugin, FakeModel, handoff_guard, load_chart, spawn_agent, tool_registry)
+
+lookup_only = tool_registry(bot.build_tools(bot.stub_orders(), []).get("lookup_order"))
+chart = load_chart("supervisor")
+workers = chart["states"]["running"]["states"]["workers"]
+workers["meta"]["tools"] = workers["states"]["working"]["meta"]["tools"] = ["lookup_order"]
+
+def store_plan(i, ctx, e, a):
+    ctx["tasks"], ctx["outstanding"] = list(e.payload["tasks"]), len(e.payload["tasks"])
+
+def hand_off(i, ctx, e, a):
+    for t in ctx["tasks"]:
+        i.send({"type": "HANDOFF", "from": "planner", "to": "worker", "task": t})
+
+def collect(key, field):
+    return lambda i, ctx, e, a: ctx.update({key: ctx[key] + [e.payload[field]]})
+
+model = FakeModel([{"tool": "lookup_order", "args": {"order_id": 42}},
+                   {"text": "order 42 is paid"}] * 3, is_async=False,
+                  default_usage={"input_tokens": 100, "output_tokens": 20, "cost_usd": 0.01})
+budget = BudgetPlugin(max_total_usd=0.04)               # ONE budget for the tree
+logic = MachineLogic(
+    actions={"storePlan": store_plan, "handOffTasks": hand_off,
+             "collectResult": collect("results", "result"),
+             "collectFailure": collect("failures", "error")},
+    guards={"allWorkersReported": lambda c, e: 0 < c["outstanding"] <= len(c["results"]) + len(c["failures"])},
+).merge(
+    spawn_agent(None, model, lookup_only, budget={"max_turns": 3},  # each worker's OWN
+                parent_tools=["lookup_order"], name="worker"),
+    handoff_guard({"planner": ["worker"]}),
+    budget.guards(),
+)
+sup = SyncInterpreter(create_machine(chart, logic=logic)).use(budget).start()
+sup.send("PLAN", tasks=["ticket 1", "ticket 2", "ticket 3"])
+print(sup.current_state_ids, sup.context["results"], sup.context["total_usage"]["cost_usd"])
+assert sup.context["budget_exceeded"]                   # tripped by worker 2's report...
+assert len(sup.context["results"]) == 2                 # ...whose result is still collected
+assert sorted(sup.context["usage_by_agent"]) == ["supervisor:worker-1", "supervisor:worker-2"]
+```
+
+Worker 2's report crosses `$0.04`, so ticket 3 is **never spawned**
+(`spawnWorker` logs `global budget exceeded; not spawning`) and
+`BUDGET_EXCEEDED` ends the worker region. `usage_by_agent` tells you who
+spent it. The battle scenario `tests/test_battle_290_scenario.py` runs 100
+tickets through this shape.
+
 ## Drop the bot into a LangGraph graph
 
 Already on LangGraph? Keep your graph and make this bot **one node**: its

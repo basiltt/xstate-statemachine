@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Callable, List, Optional
 
 from ...inspect import (
+    MESSAGE_TYPES,
     InspectorPlugin,
     JsonLinesSink,
     SseSink,
@@ -168,6 +169,19 @@ def recording_plugin(
     return plugin, sink
 
 
+def _refuse_if_empty(path: str, shown: int, skipped: int) -> None:
+    """Exit 1 when a non-empty file held no inspector messages."""
+    if shown or not skipped:
+        return
+    get_console().error(
+        f"{path}: no inspector messages (`@xstate.*`) -- not a recording. "
+        "An AgentTracePlugin trace is an OpenTelemetry-style JSONL, not "
+        "an inspector recording: record with `xsm sim --record` or "
+        "`InspectorPlugin(JsonLinesSink(path))`"
+    )
+    raise SystemExit(1)
+
+
 def run_replay(
     path: str,
     *,
@@ -194,8 +208,16 @@ def run_replay(
     #    A corrupt middle line still fails loudly (exit 1) -- after the
     #    lines before it were shown.
     if not live:
+        shown = skipped = 0
         try:
             for m in read_jsonl(path):
+                # battle #290: an `AgentTracePlugin` trace (or any JSONL
+                #    that is not an inspector recording) printed one
+                #    `?  ""` row per line and exited 0.
+                if m.get("type") not in MESSAGE_TYPES:
+                    skipped += 1
+                    continue
+                shown += 1
                 ev = (m.get("event") or {}).get("type", "")
                 snap = m.get("snapshot") or {}
                 c.print(
@@ -205,6 +227,7 @@ def run_replay(
         except (ValueError, OSError) as exc:
             c.error(f"{path}: {type(exc).__name__}: {exc}")
             raise SystemExit(1)
+        _refuse_if_empty(path, shown, skipped)
         return
     sink = _serve(host=host, port=port, token=token, open_browser=open_browser)
     try:
@@ -215,6 +238,7 @@ def run_replay(
         except (ValueError, OSError) as exc:
             c.error(f"{path}: {type(exc).__name__}: {exc}")
             raise SystemExit(1)
+        _refuse_if_empty(path, n, Path(path).stat().st_size)
         c.info(f"replayed {n} messages")
         _block(stop, duration)
     finally:
