@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import importlib
 import json
-from typing import Any, Callable, Mapping, Optional, Tuple
+from typing import Dict, Any, Callable, Mapping, Optional, Tuple
 
 from pydantic import BaseModel, ValidationError
 
@@ -108,3 +108,21 @@ def _validate_output(
             detail = f"output rejected ({type(exc).__name__})"
         return False, detail
     return True, obj.model_dump(mode="json")
+
+
+def _retry_prompt(model: Optional[type], detail: Any) -> Dict[str, Any]:
+    """The ``RETRY_OUTPUT`` user message: the validation detail (field
+    names and messages only -- never the rejected reply, which may carry
+    injected text or PII) and the schema to match."""
+    schema = (
+        json.dumps(model.model_json_schema())  # type: ignore[attr-defined]
+        if model is not None
+        else "{}"
+    )
+    return {
+        "role": "user",
+        "content": (
+            f"RETRY_OUTPUT: your answer did not validate ({detail}). "
+            f"Reply with only JSON matching this schema: {schema}"
+        ),
+    }

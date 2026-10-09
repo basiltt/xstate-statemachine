@@ -46,6 +46,7 @@ from ...machine_logic import MachineLogic
 from ...patterns.retry import RetryPolicy
 from ...plugins import redact
 from ._output import (
+    _retry_prompt,
     _meta_output_model,
     _resolve_model,
     _task_of,
@@ -551,21 +552,7 @@ class _AgentLogic:
         #    counts against every budget like any other turn.
         model, detail = self._output_model_for(e), self._detail(e)
         ctx["output_retries"] = int(ctx.get("output_retries", 0)) + 1
-        schema = (
-            json.dumps(model.model_json_schema())  # type: ignore[attr-defined]
-            if model is not None
-            else "{}"
-        )
-        self._append(
-            ctx,
-            {
-                "role": "user",
-                "content": (
-                    f"RETRY_OUTPUT: your answer did not validate ({detail}). "
-                    f"Reply with only JSON matching this schema: {schema}"
-                ),
-            },
-        )
+        self._append(ctx, _retry_prompt(model, detail))
 
     def _detail(self, e: Any) -> Any:
         """The last validation failure: field names + messages, no values."""
