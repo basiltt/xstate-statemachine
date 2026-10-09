@@ -24,7 +24,7 @@ a pending row you poll. It survives a process restart via SQLite or Redis,
 including an escalation deadline.
 
 6/ Structured output is validated per state (`meta.output_model`). On
-failure it transitions to a `RETRY_OUTPUT` state that re-prompts —
+failure a guarded `RETRY_OUTPUT` transition re-prompts —
 bounded, not an infinite loop.
 
 7/ Traces are JSONL/OTel-style, no message content by default, with secret
