@@ -241,22 +241,38 @@ def route_by_statechart(
 
     def route(state: Dict[str, Any]) -> str:
         raw = _snapshot_of(state, state_key)
-        snap = json.loads(raw) if raw is not None else {}
+        try:
+            snap = json.loads(raw) if raw is not None else {}
+        except ValueError as exc:  # review M1: a JSON string that is not
+            raise AgentConfigError(
+                f"state[{state_key!r}] is not valid snapshot JSON: {exc}"
+            ) from None
         if not isinstance(snap, Mapping):
             raise AgentConfigError(
                 f"state[{state_key!r}] is not a snapshot object"
             )
         ids = sorted(snap.get("state_ids") or [])
-        # 📝 #288-a: deepest match first, then ancestors -- a key naming a
-        #    compound state ("a" / "g.a") routes every leaf under it.
-        for sid in ids:
+        # 📝 #288-a: a key naming a compound state ("a" / "g.a") routes
+        #    every leaf under it. Review M2: candidates are ranked ACROSS
+        #    all active ids by depth (deepest first, then sorted id), so
+        #    with parallel regions the most specific key really wins; the
+        #    root (the machine id) is never a match -- a key equal to it
+        #    would swallow every state and `default` would be dead.
+        best = None  # (depth, index, target)
+        for index, sid in enumerate(ids):
             parts = sid.split(".")
-            for depth in range(len(parts), 0, -1):
-                full = ".".join(parts[:depth])
-                if full in table:
-                    return table[full]
-                if parts[depth - 1] in table:
-                    return table[parts[depth - 1]]
+            for depth in range(len(parts), 1, -1):
+                for key in (".".join(parts[:depth]), parts[depth - 1]):
+                    if key in table:
+                        cand = (depth, -index, table[key])
+                        if best is None or cand[:2] > best[:2]:
+                            best = cand
+                        break
+                else:
+                    continue
+                break
+        if best is not None:
+            return best[2]
         if default is not None:
             return default
         raise AgentConfigError(
@@ -321,6 +337,19 @@ def langgraph_service(
         raise AgentConfigError(
             f"on_interrupt must be 'error' or 'done', got {on_interrupt!r}"
         )
+    if (
+        stream
+        and on_interrupt == "error"
+        and stream_mode not in _INTERRUPT_VISIBLE_MODES
+    ):
+        # 🔥 review M3: in "messages" / "debug" / list modes no chunk
+        #    carries `__interrupt__`, so the pause could not be seen and
+        #    the run would silently end in onDone -- refuse up front.
+        raise AgentConfigError(
+            f"on_interrupt='error' cannot see an interrupt with "
+            f"stream_mode={stream_mode!r}; use 'values' or 'updates', or "
+            f"on_interrupt='done'"
+        )
     cfg = dict(config) if config is not None else None
 
     def _settle(out: Any) -> Any:
@@ -352,6 +381,8 @@ def langgraph_service(
 
 
 INTERRUPT_KEY = "__interrupt__"
+#: Stream modes whose LAST chunk carries ``__interrupt__`` after a pause.
+_INTERRUPT_VISIBLE_MODES = ("values", "updates")
 
 
 def _interrupted(out: Any) -> bool:
@@ -375,9 +406,13 @@ class GraphInterruptedError(AgentError):
             if isinstance(state, Mapping)
             else ()
         )
-        values = [getattr(x, "value", x) for x in self.interrupts]
+        # 🔐 review M4: the payload (what the graph asked a human -- PII,
+        #    amounts, any size) stays on `.interrupts`; `str(exc)` lands in
+        #    snapshots, logs and dead letters, so it carries the COUNT only.
+        n = len(self.interrupts)
         super().__init__(
-            f"LangGraph interrupt(): the graph is paused, asking {values!r}"
+            f"LangGraph interrupt(): the graph is paused ({n} interrupt"
+            f"{'' if n == 1 else 's'} pending; see .interrupts)"
         )
 
 

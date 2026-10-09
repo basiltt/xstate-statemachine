@@ -230,7 +230,10 @@ jobs:
             # 🔭 #273: structlog / loguru / sentry-sdk are soft imports
             #    (never pinned); the OTel SDK provides the in-memory exporter.
             observability) python -m pip install opentelemetry-sdk structlog loguru sentry-sdk ;;
-            agents) python -m pip install langgraph langchain-core pydantic-ai-slim instructor "httpx>=0.24" ;;
+            # 📝 #288 review: langgraph pinned to LANGGRAPH_TESTED so a 2.0
+            #    release upstream cannot redden this cell (the version gate
+            #    would refuse it at import).
+            agents) python -m pip install "langgraph>=0.2,<2" langchain-core pydantic-ai-slim instructor "httpx>=0.24" ;;
             # 🗄️ #284: the async store runs on aiosqlite; alembic proves
             #    autogenerate sees no diff (X0.10).
             # 🐘 #284 battle: psycopg + testcontainers so the Linux cell runs
@@ -281,7 +284,7 @@ jobs:
           # 📝 #286: [sqlalchemy] and [flask] run theirs (sqlalchemy_orders,
           #    flask_wizard); the test skips suites whose extra is missing.
           case "${{ matrix.extra }}" in
-            fastapi|sqlalchemy|flask|celery)
+            fastapi|sqlalchemy|flask|celery|agents)
               targets="$targets tests/test_examples_integrations.py" ;;&
             # 🧭 #309: the adoption kit -- a fresh venv with the built wheel
             #    runs the journey page, the scaffold and the action/hook

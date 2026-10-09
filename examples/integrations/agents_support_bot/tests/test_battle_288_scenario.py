@@ -307,7 +307,8 @@ def _service_machine(service: Any) -> Any:
         ctx["result"] = e.data
 
     def fail(i, ctx, e, a):
-        ctx["error"] = type(e.data).__name__ if hasattr(e, "data") else "?"
+        err = getattr(e, "error", None)
+        ctx["error"] = type(err).__name__ if err is not None else "?"
 
     def chunk(i, ctx, e, a):
         ctx["chunks"].append(e.payload.get("chunk"))

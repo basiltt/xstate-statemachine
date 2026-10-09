@@ -1472,7 +1472,8 @@ _No unreleased changes yet._
   `LangChainCallbackPlugin` never leaking secrets; 1,000 node calls flat
   (`examples/integrations/agents_support_bot/tests/
   test_battle_288_scenario.py`, `tests/contrib/agents/
-  test_battle_288_{a,integrator}.py`, `tests/test_readme_langgraph.py`).
+  test_battle_288_{a,integrator}.py`, the example's
+  `test_readme_langgraph.py`).
   Found and fixed: **a graph that called `interrupt()` was read as
   DONE** -- `ainvoke` returns normally with the partial state and an
   `__interrupt__` key, so the chart saw `onDone` for a graph that is

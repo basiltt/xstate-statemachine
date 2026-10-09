@@ -104,7 +104,9 @@ def test_interrupt_is_on_error_by_default() -> None:
     assert ids == {"host.paused"}, ids
     err = ctx["error"]
     assert isinstance(err, GraphInterruptedError), type(err)
-    assert err.interrupts and "approve?" in str(err)
+    assert err.interrupts
+    assert "approve?" not in str(err)  # payload stays off the message
+    assert "approve?" in repr(err.interrupts[0].value)
     assert ctx["result"] is None
 
 
@@ -125,3 +127,54 @@ def test_bad_on_interrupt_is_refused_at_declaration() -> None:
         langgraph_service(
             _paused_graph(), input_from=lambda c, e: {}, on_interrupt="park"
         )
+    # a stream mode whose chunks never carry the interrupt is refused too
+    with pytest.raises(AgentConfigError, match="stream_mode"):
+        langgraph_service(
+            _paused_graph(),
+            input_from=lambda c, e: {},
+            stream=True,
+            stream_mode="messages",
+        )
+    langgraph_service(  # fine: the pause is visible in "updates"
+        _paused_graph(),
+        input_from=lambda c, e: {},
+        stream=True,
+        stream_mode="updates",
+    )
+
+
+def test_router_most_specific_key_wins_across_parallel_regions() -> None:
+    """Review M2: with parallel regions the exact leaf key in the SECOND
+    region beats an ancestor key that the first region matches, and a
+    key equal to the machine id never swallows every state."""
+    from src.xstate_statemachine import SyncInterpreter
+    from src.xstate_statemachine.contrib.agents.langgraph import (
+        route_by_statechart,
+    )
+
+    m = create_machine(
+        {
+            "id": "g",
+            "initial": "p",
+            "states": {
+                "p": {
+                    "type": "parallel",
+                    "states": {
+                        "r1": {"initial": "x", "states": {"x": {}}},
+                        "r2": {"initial": "y", "states": {"y": {}}},
+                    },
+                }
+            },
+        }
+    )
+    import json
+
+    snap = json.loads(SyncInterpreter(m).start().get_snapshot())
+    route = route_by_statechart(m, {"p": "COARSE", "g.p.r2.y": "EXACT"})
+    assert route({"xsm": snap}) == "EXACT"
+    # the root id is not a match: `default` is still reachable
+    route2 = route_by_statechart(m, {"g": "ROOT"}, default="DEF")
+    assert route2({"xsm": snap}) == "DEF"
+    # a JSON string that does not parse is a config error, not JSONDecode
+    with pytest.raises(AgentConfigError, match="not valid snapshot JSON"):
+        route({"xsm": "{not json"})
