@@ -537,6 +537,18 @@ class _AgentLogic:
         for c in calls_from(d.get("tool_calls") or []):
             if c.name not in self.tools or c.name not in allowed:
                 return False
+            # 🔥 #287 battle: arguments were validated only in `run_tool`,
+            #    AFTER the human gate -- a reviewer was asked to approve
+            #    `refund_order(amount_cents="all")`, a call that could
+            #    never run. Schema-invalid arguments are denied here,
+            #    before anything is shown to a human or executed
+            #    (`run_tool` re-validates: defence in depth).
+            tool = self.tools.get(c.name)
+            if tool is not None:
+                try:
+                    tool.validate(c.arguments)
+                except ToolDeniedError:
+                    return False
         return True
 
     def g_needs_human(self, ctx: Dict[str, Any], e: Any) -> bool:
@@ -719,7 +731,19 @@ class _AgentLogic:
             for c in calls_from(d.get("tool_calls") or [])
             if c.name not in self.tools or c.name not in allowed
         ]
-        self._fail(ctx, "tool_denied", f"tool(s) {bad} not allowed here")
+        if bad:
+            self._fail(ctx, "tool_denied", f"tool(s) {bad} not allowed here")
+            ctx["pending_tool_calls"] = []
+            return
+        for c in calls_from(d.get("tool_calls") or []):
+            tool = self.tools.get(c.name)
+            if tool is None:
+                continue
+            try:
+                tool.validate(c.arguments)
+            except ToolDeniedError as exc:
+                self._fail(ctx, "tool_denied", str(exc))
+                break
         ctx["pending_tool_calls"] = []
 
     def a_record_failure(
