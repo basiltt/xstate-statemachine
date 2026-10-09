@@ -57,6 +57,70 @@ def _unsafe(values: Optional[Iterable[Any]]) -> list:
     ]
 
 
+#: Per-app set of names this module registered (`register_task`).
+_CLAIMED_ATTR = "_xsm_claimed_task_names"
+
+
+def _claimed_names(app: Any) -> set:
+    names = app.__dict__.get(_CLAIMED_ATTR)
+    if names is None:
+        names = set()
+        app.__dict__[_CLAIMED_ATTR] = names
+    return names
+
+
+def _name_taken(app: Any, name: str) -> bool:
+    """Is *name* already a task on *app* -- bound, pending or shared?
+
+    🔥 #292 review H1: on an ``autofinalize=False`` app a registration
+    is a `PromiseProxy` parked in ``app._pending``; nothing reaches
+    ``app._tasks`` until ``finalize()``, where Celery keeps whichever
+    task of that name it builds FIRST and hands the others that one
+    back -- silently. So the check cannot rely on the registry alone:
+    names this module claimed are remembered per app, and a shared
+    task (`@shared_task`) of the same name -- re-created on every app at
+    finalize, BEFORE the pending proxies -- is looked up in Celery's
+    shared-task list. Reading ``app.tasks`` on a finalisable app is
+    avoided too (it would finalise the app as a side effect).
+    """
+    if name in _claimed_names(app):
+        return True
+    if name in getattr(app, "_tasks", {}):
+        return True
+    if getattr(app, "finalized", False):
+        return name in app.tasks
+    return name in _shared_task_names()
+
+
+def _shared_task_names() -> set:
+    """Names of every `@shared_task` declared so far (they are kept as
+    finalize callbacks closing over ``(fun, options)``)."""
+    try:
+        from celery._state import _on_app_finalizers as finalizers
+    except Exception:  # noqa: BLE001 - a Celery without the private set
+        return set()
+    names = set()
+    for cb in list(finalizers):
+        fun = opts = None
+        for cell in getattr(cb, "__closure__", None) or ():
+            try:
+                value = cell.cell_contents
+            except ValueError:
+                continue
+            if isinstance(value, dict):
+                opts = value
+            elif callable(value):
+                fun = value
+        if opts is None:
+            continue
+        name = opts.get("name")
+        if name is None and fun is not None:
+            name = f"{fun.__module__}.{fun.__name__}"
+        if name:
+            names.add(name)
+    return names
+
+
 def register_task(app: Any, fn: Any, **options: Any) -> Any:
     """``app.task(shared=False, **options)(fn)``, refusing a taken name.
 
@@ -74,22 +138,13 @@ def register_task(app: Any, fn: Any, **options: Any) -> Any:
         InvalidConfigError: the name is already a task on *app*.
     """
     name = options.get("name") or app.gen_task_name(fn.__name__, fn.__module__)
-    # 📝 `app.tasks` (not the private `_tasks`): it finalises the app,
-    #    so pending shared registrations from OTHER apps are visible too
-    # 🔥 #292-a battle: on an ``autofinalize=False`` app (the pattern for
-    #    apps configured after import) `app.tasks` raises "Contract breach:
-    #    app not finalized" -- every helper failed to register. Read the
-    #    registry without finalising there.
-    finalized = getattr(app, "finalized", True) or getattr(
-        app, "autofinalize", True
-    )
-    registry = app.tasks if finalized else app._tasks
-    if name in registry:
+    if _name_taken(app, name):
         raise InvalidConfigError(
             f"a Celery task named {name!r} is already registered on this "
             f"app; pass a distinct name= (the existing task would "
             f"otherwise be returned with ITS store / machine / outbox)"
         )
+    _claimed_names(app).add(name)
     options.setdefault("shared", False)
     return app.task(**options)(fn)
 

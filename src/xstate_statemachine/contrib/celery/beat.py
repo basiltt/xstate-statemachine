@@ -34,6 +34,7 @@ from .worker import assert_json_serializer, register_task
 
 __all__ = [
     "DurableTimerScheduler",
+    "close_relay_loop",
     "outbox_relay_task",
     "xsm_deadlines_every",
 ]
@@ -230,5 +231,36 @@ def outbox_relay_task(
                 state["loop"] = None
 
     task = register_task(app, relay_once, name=name, serializer="json")
-    task.close_relay_loop = close
+    # 🔥 #292 review H2: on an ``autofinalize=False`` app the return is
+    #    a `PromiseProxy`; setting an attribute on it EVALUATES it and
+    #    raises "Contract breach". Attach the closer on the real task
+    #    once the app is finalised (now, when it already is).
+    if getattr(app, "finalized", False) or getattr(app, "autofinalize", True):
+        # 📝 a finalisable app evaluates the proxy on attribute set (and
+        #    finalises) -- exactly what `app.tasks` would do anyway
+        task.close_relay_loop = close
+    else:
+        _RELAY_CLOSERS.setdefault(id(app), {})[name] = close
+
+        def _attach(sender: Any = None, **_kw: Any) -> None:
+            real = sender.tasks.get(name) if sender is not None else None
+            if real is not None:
+                real.close_relay_loop = close
+
+        app.on_after_finalize.connect(_attach, weak=False)
     return task
+
+
+#: id(app) -> {task name: closer} for relays registered before finalize.
+_RELAY_CLOSERS: Dict[int, Dict[str, Any]] = {}
+
+
+def close_relay_loop(app: Any, name: str = DEFAULT_OUTBOX_TASK) -> None:
+    """Close the relay loop of *name* on *app* -- works whether the task
+    was registered before or after the app was finalised."""
+    task = app.tasks.get(name)
+    closer = getattr(task, "close_relay_loop", None) or _RELAY_CLOSERS.get(
+        id(app), {}
+    ).get(name)
+    if closer is not None:
+        closer()

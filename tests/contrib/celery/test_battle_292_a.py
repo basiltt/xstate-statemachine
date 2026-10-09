@@ -308,7 +308,15 @@ class TestDurableHeld(unittest.TestCase):
         pending = MemoryPendingResults()
         for n in range(10_000):
             deliver_result(store, m, "o1", "charge", f"f{n}", pending=pending)
-        self.assertEqual(len(pending), 0)  # recorded -> stale, not parked
+        # 📝 review M2: with a pending table a wrong task id is PARKED
+        #    (a re-entered invoke's early completion looks the same) --
+        #    bounded by max_items, so 10k forged signals cost memory for
+        #    10k entries at most and NEVER a write
+        self.assertLessEqual(len(pending), pending.max_items)
+        self.assertEqual(store.load("o1").version, 1)  # type: ignore
+        # without a table: refused outright, nothing kept
+        for n in range(100):
+            deliver_result(store, m, "o1", "charge", f"g{n}")
         self.assertEqual(store.load("o1").version, 1)  # type: ignore
 
 

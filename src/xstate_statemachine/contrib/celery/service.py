@@ -51,6 +51,7 @@ from ...events import (
     _engine_done,
     _engine_error,
 )
+from ...exceptions import InvalidConfigError
 from ...plugins import PluginBase
 from .worker import assert_json_serializer
 
@@ -344,13 +345,18 @@ class MemoryPendingResults:
         ttl_s: float = PENDING_TTL_S,
         max_items: int = PENDING_MAX_ITEMS,
     ) -> None:
+        if not ttl_s > 0 or int(max_items) < 1:
+            raise InvalidConfigError(
+                "MemoryPendingResults needs ttl_s > 0 and max_items >= 1"
+            )
         self.ttl_s = float(ttl_s)
         self.max_items = int(max_items)
         self._lock = threading.Lock()
         self._items: Dict[str, PendingResult] = {}
 
     def add(self, item: PendingResult) -> None:
-        """Park *item*; evicts (and logs) the oldest entry when full."""
+        """Park *item*; when full, the LEAST RECENTLY (re-)parked entry
+        is evicted and logged (a re-park moves an item to the back)."""
         with self._lock:
             self._items.pop(item.task_id, None)
             self._items[item.task_id] = item
@@ -487,6 +493,17 @@ def deliver_result(
         #    per call (10 000 forged signals = 10 000 writes, each one a
         #    `ConflictError` for a legitimate writer). The stored record
         #    already says it is not ours: refuse it without writing.
+        # 📝 review M2: with a pending table the completion is PARKED
+        #    instead -- a re-entered invoke whose new task finished
+        #    before its record was saved looks exactly like this, and
+        #    `_retry_parked` settles it against the final record (a
+        #    truly stale one is then refused for good; bounded by
+        #    max_items / ttl_s, so forged signals cannot grow memory).
+        if pending is not None:
+            pending.add(
+                PendingResult(key, invocation_id, task_id, result, error)
+            )
+            return False
         _dropped_unloaded(key, invocation_id, plugins)
         return False
     machine = _machine(machine_for_key, key)

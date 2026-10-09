@@ -1488,7 +1488,18 @@ _No unreleased changes yet._
   `MemoryPendingResults` grew without bound on forged keys
   (`PENDING_MAX_ITEMS` 10,000, oldest evicted and logged); the example
   hard-coded `memory://` so a real worker could never run it
-  (`CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND`). Docs: the Celery
+  (`CELERY_BROKER_URL` / `CELERY_RESULT_BACKEND`); and from the
+  independent review: on an `autofinalize=False` app a registration is
+  a `PromiseProxy` -- the duplicate check saw nothing, and `finalize()`
+  would have kept whichever task it built first (`register_task` now
+  remembers the names it claimed per app and refuses a `@shared_task`
+  of the same name too), and `outbox_relay_task` setting the closer on
+  the proxy raised "Contract breach" (`close_relay_loop(app, name)`;
+  the closer is attached after `finalize()`); a completion whose record
+  names another task is PARKED when a pending table is given (a
+  re-entered invoke's new task finishing before its record is saved
+  looked stale -- `poll_results` settles it), and
+  `MemoryPendingResults(max_items=0)` / `ttl_s<=0` are refused. Docs: the Celery
   guide gains a `register_task` section (including the factory-built
   worker app case), an Operations section (ONE Beat and its three
   schedules, the per-process `cache+memory://` trap, `after` precision
