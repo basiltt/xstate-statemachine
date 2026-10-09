@@ -170,3 +170,42 @@ def test_readme_broker_table_commands_run_offline(line, monkeypatch):
     assert f"broker                 {name}" in proc.stdout
     assert proc.stdout.count("order.shipped") == 3
     assert "dead_letters           1" in proc.stdout
+
+
+def test_readme_celery_operate_note_is_true(monkeypatch):
+    """The "Operate it: Celery" note: env-configurable URLs, a real
+    worker runs the example's task, two apps keep their own tasks."""
+    pytest.importorskip("celery")
+    text = (HERE / "README.md").read_text("utf-8")
+    assert "### Operate it: Celery" in text
+    assert "test_real_worker_runs_ship_order" in text
+    import celery_app
+
+    monkeypatch.setenv("CELERY_BROKER_URL", "memory://x")
+    monkeypatch.setenv("CELERY_RESULT_BACKEND", "cache+memory://")
+    app = celery_app.make_celery(eager=False, name="env-292")
+    assert app.conf.broker_url == "memory://x"
+
+
+def test_real_worker_runs_ship_order():
+    """A real (in-process thread) worker executes the example's task --
+    the README's non-eager path, without a broker server."""
+    pytest.importorskip("celery")
+    import logging
+
+    from celery.contrib.testing.worker import start_worker
+
+    import celery_app
+    import logic
+
+    app = celery_app.make_celery(eager=False, name="worker-292")
+    task = celery_app.ship_order_task(app)
+    root = logging.getLogger()
+    level, handlers = root.level, list(root.handlers)
+    try:
+        with start_worker(app, perform_ping_check=False):
+            got = task.delay("o-9").get(timeout=20)
+    finally:
+        root.setLevel(level)
+        root.handlers[:] = handlers
+    assert got == {"trackingId": logic.tracking_for("o-9")}
