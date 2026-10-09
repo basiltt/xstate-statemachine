@@ -43,6 +43,10 @@ __all__ = [
 ASYNCAPI_VERSION = "3.0.0"
 _SCHEMA_FILE = "_asyncapi_schema.json"
 _KEY = re.compile(r"[^A-Za-z0-9_.\-]")
+_NO_JSONSCHEMA = (
+    "`jsonschema` is not installed (AsyncAPI validation only): "
+    "pip install jsonschema"
+)
 _ENGINE_PREFIXES = ("done.", "error.", "xstate.", "after.")
 
 
@@ -67,11 +71,12 @@ def validate_asyncapi(document: Dict[str, Any]) -> None:
     except ImportError as exc:  # pragma: no cover - depends on env
         from ..exceptions import MissingExtraError
 
-        raise MissingExtraError(
-            "asyncapi",
-            "jsonschema",
-            hint="(validation only): pip install jsonschema",
-        ) from exc
+        # 🐛 #295-a: there is NO ``asyncapi`` extra; the default
+        #    MissingExtraError text told users to install one (pip fails).
+        err = MissingExtraError("asyncapi", "jsonschema")
+        err.msg = _NO_JSONSCHEMA
+        err.args = (_NO_JSONSCHEMA,)
+        raise err from exc
     jsonschema.Draft7Validator(load_asyncapi_schema()).validate(document)
 
 
@@ -95,6 +100,21 @@ def consumed_events(machine: Any) -> List[str]:
 
 def _key(text: str) -> str:
     return _KEY.sub("_", text)
+
+
+def _unique_key(text: str, taken: Dict[str, Any]) -> str:
+    """A component key for *text* not already in *taken*.
+
+    🐛 #295-a: sanitising maps distinct names onto one key (``"GO NOW"``
+    and ``"GO_NOW"`` → ``consume.GO_NOW``); the second message used to
+    overwrite (consumed) or silently skip (published) the first, so the
+    document omitted an event the chart handles. Suffix instead.
+    """
+    base = _key(text)
+    key, n = base, 2
+    while key in taken:
+        key, n = f"{base}_{n}", n + 1
+    return key
 
 
 def _cloudevent_schema() -> Dict[str, Any]:
@@ -180,13 +200,15 @@ def asyncapi_document(
     out_msgs: Dict[str, Any] = {}
     for ev in consumed_events(machine):
         ce_type = f"xsm.{mid}.{ev}"
-        key = _key(f"consume.{ev}")
+        key = _unique_key(f"consume.{ev}", messages)
         messages[key] = _message(ce_type, f"Command: send {ev!r}.", None)
         in_msgs[key] = {"$ref": f"#/components/messages/{key}"}
+    published = set()
     for spec in publish_specs(machine):
-        key = _key(f"publish.{spec['type']}")
-        if key in messages:
-            continue
+        if spec["type"] in published:
+            continue  # 📝 one message per published type
+        published.add(spec["type"])
+        key = _unique_key(f"publish.{spec['type']}", messages)
         origin = (
             f"on {spec['event']!r} from {spec['from']}"
             if spec["source"] == "transition"
