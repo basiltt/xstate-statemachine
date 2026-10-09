@@ -1,6 +1,6 @@
 {
   "id": "debate",
-  "description": "DEBATE recipe (#290): two debaters in parallel regions, each spawning a TOOL_LOOP sub-agent with its own budget; done.state aggregates both positions, then a judge agent decides. Only the debaters may hand their positions to the judge (handoffAllowed). Example chart only -- not a runtime.",
+  "description": "DEBATE recipe (#290): two debaters in parallel regions, each spawning a TOOL_LOOP sub-agent with its own budget; done.state aggregates both positions (a debater that FAILS states its failure, so the judge is never stalled), then a judge agent decides. Only the debaters may hand their positions to the judge (handoffAllowed). Example chart only -- not a runtime.",
   "initial": "arguing",
   "actionErrorPolicy": "fail",
   "context": {
@@ -26,6 +26,11 @@
                   "guard": "fromPro",
                   "target": "stated",
                   "actions": "storePosition"
+                },
+                "AGENT_FAILED": {
+                  "guard": "fromPro",
+                  "target": "stated",
+                  "actions": "storePosition"
                 }
               }
             },
@@ -39,6 +44,11 @@
               "entry": "spawnCon",
               "on": {
                 "AGENT_DONE": {
+                  "guard": "fromCon",
+                  "target": "stated",
+                  "actions": "storePosition"
+                },
+                "AGENT_FAILED": {
                   "guard": "fromCon",
                   "target": "stated",
                   "actions": "storePosition"

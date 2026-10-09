@@ -58,6 +58,7 @@ logger = logging.getLogger(__name__)
 __all__ = ["BudgetPlugin", "handoff_guard", "spawn_agent"]
 
 _USAGE_KEYS = ("turns", "input_tokens", "output_tokens", "cost_usd")
+_SEEN_MAX = 10_000  # de-dup ring for reports seen by both hooks
 
 
 def _names(tools: Union[ToolRegistry, Iterable[str], None]) -> Set[str]:
@@ -224,6 +225,8 @@ class BudgetPlugin(PluginBase[Any]):
             raise AgentConfigError("BudgetPlugin needs at least one limit")
         self.max_total_usd = max_total_usd
         self.max_total_tokens = max_total_tokens
+        self._seen: Dict[int, Set[int]] = {}
+        self._tripped: Set[int] = set()
 
     def exceeded(self, totals: Mapping[str, Any]) -> bool:
         tokens = int(totals.get("input_tokens", 0)) + int(
@@ -243,23 +246,72 @@ class BudgetPlugin(PluginBase[Any]):
 
         return MachineLogic(guards={"underGlobalBudget": under})
 
+    def on_before_send(self, interpreter: Any, event: Any) -> Optional[Any]:
+        # 🔥 #290 battle: the rollup ran in `on_event_received`, i.e. when
+        #    the parent DEQUEUED the child's report. A planner that hands
+        #    off a batch (`handOffTasks` sends N HANDOFFs in one action)
+        #    had all N queued before the first AGENT_DONE was processed, so
+        #    every worker spawned however small the global budget. The
+        #    totals and `budget_exceeded` now land the moment the child
+        #    SENDS (this hook fires before the event is queued), so the
+        #    next HANDOFF dequeued refuses to spawn. The BUDGET_EXCEEDED
+        #    event itself is sent when the report is dequeued (below) so
+        #    it queues AFTER the report: the result that tripped the
+        #    budget is still collected. Returns None: never blocks.
+        self._rollup(interpreter, event)
+        return None
+
     def on_event_received(self, interpreter: Any, event: Any) -> None:
+        # 📝 Reports that bypassed `send()` (a restored queue, a direct
+        #    `_process_event`) are still counted exactly once: `_rollup`
+        #    remembers the events it has already seen.
+        self._rollup(interpreter, event)
+        if id(event) in self._tripped:
+            self._tripped.discard(id(event))
+            interpreter.send(
+                "BUDGET_EXCEEDED",
+                total_usage=dict(interpreter.context.get("total_usage") or {}),
+            )
+
+    def _rollup(self, interpreter: Any, event: Any) -> None:
+        """Add the report's usage to the parent context; flag the one
+        report that crosses the global limit."""
         if getattr(event, "type", None) not in ("AGENT_DONE", "AGENT_FAILED"):
             return
-        usage = (getattr(event, "payload", None) or {}).get("usage") or {}
+        seen = self._seen.setdefault(id(interpreter), set())
+        key = id(event)
+        if key in seen:
+            return
+        seen.add(key)
+        if len(seen) > _SEEN_MAX:
+            seen.clear()
+            seen.add(key)
+        payload = getattr(event, "payload", None) or {}
+        usage = payload.get("usage") if isinstance(payload, Mapping) else {}
+        usage = usage if isinstance(usage, Mapping) else {}
         ctx = interpreter.context
         totals = dict(ctx.get("total_usage") or {})
         for k in _USAGE_KEYS:
-            totals[k] = totals.get(k, 0) + usage.get(k, 0)
+            totals[k] = totals.get(k, 0) + _num(usage.get(k, 0))
         by_agent = dict(ctx.get("usage_by_agent") or {})
-        aid = (getattr(event, "payload", None) or {}).get("agent_id")
+        aid = payload.get("agent_id")
         if aid:
             by_agent[str(aid)] = dict(usage)
         ctx["total_usage"] = totals
         ctx["usage_by_agent"] = by_agent
         if not ctx.get("budget_exceeded") and self.exceeded(totals):
             ctx["budget_exceeded"] = True
-            interpreter.send("BUDGET_EXCEEDED", total_usage=dict(totals))
+            self._tripped.add(key)
+
+
+def _num(value: Any) -> Any:
+    """A usage number from a child's report: non-numeric / bool / NaN /
+    negative counts never reduce or poison the rollup (0)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0
+    if value != value or value < 0:
+        return 0
+    return value
 
 
 # -----------------------------------------------------------------------------
