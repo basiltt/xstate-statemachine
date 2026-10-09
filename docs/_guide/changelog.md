@@ -1457,6 +1457,62 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **Sagas, choreography and AsyncAPI, as battle-tested (#295).** 90
+  `SagaBuilder` sagas PERSISTED and driven through the bus (the
+  `InboundDispatcher` + outbox the example runs), a third of them
+  failing at reserve / charge / ship: every one compensates in REVERSE
+  order exactly once with its results in context, the step events the
+  saga published are the channels its AsyncAPI document names; the
+  process killed -9 mid-compensation (the compensation ran, the
+  snapshot did not land) restarts the saga and runs the compensation
+  AGAIN -- compensations are idempotent by contract, now stated in the
+  Guarantees box; a compensation that itself fails parks in
+  `compensationFailed` (FINAL -- a retry loop there would hammer a down
+  service) with a chart-state dead letter as the operator's ticket, and
+  a redelivered command does nothing to it; a redelivered START and a
+  shared bus with foreign and unknown types; the example's charts'
+  AsyncAPI validates offline, names every published type and every
+  consumed event and nothing else, and `xsm asyncapi --validate` prints
+  the same (`examples/integrations/eda_fulfilment/tests/
+  test_battle_295_scenario.py`, `tests/patterns/test_battle_295_{a,
+  b_saga_input}.py`, `tests/eda/test_battle_295_a_asyncapi.py`,
+  `tests/tests_cli/test_battle_295_b.py`). Found and fixed: **the START
+  event's payload was silently dropped** -- `send("START", order=...)`
+  moved the saga to `steps` and no service could see the data (the
+  generated chart now runs `sagaStart`, which copies it to
+  `context.input`); `asyncapi_document` silently LOST a message when two
+  event names reduced to the same component key (`"GO NOW"` and
+  `"GO_NOW"`; colliding keys get a numeric suffix, one message per
+  published type); the missing-`jsonschema` hint named an `[asyncapi]`
+  extra that does not exist (`pip install jsonschema`); `xsm asyncapi`
+  answered an unwritable `-o`, `--validate` without jsonschema, a
+  schema-rejected document and an empty `--server` / `--inbound` /
+  `--outbound` with tracebacks or silence (one line, exit 2);
+  `SagaBuilder.step()` accepted input that broke later somewhere else
+  -- `retry=3` (`AttributeError` from `logic()`), `timeout_ms=True`
+  (a 1 ms timeout), `timeout_ms="abc"`, an empty `invoke`, a step named
+  `aRetrying` silently overwritten by step `a`'s generated retry state,
+  an engine-reserved `start_event` -- all `ValueError` at declaration;
+  `ChoreographyRouter.run_until_quiet*(max_rounds=0)` raised "did not
+  settle in 0 rounds" (`ValueError`; both engines give the same
+  message). Docs: the EDA guide gains saga Guarantees (reverse once
+  each, idempotent compensations, `compensationFailed` final + dead
+  letter, `context.input`, `OptimisticLock` re-runs a step service on a
+  lost save race -- use `PessimisticLock` or idempotent services), a
+  Threat-model paragraph on why a forged `done.invoke.*` envelope from
+  the bus cannot complete an internal invoke, Troubleshooting rows for
+  every saga / choreography / AsyncAPI error, a saga Operations
+  section, and a Reference that names `SagaStep` and `Route`;
+  `asyncapi_document` split into helpers (byte-identical output); the
+  example README gains "Sagas" and the `xsm asyncapi` command (tested).
+  Held: timeout → retry → timeout → compensation on `SimulatedClock`
+  counts every service call once; START sent twice is ignored; a forged
+  `done.invoke.*` through `send()` or the bus never moves a step; the
+  same `causationid` across two dispatcher runs is a duplicate with
+  both inboxes; 50 sagas × 2 replicas under `PessimisticLock` run each
+  service exactly 50 times; the 103-chart corpus produces documents that
+  validate and are byte-identical on a second run; 10k sync saga runs
+  show no growth.
 - **`[celery]`, as battle-tested (#292).** The Celery bridge on a
   fulfilment day: 100 orders through `@statechart_task` as two
   interleaved delivery streams with DUPLICATES (`acks_late`); a worker
