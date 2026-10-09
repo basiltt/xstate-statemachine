@@ -90,13 +90,21 @@ def _validate_output(
         obj = model.model_validate(  # type: ignore[attr-defined]
             (parser or _parse_json_text)(text)
         )
-    except (ValueError, ValidationError) as exc:
+    except Exception as exc:  # noqa: BLE001 -- hostile reply, see below
+        # 🔥 #289 battle (A): a validator raising TypeError/RuntimeError,
+        #    a custom parser raising KeyError, or 100k-deep nesting
+        #    (RecursionError) escaped into `outputValid`/`retryOutput` and
+        #    STOPPED the machine. Any failure is "did not validate"; the
+        #    detail names the exception type only (its message may quote
+        #    the reply). CancelledError is BaseException -- not caught.
         if isinstance(exc, ValidationError):
             detail = "; ".join(
                 f"{'.'.join(str(p) for p in e['loc'])}: {e['msg']}"
                 for e in exc.errors(include_input=False, include_url=False)
             )
-        else:
+        elif isinstance(exc, ValueError):
             detail = "not valid JSON"
+        else:
+            detail = f"output rejected ({type(exc).__name__})"
         return False, detail
     return True, obj.model_dump(mode="json")
