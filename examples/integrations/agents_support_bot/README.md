@@ -38,6 +38,16 @@ What happened:
 2. It then proposed `refund_order(42, 2400)`, a side-effect tool, so the chart moved to **`awaiting_human`** and `run_agent` returned. The snapshot, including the escalation deadline, is in `support.db`.
 3. `run.py` played the reviewer. `bot.decide(key, approve=True)` sent `HUMAN_APPROVED` naming exactly the pending call id, and the refund ran once.
 
+The run itself takes about 2 seconds cold (measured on Windows, Python
+3.14); the install is the rest of the two minutes.
+
+**What it writes, and how to clean up.** `run.py` and `ops.py` write two
+files into the current folder: `support.db` (the SQLite store) and
+`support-trace.jsonl`
+(one span per line, no message content). Both are git-ignored. Delete them
+to start fresh: `rm support.db* support-trace.jsonl` (PowerShell:
+`Remove-Item support.db*, support-trace.jsonl`).
+
 Run it again with `--reject`: the refund never executes, and the model is told it was declined.
 
 In a real deployment, steps 2 and 3 are two HTTP requests, possibly hours apart and on different workers. See the FastAPI recipe in the [LLM agents guide](https://basiltt.github.io/xstate-statemachine/guide/integration-agents/).

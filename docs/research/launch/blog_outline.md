@@ -56,8 +56,9 @@ problems.
 ## 7. Structured output that retries itself
 
 - `meta.output_model` validated per state.
-- On validation failure, transition to a `RETRY_OUTPUT` state that
-  re-prompts, optionally via `instructor`.
+- On validation failure, the `RETRY_OUTPUT` transition (guard
+  `canRetryOutput`) re-prompts with the field errors and loops back
+  through `checking_budget`; JSON extraction optionally via `instructor`.
 - Trade-off: bounded retries, not infinite re-prompt loops.
 
 ## 8. Traces without leaking your prompts

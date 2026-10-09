@@ -32,8 +32,8 @@ get wrong:
 - `after` timeouts for model calls, tool calls, and human responses.
 - Human-in-the-loop as a durable, persisted state (`awaiting_human`) that
   survives a process restart via SQLite or Redis.
-- Structured output validated per state, with an automatic re-prompt state
-  (`RETRY_OUTPUT`) on validation failure.
+- Structured output validated per state, with a bounded automatic
+  re-prompt (the `RETRY_OUTPUT` transition) on validation failure.
 - Traces with no message content by default, plus secret redaction.
 
 It composes with LangGraph (as a node, or the reverse) and pydantic-ai
@@ -47,19 +47,27 @@ Docs: https://basiltt.github.io/xstate-statemachine/
 ## Code snippet
 
 ```python
-from xstate_statemachine import create_machine
-from xstate_statemachine.agents import run_agent, FakeModel
+import asyncio
+from xstate_statemachine.contrib.agents import (
+    FakeModel, load_chart, run_agent, tool, tool_registry,
+)
 
-# TOOL_LOOP-style chart: idle -> checking_budget -> awaiting_model -> ...
-machine = create_machine(tool_loop_config, logic=agent_logic)
+def lookup_order(order_id: int) -> str:
+    """Look up an order."""
+    return f"order {order_id}: ships tomorrow"
 
-model = FakeModel(script=[
-    {"tool_call": "lookup_order", "args": {"order_id": 42}},
-    {"content": "Your order ships tomorrow."},
+chart = load_chart()  # TOOL_LOOP: plain XState JSON
+for s in ("awaiting_model", "awaiting_tool"):
+    chart["states"][s]["meta"]["tools"] = ["lookup_order"]
+model = FakeModel([
+    {"tool": "lookup_order", "args": {"order_id": 42}},
+    {"text": "Your order ships tomorrow."},
 ])
-
-result = run_agent(machine, model=model, prompt="Where is order 42?")
-print(result.output)
+res = asyncio.run(run_agent(
+    chart, model=model, tools=tool_registry(tool(lookup_order)),
+    prompt="Where is order 42?", budgets={"max_turns": 5},
+))
+print(res.final_state, res.output)
 ```
 
 ## Notes for maintainer
