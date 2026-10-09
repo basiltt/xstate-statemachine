@@ -1501,6 +1501,77 @@ _No unreleased changes yet._
   LangChain message in a STREAM payload snapshots; a raising callback
   handler is contained; the version guard reads `importlib.metadata`
   (langgraph has no `__version__`).
+- **`[agents]`, as battle-tested (#287).** The `agents_support_bot`
+  example on a support day: 200 tickets through two bot replicas (half
+  refunds parked for a human, lookups, hostile and broken ones); the
+  provider raising, returning garbage, hanging past `model_timeout_s`,
+  naming unknown tools, sending the wrong argument types and 50 tool
+  calls in one turn; a restart followed by the SAME approval from two
+  replicas at once; a human who never comes; prompt injection, a 1 MB
+  prompt, refund amounts of -1 / 10**12 / `"all"`; a 1,000-ticket soak
+  (`examples/integrations/agents_support_bot/tests/
+  test_battle_287_scenario.py`, `tests/contrib/agents/
+  test_battle_287_{scenario_unit,a,b}.py`). Found and fixed -- X0.13
+  gaps first: **tool arguments were validated only in `run_tool`, AFTER
+  the human gate** -- a reviewer was asked to approve
+  `refund_order(amount_cents="all")`, a call that could never run (the
+  `toolAllowed` guard validates against the tool's schema first; the
+  error names the field, never the value); **value ranges declared as
+  `Annotated[int, Field(gt=0, le=...)]` were silently dropped** (type
+  hints were read without `include_extras`), so the obvious way to
+  refuse a -1-cent refund did nothing; **a model that reused an earlier
+  tool-call id could get a replayed `HUMAN_APPROVED` to approve a
+  DIFFERENT side-effect call** (any id already in the conversation is a
+  duplicate: denied); **provider usage numbers were trusted** -- negative
+  tokens or cost REFUNDED the budget (`input_tokens=-1000` bought ~65
+  extra turns under `max_tokens=20`) and a NaN cost made every later
+  total NaN (negatives spend 0, NaN / inf / garbage exhaust the budget,
+  `Usage.from_dict` no longer crashes on `"nan"`); `Budget` limits were
+  never validated (`"20"` read as exhausted, `True` was a turn limit of
+  1, NaN refused every turn; `AgentConfigError` now, including unknown
+  keys); tool `arguments` that were a list of pairs were coerced into an
+  object and the tool RAN on input that was never an object, a string /
+  int argument crashed `denyTool` mid-transition, 1,500-deep arguments
+  raised `RecursionError` and were retried and billed again (all
+  `tool_denied`); a bad `"module:Model"` `output_model` leaked a raw
+  `ModuleNotFoundError`; a hung SYNC model under `run_agent` could not
+  be timed out (`model_timeout_s` waited inline; it now runs on a worker
+  thread and the hung call is abandoned -- documented) and
+  `run_agent(timeout_s=)` bounded only the final wait, not the sends;
+  the Anthropic adapter ran a tool with no parameters on a malformed
+  `input`; both adapters could send a tool result whose proposing turn
+  `max_messages` had trimmed (the provider APIs reject that) -- and, from
+  the independent review, the window is now cut at a TURN boundary so
+  no orphan is produced at all (the model never loses a result it
+  needs); a hung SYNC model used the loop's default executor, whose few
+  workers a stuck call pins and which `asyncio.run` waits for on exit
+  (a daemon thread per call now, abandoned on timeout); `FakeModel`
+  ids collided after a store resume (`call_{n}_{k}` → unique per
+  instance) and the duplicate-id check now also remembers ids from
+  trimmed turns (`context.spent_call_ids`); a validation failure other
+  than `ToolDeniedError` escaped `denyTool` and left `pending_tool_calls`
+  stale; `"1.5"` token counts read as garbage. Also:
+  `core.py` was 937 lines (split into `budgets.py`, `_output.py`,
+  `_allowlist.py`); the `[agents]` CI cell never ran the example's
+  tests (gated on the FastAPI stack by mistake) and `G8_agents.py`
+  tested the main checkout's install instead of the worktree. Docs: the
+  agents guide names every public symbol, its Guarantees box states
+  exactly what X0.13 gives (args checked before the gate; value ranges
+  are the tool's job -- `Field(gt=0)` example; a side effect after
+  `timeout_s` may still land; a sync model's hung call is abandoned),
+  gains an Operations section (one `DueTimerScanner` per store for
+  `awaiting_human` deadlines -- a plain reload re-arms the timer, it
+  does not fire it; what to alert on; sizing; trace rotation) and
+  Troubleshooting for every provoked error; the example gains `ops.py`
+  (`open` / `pending` / `approve` / `reject` / `scan`, each its own
+  process on one `support.db`; a second approval exits 2) and an
+  "Operate it" README section, tested. Held: tool names differing in
+  case / trailing space / fullwidth Unicode are denied; partial, extra
+  or duplicated `call_ids` are refused; `HUMAN_APPROVED` outside
+  `awaiting_human` is ignored; `"*"` means registered tools only; the
+  system prompt and the original task survive `max_messages` trimming;
+  `sk-...` / Bearer values are scrubbed from tool results; no leak over
+  2,000 runs.
 - **Sagas, choreography and AsyncAPI, as battle-tested (#295).** 90
   `SagaBuilder` sagas PERSISTED and driven through the bus (the
   `InboundDispatcher` + outbox the example runs), a third of them

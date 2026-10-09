@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import pathlib
 import subprocess
 import sys
@@ -43,6 +44,16 @@ def run_tests() -> None:
             "no:cacheprovider",
         ],
         cwd=str(ROOT),
+        # 📝 #287 battle: the child must import THIS checkout too -- an
+        #    editable install of another worktree silently tested old code.
+        env=dict(
+            os.environ,
+            PYTHONPATH=os.pathsep.join(
+                p
+                for p in (str(ROOT / "src"), os.environ.get("PYTHONPATH"))
+                if p
+            ),
+        ),
     )
     assert proc.returncode == 0, "agents tests failed"
 
@@ -194,6 +205,104 @@ def durable_human() -> None:
         assert woke == 1 and snap["state_ids"] == ["toolLoop.error"]
 
 
+def args_before_gate() -> None:
+    step("#287 battle: arguments validated BEFORE the human gate")
+    from pydantic import Field
+
+    from xstate_statemachine.contrib.agents import (
+        FakeModel,
+        run_agent_sync,
+        tool,
+        tool_registry,
+    )
+
+    ran = []
+
+    # 📝 Value ranges are the TOOL's job: `Field(gt=0, le=...)` in the
+    #    signature becomes part of the schema validated before the gate.
+    def refund(order_id: int, amount_cents: int = Field(gt=0, le=100_000)):
+        """Refund an order."""
+        ran.append(amount_cents)
+        return "ok"
+
+    refund.__annotations__["return"] = str
+    reg = tool_registry(tool(refund, side_effect=True, timeout_s=2))
+    for amount, want in (
+        ("all", "tool_denied"),
+        (-1, "tool_denied"),
+        (10**12, "tool_denied"),
+        (500, None),
+    ):
+        res = run_agent_sync(
+            model=FakeModel(
+                [
+                    {
+                        "tool": "refund",
+                        "args": {"order_id": 1, "amount_cents": amount},
+                    }
+                ],
+                is_async=False,
+            ),
+            tools=reg,
+            prompt="p",
+        )
+        kind = (res.error or {}).get("kind")
+        print(f"   amount={amount!r}: {res.final_state} {kind}")
+        assert kind == want and (want or res.waiting), res
+        assert repr(amount) not in str(res.error or "")
+    assert ran == []
+
+
+def scanner_vs_reload() -> None:
+    step("#287 battle: matured awaiting_human -> scanner, not a reload")
+    from xstate_statemachine import SimulatedClock, create_machine
+    from xstate_statemachine.contrib.agents import (
+        TOOL_LOOP,
+        FakeModel,
+        agent_logic,
+        run_agent_sync,
+        tool,
+        tool_registry,
+    )
+    from xstate_statemachine.persistence import DueTimerScanner, SQLiteStore
+
+    def send_email(to: str) -> str:
+        return "ok"
+
+    reg = tool_registry(tool(send_email, timeout_s=2, side_effect=True))
+    m = create_machine(
+        TOOL_LOOP,
+        logic=agent_logic(
+            FakeModel(
+                [{"tool": "send_email", "args": {"to": "x"}}], is_async=False
+            ),
+            reg,
+            human_timeout_s=60,
+        ),
+    )
+    t0 = 1_800_000_000.0
+    store = SQLiteStore(pathlib.Path(tempfile.mkdtemp()) / "s.db")
+    run_agent_sync(
+        m,
+        prompt="p",
+        store=store,
+        key="k",
+        clock=SimulatedClock(wall_start=t0),
+    )
+    # ⚠️ A plain reload long after the deadline re-arms the timer on the
+    #    new clock and returns still waiting -- it does NOT escalate.
+    again = run_agent_sync(
+        m, store=store, key="k", clock=SimulatedClock(wall_start=t0 + 3600)
+    )
+    print("   reload:", again.final_state, again.waiting)
+    assert again.waiting
+    woke = DueTimerScanner(store, lambda k: m).run_once(now=t0 + 7200)
+    snap = json.loads(store.load("k").snapshot)
+    print("   scanner:", woke, snap["state_ids"])
+    assert woke == 1 and snap["state_ids"] == ["toolLoop.error"]
+    store.close()
+
+
 def supervisor() -> None:
     step(
         "supervisor: spawn_agent per task, BudgetPlugin rollup, handoff denied"
@@ -294,6 +403,8 @@ def main() -> None:
     issue_one_liner()
     injection()
     durable_human()
+    args_before_gate()
+    scanner_vs_reload()
     supervisor()
     print("\nALL OK")
 

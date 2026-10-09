@@ -24,7 +24,7 @@ python run.py --fake --prompt "refund order 42"
 
 ```text
 [ticket:1a2b3c4d] state=supportBot.awaiting_human waiting=True
-  needs approval: {"id": "call_2_0", "name": "refund_order", "arguments": {"order_id": 42, "amount_cents": 2400}}
+  needs approval: {"id": "call_9f2a1c3b_2_0", "name": "refund_order", "arguments": {"order_id": 42, "amount_cents": 2400}}
   human reviewer: approved
 [ticket:1a2b3c4d] state=supportBot.done
 answer: Order 42 has been refunded (24.00).
@@ -41,6 +41,42 @@ What happened:
 Run it again with `--reject`: the refund never executes, and the model is told it was declined.
 
 In a real deployment, steps 2 and 3 are two HTTP requests, possibly hours apart and on different workers. See the FastAPI recipe in the [LLM agents guide](https://basiltt.github.io/xstate-statemachine/guide/integration-agents/).
+
+## Operate it (the day after)
+
+`run.py` plays a whole ticket in one process. In production the ticket,
+the reviewer and the timeout worker are separate processes, often on
+different replicas and hours apart. `ops.py` is that day, offline, on the
+same `support.db`:
+
+```bash
+python ops.py open --key t-1 --prompt "refund order 42"
+python ops.py open --key t-2 --order 7
+python ops.py pending
+python ops.py approve t-1
+python ops.py approve t-1
+python ops.py scan --at 99999999999
+python ops.py pending
+```
+
+```text
+[t-1] state=supportBot.awaiting_human waiting=True
+[t-2] state=supportBot.awaiting_human waiting=True
+t-1  refund_order {"order_id": 42, "amount_cents": 2400}
+t-2  refund_order {"order_id": 7, "amount_cents": 2400}
+[t-1] state=supportBot.done answer=Refund done.
+refunds executed: [{'order_id': 42, 'amount_cents': 2400}]
+error: t-1 is not waiting for a human
+escalated: 1
+```
+
+What an operator needs to know:
+
+- **Approval is a later run.** `approve` / `reject` load the ticket from the store and send `HUMAN_APPROVED` naming exactly the pending call ids. A second approval is refused (exit 2), so the refund runs once even if two reviewers click.
+- **A resumed run continues the conversation.** The model in `approve` is asked only for the *next* turn, so its script is the closing answer alone.
+- **Timeouts need the scanner.** A ticket nobody answers is escalated (to `error`, `kind: "human_timeout"`) by **one** `DueTimerScanner` per store — `python ops.py scan` from cron, or `scanner.run_forever()` in a worker. Reloading the ticket does not escalate it: a reload re-arms the timer. `--at` pretends it is later (here: far past the one-hour deadline); drop it in production.
+- **Two replicas** share the store: each ticket is one key, and a concurrent second save loses with `ConflictError` instead of acting twice (`tests/test_battle_287_scenario.py`).
+- **Alert on** the oldest `pending` ticket's age, `budget` errors, and bursts of `tool_denied` (prompt-injection attempts). See *Operations* in the [LLM agents guide](https://basiltt.github.io/xstate-statemachine/guide/integration-agents/#operations).
 
 ## Real model (opt-in)
 
@@ -112,5 +148,6 @@ python -m pytest tests -q       # FakeModel only; no key, no network
 
 They cover: approval runs the refund exactly once, a rejected refund never runs, a
 prompt-injected tool outside the allow-list ends in `error` (`tool_denied`), a looping
-model is stopped by the turn budget, lookup goes through the FastAPI example, and
-`run.py --fake` finishes offline.
+model is stopped by the turn budget, lookup goes through the FastAPI example,
+`run.py --fake` finishes offline, and every command in this README runs as
+written (`tests/test_readme_commands.py`).

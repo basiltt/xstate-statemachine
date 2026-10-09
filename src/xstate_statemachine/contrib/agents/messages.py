@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import uuid
 from dataclasses import dataclass, field
 from typing import (
     Any,
@@ -101,19 +102,26 @@ class ToolCall:
     arguments: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        return {
-            "id": self.id,
-            "name": self.name,
-            "arguments": copy.deepcopy(self.arguments),
-        }
+        try:
+            args = copy.deepcopy(self.arguments)
+        except RecursionError:
+            # 🔥 #287 battle (A): arguments nested ~1000 deep raised out
+            #    of `callModel` as a generic failure, so the turn was
+            #    RETRIED (re-billed) instead of denied. Replace them with
+            #    a marker the tool schema refuses.
+            args = {"__unparseable__": "arguments nested too deeply"}
+        return {"id": self.id, "name": self.name, "arguments": args}
 
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> "ToolCall":
-        return cls(
-            id=str(d["id"]),
-            name=str(d["name"]),
-            arguments=dict(d.get("arguments") or {}),
-        )
+        # 🔥 #287 battle (A): `dict(arguments)` coerced a list of pairs
+        #    into an object (schema bypass) and crashed on a string/int.
+        #    A non-object is kept as-is so `Tool.validate` denies it.
+        raw = d.get("arguments")
+        args: Any = {} if raw is None else raw
+        if isinstance(args, Mapping):
+            args = dict(args)
+        return cls(id=str(d["id"]), name=str(d["name"]), arguments=args)
 
 
 @dataclass(frozen=True)
@@ -134,11 +142,30 @@ class Usage:
     @classmethod
     def from_dict(cls, d: Optional[Mapping[str, Any]]) -> "Usage":
         d = d or {}
+        # 📝 #287 battle (B's note): a provider's "nan" / garbage string
+        #    crashed `int()` -- a usage number that is not a number is
+        #    sanitised downstream (`budgets._spent` fails closed), so it is
+        #    carried through as-is here rather than raising in the parser
         return cls(
-            input_tokens=int(d.get("input_tokens", 0) or 0),
-            output_tokens=int(d.get("output_tokens", 0) or 0),
-            cost_usd=float(d.get("cost_usd", 0.0) or 0.0),
+            input_tokens=_num(d.get("input_tokens"), _int),
+            output_tokens=_num(d.get("output_tokens"), _int),
+            cost_usd=_num(d.get("cost_usd"), float),
         )
+
+
+def _int(value: Any) -> int:
+    """``int()`` that also takes ``"1.5"`` / ``1.5`` (review L1)."""
+    return int(float(value))
+
+
+def _num(value: Any, kind: Any) -> Any:
+    """``kind(value)`` or ``nan`` when the provider sent garbage."""
+    if value is None or value == "":
+        return kind(0)
+    try:
+        return kind(value)
+    except (TypeError, ValueError, OverflowError):
+        return float("nan")
 
 
 @dataclass(frozen=True)
@@ -227,6 +254,7 @@ class FakeModel:
         )
         self.calls: List[Dict[str, Any]] = []
         self._pos = 0
+        self._nonce = uuid.uuid4().hex[:8]
 
     def __call__(
         self, messages: Sequence[Message], tools: Sequence[Dict[str, Any]]
@@ -244,6 +272,12 @@ class FakeModel:
             self._pos += 1
             await asyncio.Event().wait()  # cancelled by the `after` exit
         return self._next(messages, tools)
+
+    def _mint(self, n: int, k: int) -> str:
+        """A call id unique across FakeModel instances and sessions (review
+        M1: `call_{n}_{k}` collided after a store resume and was denied as
+        a duplicate)."""
+        return f"call_{self._nonce}_{n}_{k}"
 
     def _peek(self) -> Optional[ScriptItem]:
         return self.script[self._pos] if self._pos < len(self.script) else None
@@ -282,7 +316,7 @@ class FakeModel:
         if "tool" in item:
             calls.append(
                 ToolCall(
-                    id=item.get("id", f"call_{n}_0"),
+                    id=item.get("id") or self._mint(n, 0),
                     name=item["tool"],
                     arguments=dict(item.get("args") or {}),
                 )
@@ -290,7 +324,7 @@ class FakeModel:
         for k, c in enumerate(item.get("tool_calls") or []):
             calls.append(
                 ToolCall(
-                    id=c.get("id", f"call_{n}_{k}"),
+                    id=c.get("id") or self._mint(n, k),
                     name=c["name"],
                     arguments=dict(c.get("arguments") or {}),
                 )
