@@ -140,7 +140,10 @@ def _description(fn: Callable[..., Any]) -> str:
 def _args_model(fn: Callable[..., Any], name: str) -> type:
     sig = inspect.signature(fn)
     try:
-        hints = get_type_hints(fn)
+        # ⚠️ include_extras: without it `Annotated[int, Field(gt=0)]` is
+        #    flattened to `int` and the tool's value-range constraints are
+        #    silently dropped from the schema the model AND `validate` use.
+        hints = get_type_hints(fn, include_extras=True)
     except Exception:  # noqa: BLE001 -- unresolvable forward refs
         hints = {}
     fields: Dict[str, Any] = {}
