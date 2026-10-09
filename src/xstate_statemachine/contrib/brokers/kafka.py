@@ -16,9 +16,10 @@
 #    * Structured-mode CloudEvents body + ``content-type`` header
 #      (CloudEvents Kafka binding); ``ce_id`` / ``ce_type`` headers too so
 #      a router can filter without parsing.
-#    * Kafka keeps no delivery count: the attempt number carried across a
-#      restart is the envelope's own ``xsmattempt`` (the dispatcher's
-#      count lives for the process).
+#    * Kafka keeps no delivery count: a redelivery after a restart starts
+#      at attempt 0 (the wire ``xsmattempt`` is producer-controlled and
+#      ignored, battle #294-a; the dispatcher's count lives for the
+#      process).
 #    * TLS / SASL: pass the aiokafka keyword arguments through
 #      (``security_protocol=``, ``ssl_context=``, ``sasl_*``); they are
 #      never echoed by ``repr``.
