@@ -16,9 +16,10 @@
 #    * Structured-mode CloudEvents body + ``content-type`` header
 #      (CloudEvents Kafka binding); ``ce_id`` / ``ce_type`` headers too so
 #      a router can filter without parsing.
-#    * Kafka keeps no delivery count: the attempt number carried across a
-#      restart is the envelope's own ``xsmattempt`` (the dispatcher's
-#      count lives for the process).
+#    * Kafka keeps no delivery count: a redelivery after a restart starts
+#      at attempt 0 (the wire ``xsmattempt`` is producer-controlled and
+#      ignored, battle #294-a; the dispatcher's count lives for the
+#      process).
 #    * TLS / SASL: pass the aiokafka keyword arguments through
 #      (``security_protocol=``, ``ssl_context=``, ``sasl_*``); they are
 #      never echoed by ``repr``.
@@ -76,6 +77,7 @@ class _Partition:
         return True
 
     def is_handed(self, offset: int) -> bool:
+        """Whether *offset* was already handed out on this partition."""
         return offset in self._handed_set
 
     def commit_point(self) -> Optional[int]:
@@ -169,6 +171,7 @@ class KafkaTransport:
 
     # -- operations -------------------------------------------------------------
     async def send(self, topic: str, envelope: Envelope) -> None:
+        """Publish *envelope* on *topic*; raise on failure."""
         producer = await self._producer_ready()
         headers = [
             ("content-type", CE_CONTENT_TYPE.encode()),
@@ -184,6 +187,7 @@ class KafkaTransport:
         )
 
     async def fetch(self, topic: str, wait_s: float) -> List[Raw]:
+        """Pull what is ready on *topic*, waiting at most *wait_s*."""
         consumer = await self._consumer(topic)
         wait_ms = int(wait_s * 1000)
         if topic not in self._joined:
@@ -207,6 +211,7 @@ class KafkaTransport:
         return out
 
     async def ack(self, native: Any) -> None:
+        """Settle a delivery for good."""
         topic, tp, offset = native
         part = self._parts.setdefault((topic, tp), _Partition())
         if not part.is_handed(offset):
@@ -238,6 +243,7 @@ class KafkaTransport:
             self._producer_started = False
 
     async def close(self) -> None:
+        """Release the client connections this object opened."""
         for c in list(self._consumers.values()):
             await c.stop()
         self._consumers.clear()
@@ -263,6 +269,10 @@ class KafkaBroker(AsyncBroker):
         max_bytes / on_disconnect / on_reconnect / on_undecodable: See
             `contrib.brokers`.
     """
+
+    CLIENT_HINT = (
+        "`client_kw=` (aiokafka options) or `producer=` / `consumer_factory=`"
+    )
 
     def __init__(
         self,

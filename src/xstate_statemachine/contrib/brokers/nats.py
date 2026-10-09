@@ -118,6 +118,7 @@ class NatsTransport:
 
     # -- operations -------------------------------------------------------------
     async def send(self, topic: str, envelope: Envelope) -> None:
+        """Publish *envelope* on *topic*; raise on failure."""
         js = await self._stream(topic)
         await js.publish(
             f"{topic}.{subject_token(envelope.subject)}",
@@ -129,6 +130,7 @@ class NatsTransport:
         )
 
     async def fetch(self, topic: str, wait_s: float) -> List[Raw]:
+        """Pull what is ready on *topic*, waiting at most *wait_s*."""
         sub = await self._sub(topic)
         try:
             msgs = await sub.fetch(self.batch, timeout=max(wait_s, 0.001))
@@ -141,9 +143,11 @@ class NatsTransport:
         return [Raw(m.data, m, _attempts(m)) for m in msgs]
 
     async def ack(self, native: Any) -> None:
+        """Settle a delivery for good."""
         await native.ack()
 
     async def drop(self, native: Any) -> None:
+        """Settle without redelivery."""
         await native.term()
 
     def rebind(self) -> None:
@@ -157,6 +161,7 @@ class NatsTransport:
             self._subs.clear()
 
     async def close(self) -> None:
+        """Release the client connections this object opened."""
         for sub in list(self._subs.values()):
             unsub = getattr(sub, "unsubscribe", None)
             if unsub is not None:
@@ -191,6 +196,8 @@ class NatsBroker(AsyncBroker):
         max_bytes / on_disconnect / on_reconnect / on_undecodable: See
             `contrib.brokers`.
     """
+
+    CLIENT_HINT = "`connect_kw=` (nats-py options) or `js=`"
 
     def __init__(
         self,

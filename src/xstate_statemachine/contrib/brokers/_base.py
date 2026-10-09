@@ -99,8 +99,36 @@ def default_on_undecodable(topic: str, raw: Raw, exc: Exception) -> None:
     )
 
 
+def _native_attempts(value: Any) -> int:
+    """A transport's redelivery count, coerced: ``None`` / negative /
+    non-numeric (a buggy or hostile transport) count as a first delivery
+    instead of raising mid-batch and stranding everything fetched."""
+    if isinstance(value, bool):
+        return int(value)
+    try:
+        return max(0, int(value))
+    except (TypeError, ValueError, OverflowError):
+        return 0
+
+
+def _notify(callback: Optional[Callable[..., Any]], *args: Any) -> None:
+    """Run a health callback; a raising one is logged, never propagated
+    (it fired AFTER a fetch succeeded: raising there lost the batch, and
+    on failure it masked the transport's own exception)."""
+    if callback is None:
+        return
+    try:
+        callback(*args)
+    except Exception:  # noqa: BLE001 - user hook
+        logger.warning("🔥 broker health callback failed", exc_info=True)
+
+
 class _Core:
     """Thread-safe local state shared by the sync and async bases."""
+
+    #: Where this adapter takes its client's own options (named in the
+    #: unknown-option error); subclasses override.
+    CLIENT_HINT = "the client object you pass in (`client=`)"
 
     def __init__(
         self,
@@ -110,7 +138,19 @@ class _Core:
         on_reconnect: Optional[Callable[[], Any]] = None,
         on_undecodable: Optional[Callable[[str, Raw, Exception], Any]] = None,
         dead_letters: Optional[Any] = None,
+        **unknown: Any,
     ) -> None:
+        if unknown:
+            # 💡 #294 review (B): `KafkaBroker(sasl_plain_password=...)`
+            #    died with `TypeError: _Core.__init__()` -- name the
+            #    option and where client options go.
+            names = ", ".join(sorted(unknown))
+            raise TypeError(
+                f"unknown broker option(s): {names}. Client options "
+                f"(TLS, SASL, credentials) go in {self.CLIENT_HINT}; the "
+                "adapter's own options are max_bytes, on_disconnect, "
+                "on_reconnect, on_undecodable, dead_letters."
+            )
         self.max_bytes = int(max_bytes)
         self.on_disconnect = on_disconnect
         self.on_reconnect = on_reconnect
@@ -131,19 +171,19 @@ class _Core:
         return self._healthy
 
     def _io_ok(self) -> None:
-        if not self._healthy:
-            self._healthy = True
+        with self._lock:
+            flipped, self._healthy = not self._healthy, True
+        if flipped:
             logger.info("✅ broker connection healthy again")
-            if self.on_reconnect is not None:
-                self.on_reconnect()
+            _notify(self.on_reconnect)
 
     def _io_failed(self, exc: Exception) -> None:
-        if self._healthy:
-            self._healthy = False
+        with self._lock:
+            flipped, self._healthy = self._healthy, False
+        if flipped:
             # 🔐 type only: client errors may embed URLs with credentials
             logger.warning("🔥 broker call failed: %s", type(exc).__name__)
-            if self.on_disconnect is not None:
-                self.on_disconnect(exc)
+            _notify(self.on_disconnect, exc)
 
     # -- local queue ----------------------------------------------------------
     def _hold_s(self) -> Optional[float]:
@@ -182,22 +222,32 @@ class _Core:
                 forget(native)
         return item
 
-    def _decode(self, topic: str, raws: List[Raw]) -> List[Tuple[Any, Any]]:
-        """Decode fetched messages; returns ``(envelope | None, native)``
-        (``None`` = undecodable: the caller drops the native message)."""
-        out: List[Tuple[Any, Any]] = []
-        for raw in raws:
-            try:
-                env = Envelope.from_json(raw.body, max_bytes=self.max_bytes)
-            except EnvelopeCorruptError as exc:
-                self._dead_letter_raw(topic, raw, exc)
-                self.on_undecodable(topic, raw, exc)
-                out.append((None, raw.native))
-                continue
-            if raw.attempts > env.attempt:
-                env = env.with_attempt(raw.attempts)
-            out.append((env, raw.native))
-        return out
+    def _decode_one(self, topic: str, raw: Raw) -> Optional[Envelope]:
+        """One fetched message -> envelope, or ``None`` if undecodable.
+
+        🔐 battle #294-a: the attempt is the BROKER's count only. The
+        wire ``xsmattempt`` is producer-controlled (a forged ``10**9``
+        dead-lettered a healthy message on its first transient failure,
+        and a re-published envelope carried a stale count); local
+        requeues and the dispatcher's own counter cover the rest.
+        """
+        try:
+            env = Envelope.from_json(raw.body, max_bytes=self.max_bytes)
+        except EnvelopeCorruptError as exc:
+            # 💡 the DLQ record and the user hook are best-effort: a
+            #    failure in either must not lose the rest of the batch
+            for report in (self._dead_letter_raw, self.on_undecodable):
+                try:
+                    report(topic, raw, exc)
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "🔥 reporting an undecodable message on %r failed",
+                        topic,
+                        exc_info=True,
+                    )
+            return None
+        n = _native_attempts(raw.attempts)
+        return env if env.attempt == n else env.with_attempt(n)
 
     def _stash_decoded(self, topic: str, raws: List[Raw]) -> List[Any]:
         """Stash every decodable message FIRST; return the natives of the
@@ -207,11 +257,12 @@ class _Core:
         good: List[Tuple[Envelope, Any]] = []
         bad: List[Any] = []
         try:
-            for env, native in self._decode(topic, raws):
+            for raw in raws:
+                env = self._decode_one(topic, raw)
                 if env is None:
-                    bad.append(native)
+                    bad.append(raw.native)
                 else:
-                    good.append((env, native))
+                    good.append((env, raw.native))
         finally:
             self._stash(topic, good)
         return bad
@@ -259,9 +310,11 @@ class _Core:
         box: List[Delivery] = []
 
         def ack() -> Any:
+            """Settle a delivery for good."""
             return self.ack(box[0])
 
         def nack(requeue: bool = True) -> Any:
+            """Requeue locally (``requeue=True``) or settle without redelivery."""
             return self.nack(box[0], requeue=requeue)
 
         d = Delivery(env, topic, ack, nack)
@@ -299,11 +352,13 @@ class _Core:
 
     # placeholders overridden by the bases
     def ack(self, delivery: Delivery) -> Any:  # pragma: no cover
+        """Settle a delivery for good."""
         raise NotImplementedError
 
     def nack(
         self, delivery: Delivery, *, requeue: bool
     ) -> Any:  # pragma: no cover
+        """Requeue locally (``requeue=True``) or settle without redelivery."""
         raise NotImplementedError
 
 
@@ -338,6 +393,7 @@ class SyncBroker(_Core):
         return result
 
     def publish(self, topic: str, envelope: Envelope) -> None:
+        """Publish *envelope* on *topic* (raises if the broker refuses)."""
         if not isinstance(envelope, Envelope):
             raise TypeError("publish() needs an Envelope")
         self._call(self.transport.send, topic, envelope)
@@ -345,6 +401,7 @@ class SyncBroker(_Core):
     def subscribe(
         self, topic: str, *, timeout: Optional[float] = None
     ) -> Iterator[Delivery]:
+        """Yield deliveries on *topic*; end after *timeout* idle seconds."""
         deadline = _deadline(timeout)
         fetched = False
         while True:
@@ -365,11 +422,13 @@ class SyncBroker(_Core):
                 deadline = _deadline(timeout)
 
     def ack(self, delivery: Delivery) -> None:
+        """Settle a delivery for good."""
         claimed, native, at = self._claim(delivery)
         if claimed:
             self._call(self.transport.ack, native)
 
     def nack(self, delivery: Delivery, *, requeue: bool) -> None:
+        """Requeue locally (``requeue=True``) or settle without redelivery."""
         claimed, native, at = self._claim(delivery)
         if not claimed:
             return
@@ -379,6 +438,7 @@ class SyncBroker(_Core):
             self._call(self.transport.drop, native)
 
     def close(self) -> None:
+        """Release the client connections this object opened."""
         close = getattr(self.transport, "close", None)
         if close is not None:
             close()
@@ -429,6 +489,7 @@ class AsyncBroker(_Core):
         return result
 
     async def publish(self, topic: str, envelope: Envelope) -> None:
+        """Publish *envelope* on *topic* (raises if the broker refuses)."""
         if not isinstance(envelope, Envelope):
             raise TypeError("publish() needs an Envelope")
         self._check_loop()
@@ -437,6 +498,7 @@ class AsyncBroker(_Core):
     async def subscribe(
         self, topic: str, *, timeout: Optional[float] = None
     ) -> AsyncIterator[Delivery]:
+        """Yield deliveries on *topic*; end after *timeout* idle seconds."""
         self._check_loop()
         deadline = _deadline(timeout)
         fetched = False
@@ -460,12 +522,14 @@ class AsyncBroker(_Core):
                 deadline = _deadline(timeout)
 
     async def ack(self, delivery: Delivery) -> None:
+        """Settle a delivery for good."""
         self._check_loop()
         claimed, native, at = self._claim(delivery)
         if claimed:
             await self._call(self.transport.ack, native)
 
     async def nack(self, delivery: Delivery, *, requeue: bool) -> None:
+        """Requeue locally (``requeue=True``) or settle without redelivery."""
         self._check_loop()
         claimed, native, at = self._claim(delivery)
         if not claimed:
@@ -476,6 +540,7 @@ class AsyncBroker(_Core):
             await self._call(self.transport.drop, native)
 
     async def close(self) -> None:
+        """Release the client connections this object opened."""
         close = getattr(self.transport, "close", None)
         if close is not None:
             result = close()
@@ -530,26 +595,31 @@ class ThreadedTransport:
         self.inner = inner
 
     async def send(self, topic: str, envelope: Envelope) -> None:
+        """Publish *envelope* on *topic*; raise on failure."""
         await asyncio.get_running_loop().run_in_executor(
             None, self.inner.send, topic, envelope
         )
 
     async def fetch(self, topic: str, wait_s: float) -> List[Raw]:
+        """Pull what is ready on *topic*, waiting at most *wait_s*."""
         return await asyncio.get_running_loop().run_in_executor(
             None, self.inner.fetch, topic, wait_s
         )
 
     async def ack(self, native: Any) -> None:
+        """Settle a delivery for good."""
         await asyncio.get_running_loop().run_in_executor(
             None, self.inner.ack, native
         )
 
     async def drop(self, native: Any) -> None:
+        """Settle without redelivery."""
         await asyncio.get_running_loop().run_in_executor(
             None, self.inner.drop, native
         )
 
     def close(self) -> None:
+        """Release the client connections this object opened."""
         close = getattr(self.inner, "close", None)
         if close is not None:
             close()

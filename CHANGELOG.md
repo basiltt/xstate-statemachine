@@ -27,7 +27,8 @@ _No unreleased changes yet._
   boto3: FIFO `MessageGroupId` = subject, `MessageDeduplicationId` =
   envelope id, `extend_visibility`). One shared core gives every adapter
   local requeue-to-head, settle-once, broker redelivery counts stamped as
-  envelope attempts (so poison reaches the DLQ across restarts, X0.8),
+  envelope attempts (so poison reaches the DLQ across restarts, X0.8 --
+  except on Kafka, which keeps no delivery count),
   the size cap before parsing (X0.4), undecodable messages dropped never
   looped, and `healthy` / `on_disconnect` / `on_reconnect`. Every adapter
   passes `AsyncBrokerContract` in CI (fakeredis, moto, in-memory client
@@ -1450,6 +1451,56 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **The broker adapters, as battle-tested (#294).** Redis Streams,
+  Kafka, RabbitMQ, NATS JetStream and SQS on a fulfilment day, each on
+  its offline stand-in (the same adapter classes a live deployment
+  runs): 300 orders across ten subjects with duplicates interleaved; the
+  broker going AWAY mid-run (`send` and `fetch` raising for a while);
+  two consumers on one topic; a hostile producer putting an oversized
+  body, non-JSON bytes and a credential-bearing extension straight on
+  the native transport; a 2,000-round-trip soak (`examples/
+  integrations/eda_fulfilment/tests/test_battle_294_scenario.py`,
+  `tests/contrib/brokers/test_battle_294_{a,repr,integrator}.py`).
+  Found and fixed: **a producer could forge the attempt count** -- the
+  adapter kept the larger of the wire's `xsmattempt` and the broker's
+  own redelivery count, so `xsmattempt=10**9` dead-lettered a healthy
+  message on its first transient failure; the attempt is now the
+  BROKER's count plus local requeues (Kafka, which keeps no count,
+  starts again at 0 after a consumer restart -- documented); a transport
+  reporting a malformed redelivery count (`None`, negative, a string)
+  raised mid-decode and stranded the whole fetched batch un-acked --
+  coerced to a first delivery; a raising `on_reconnect` lost the batch
+  it fired after, a raising `on_disconnect` masked the transport's own
+  error, a raising dead-letter `put` / `on_undecodable` stopped the good
+  messages behind a bad one -- all logged, never propagated; the health
+  flip happened outside the lock, so several threads fired
+  `on_disconnect` / `on_reconnect` more than once per real transition;
+  `KafkaBroker(sasl_plain_password=...)` died with `TypeError:
+  _Core.__init__()` (unknown options are named with a hint at
+  `client_kw=`, the value never echoed); `xsm asyncapi --protocol bogus`
+  exited 0 (the protocol is one of the AsyncAPI binding names); `xsm
+  dlq` on a missing store file said "xsm snapshots: error:". Docs that
+  were false or silent: per-subject order holds only while ONE consumer
+  handles a subject -- Kafka and SQS FIFO guarantee that, competing
+  consumers on one Redis stream / RabbitMQ queue / NATS durable do NOT
+  (the ways around it are listed); NATS and SQS FIFO dedup a republished
+  envelope AT THE BROKER (`Nats-Msg-Id`, `MessageDeduplicationId`), so
+  the inbox reports no duplicate there -- do not alert on zero; `batch`
+  defaults are 10 (not 100) on Redis/NATS; the Redis shard hash is
+  crc32; the Reference was missing 9 of 18 public names; an Operations
+  section (reconnect visibility, what to alert on, each broker's
+  redelivery knob and sizing) and a Troubleshooting row for every
+  operator-visible error (`MissingExtraError` per extra, `BUSYGROUP`,
+  `NOGROUP`, `QueueDoesNotExist`, the local hold release, dedup windows
+  swallowing a replay, Kafka uncommitted offsets); the example README
+  gains "Operate it: when the broker goes away" and every command in
+  its broker table runs in the suite. Held: `healthy` / `on_disconnect`
+  / `on_reconnect` fire once per transition and the outbox keeps its
+  rows through an outage; nothing is published twice; hostile bodies are
+  dead-lettered as `corrupt` without the body and the good messages
+  behind them flow; settle-once, head requeue order, Kafka commits only
+  the contiguous settled prefix; no adapter `repr` or failure log shows
+  a URL or credential; flat memory over 10,000 round trips.
 - **The EDA core, as battle-tested (#293).** A fulfilment day in the
   `eda_fulfilment` example as an operations team lives it: 1,000 orders
   through TWO service replicas on one SQLite file and one bus, with

@@ -114,15 +114,18 @@ class RedisStreamsTransport:
 
     # -- keys -------------------------------------------------------------------
     def stream(self, topic: str, shard: int = 0) -> str:
+        """The stream key for *topic* (and *shard*)."""
         base = f"{self.prefix}:stream:{topic}"
         return base if self.shards == 1 else f"{base}:{shard}"
 
     def shard_of(self, subject: Optional[str]) -> int:
+        """The shard a *subject* always hashes to (crc32)."""
         if self.shards == 1:
             return 0
         return zlib.crc32((subject or "").encode("utf-8")) % self.shards
 
     def streams(self, topic: str) -> List[str]:
+        """Every shard stream key of *topic*."""
         return [self.stream(topic, n) for n in range(self.shards)]
 
     def _ensure_group(self, stream: str) -> None:
@@ -139,6 +142,7 @@ class RedisStreamsTransport:
 
     # -- operations -------------------------------------------------------------
     def send(self, topic: str, envelope: Envelope) -> None:
+        """Publish *envelope* on *topic*; raise on failure."""
         stream = self.stream(topic, self.shard_of(envelope.subject))
         fields = {
             "ce": structured(envelope, self.max_bytes),
@@ -152,6 +156,7 @@ class RedisStreamsTransport:
             )
 
     def fetch(self, topic: str, wait_s: float) -> List[Raw]:
+        """Pull what is ready on *topic*, waiting at most *wait_s*."""
         out: List[Raw] = []
         for stream in self.streams(topic):
             self._ensure_group(stream)
@@ -228,6 +233,7 @@ class RedisStreamsTransport:
         return Raw(body, (stream, _text(entry_id)), attempts)
 
     def ack(self, native: Any) -> None:
+        """Settle a delivery for good."""
         stream, entry_id = native
         self.client.xack(stream, self.group, entry_id)
         self._held.discard(native)
@@ -235,6 +241,7 @@ class RedisStreamsTransport:
     drop = ack
 
     def close(self) -> None:
+        """Release the client connections this object opened."""
         close = getattr(self.client, "close", None)
         if close is not None:
             close()
@@ -285,6 +292,8 @@ class SyncRedisStreamsBroker(SyncBroker):
         max_bytes / on_disconnect / on_reconnect / on_undecodable: See
             `contrib.brokers`.
     """
+
+    CLIENT_HINT = "`url=` / `client=` (a redis-py client)"
 
     def __init__(
         self,

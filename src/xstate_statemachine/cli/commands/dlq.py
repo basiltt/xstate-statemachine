@@ -88,7 +88,9 @@ def open_dlq(url: str) -> Any:
         )
     try:
         if url.startswith("sqlite:"):
-            return SQLiteDeadLetterStore(open_store(url, must_exist=True))
+            return SQLiteDeadLetterStore(
+                open_store(url, must_exist=True, prog="xsm dlq")
+            )
         if not Path(url).is_file():
             raise _fail(f"no such dead-letter database file: {url!r}")
         return SQLiteDeadLetterStore(Path(url))
@@ -134,7 +136,7 @@ def _dispatcher(
             return next(iter(machines.values()))
         return None
 
-    store = open_store(store_url, must_exist=True)
+    store = open_store(store_url, must_exist=True, prog="xsm dlq")
     inbox = SQLiteInbox(store) if isinstance(store, SQLiteStore) else None
     return InboundDispatcher(store, machine_for, inbox=inbox, max_attempts=1)
 
