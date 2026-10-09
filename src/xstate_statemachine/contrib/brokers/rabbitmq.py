@@ -107,6 +107,7 @@ class RabbitMQTransport:
 
     # -- operations -------------------------------------------------------------
     async def send(self, topic: str, envelope: Envelope) -> None:
+        """Publish *envelope* on *topic*; raise on failure."""
         if self.exchange_name is None:
             await self._queue(topic)  # a publish to no queue is lost
             routing_key = topic
@@ -124,6 +125,7 @@ class RabbitMQTransport:
         await exchange.publish(message, routing_key=routing_key)
 
     async def fetch(self, topic: str, wait_s: float) -> List[Raw]:
+        """Pull what is ready on *topic*, waiting at most *wait_s*."""
         queue = await self._queue(topic)
         out: List[Raw] = []
         # 📝 basic.get answers "empty" at once; its timeout is only the RPC
@@ -149,10 +151,12 @@ class RabbitMQTransport:
         return out
 
     async def ack(self, native: Any) -> None:
+        """Settle a delivery for good."""
         await native.ack()
         self.unacked = max(0, self.unacked - 1)
 
     async def drop(self, native: Any) -> None:
+        """Settle without redelivery."""
         await native.reject(requeue=False)
         self.unacked = max(0, self.unacked - 1)
 
@@ -168,6 +172,7 @@ class RabbitMQTransport:
             self.unacked = 0
 
     async def close(self) -> None:
+        """Release the client connections this object opened."""
         if self._connection is not None:
             await self._connection.close()
             self._connection = None

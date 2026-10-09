@@ -259,9 +259,11 @@ class _Core:
         box: List[Delivery] = []
 
         def ack() -> Any:
+            """Settle a delivery for good."""
             return self.ack(box[0])
 
         def nack(requeue: bool = True) -> Any:
+            """Requeue locally (``requeue=True``) or settle without redelivery."""
             return self.nack(box[0], requeue=requeue)
 
         d = Delivery(env, topic, ack, nack)
@@ -299,11 +301,13 @@ class _Core:
 
     # placeholders overridden by the bases
     def ack(self, delivery: Delivery) -> Any:  # pragma: no cover
+        """Settle a delivery for good."""
         raise NotImplementedError
 
     def nack(
         self, delivery: Delivery, *, requeue: bool
     ) -> Any:  # pragma: no cover
+        """Requeue locally (``requeue=True``) or settle without redelivery."""
         raise NotImplementedError
 
 
@@ -338,6 +342,7 @@ class SyncBroker(_Core):
         return result
 
     def publish(self, topic: str, envelope: Envelope) -> None:
+        """Publish *envelope* on *topic* (raises if the broker refuses)."""
         if not isinstance(envelope, Envelope):
             raise TypeError("publish() needs an Envelope")
         self._call(self.transport.send, topic, envelope)
@@ -345,6 +350,7 @@ class SyncBroker(_Core):
     def subscribe(
         self, topic: str, *, timeout: Optional[float] = None
     ) -> Iterator[Delivery]:
+        """Yield deliveries on *topic*; end after *timeout* idle seconds."""
         deadline = _deadline(timeout)
         fetched = False
         while True:
@@ -365,11 +371,13 @@ class SyncBroker(_Core):
                 deadline = _deadline(timeout)
 
     def ack(self, delivery: Delivery) -> None:
+        """Settle a delivery for good."""
         claimed, native, at = self._claim(delivery)
         if claimed:
             self._call(self.transport.ack, native)
 
     def nack(self, delivery: Delivery, *, requeue: bool) -> None:
+        """Requeue locally (``requeue=True``) or settle without redelivery."""
         claimed, native, at = self._claim(delivery)
         if not claimed:
             return
@@ -379,6 +387,7 @@ class SyncBroker(_Core):
             self._call(self.transport.drop, native)
 
     def close(self) -> None:
+        """Release the client connections this object opened."""
         close = getattr(self.transport, "close", None)
         if close is not None:
             close()
@@ -429,6 +438,7 @@ class AsyncBroker(_Core):
         return result
 
     async def publish(self, topic: str, envelope: Envelope) -> None:
+        """Publish *envelope* on *topic* (raises if the broker refuses)."""
         if not isinstance(envelope, Envelope):
             raise TypeError("publish() needs an Envelope")
         self._check_loop()
@@ -437,6 +447,7 @@ class AsyncBroker(_Core):
     async def subscribe(
         self, topic: str, *, timeout: Optional[float] = None
     ) -> AsyncIterator[Delivery]:
+        """Yield deliveries on *topic*; end after *timeout* idle seconds."""
         self._check_loop()
         deadline = _deadline(timeout)
         fetched = False
@@ -460,12 +471,14 @@ class AsyncBroker(_Core):
                 deadline = _deadline(timeout)
 
     async def ack(self, delivery: Delivery) -> None:
+        """Settle a delivery for good."""
         self._check_loop()
         claimed, native, at = self._claim(delivery)
         if claimed:
             await self._call(self.transport.ack, native)
 
     async def nack(self, delivery: Delivery, *, requeue: bool) -> None:
+        """Requeue locally (``requeue=True``) or settle without redelivery."""
         self._check_loop()
         claimed, native, at = self._claim(delivery)
         if not claimed:
@@ -476,6 +489,7 @@ class AsyncBroker(_Core):
             await self._call(self.transport.drop, native)
 
     async def close(self) -> None:
+        """Release the client connections this object opened."""
         close = getattr(self.transport, "close", None)
         if close is not None:
             result = close()
@@ -530,26 +544,31 @@ class ThreadedTransport:
         self.inner = inner
 
     async def send(self, topic: str, envelope: Envelope) -> None:
+        """Publish *envelope* on *topic*; raise on failure."""
         await asyncio.get_running_loop().run_in_executor(
             None, self.inner.send, topic, envelope
         )
 
     async def fetch(self, topic: str, wait_s: float) -> List[Raw]:
+        """Pull what is ready on *topic*, waiting at most *wait_s*."""
         return await asyncio.get_running_loop().run_in_executor(
             None, self.inner.fetch, topic, wait_s
         )
 
     async def ack(self, native: Any) -> None:
+        """Settle a delivery for good."""
         await asyncio.get_running_loop().run_in_executor(
             None, self.inner.ack, native
         )
 
     async def drop(self, native: Any) -> None:
+        """Settle without redelivery."""
         await asyncio.get_running_loop().run_in_executor(
             None, self.inner.drop, native
         )
 
     def close(self) -> None:
+        """Release the client connections this object opened."""
         close = getattr(self.inner, "close", None)
         if close is not None:
             close()

@@ -109,3 +109,61 @@ def test_readme_operate_commands_work(fulfilment):
         if "--json" in argv:
             assert json.loads(proc.stdout)["count"] == 1
     assert fulfilment.dead_letters.list() == []
+
+
+#: What each offline stand-in needs (mirrors tests/test_all_brokers.py).
+_OFFLINE_NEEDS = {
+    "redis-streams": ("redis", "fakeredis"),
+    "kafka": ("aiokafka",),
+    "rabbitmq": ("aio_pika",),
+    "nats": ("nats",),
+    "sqs": ("boto3", "moto"),
+}
+
+
+def _broker_table_commands():
+    """`python -m eda_fulfilment --broker X` lines of the broker table."""
+    text = (HERE / "README.md").read_text("utf-8")
+    section = text[text.index("### Run it against each broker") :]
+    section = section[: section.index("\n## ")]
+    return re.findall(r"`(python -m eda_fulfilment --broker [\w-]+)`", section)
+
+
+def test_readme_broker_table_matches_live_env():
+    # 🐛 #294 battle (B): the table's env vars are the app's LIVE_ENV.
+    import eda_fulfilment.app as app
+
+    text = (HERE / "README.md").read_text("utf-8")
+    for name, var in app.LIVE_ENV.items():
+        assert f"--broker {name}`" in text, name
+        assert f"`{var}`" in text, var
+    assert len(_broker_table_commands()) == len(app.LIVE_ENV)
+
+
+@pytest.mark.parametrize("line", _broker_table_commands())
+def test_readme_broker_table_commands_run_offline(line, monkeypatch):
+    # 🐛 #294 battle (B): every command the table shows is run, offline.
+    import eda_fulfilment.app as app
+    import shlex
+
+    name = shlex.split(line)[-1]
+    for mod in _OFFLINE_NEEDS[name]:
+        pytest.importorskip(mod)
+    env = dict(os.environ)
+    for var in app.LIVE_ENV.values():
+        env.pop(var, None)
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(ROOT / "src")] + [p for p in [env.get("PYTHONPATH")] if p]
+    )
+    proc = subprocess.run(
+        [sys.executable] + shlex.split(line)[1:],
+        cwd=str(HERE.parent),
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert f"broker                 {name}" in proc.stdout
+    assert proc.stdout.count("order.shipped") == 3
+    assert "dead_letters           1" in proc.stdout
