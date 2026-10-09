@@ -22,27 +22,98 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any, AsyncIterator, Callable, Dict, Optional
+import warnings
+from typing import Any, AsyncIterator, Callable, Dict, Optional, Tuple
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from ...actor_logic import from_async_iterator
 from ...machine_logic import MachineLogic
 from .._compat import require_extra
+from ._threads import _in_daemon_thread
+from .budgets import _spent_tokens
 
 require_extra("agents", "pydantic_ai", hint="or: pip install pydantic-ai")
 
 __all__ = [
+    "PYDANTIC_AI_TESTED",
     "agent_tool_from_machine",
+    "check_pydantic_ai_version",
     "pydantic_ai_service",
     "usage_logic",
 ]
 
 
+#: The pydantic-ai versions this adapter is tested against (inclusive
+#: lower, exclusive upper). Outside it `check_pydantic_ai_version` WARNS
+#: -- pydantic-ai churns, and both attribute spellings are read.
+PYDANTIC_AI_TESTED: Tuple[Tuple[int, int], Tuple[int, int]] = ((0, 8), (3, 0))
+
+
+def _parse_version(version: str) -> Tuple[int, int]:
+    parts = []
+    for piece in version.split(".")[:2]:
+        digits = "".join(ch for ch in piece if ch.isdigit())
+        parts.append(int(digits or 0))
+    while len(parts) < 2:
+        parts.append(0)
+    return parts[0], parts[1]
+
+
+def check_pydantic_ai_version(version: Optional[str] = None) -> bool:
+    """Warn when pydantic-ai is outside `PYDANTIC_AI_TESTED`.
+
+    Args:
+        version: A version string; ``None`` reads the installed
+            ``pydantic_ai.__version__``.
+
+    Returns:
+        ``True`` when the version is inside the tested range, ``False``
+        (after a `RuntimeWarning`) when it is outside or unreadable.
+    """
+    if version is None:
+        import pydantic_ai
+
+        version = str(getattr(pydantic_ai, "__version__", "") or "")
+    lo, hi = PYDANTIC_AI_TESTED
+    if version and lo <= _parse_version(version) < hi:
+        return True
+    warnings.warn(
+        f"xstate_statemachine.contrib.agents.pydantic_ai is tested with "
+        f"pydantic-ai >={lo[0]}.{lo[1]},<{hi[0]}.{hi[1]}; found "
+        f"{version or 'unknown'}. See the compatibility table in "
+        f"docs/_guide/integration-agents.md.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+    return False
+
+
+check_pydantic_ai_version()
+
+
+_ANY_JSON = TypeAdapter(Any, config=ConfigDict(ser_json_bytes="base64"))
+
+
 def _jsonable(value: Any) -> Any:
+    # 🔥 #289 battle (A): only BaseModel was dumped; a dataclass /
+    #    TypedDict / dict output holding datetime, bytes or Decimal landed
+    #    raw in context and broke `get_snapshot()` (json.dumps). Every
+    #    output now goes through pydantic's JSON mode. #289 review (4):
+    #    non-UTF-8 bytes raised under the default utf8 serialiser -- bytes
+    #    are base64 now, and anything else pydantic cannot serialise falls
+    #    back to `repr` (always JSON-safe, never raises).
     if isinstance(value, BaseModel):
         return value.model_dump(mode="json")
-    return value
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    try:
+        return _ANY_JSON.dump_python(value, mode="json", fallback=repr)
+    except Exception:  # noqa: BLE001 -- pydantic < 2.10 lacks fallback=
+        try:
+            return _ANY_JSON.dump_python(value, mode="json")
+        except Exception:  # noqa: BLE001 -- unserialisable: JSON-safe repr
+            return repr(value)
 
 
 def _usage(obj: Any) -> Dict[str, int]:
@@ -60,7 +131,11 @@ def _usage(obj: Any) -> Dict[str, int]:
         for name in (key, *alts):
             v = getattr(u, name, None)
             if v:
-                out[key] = int(v)
+                # 🔥 #289 battle (A): `int(v)` raised on NaN/garbage (the
+                #    run then went to onError) and passed negatives (a
+                #    hostile provider refunding budget). Reuse the budget
+                #    sanitiser: negative → 0, NaN/inf/junk → exhausting.
+                out[key] = _spent_tokens(v)
                 break
     return out
 
@@ -92,9 +167,23 @@ def pydantic_ai_service(
     ``onDone`` so `budget_guards` see the spend.
 
     With ``stream=True`` each text delta is sent as a ``STREAM`` event
-    (``event.data == {"delta": "..."}``) via `from_async_iterator`, and
-    ``onDone`` receives the same ``{"output", "usage"}`` as above.
-    Exceptions are ``onError``; exiting the state cancels the run.
+    (``event.data == {"delta": "..."}``) via `from_async_iterator`; the
+    LAST ``STREAM`` event carries ``{"output", "usage"}`` and NO
+    ``"delta"`` (a handler must use ``event.data.get("delta")``), and
+    ``onDone`` receives that same ``{"output", "usage"}``. Exceptions are
+    ``onError``; exiting the state cancels the run.
+
+    Args:
+        agent: A ``pydantic_ai.Agent`` (anything with ``run`` /
+            ``run_stream``).
+        prompt_from: ``(ctx, event) -> str`` -- the user prompt.
+        deps_from: Optional ``(ctx, event) -> deps`` passed as ``deps=``.
+        stream: Stream text deltas as ``STREAM`` events.
+
+    Returns:
+        An async service callable for ``MachineLogic(services=...)``.
+        Async engine only: `SyncInterpreter` refuses it with
+        `NotSupportedError`.
     """
 
     def _args(ctx: Any, e: Any) -> Dict[str, Any]:
@@ -128,19 +217,39 @@ def pydantic_ai_service(
 def usage_logic(name: str = "recordAgentUsage") -> MachineLogic:
     """An action that adds an ``onDone`` usage block to ``tokens_in`` /
     ``tokens_out`` and counts one ``turns`` -- the keys `budget_guards`
-    read."""
+    read.
+
+    Without this action on ``onDone`` nothing writes those keys, so
+    `budget_guards` read zeros and never trip.
+
+    Args:
+        name: The action name to register.
+
+    Returns:
+        A `MachineLogic` with one action that also stores ``output`` in
+        ``context["result"]``.
+    """
 
     def record(i: Any, ctx: Dict[str, Any], e: Any, a: Any) -> None:
-        data = getattr(e, "data", None) or {}
-        usage = data.get("usage") or {}
-        ctx["tokens_in"] = int(ctx.get("tokens_in", 0)) + int(
-            usage.get("input_tokens", 0)
+        # 🛡️ #289 battle (A): onDone data is untrusted (a hand-written
+        #    service, a hostile provider): non-dict data / usage, None,
+        #    negative, NaN or "junk" counts must neither raise (a stopped
+        #    machine) nor refund budget -- `_spent_tokens` clamps them.
+        data = getattr(e, "data", None)
+        data = data if isinstance(data, dict) else {"output": data}
+        usage = data.get("usage")
+        usage = usage if isinstance(usage, dict) else {}
+        ctx["tokens_in"] = _spent_tokens(ctx.get("tokens_in")) + (
+            _spent_tokens(usage.get("input_tokens"))
         )
-        ctx["tokens_out"] = int(ctx.get("tokens_out", 0)) + int(
-            usage.get("output_tokens", 0)
+        ctx["tokens_out"] = _spent_tokens(ctx.get("tokens_out")) + (
+            _spent_tokens(usage.get("output_tokens"))
         )
-        ctx["turns"] = int(ctx.get("turns", 0)) + 1
-        ctx["result"] = data.get("output")
+        ctx["turns"] = _spent_tokens(ctx.get("turns")) + 1
+        # 📝 #289 review (8): a hand-written service's datetime output
+        #    (or junk `turns` in a tampered snapshot) must not break
+        #    `get_snapshot()` / raise here.
+        ctx["result"] = _jsonable(data.get("output"))
 
     return MachineLogic(actions={name: record})
 
@@ -159,14 +268,30 @@ def agent_tool_from_machine(
     *runner* is ``(prompt) -> AgentResult`` (sync or async) -- typically
     ``lambda p: run_agent(machine, prompt=p)``. The tool returns
     ``{"state", "output", "error"}``; the statechart's own budgets,
-    allow-lists and approvals still apply inside it.
+    allow-lists and approvals still apply inside it. The inner
+    conversation (``messages``) is never returned.
+
+    Args:
+        runner: ``(prompt) -> AgentResult``, sync or async.
+        name: The tool name the outer agent sees.
+        description: The tool description the outer agent sees.
+
+    Returns:
+        A ``pydantic_ai.Tool``.
     """
     from pydantic_ai import Tool
 
     async def run_statechart(prompt: str) -> Dict[str, Any]:
-        res = runner(prompt)
-        if inspect.isawaitable(res):
-            res = await res
+        # 🔥 #289 review (5): a SYNC runner (`run_agent_sync`) called
+        #    inline blocked the outer agent's event loop -- concurrent tool
+        #    calls serialised and timeouts stalled. Off-loop on a daemon
+        #    thread; an async runner is awaited as before.
+        if inspect.iscoroutinefunction(runner):
+            res = await runner(prompt)
+        else:
+            res = await _in_daemon_thread(runner, prompt)
+            if inspect.isawaitable(res):
+                res = await res
         return {
             "state": getattr(res, "final_state", None),
             "output": _jsonable(getattr(res, "output", res)),

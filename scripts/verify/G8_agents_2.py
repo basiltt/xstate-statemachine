@@ -255,6 +255,43 @@ def structured_retry() -> None:
     assert res.context["output_retries"] == 1
 
 
+def per_state_schemas_recipe() -> None:
+    step("#289-b: per-state schema recipe (guide) runs")
+    import re
+
+    guide = (ROOT / "docs" / "_guide" / "integration-agents.md").read_text(
+        "utf-8"
+    )
+    section = guide.split("### Structured output per state", 1)[1]
+    blocks = re.findall(r"```python\n(.*?)```", section, re.S)
+    sys.modules["_guide_recipe"] = type(sys)("_guide_recipe")
+    exec(blocks[0], sys.modules["_guide_recipe"].__dict__)
+    print("   form:", sys.modules["_guide_recipe"].res.context["form"])
+
+
+def budget_beats_retries() -> None:
+    step("#289-b: max_turns beats retries")
+    from pydantic import BaseModel
+
+    from xstate_statemachine.contrib.agents import (
+        FakeModel,
+        run_agent_sync,
+        structured_output,
+    )
+
+    class W(BaseModel):
+        city: str
+
+    res = run_agent_sync(
+        model=FakeModel([{"text": "prose"}] * 9, is_async=False),
+        prompt="w",
+        max_turns=2,
+        **structured_output(W, retries=5, use_instructor=False),
+    )
+    print("  ", res.final_state, res.error, res.usage["turns"])
+    assert res.error["kind"] == "budget" and res.usage["turns"] == 2
+
+
 def support_bot() -> None:
     step("#291: agents_support_bot run.py --fake")
     ex = ROOT / "examples" / "integrations" / "agents_support_bot"
@@ -298,6 +335,8 @@ def main() -> None:
     langgraph_resume_and_forgery()
     pydantic_ai_round_trip()
     structured_retry()
+    per_state_schemas_recipe()
+    budget_beats_retries()
     support_bot()
     launch_and_comparisons()
     print("\nALL OK")

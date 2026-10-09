@@ -1451,6 +1451,72 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **pydantic-ai and structured output, as battle-tested (#289).** The
+  support bot's intake with a per-state schema: 100 tickets whose model
+  answers valid JSON, invalid JSON, JSON of the WRONG state's schema,
+  prose around JSON, a 1 MB string field, `null` and a negative id --
+  every one ends `done` with a VALIDATED value or `error` with
+  `kind: output` after exactly `retries` re-prompts, each counted as a
+  turn; a pydantic-ai `TestModel` agent as the lookup service (usage
+  into the budget keys, a structured `output_type` dumped to JSON,
+  raising → `onError`, hanging cancelled by the state exit, streaming
+  deltas in order); `max_turns` beating `retries` (the run ends
+  `budget`, never a hidden turn); a statechart exposed as a pydantic-ai
+  `Tool` that hides the conversation and keeps the allow-list;
+  instructor accepting prose the strict parser refuses; 1,000 runs flat
+  (`examples/integrations/agents_support_bot/tests/
+  test_battle_289_scenario.py`, `tests/contrib/agents/
+  test_battle_289_a.py`, `tests/test_battle_289_docs.py`). Found and
+  fixed: **a model validator or output parser raising anything but
+  `ValueError` / `ValidationError`** (`TypeError`, `RuntimeError`, a
+  `KeyError` from a custom parser, instructor's parser, `RecursionError`
+  from 100k-deep JSON) escaped the `outputValid` guard and STOPPED the
+  machine with `TransitionFailedError` -- any exception is now an
+  invalid reply (retried, then `kind: output`; the retry message names
+  the exception type only); `pydantic_ai_service` / `usage_logic`
+  trusted provider usage (negative counts refunded the budget, NaN
+  raised and sent the service to `onError`, malformed `onDone` data
+  raised) -- both reuse the budget sanitiser; a dataclass / TypedDict /
+  dict output holding `datetime` / `bytes` / `Decimal` broke
+  `get_snapshot()` (JSON-safe via pydantic now); **the documented
+  per-state recipe was not per-state** -- one schema on one state -- it
+  is a real 3-state chart with three `meta.output_model`s (an address
+  sent while collecting the name is rejected and retried); the
+  streaming service's LAST `STREAM` event carries `{"output", "usage"}`
+  (undocumented -- a deltas-only handler broke on it); forgetting
+  `usage_logic()` / `recordAgentUsage` meant budgets never tripped
+  (said loudly now, with the note that `onError` spends nothing);
+  exhaustion hid the reason (`kind: output` now names the last
+  validation detail -- field names and messages, never the model's
+  values); pydantic's default `extra="ignore"` silently DROPS unknown
+  fields -- "illegal fields rejected by state" needs
+  `extra="forbid"` on the model (documented; the recipe sets it);
+  `PYDANTIC_AI_TESTED` (`>=0.8,<3`) and a warn-only
+  `check_pydantic_ai_version()` mirror the LangGraph gate (pydantic-ai
+  churns); **review:** a `field_validator` raising
+  `ValueError(f"bad {v}")` and a `dict`-typed field's `loc` both echoed
+  the reply's values into the retry prompt and `context["error"]`
+  (custom-validator messages are now their error type, non-field `loc`
+  parts `*`); a validator flipping between calls made the exhaustion
+  message carry the VALIDATED value (never now); a `field_serializer`
+  raising escaped the guard (inside the try now); non-UTF-8 bytes and
+  unknown classes in a service's output broke `get_snapshot()`
+  (base64 / `repr`); a SYNC runner behind `agent_tool_from_machine`
+  blocked the outer agent's event loop (daemon thread now);
+  `usage_logic` raised on junk `turns` and kept a raw `datetime`
+  output. Docs: Guarantees (validation before `done`; constraints
+  enforced not suggested; retries are counted turns; strict parser
+  unless instructor; exhaustion never writes `result`; a model can
+  still lie inside a valid schema), Troubleshooting rows for every
+  provoked error, an Operations alert on the output-retry rate, the
+  example README's "Structured intake". Held: a `"module:Model"` naming
+  a non-pydantic class / function / missing attribute is
+  `AgentConfigError`; the retry message never echoes the rejected reply;
+  `retries=2, max_turns=3` reaches `done` and `max_turns=2` ends
+  `error` (no off-by-one); a stream failing midway delivers its deltas
+  then `onError` with the context closed; the service under
+  `SyncInterpreter` fails loudly; async and sync runners agree on four
+  scripts.
 - **LangGraph interop, as battle-tested (#288).** The support bot's
   `TOOL_LOOP` dropped INTO a 3-node LangGraph graph as a
   `statechart_node`: 100 checkpointed threads (`MemorySaver`) each

@@ -46,6 +46,7 @@ from ...machine_logic import MachineLogic
 from ...patterns.retry import RetryPolicy
 from ...plugins import redact
 from ._output import (
+    _retry_prompt,
     _meta_output_model,
     _resolve_model,
     _task_of,
@@ -549,26 +550,28 @@ class _AgentLogic:
         # 🔁 RETRY_OUTPUT: re-prompt with the validation errors (field
         #    names and messages only). The retry costs a model turn, so it
         #    counts against every budget like any other turn.
-        model = self._output_model_for(e)
-        _, detail = _validate_output(
-            model, str(self._data(e).get("text", "")), self.output_parser
-        )
+        model, detail = self._output_model_for(e), self._detail(e)
         ctx["output_retries"] = int(ctx.get("output_retries", 0)) + 1
-        schema = (
-            json.dumps(model.model_json_schema())  # type: ignore[attr-defined]
-            if model is not None
-            else "{}"
+        self._append(ctx, _retry_prompt(model, detail))
+
+    def _detail(self, e: Any) -> Any:
+        """The last validation failure: field names + messages, no values."""
+        ok, detail = _validate_output(
+            self._output_model_for(e),
+            str(self._data(e).get("text", "")),
+            self.output_parser,
         )
-        self._append(
-            ctx,
-            {
-                "role": "user",
-                "content": (
-                    f"RETRY_OUTPUT: your answer did not validate ({detail}). "
-                    f"Reply with only JSON matching this schema: {schema}"
-                ),
-            },
-        )
+        # 🔥 #289 review (2): a validator that flips between calls (time,
+        #    quota) made this second run SUCCEED -- `detail` was then the
+        #    validated VALUE and landed in `context["error"]`.
+        return "output rejected" if ok else detail
+
+    def a_fail_output(
+        self, i: Any, ctx: Dict[str, Any], e: Any, a: Any
+    ) -> None:
+        # 🔥 Exhaustion names the LAST detail (prompt drift vs parser).
+        msg = f"model output failed validation ({self._detail(e)})"
+        self._fail(ctx, "output", msg)
 
     @staticmethod
     def _fail(ctx: Dict[str, Any], kind: str, message: str) -> None:
@@ -754,9 +757,7 @@ def agent_logic(
             "failTurnLimit": st.a_fail("budget", "turn limit reached"),
             "failTokenBudget": st.a_fail("budget", "token budget exhausted"),
             "failCostBudget": st.a_fail("budget", "cost budget exhausted"),
-            "failOutput": st.a_fail(
-                "output", "model output failed validation"
-            ),
+            "failOutput": st.a_fail_output,
             "failRetries": st.a_fail("retries", "retries exhausted"),
             "escalateHuman": st.a_fail(
                 "human_timeout", "no human decision in time"

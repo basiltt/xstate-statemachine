@@ -91,6 +91,38 @@ the fix (`pip install openai` / `OPENAI_API_KEY`); no ticket is started.
 
 Only the model changes. The allow-list, budgets and human gate stay exactly as they were.
 
+## Structured intake
+
+A refund request can be collected as a validated object instead of free
+text: give the model state a `meta.output_model` and switch on
+`structured_output`. A reply that is not valid JSON, has the wrong shape,
+or breaks a `Field(...)` range is re-prompted (`RETRY_OUTPUT`, a counted
+turn) and never reaches `result`. The battle scenario
+`tests/test_battle_289_scenario.py` runs 100 tickets through exactly this
+`OrderRef` schema.
+
+```python
+import sys
+from pydantic import BaseModel, Field
+from xstate_statemachine.contrib.agents import FakeModel, load_chart, run_agent_sync, structured_output
+
+class OrderRef(BaseModel):
+    order_id: int = Field(gt=0, le=10**6)
+    reason: str = Field(min_length=3, max_length=200)
+
+sys.modules["intake"] = sys.modules[__name__]
+chart = load_chart()
+chart["states"]["awaiting_model"]["meta"]["output_model"] = "intake:OrderRef"
+model = FakeModel([{"text": '{"order_id": -1, "reason": "oops"}'},
+                   {"text": '{"order_id": 42, "reason": "damaged"}'}], is_async=False)
+res = run_agent_sync(chart, model=model, prompt="refund order 42",
+                     **structured_output(retries=2, use_instructor=False))
+assert res.output == {"order_id": 42, "reason": "damaged"}
+assert res.context["output_retries"] == 1
+```
+
+See [Structured output per state](https://basiltt.github.io/xstate-statemachine/guide/integration-agents/#structured-output-per-state).
+
 ## Drop the bot into a LangGraph graph
 
 Already on LangGraph? Keep your graph and make this bot **one node**: its
