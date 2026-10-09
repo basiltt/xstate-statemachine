@@ -30,9 +30,11 @@ from typing import Any, Dict, List, Optional
 
 from ...eda.outbox import OutboxRelay
 from ...persistence.timers import DueTimerScanner
+from .worker import assert_json_serializer, register_task
 
 __all__ = [
     "DurableTimerScheduler",
+    "close_relay_loop",
     "outbox_relay_task",
     "xsm_deadlines_every",
 ]
@@ -65,6 +67,9 @@ class DurableTimerScheduler:
         fire_name: str = DEFAULT_FIRE_TASK,
         **scanner_kw: Any,
     ) -> None:
+        # 🔐 #292 battle B: the guide promised "every entry point" refuses
+        #    pickle; the Beat tasks were the two that did not check.
+        assert_json_serializer(app)
         self.app = app
         self.store = store
         mfk = machine_for_key
@@ -82,8 +87,10 @@ class DurableTimerScheduler:
         def fire(key: str, state_id: str, entry_seq: int) -> bool:
             return self.fire(key, state_id, entry_seq)
 
-        self.task = app.task(name=name, serializer="json")(scan)
-        self.fire_task = app.task(name=fire_name, serializer="json")(fire)
+        self.task = register_task(app, scan, name=name, serializer="json")
+        self.fire_task = register_task(
+            app, fire, name=fire_name, serializer="json"
+        )
 
     def run_once(self) -> int:
         """One safety-net scan; returns how many machines were woken."""
@@ -181,7 +188,12 @@ def outbox_relay_task(
     left one broker connection behind per tick. `close_relay_loop` (the
     returned task's ``close`` attribute) closes the broker and the loop
     -- call it from ``worker_process_shutdown``.
+
+    Raises:
+        InvalidConfigError: *app* accepts pickle / YAML, or *name* is
+            already a task on *app* (`register_task`).
     """
+    assert_json_serializer(app)
     relay_kw: Dict[str, Any] = {"batch": batch}
     if owner is not None:
         relay_kw["owner"] = owner
@@ -218,6 +230,37 @@ def outbox_relay_task(
                 loop.close()
                 state["loop"] = None
 
-    task = app.task(name=name, serializer="json")(relay_once)
-    task.close_relay_loop = close
+    task = register_task(app, relay_once, name=name, serializer="json")
+    # 🔥 #292 review H2: on an ``autofinalize=False`` app the return is
+    #    a `PromiseProxy`; setting an attribute on it EVALUATES it and
+    #    raises "Contract breach". Attach the closer on the real task
+    #    once the app is finalised (now, when it already is).
+    if getattr(app, "finalized", False) or getattr(app, "autofinalize", True):
+        # 📝 a finalisable app evaluates the proxy on attribute set (and
+        #    finalises) -- exactly what `app.tasks` would do anyway
+        task.close_relay_loop = close
+    else:
+        _RELAY_CLOSERS.setdefault(id(app), {})[name] = close
+
+        def _attach(sender: Any = None, **_kw: Any) -> None:
+            real = sender.tasks.get(name) if sender is not None else None
+            if real is not None:
+                real.close_relay_loop = close
+
+        app.on_after_finalize.connect(_attach, weak=False)
     return task
+
+
+#: id(app) -> {task name: closer} for relays registered before finalize.
+_RELAY_CLOSERS: Dict[int, Dict[str, Any]] = {}
+
+
+def close_relay_loop(app: Any, name: str = DEFAULT_OUTBOX_TASK) -> None:
+    """Close the relay loop of *name* on *app* -- works whether the task
+    was registered before or after the app was finalised."""
+    task = app.tasks.get(name)
+    closer = getattr(task, "close_relay_loop", None) or _RELAY_CLOSERS.get(
+        id(app), {}
+    ).get(name)
+    if closer is not None:
+        closer()

@@ -42,6 +42,7 @@ require_extra("celery", "celery")
 
 from .beat import (  # noqa: E402
     DurableTimerScheduler,
+    close_relay_loop,
     outbox_relay_task,
     xsm_deadlines_every,
 )
@@ -59,6 +60,7 @@ from .service import (  # noqa: E402
 from .worker import (  # noqa: E402
     UNSAFE_CONTENT,
     assert_json_serializer,
+    register_task,
     statechart_task,
 )
 
@@ -74,8 +76,10 @@ __all__ = [
     "celery_service",
     "connect_signals",
     "deliver_result",
+    "close_relay_loop",
     "outbox_relay_task",
     "poll_results",
+    "register_task",
     "statechart_task",
     "xsm_deadlines_every",
 ]

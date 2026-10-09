@@ -287,10 +287,29 @@ EDA_BROKER=redis-streams REDIS_URL=redis://localhost:6379/0 python -m eda_fulfil
 
 Kafka, RabbitMQ, NATS and SQS work the same way. Pick one with
 `EDA_BROKER` / `--broker` and point it at a server with its env var (see
-*Run it against each broker* above). For a real Celery worker, build the app with
-`make_celery(eager=False)`, run a worker plus **exactly one** Beat process
-with `xsm_deadlines_every(scheduler)`, and call `connect_signals()` so
-completions are delivered durably.
+*Run it against each broker* above).
+
+### Operate it: Celery
+
+- **A shared broker and result backend.** `make_celery()` defaults to
+  `memory://` + `cache+memory://`, which live inside one process. A worker
+  started with `celery worker` in another process would never see the
+  caller's tasks or results. Set `CELERY_BROKER_URL` and
+  `CELERY_RESULT_BACKEND` (for example `redis://localhost:6379/0`) and
+  build with `make_celery(eager=False)`. In the worker process call
+  `connect_signals(store, machine, app=app)` so completions reach the
+  stored order (`test_real_worker_runs_ship_order` runs a real worker
+  thread against this app).
+- **Exactly one Beat**, carrying `xsm_deadlines_every(scheduler)` (the
+  `after` escalation), a `poll_results` task (the durable completion
+  path: a completion reaches an order whose interpreter was stopped long
+  ago, because it is applied to the *stored* snapshot) and the
+  `relay_task`. Two Beats are safe but double the work; zero Beats means
+  escalations never fire.
+- **Two apps in one process** (tests, one worker per tenant) each keep
+  their own scan / relay / statechart tasks: they are registered
+  `shared=False`. Two schedulers on *one* app need distinct `name=`;
+  the default name twice is refused with `InvalidConfigError`.
 
 ## What is faked here
 
