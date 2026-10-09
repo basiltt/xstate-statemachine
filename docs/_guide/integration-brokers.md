@@ -108,7 +108,7 @@ Every consumer name ever used stays registered in the group until it is removed,
 
 ### Kafka: `KafkaBroker`
 
-`(*, bootstrap_servers, group_id="xsm", producer=None, consumer_factory=None, batch=50, client_kw=None)`. The message **key is `envelope.subject`**, so per-subject order is partition order. The body is structured-mode CloudEvents with `content-type`, `ce_id` and `ce_type` headers, and the producer is idempotent with `acks="all"`. Kafka has no per-message ack, so the adapter tracks the offsets it handed out and **commits only the contiguous settled prefix** per partition. After a crash, the group resumes from the first unsettled offset, and the messages after it are redelivered and deduped by the inbox. Kafka keeps no delivery count, so the attempt carried across a restart is the envelope's own `xsmattempt`. Pass TLS / SASL through `client_kw` (`security_protocol`, `ssl_context`, `sasl_*`).
+`(*, bootstrap_servers, group_id="xsm", producer=None, consumer_factory=None, batch=50, client_kw=None)`. The message **key is `envelope.subject`**, so per-subject order is partition order. The body is structured-mode CloudEvents with `content-type`, `ce_id` and `ce_type` headers, and the producer is idempotent with `acks="all"`. Kafka has no per-message ack, so the adapter tracks the offsets it handed out and **commits only the contiguous settled prefix** per partition. After a crash, the group resumes from the first unsettled offset, and the messages after it are redelivered and deduped by the inbox. Kafka keeps no delivery count, and the adapters no longer trust a producer-supplied `xsmattempt` (a forged count could dead-letter a healthy message), so after a consumer restart a Kafka envelope starts again at attempt 0 -- poison detection there relies on `InboundDispatcher`'s own in-process counter. Pass TLS / SASL through `client_kw` (`security_protocol`, `ssl_context`, `sasl_*`).
 
 ### RabbitMQ: `RabbitMQBroker`
 
@@ -175,7 +175,7 @@ Live broker suite: `XSM_CONTAINERS=1 pytest tests/contrib/brokers -m containers`
 | `MissingExtraError: … pip install "xstate-statemachine[kafka]"` | extra not installed | run the command |
 | Envelopes of one subject arrive out of order on SQS | a standard queue | use a `.fifo` queue |
 | The same envelope is processed twice | at-least-once redelivery | pass `inbox=` to `InboundDispatcher` |
-| A poison message loops on Kafka after restarts | Kafka has no delivery count | republish with `with_attempt(n + 1)`, or lower `max_attempts` |
+| A poison message loops on Kafka after restarts | Kafka has no delivery count and the adapter does not trust a producer's `xsmattempt` | keep the consumer up long enough for `max_attempts` in-process deliveries, or lower `max_attempts`; `xsm dlq` the message by hand |
 | Redis entries of a crashed consumer are never processed | `min_idle_ms` not reached yet | wait, or lower `min_idle_ms` (never below your handler time) |
 | "dropping undecodable message" warnings | non-CloudEvents producers on the topic | fix the producer, or use a separate topic |
 | `MissingExtraError: … pip install "xstate-statemachine[redis]"` (or `[rabbitmq]`, `[nats]`, `[sqs]`) | importing `contrib.brokers.<name>` without its extra | install the extra the message names |

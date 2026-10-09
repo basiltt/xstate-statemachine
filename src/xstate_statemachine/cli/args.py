@@ -836,6 +836,29 @@ examples:
     return parser
 
 
+#: 📝 #294 review (B): `--protocol bogus --validate` exited 0 -- the field is
+#:    free text in AsyncAPI, but a typo is never what the operator meant.
+ASYNCAPI_PROTOCOLS = (
+    "kafka",
+    "kafka-secure",
+    "amqp",
+    "amqps",
+    "nats",
+    "redis",
+    "sqs",
+    "sns",
+    "mqtt",
+    "http",
+    "https",
+    "ws",
+    "wss",
+    "pulsar",
+    "googlepubsub",
+    "jms",
+    "solace",
+)
+
+
 def _add_eda_parsers(subparsers: Any, presentation: Any) -> None:
     """`xsm dlq` and `xsm asyncapi` (#293, #295)."""
     dlq = subparsers.add_parser(
@@ -919,7 +942,12 @@ def _add_eda_parsers(subparsers: Any, presentation: Any) -> None:
     aa.add_argument("json_file", help="The machine JSON file.")
     aa.add_argument("-o", "--output", help="Write to this file.")
     aa.add_argument("--server", help="Broker host, e.g. localhost:9092.")
-    aa.add_argument("--protocol", default="kafka", help="Server protocol.")
+    aa.add_argument(
+        "--protocol",
+        default="kafka",
+        choices=ASYNCAPI_PROTOCOLS,
+        help="Server protocol (AsyncAPI binding name).",
+    )
     aa.add_argument("--inbound", help="Inbound channel address.")
     aa.add_argument(
         "--outbound", default="events", help="Outbound channel address."

@@ -134,7 +134,20 @@ class _Core:
         on_reconnect: Optional[Callable[[], Any]] = None,
         on_undecodable: Optional[Callable[[str, Raw, Exception], Any]] = None,
         dead_letters: Optional[Any] = None,
+        **unknown: Any,
     ) -> None:
+        if unknown:
+            # 💡 #294 review (B): `KafkaBroker(sasl_plain_password=...)`
+            #    died with `TypeError: _Core.__init__()` -- name the
+            #    option and where client options go.
+            names = ", ".join(sorted(unknown))
+            raise TypeError(
+                f"unknown broker option(s): {names}. Client options "
+                "(TLS, SASL, credentials) go in `client_kw=` / "
+                "`connect_kw=` / `client=`; the adapter's own options are "
+                "max_bytes, on_disconnect, on_reconnect, on_undecodable, "
+                "dead_letters."
+            )
         self.max_bytes = int(max_bytes)
         self.on_disconnect = on_disconnect
         self.on_reconnect = on_reconnect

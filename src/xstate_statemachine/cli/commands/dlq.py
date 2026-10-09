@@ -274,7 +274,15 @@ def run_dlq(args: Any) -> None:
     limit = getattr(args, "limit", None)
     if limit is not None and limit < 1:
         raise _fail("--limit must be >= 1")
-    dlq = open_dlq(args.dlq)
+    from . import snapshots as _snap
+
+    # 📝 #294 review (B): `open_store` is borrowed from `xsm snapshots`;
+    #    its error lines must say which command the operator ran.
+    _snap._PROG[0] = "xsm dlq"
+    try:
+        dlq = open_dlq(args.dlq)
+    finally:
+        _snap._PROG[0] = "xsm snapshots"
     try:
         if args.dlq_command == "list":
             _list(

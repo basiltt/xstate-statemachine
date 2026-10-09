@@ -31,9 +31,14 @@ EXIT_USAGE = 2
 _SCAN_ALL = 2**62
 
 
+#: The command name error lines are prefixed with; `xsm dlq` borrows
+#: `open_store` and sets its own (#294 review: it said "xsm snapshots").
+_PROG = ["xsm snapshots"]
+
+
 def _fail(msg: str) -> "SystemExit":
     # 📝 stderr, so `--json > out.json` never captures an error line.
-    print(f"xsm snapshots: error: {msg}", file=sys.stderr)
+    print(f"{_PROG[0]}: error: {msg}", file=sys.stderr)
     return SystemExit(EXIT_USAGE)
 
 
