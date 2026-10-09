@@ -48,9 +48,11 @@ from ...factory import create_machine
 from ...models import MachineNode
 from ...plugins import PluginBase
 from .._compat import require_extra
-from .messages import AgentConfigError
+from .messages import AgentConfigError, AgentError
 
 __all__ = [
+    "INTERRUPT_KEY",
+    "GraphInterruptedError",
     "LANGGRAPH_TESTED",
     "LangChainCallbackPlugin",
     "check_langgraph_version",
@@ -276,6 +278,7 @@ def langgraph_service(
     stream: bool = False,
     stream_mode: str = "values",
     config: Optional[Mapping[str, Any]] = None,
+    on_interrupt: str = "error",
 ) -> Callable[..., Any]:
     """A compiled LangGraph as an `invoke` service (async engine).
 
@@ -294,20 +297,43 @@ def langgraph_service(
         stream: Stream chunks as ``STREAM`` events.
         stream_mode: Passed to ``astream``.
         config: Passed to LangGraph as-is (``recursion_limit``, ...).
+        on_interrupt: What a graph that called ``interrupt()`` means:
+            ``"error"`` (default) -- ``onError`` with
+            `GraphInterruptedError` carrying the interrupt payload(s), so
+            the chart decides (park in its own waiting state, escalate);
+            ``"done"`` -- ``onDone`` with the partial state (the
+            ``__interrupt__`` key is left in place for the caller).
 
     Returns:
         An async service for ``MachineLogic(services=...)``.
 
-    ⚠️ A graph that calls ``interrupt()`` returns normally: ``onDone``
-    receives the partial state with an ``__interrupt__`` key.
+    Raises:
+        AgentConfigError: *on_interrupt* is not ``"error"`` / ``"done"``.
+
+    🔥 #288 battle (B): a graph that calls ``interrupt()`` RETURNS
+    normally from ``ainvoke`` -- the partial state carries an
+    ``__interrupt__`` key -- so the chart saw ``onDone`` and read a
+    paused graph as a finished one. The default now surfaces it as
+    ``onError`` (`GraphInterruptedError`); "the model proposes, the
+    machine decides" needs the machine to SEE the pause.
     """
+    if on_interrupt not in ("error", "done"):
+        raise AgentConfigError(
+            f"on_interrupt must be 'error' or 'done', got {on_interrupt!r}"
+        )
     cfg = dict(config) if config is not None else None
+
+    def _settle(out: Any) -> Any:
+        if on_interrupt == "error" and _interrupted(out):
+            raise GraphInterruptedError(out)
+        return output_to(out) if output_to is not None else out
 
     if not stream:
 
         async def run_graph(i: Any, ctx: Any, e: Any) -> Any:
-            out = await compiled_graph.ainvoke(input_from(ctx, e), cfg)
-            return output_to(out) if output_to is not None else out
+            return _settle(
+                await compiled_graph.ainvoke(input_from(ctx, e), cfg)
+            )
 
         return run_graph
 
@@ -320,10 +346,39 @@ def langgraph_service(
     inner = from_async_iterator(chunks)
 
     async def stream_graph(i: Any, ctx: Any, e: Any) -> Any:
-        last = await inner(i, ctx, e)
-        return output_to(last) if output_to is not None else last
+        return _settle(await inner(i, ctx, e))
 
     return stream_graph
+
+
+INTERRUPT_KEY = "__interrupt__"
+
+
+def _interrupted(out: Any) -> bool:
+    """Did LangGraph pause this run (``interrupt()``)?"""
+    return isinstance(out, Mapping) and bool(out.get(INTERRUPT_KEY))
+
+
+class GraphInterruptedError(AgentError):
+    """The inner LangGraph called ``interrupt()`` -- it is PAUSED, not done.
+
+    ``interrupts`` holds LangGraph's ``Interrupt`` objects (their ``value``
+    is what the graph asked a human); ``state`` is the partial graph
+    state. Resume the graph with ``Command(resume=...)`` on the same
+    ``thread_id`` once the chart has decided.
+    """
+
+    def __init__(self, state: Any) -> None:
+        self.state = state
+        self.interrupts = list(
+            state.get(INTERRUPT_KEY) or ()
+            if isinstance(state, Mapping)
+            else ()
+        )
+        values = [getattr(x, "value", x) for x in self.interrupts]
+        super().__init__(
+            f"LangGraph interrupt(): the graph is paused, asking {values!r}"
+        )
 
 
 # -----------------------------------------------------------------------------
