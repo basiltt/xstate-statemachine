@@ -549,10 +549,7 @@ class _AgentLogic:
         # 🔁 RETRY_OUTPUT: re-prompt with the validation errors (field
         #    names and messages only). The retry costs a model turn, so it
         #    counts against every budget like any other turn.
-        model = self._output_model_for(e)
-        _, detail = _validate_output(
-            model, str(self._data(e).get("text", "")), self.output_parser
-        )
+        model, detail = self._output_model_for(e), self._detail(e)
         ctx["output_retries"] = int(ctx.get("output_retries", 0)) + 1
         schema = (
             json.dumps(model.model_json_schema())  # type: ignore[attr-defined]
@@ -569,6 +566,21 @@ class _AgentLogic:
                 ),
             },
         )
+
+    def _detail(self, e: Any) -> Any:
+        """The last validation failure: field names + messages, no values."""
+        return _validate_output(
+            self._output_model_for(e),
+            str(self._data(e).get("text", "")),
+            self.output_parser,
+        )[1]
+
+    def a_fail_output(
+        self, i: Any, ctx: Dict[str, Any], e: Any, a: Any
+    ) -> None:
+        # 🔥 Exhaustion names the LAST detail (prompt drift vs parser).
+        msg = f"model output failed validation ({self._detail(e)})"
+        self._fail(ctx, "output", msg)
 
     @staticmethod
     def _fail(ctx: Dict[str, Any], kind: str, message: str) -> None:
@@ -754,9 +766,7 @@ def agent_logic(
             "failTurnLimit": st.a_fail("budget", "turn limit reached"),
             "failTokenBudget": st.a_fail("budget", "token budget exhausted"),
             "failCostBudget": st.a_fail("budget", "cost budget exhausted"),
-            "failOutput": st.a_fail(
-                "output", "model output failed validation"
-            ),
+            "failOutput": st.a_fail_output,
             "failRetries": st.a_fail("retries", "retries exhausted"),
             "escalateHuman": st.a_fail(
                 "human_timeout", "no human decision in time"

@@ -22,7 +22,8 @@
 from __future__ import annotations
 
 import inspect
-from typing import Any, AsyncIterator, Callable, Dict, Optional
+import warnings
+from typing import Any, AsyncIterator, Callable, Dict, Optional, Tuple
 
 from pydantic import BaseModel
 
@@ -33,10 +34,60 @@ from .._compat import require_extra
 require_extra("agents", "pydantic_ai", hint="or: pip install pydantic-ai")
 
 __all__ = [
+    "PYDANTIC_AI_TESTED",
     "agent_tool_from_machine",
+    "check_pydantic_ai_version",
     "pydantic_ai_service",
     "usage_logic",
 ]
+
+
+#: The pydantic-ai versions this adapter is tested against (inclusive
+#: lower, exclusive upper). Outside it `check_pydantic_ai_version` WARNS
+#: -- pydantic-ai churns, and both attribute spellings are read.
+PYDANTIC_AI_TESTED: Tuple[Tuple[int, int], Tuple[int, int]] = ((0, 8), (3, 0))
+
+
+def _parse_version(version: str) -> Tuple[int, int]:
+    parts = []
+    for piece in version.split(".")[:2]:
+        digits = "".join(ch for ch in piece if ch.isdigit())
+        parts.append(int(digits or 0))
+    while len(parts) < 2:
+        parts.append(0)
+    return parts[0], parts[1]
+
+
+def check_pydantic_ai_version(version: Optional[str] = None) -> bool:
+    """Warn when pydantic-ai is outside `PYDANTIC_AI_TESTED`.
+
+    Args:
+        version: A version string; ``None`` reads the installed
+            ``pydantic_ai.__version__``.
+
+    Returns:
+        ``True`` when the version is inside the tested range, ``False``
+        (after a `RuntimeWarning`) when it is outside or unreadable.
+    """
+    if version is None:
+        import pydantic_ai
+
+        version = str(getattr(pydantic_ai, "__version__", "") or "")
+    lo, hi = PYDANTIC_AI_TESTED
+    if version and lo <= _parse_version(version) < hi:
+        return True
+    warnings.warn(
+        f"xstate_statemachine.contrib.agents.pydantic_ai is tested with "
+        f"pydantic-ai >={lo[0]}.{lo[1]},<{hi[0]}.{hi[1]}; found "
+        f"{version or 'unknown'}. See the compatibility table in "
+        f"docs/_guide/integration-agents.md.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+    return False
+
+
+check_pydantic_ai_version()
 
 
 def _jsonable(value: Any) -> Any:
@@ -95,6 +146,18 @@ def pydantic_ai_service(
     (``event.data == {"delta": "..."}``) via `from_async_iterator`, and
     ``onDone`` receives the same ``{"output", "usage"}`` as above.
     Exceptions are ``onError``; exiting the state cancels the run.
+
+    Args:
+        agent: A ``pydantic_ai.Agent`` (anything with ``run`` /
+            ``run_stream``).
+        prompt_from: ``(ctx, event) -> str`` -- the user prompt.
+        deps_from: Optional ``(ctx, event) -> deps`` passed as ``deps=``.
+        stream: Stream text deltas as ``STREAM`` events.
+
+    Returns:
+        An async service callable for ``MachineLogic(services=...)``.
+        Async engine only: `SyncInterpreter` refuses it with
+        `NotSupportedError`.
     """
 
     def _args(ctx: Any, e: Any) -> Dict[str, Any]:
@@ -128,7 +191,18 @@ def pydantic_ai_service(
 def usage_logic(name: str = "recordAgentUsage") -> MachineLogic:
     """An action that adds an ``onDone`` usage block to ``tokens_in`` /
     ``tokens_out`` and counts one ``turns`` -- the keys `budget_guards`
-    read."""
+    read.
+
+    Without this action on ``onDone`` nothing writes those keys, so
+    `budget_guards` read zeros and never trip.
+
+    Args:
+        name: The action name to register.
+
+    Returns:
+        A `MachineLogic` with one action that also stores ``output`` in
+        ``context["result"]``.
+    """
 
     def record(i: Any, ctx: Dict[str, Any], e: Any, a: Any) -> None:
         data = getattr(e, "data", None) or {}
@@ -159,7 +233,16 @@ def agent_tool_from_machine(
     *runner* is ``(prompt) -> AgentResult`` (sync or async) -- typically
     ``lambda p: run_agent(machine, prompt=p)``. The tool returns
     ``{"state", "output", "error"}``; the statechart's own budgets,
-    allow-lists and approvals still apply inside it.
+    allow-lists and approvals still apply inside it. The inner
+    conversation (``messages``) is never returned.
+
+    Args:
+        runner: ``(prompt) -> AgentResult``, sync or async.
+        name: The tool name the outer agent sees.
+        description: The tool description the outer agent sees.
+
+    Returns:
+        A ``pydantic_ai.Tool``.
     """
     from pydantic_ai import Tool
 
