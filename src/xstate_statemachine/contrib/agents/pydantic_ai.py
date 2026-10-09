@@ -25,11 +25,12 @@ import inspect
 import warnings
 from typing import Any, AsyncIterator, Callable, Dict, Optional, Tuple
 
-from pydantic import BaseModel, TypeAdapter
+from pydantic import BaseModel, ConfigDict, TypeAdapter
 
 from ...actor_logic import from_async_iterator
 from ...machine_logic import MachineLogic
 from .._compat import require_extra
+from ._threads import _in_daemon_thread
 from .budgets import _spent_tokens
 
 require_extra("agents", "pydantic_ai", hint="or: pip install pydantic-ai")
@@ -91,20 +92,28 @@ def check_pydantic_ai_version(version: Optional[str] = None) -> bool:
 check_pydantic_ai_version()
 
 
+_ANY_JSON = TypeAdapter(Any, config=ConfigDict(ser_json_bytes="base64"))
+
+
 def _jsonable(value: Any) -> Any:
     # 🔥 #289 battle (A): only BaseModel was dumped; a dataclass /
     #    TypedDict / dict output holding datetime, bytes or Decimal landed
     #    raw in context and broke `get_snapshot()` (json.dumps). Every
-    #    output now goes through pydantic's JSON mode; anything pydantic
-    #    cannot serialise is kept as-is (never raises).
+    #    output now goes through pydantic's JSON mode. #289 review (4):
+    #    non-UTF-8 bytes raised under the default utf8 serialiser -- bytes
+    #    are base64 now, and anything else pydantic cannot serialise falls
+    #    back to `repr` (always JSON-safe, never raises).
     if isinstance(value, BaseModel):
         return value.model_dump(mode="json")
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     try:
-        return TypeAdapter(Any).dump_python(value, mode="json")
-    except Exception:  # noqa: BLE001 -- unserialisable: keep raw
-        return value
+        return _ANY_JSON.dump_python(value, mode="json", fallback=repr)
+    except Exception:  # noqa: BLE001 -- pydantic < 2.10 lacks fallback=
+        try:
+            return _ANY_JSON.dump_python(value, mode="json")
+        except Exception:  # noqa: BLE001 -- unserialisable: JSON-safe repr
+            return repr(value)
 
 
 def _usage(obj: Any) -> Dict[str, int]:
@@ -158,9 +167,11 @@ def pydantic_ai_service(
     ``onDone`` so `budget_guards` see the spend.
 
     With ``stream=True`` each text delta is sent as a ``STREAM`` event
-    (``event.data == {"delta": "..."}``) via `from_async_iterator`, and
-    ``onDone`` receives the same ``{"output", "usage"}`` as above.
-    Exceptions are ``onError``; exiting the state cancels the run.
+    (``event.data == {"delta": "..."}``) via `from_async_iterator`; the
+    LAST ``STREAM`` event carries ``{"output", "usage"}`` and NO
+    ``"delta"`` (a handler must use ``event.data.get("delta")``), and
+    ``onDone`` receives that same ``{"output", "usage"}``. Exceptions are
+    ``onError``; exiting the state cancels the run.
 
     Args:
         agent: A ``pydantic_ai.Agent`` (anything with ``run`` /
@@ -234,8 +245,11 @@ def usage_logic(name: str = "recordAgentUsage") -> MachineLogic:
         ctx["tokens_out"] = _spent_tokens(ctx.get("tokens_out")) + (
             _spent_tokens(usage.get("output_tokens"))
         )
-        ctx["turns"] = int(ctx.get("turns", 0)) + 1
-        ctx["result"] = data.get("output")
+        ctx["turns"] = _spent_tokens(ctx.get("turns")) + 1
+        # 📝 #289 review (8): a hand-written service's datetime output
+        #    (or junk `turns` in a tampered snapshot) must not break
+        #    `get_snapshot()` / raise here.
+        ctx["result"] = _jsonable(data.get("output"))
 
     return MachineLogic(actions={name: record})
 
@@ -268,9 +282,16 @@ def agent_tool_from_machine(
     from pydantic_ai import Tool
 
     async def run_statechart(prompt: str) -> Dict[str, Any]:
-        res = runner(prompt)
-        if inspect.isawaitable(res):
-            res = await res
+        # 🔥 #289 review (5): a SYNC runner (`run_agent_sync`) called
+        #    inline blocked the outer agent's event loop -- concurrent tool
+        #    calls serialised and timeouts stalled. Off-loop on a daemon
+        #    thread; an async runner is awaited as before.
+        if inspect.iscoroutinefunction(runner):
+            res = await runner(prompt)
+        else:
+            res = await _in_daemon_thread(runner, prompt)
+            if inspect.isawaitable(res):
+                res = await res
         return {
             "state": getattr(res, "final_state", None),
             "output": _jsonable(getattr(res, "output", res)),

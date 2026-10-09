@@ -556,11 +556,15 @@ class _AgentLogic:
 
     def _detail(self, e: Any) -> Any:
         """The last validation failure: field names + messages, no values."""
-        return _validate_output(
+        ok, detail = _validate_output(
             self._output_model_for(e),
             str(self._data(e).get("text", "")),
             self.output_parser,
-        )[1]
+        )
+        # 🔥 #289 review (2): a validator that flips between calls (time,
+        #    quota) made this second run SUCCEED -- `detail` was then the
+        #    validated VALUE and landed in `context["error"]`.
+        return "output rejected" if ok else detail
 
     def a_fail_output(
         self, i: Any, ctx: Dict[str, Any], e: Any, a: Any

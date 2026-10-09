@@ -1499,7 +1499,18 @@ _No unreleased changes yet._
   `extra="forbid"` on the model (documented; the recipe sets it);
   `PYDANTIC_AI_TESTED` (`>=0.8,<3`) and a warn-only
   `check_pydantic_ai_version()` mirror the LangGraph gate (pydantic-ai
-  churns). Docs: Guarantees (validation before `done`; constraints
+  churns); **review:** a `field_validator` raising
+  `ValueError(f"bad {v}")` and a `dict`-typed field's `loc` both echoed
+  the reply's values into the retry prompt and `context["error"]`
+  (custom-validator messages are now their error type, non-field `loc`
+  parts `*`); a validator flipping between calls made the exhaustion
+  message carry the VALIDATED value (never now); a `field_serializer`
+  raising escaped the guard (inside the try now); non-UTF-8 bytes and
+  unknown classes in a service's output broke `get_snapshot()`
+  (base64 / `repr`); a SYNC runner behind `agent_tool_from_machine`
+  blocked the outer agent's event loop (daemon thread now);
+  `usage_logic` raised on junk `turns` and kept a raw `datetime`
+  output. Docs: Guarantees (validation before `done`; constraints
   enforced not suggested; retries are counted turns; strict parser
   unless instructor; exhaustion never writes `result`; a model can
   still lie inside a valid schema), Troubleshooting rows for every
