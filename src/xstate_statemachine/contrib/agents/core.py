@@ -22,11 +22,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import copy
 import importlib
 import inspect
 import json
 import logging
+import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -141,6 +143,24 @@ class Budget:
     max_usd: Optional[float] = None
     max_turns: Optional[int] = 10
 
+    def __post_init__(self) -> None:
+        # 🔥 #287 battle (A): budgets were never validated -- "20" made
+        #    every guard raise, True was a turn limit of 1, NaN refused
+        #    every turn. A limit is a non-negative finite number or None.
+        for name in ("max_tokens", "max_usd", "max_turns"):
+            v = getattr(self, name)
+            if v is None:
+                continue
+            ok = isinstance(v, (int, float)) and not isinstance(v, bool)
+            if name != "max_usd":
+                ok = ok and isinstance(v, int)
+            if not ok or not math.isfinite(v) or v < 0:
+                raise AgentConfigError(
+                    f"Budget.{name} must be a non-negative "
+                    f"{'number' if name == 'max_usd' else 'int'} or None "
+                    f"(got {v!r})"
+                )
+
     @classmethod
     def coerce(
         cls, value: Union["Budget", Mapping[str, Any], None]
@@ -149,7 +169,10 @@ class Budget:
             return cls()
         if isinstance(value, Budget):
             return value
-        return cls(**dict(value))
+        try:
+            return cls(**dict(value))
+        except TypeError as exc:
+            raise AgentConfigError(f"invalid budgets: {exc}") from None
 
 
 def budget_guards(
@@ -248,7 +271,14 @@ def _resolve_model(spec: Any) -> Optional[type]:
         return spec
     if isinstance(spec, str) and ":" in spec:
         mod, _, attr = spec.partition(":")
-        obj = getattr(importlib.import_module(mod), attr)
+        # 🔥 #287 battle (A): a bad 'module:Model' leaked a raw
+        #    ModuleNotFoundError / AttributeError from inside callModel.
+        try:
+            obj = getattr(importlib.import_module(mod), attr)
+        except (ImportError, AttributeError, ValueError) as exc:
+            raise AgentConfigError(
+                f"output_model {spec!r} cannot be resolved: {exc}"
+            ) from None
         if isinstance(obj, type) and issubclass(obj, BaseModel):
             return obj
     raise AgentConfigError(
@@ -325,6 +355,25 @@ def _is_async_model(model: Any) -> bool:
     )
 
 
+#: What a non-finite / unparseable usage number counts as: enough to
+#: exhaust any budget (fail closed) while staying JSON-serialisable.
+_EXHAUSTED = 2**53
+
+
+def _spent(value: Any, integer: bool) -> Any:
+    """One provider-reported usage number, sanitised: negative → 0 (a
+    hostile provider cannot REFUND budget), NaN / inf / garbage → a
+    budget-exhausting amount (fail closed). Never raises."""
+    try:
+        v = float(value or 0)
+    except (TypeError, ValueError, OverflowError):
+        v = math.nan
+    if not math.isfinite(v) or v > _EXHAUSTED:
+        v = float(_EXHAUSTED)
+    v = max(v, 0.0)
+    return int(v) if integer else v
+
+
 def _usage_totals(ctx: Mapping[str, Any]) -> Dict[str, Any]:
     return {
         "turns": int(ctx.get("turns", 0)),
@@ -380,6 +429,8 @@ class _AgentLogic:
             return out
         # 📝 Keep the task (first message) and the most recent tail.
         head = messages[:1]
+        # ⚠️ The tail may begin with `tool` results whose assistant
+        #    message was dropped; the provider adapters skip such orphans.
         return head + messages[-(self.max_messages - 1) :]
 
     def _append(self, ctx: Dict[str, Any], *msgs: Message) -> None:
@@ -426,6 +477,24 @@ class _AgentLogic:
         data.update(extra)
         return data
 
+    @staticmethod
+    def _flag_reused_ids(
+        data: Dict[str, Any], ctx: Mapping[str, Any]
+    ) -> Dict[str, Any]:
+        # 🔥 #287 battle (A): approval is by call id, and ids are chosen
+        #    by the (injectable) model. Re-using an id from an earlier
+        #    batch would let a stale/replayed HUMAN_APPROVED naming that
+        #    id approve a DIFFERENT call -- such a turn is denied.
+        seen = {
+            str(c.get("id"))
+            for m in ctx.get("messages") or []
+            for c in (m.get("tool_calls") or [])
+            if isinstance(c, Mapping)
+        }
+        if any(str(c.get("id")) in seen for c in data["tool_calls"]):
+            data["duplicate_call_ids"] = True
+        return data
+
     def _bounded(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Cap what a (possibly injected) response can put in context:
         text truncated like tool output, arguments scrubbed. Too many tool
@@ -460,20 +529,29 @@ class _AgentLogic:
             )
         raw = self._response_data(resp, extra)
         self._trace(i, "model_call", response=raw, messages=messages)
-        data = self._bounded(raw)
-        return data
+        return self._flag_reused_ids(self._bounded(raw), ctx)
 
     async def call_model_async(
         self, i: Any, ctx: Dict[str, Any], e: Any
     ) -> Any:
         messages, schemas, extra = self._model_request(i, ctx, e)
-        resp = self.model(messages, schemas)
+        if _is_async_model(self.model):
+            resp = self.model(messages, schemas)
+        else:
+            # 🔥 #287 battle (A): a SYNC model under `Interpreter` ran ON
+            #    the event loop -- a hung SDK call froze the loop, so the
+            #    `modelTimeout` delay (and `run_agent(timeout_s=)`) could
+            #    not fire. It runs on a worker thread now; on timeout the
+            #    thread is abandoned (Python cannot kill it).
+            loop = asyncio.get_running_loop()
+            resp = await loop.run_in_executor(
+                None, self.model, messages, schemas
+            )
         if inspect.isawaitable(resp):
             resp = await resp
         raw = self._response_data(resp, extra)
         self._trace(i, "model_call", response=raw, messages=messages)
-        data = self._bounded(raw)
-        return data
+        return self._flag_reused_ids(self._bounded(raw), ctx)
 
     def _authorise_all(
         self, i: Any, ctx: Dict[str, Any], e: Any
@@ -596,14 +674,14 @@ class _AgentLogic:
         d = self._data(e)
         usage = d.get("usage") or {}
         ctx["turns"] = int(ctx.get("turns", 0)) + 1
-        ctx["tokens_in"] = int(ctx.get("tokens_in", 0)) + int(
-            usage.get("input_tokens", 0)
+        ctx["tokens_in"] = int(ctx.get("tokens_in", 0)) + _spent(
+            usage.get("input_tokens"), True
         )
-        ctx["tokens_out"] = int(ctx.get("tokens_out", 0)) + int(
-            usage.get("output_tokens", 0)
+        ctx["tokens_out"] = int(ctx.get("tokens_out", 0)) + _spent(
+            usage.get("output_tokens"), True
         )
-        ctx["cost_usd"] = float(ctx.get("cost_usd", 0.0)) + float(
-            usage.get("cost_usd", 0.0)
+        ctx["cost_usd"] = float(ctx.get("cost_usd", 0.0)) + _spent(
+            usage.get("cost_usd"), False
         )
         ctx["attempt"] = 0  # a successful call resets the retry counter
         ctx["approved_call_ids"] = []  # approvals never outlive a batch

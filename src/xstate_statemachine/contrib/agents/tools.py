@@ -129,6 +129,13 @@ class Tool:
             raise ToolDeniedError(
                 self.name, f"invalid arguments ({detail})"
             ) from None
+        except RecursionError:
+            # 🔥 #287 battle (A): arguments nested ~1000 deep escaped as a
+            #    RecursionError -- the guard swallowed it, `runTool` raised
+            #    it as a generic failure and the turn was RETRIED. Denied.
+            raise ToolDeniedError(
+                self.name, "invalid arguments (nested too deeply)"
+            ) from None
         return {k: getattr(model, k) for k in type(model).model_fields}
 
 
