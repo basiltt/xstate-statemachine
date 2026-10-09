@@ -13,7 +13,7 @@ import pytest
 pytest.importorskip("pydantic")
 
 from pydantic import Field  # noqa: E402
-from typing_extensions import Annotated  # noqa: E402
+from typing import Annotated  # noqa: E402
 
 from xstate_statemachine.contrib.agents import (  # noqa: E402
     FakeModel,

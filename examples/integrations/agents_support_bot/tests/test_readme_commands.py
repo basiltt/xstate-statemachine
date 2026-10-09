@@ -82,14 +82,16 @@ def test_fake_walkthrough_matches_the_readme_transcript(copy):
     res = _run(copy, cmd)
     assert res.returncode == 0, res.stderr
     shown = re.search(r"```text\n(.*?)```", README, re.S).group(1)
-    norm = re.compile(r"ticket:[0-9a-f]{8}")
+    # 📝 ticket ids and FakeModel call ids (unique per instance since
+    #    #287) differ run to run; everything else is byte-for-byte
+    norm = re.compile(r"ticket:[0-9a-f]{8}|call_[0-9a-f]{8}_")
     assert norm.sub("T", res.stdout) == norm.sub("T", shown)
     assert (copy / "support.db").exists()
 
 
 def test_fake_run_is_deterministic(copy):
     cmd = next(r for r in _readme_runs() if "--fake" in r)
-    norm = re.compile(r"ticket:[0-9a-f]{8}")
+    norm = re.compile(r"ticket:[0-9a-f]{8}|call_[0-9a-f]{8}_")
     a, b = (norm.sub("T", _run(copy, cmd).stdout) for _ in range(2))
     assert a == b
 

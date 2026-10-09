@@ -24,7 +24,7 @@ python run.py --fake --prompt "refund order 42"
 
 ```text
 [ticket:1a2b3c4d] state=supportBot.awaiting_human waiting=True
-  needs approval: {"id": "call_2_0", "name": "refund_order", "arguments": {"order_id": 42, "amount_cents": 2400}}
+  needs approval: {"id": "call_9f2a1c3b_2_0", "name": "refund_order", "arguments": {"order_id": 42, "amount_cents": 2400}}
   human reviewer: approved
 [ticket:1a2b3c4d] state=supportBot.done
 answer: Order 42 has been refunded (24.00).
