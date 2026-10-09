@@ -338,16 +338,16 @@ def test_trouble_unhandled_budget_exceeded_stays_running() -> None:
     _row("the active state has no `BUDGET_EXCEEDED` transition")
 
 
-def test_trouble_child_without_notify_parent_never_reports() -> None:
+def test_trouble_child_without_notify_parent_is_refused() -> None:
+    # 📝 integrator: adversary A made `spawn_agent` refuse such a chart at
+    #    construction (the parent would otherwise wait forever).
     child = copy.deepcopy(TOOL_LOOP)
     for state in child["states"].values():
         if state.get("entry") == "notifyParent":
             del state["entry"]
-    sup = _supervisor(BudgetPlugin(max_total_usd=1), _paid(), child=child)
-    sup.start().send("PLAN", tasks=["a"])
-    assert "supervisor.running.workers.working" in sup.current_state_ids
-    assert sup.context["usage_by_agent"] == {}  # BudgetPlugin saw nothing
-    _row("no `notifyParent` entry action")
+    with pytest.raises(AgentConfigError, match="notifyParent"):
+        _supervisor(BudgetPlugin(max_total_usd=1), _paid(), child=child)
+    _row("the child chart never runs 'notifyParent'")
 
 
 # -------------------------------------------------------------------------
