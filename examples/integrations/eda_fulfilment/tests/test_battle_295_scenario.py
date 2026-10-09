@@ -239,6 +239,9 @@ real_save = a.store.save
 def save(*args, **kw):
     # die after the compensation `release` RAN, before the snapshot lands
     if any(s == "s-k" and n == "release" for s, n in svc.calls):
+        Path(sys.argv[1], "calls.json").write_text(
+            __import__("json").dumps([list(c) for c in svc.calls])
+        )
         os.kill(os.getpid(), getattr(signal, "SIGKILL", 9))
     return real_save(*args, **kw)
 a.store.save = save
@@ -273,10 +276,16 @@ def test_killed_mid_compensation_compensates_again_idempotently(
         snap = b.state("s-k")
         # 🔥 the whole step (START → reserve → charge failed → release)
         #    ran inside ONE persisted() block and the save was killed:
-        #    nothing landed -- the redelivered command restarts the saga
+        #    NOTHING landed -- the redelivered command restarts the saga
         #    from scratch, and `release` runs AGAIN (compensations must
         #    be idempotent; documented in the guide's Guarantees box)
-        assert snap is None or snap["value"] != "failed", snap
+        assert snap is None, snap
+        before = json.loads((tmp_path / "calls.json").read_text())
+        assert [n for s_, n in before if s_ == "s-k"] == [
+            "reserve",
+            "charge",
+            "release",
+        ], before
         b.start("s-k")
         b.pump()
         snap = b.state("s-k")

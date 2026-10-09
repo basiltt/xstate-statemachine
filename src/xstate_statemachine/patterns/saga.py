@@ -34,6 +34,7 @@
 
 from __future__ import annotations
 
+import numbers
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
@@ -55,12 +56,37 @@ def _check_key(what: str, key: Any) -> None:
         raise ValueError(f"{what} must be a non-empty string, got {key!r}")
 
 
+def _check_timeout(value: Any) -> Optional[int]:
+    """A positive whole number of milliseconds (``5000``, ``5000.0`` and
+    numpy ints all count; ``True``, ``0``, ``"abc"`` and ``1.5`` do not)."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        raise ValueError(f"timeout_ms must be a positive int, got {value!r}")
+    if isinstance(value, numbers.Integral):
+        n = int(value)
+    elif isinstance(value, numbers.Real) and float(value).is_integer():
+        n = int(float(value))
+    else:
+        raise ValueError(f"timeout_ms must be a positive int, got {value!r}")
+    if n <= 0:
+        raise ValueError(f"timeout_ms must be a positive int, got {value!r}")
+    return n
+
+
 def _check_event(event: Any) -> None:
     """Refuse a start event a caller could never deliver."""
     _check_key("start_event", event)
     if event.startswith(_ENGINE_PREFIXES):
         raise ValueError(
             f"start_event {event!r} is an engine-reserved event name"
+        )
+    if "*" in event or any(ch.isspace() for ch in event):
+        # 📝 review M5: a wildcard or whitespace name is never a concrete
+        #    event a producer sends (and `consumed_events` drops it)
+        raise ValueError(
+            f"start_event {event!r} must be a concrete event name "
+            "(no wildcards or whitespace)"
         )
 
 
@@ -166,14 +192,7 @@ class SagaBuilder:
         _check_key("invoke", invoke)
         if compensate is not None:
             _check_key("compensate", compensate)
-        if timeout_ms is not None and (
-            isinstance(timeout_ms, bool)
-            or not isinstance(timeout_ms, int)
-            or timeout_ms <= 0
-        ):
-            raise ValueError(
-                f"timeout_ms must be a positive int, got {timeout_ms!r}"
-            )
+        timeout_ms = _check_timeout(timeout_ms)
         if retry is not None and not isinstance(retry, RetryPolicy):
             raise ValueError(
                 f"retry must be a RetryPolicy, got {type(retry).__name__}"
@@ -220,12 +239,15 @@ class SagaBuilder:
         for s in self._steps:
             if s.retry is not None:
                 ctx[s.attempt_key] = 0
+        # 🐛 #295-a: the start event's payload was silently dropped
+        #    (services could not see START's data); `sagaStart` keeps it
+        #    in ``context.input``. Review H2: the key exists in BOTH
+        #    shapes -- a saga that starts immediately has no START, so
+        #    its services read ``None`` (or what the caller put in the
+        #    initial context), never a `KeyError`.
+        ctx["input"] = None
         states: Dict[str, Any] = {}
         if self.start_event:
-            # 🐛 #295-a: the start event's payload was silently dropped
-            #    (services could not see START's data); `sagaStart` keeps
-            #    it in ``context.input``.
-            ctx["input"] = None
             states["idle"] = {
                 "on": {
                     self.start_event: {

@@ -56,7 +56,10 @@ def _validated(doc: Any) -> None:
     except MissingExtraError as exc:
         raise _fail(f"--validate needs jsonschema: {exc}") from None
     except Exception as exc:  # jsonschema.ValidationError (no hard import)
-        if not type(exc).__module__.startswith("jsonschema"):
+        # 📝 review L7: only a DOCUMENT failure is the operator's; a broken
+        #    vendored schema (`SchemaError`) is a library bug and must
+        #    show its traceback
+        if type(exc).__name__ != "ValidationError":
             raise
         msg = getattr(exc, "message", None) or str(exc).splitlines()[0]
         raise _fail(f"document is not valid AsyncAPI 3.0: {msg}") from None

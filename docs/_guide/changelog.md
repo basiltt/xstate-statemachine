@@ -1480,7 +1480,11 @@ _No unreleased changes yet._
   event's payload was silently dropped** -- `send("START", order=...)`
   moved the saga to `steps` and no service could see the data (the
   generated chart now runs `sagaStart`, which copies it to
-  `context.input`); `asyncapi_document` silently LOST a message when two
+  `context.input` -- present in both chart shapes; ⚠️ this changes the
+  structure hash of a saga built with `start_event`, so a snapshot saved
+  from the previous builder needs `verify_machine_hash=False` once --
+  the guide's Guarantees box says how; `timeout_ms` accepts any integral
+  number such as `5000.0`, as before); `asyncapi_document` silently LOST a message when two
   event names reduced to the same component key (`"GO NOW"` and
   `"GO_NOW"`; colliding keys get a numeric suffix, one message per
   published type); the missing-`jsonschema` hint named an `[asyncapi]`
