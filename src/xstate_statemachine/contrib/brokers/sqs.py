@@ -70,6 +70,7 @@ class SqsTransport:
         self._urls: Dict[str, str] = {}
 
     def url(self, topic: str) -> str:
+        """The queue URL for the queue named *topic* (cached)."""
         u = self._urls.get(topic)
         if u is None:
             u = self.client.get_queue_url(QueueName=topic)["QueueUrl"]
@@ -77,6 +78,7 @@ class SqsTransport:
         return u
 
     def send(self, topic: str, envelope: Envelope) -> None:
+        """Publish *envelope* on *topic*; raise on failure."""
         kw: Dict[str, Any] = {
             "QueueUrl": self.url(topic),
             "MessageBody": structured(envelope, self.max_bytes).decode(),
@@ -90,6 +92,7 @@ class SqsTransport:
         self.client.send_message(**kw)
 
     def fetch(self, topic: str, wait_s: float) -> List[Raw]:
+        """Pull what is ready on *topic*, waiting at most *wait_s*."""
         url = self.url(topic)
         kw: Dict[str, Any] = {
             "QueueUrl": url,
@@ -111,12 +114,14 @@ class SqsTransport:
         return out
 
     def ack(self, native: Any) -> None:
+        """Settle a delivery for good."""
         url, handle = native
         self.client.delete_message(QueueUrl=url, ReceiptHandle=handle)
 
     drop = ack
 
     def extend(self, native: Any, seconds: int) -> None:
+        """Keep *native* invisible for *seconds* more."""
         url, handle = native
         self.client.change_message_visibility(
             QueueUrl=url, ReceiptHandle=handle, VisibilityTimeout=int(seconds)

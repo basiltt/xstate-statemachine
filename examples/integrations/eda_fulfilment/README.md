@@ -124,6 +124,19 @@ assert summary["outbox_rows"] == summary["published"] == 9
 assert summary["dead_letters"] == 1 and summary["duplicates"] == 1
 ```
 
+### Operate it: when the broker goes away
+
+Every adapter has a `healthy` flag and two callbacks. The first broker
+call that fails sets `healthy` to `False` and calls `on_disconnect(exc)`
+once; the first call that succeeds again calls `on_reconnect()` once. The
+client library does the reconnecting; the adapter only makes it
+observable. While the broker is down, `OutboxRelay` cannot publish, so
+the outbox **keeps its rows** and sends them on a later tick: nothing is
+lost and nothing is sent twice to the machine (the inbox answers a
+redelivery). `tests/test_battle_294_scenario.py` takes each of the five
+brokers away mid-run and checks exactly this. Put `healthy` in your
+readiness probe and alert when it stays `False`.
+
 ## The two charts
 
 `xsm diagram machine.json -f mermaid`, with the `after` and `invoke` edges

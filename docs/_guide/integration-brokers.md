@@ -11,7 +11,7 @@ The [EDA core](../integration-eda/) defines one small `BrokerAdapter` contract (
 
 | Broker | Extra | Ordering key → | Redelivery signal | Pick it when |
 |:--|:--|:--|:--|:--|
-| Redis Streams | `[redis]` | one stream (or `hash(subject) % shards`) | PEL delivery count | you already run Redis for the store |
+| Redis Streams | `[redis]` | one stream (or `crc32(subject) % shards`) | PEL delivery count | you already run Redis for the store |
 | Kafka | `[kafka]` | message key → partition | committed offset | high volume, replay, many consumer groups |
 | RabbitMQ | `[rabbitmq]` | queue order (or consistent-hash exchange on `subject`) | `x-delivery-count` / `redelivered` | work queues, routing, an existing AMQP estate |
 | NATS JetStream | `[nats]` | `<topic>.<subject>` in one stream | `num_delivered` | lightweight, edge, many small services |
@@ -98,9 +98,11 @@ Shared semantics (`contrib.brokers._base`):
 - **`nack(requeue=False)`** settles the message on the broker for good. Dead-lettering is the dispatcher's job (`DeadLetterStore` / `BrokerDeadLetterSink`).
 - `in_flight`, `held(topic)`, `healthy`, `close()`.
 
+Lower-level names, for writing an adapter of your own or testing one: each module also exports its transport (`RedisStreamsTransport`, `KafkaTransport`, `RabbitMQTransport`, `NatsTransport`, `SqsTransport`: the four native operations `send` / `fetch` / `ack` / `drop`, and nothing else), and `nats` exports `subject_token(subject)` (the NATS-safe token an envelope subject is published under). `contrib.brokers._base` exports `SyncBroker` and `AsyncBroker` (the shared bookkeeping over a blocking or an async transport), `Raw(body, native, attempts)` (one message as a transport fetched it), `ThreadedTransport` (runs a blocking transport on a worker thread) and `default_on_undecodable` (logs the topic and error type, never the body).
+
 ### Redis Streams: `RedisStreamsBroker` / `SyncRedisStreamsBroker`
 
-`(client=None, *, url=None, prefix, group="xsm", consumer=hostname-pid, shards=1, min_idle_ms=60_000, maxlen=None, batch=100)`. Module `contrib.brokers.redis_streams`, extra `[redis]`. The key namespace follows [`contrib.redis`](../integration-redis/) (a mandatory `prefix`): `{prefix}:stream:{topic}`, or `…:{topic}:{n}` with `shards > 1`, where a subject always hashes (crc32) to the same shard. The consumer group is created lazily from id `0` (`MKSTREAM`). `ack` is `XACK`. Before reading new entries, a consumer claims entries a **dead** consumer left pending for at least `min_idle_ms` (`XAUTOCLAIM`). Their delivery count becomes the attempt, and entries the consumer holds itself are never re-claimed. `maxlen` trims approximately on `XADD`. The sync class calls redis-py directly; the async class runs the same calls on a worker thread, so one thread-safe client can back both.
+`(client=None, *, url=None, prefix, group="xsm", consumer=hostname-pid, shards=1, min_idle_ms=60_000, maxlen=None, batch=10)`. Module `contrib.brokers.redis_streams`, extra `[redis]`. The key namespace follows [`contrib.redis`](../integration-redis/) (a mandatory `prefix`): `{prefix}:stream:{topic}`, or `…:{topic}:{n}` with `shards > 1`, where a subject always hashes (crc32) to the same shard. The consumer group is created lazily from id `0` (`MKSTREAM`). `ack` is `XACK`. Before reading new entries, a consumer claims entries a **dead** consumer left pending for at least `min_idle_ms` (`XAUTOCLAIM`). Their delivery count becomes the attempt, and entries the consumer holds itself are never re-claimed. `maxlen` trims approximately on `XADD`. The sync class calls redis-py directly; the async class runs the same calls on a worker thread, so one thread-safe client can back both.
 
 Every consumer name ever used stays registered in the group until it is removed, and a crashed pod (default name `hostname-pid`) leaves one behind each time. Its pending entries are reclaimed, but the name accumulates, so run `XGROUP DELCONSUMER <stream> <group> <name>` for names with no pending entries (`XINFO CONSUMERS`), or pass a stable `consumer=` per replica.
 
@@ -114,15 +116,33 @@ Every consumer name ever used stays registered in the group until it is removed,
 
 ### NATS JetStream: `NatsBroker`
 
-`(*, servers=None, js=None, durable="xsm", ack_wait_s=30.0, batch=100, connect_kw=None)`. JetStream only: core NATS is at-most-once and is not supported. Topic `orders` is a stream capturing `orders.>`. An envelope is published on `orders.<subject>`, where `.`, `*`, `>` and whitespace in the subject become `_`, and `Nats-Msg-Id = envelope.id` (the server-side duplicate window drops a re-published outbox row). A durable pull consumer reads the stream in order. `ack` is +ACK, drop is +TERM, and attempts are `num_delivered - 1`. `ack_wait_s` is the redelivery timeout.
+`(*, servers=None, js=None, durable="xsm", ack_wait_s=30.0, batch=10, connect_kw=None)`. JetStream only: core NATS is at-most-once and is not supported. Topic `orders` is a stream capturing `orders.>`. An envelope is published on `orders.<subject>`, where `.`, `*`, `>` and whitespace in the subject become `_`, and `Nats-Msg-Id = envelope.id` (the server-side duplicate window drops a re-published outbox row). A durable pull consumer reads the stream in order. `ack` is +ACK, drop is +TERM, and attempts are `num_delivered - 1`. `ack_wait_s` is the redelivery timeout.
 
 ### Amazon SQS: `SqsBroker` / `SyncSqsBroker`
 
 `(client=None, *, region_name=None, visibility_timeout_s=None, batch=10)`. The topic is a queue **name**. **FIFO queues** (`*.fifo`) get `MessageGroupId = subject` and `MessageDeduplicationId = envelope.id`. **Standard queues do not preserve order**, so use them only for charts that tolerate reordering. `ack` and drop both call `DeleteMessage`. Long polling waits up to 20 s. Attempts are `ApproximateReceiveCount - 1`. `extend_visibility(delivery, seconds)` keeps a slow delivery hidden (`await` it on the async class). A batch of up to 10 messages is received at once, and messages still waiting in the local buffer are subject to the same visibility clock. Size `visibility_timeout_s` for a whole batch: if it expires, SQS hands the message to another consumer (at-least-once; the inbox dedups). Credentials come only from boto3's own chain. For fan-out, publish to SNS and subscribe FIFO queues to it. **Deduplication window versus replay:** SQS drops a FIFO message whose `MessageDeduplicationId` was seen in the last **5 minutes**. `xsm dlq replay` re-publishes with the *same* envelope id (so the inbox dedups a double replay), so a replay within 5 minutes of the original publish is silently dropped by SQS. Wait out the window, or replay to a standard queue.
 
+## Operations
+
+**Reconnects.** The client reconnects; the adapter makes it observable. The first broker call that raises sets `healthy` to `False` and calls `on_disconnect(exc)` once (one `WARNING` log line with the exception *type* only, since client errors can embed a URL with credentials). The call's exception still reaches you: `publish` raises, and `OutboxRelay` keeps the outbox row for the next tick, so nothing is lost. The first call that succeeds again sets `healthy` back to `True` and calls `on_reconnect()` once. Wire `healthy` into your readiness probe.
+
+**What to alert on.** `healthy` staying `False` (or `on_disconnect` without a matching `on_reconnect` within a few minutes); a growing dead-letter store (`xsm dlq list`), especially `reason="corrupt"` (someone is publishing non-envelopes); outbox rows older than a few relay intervals; the broker's own consumer lag (Kafka group lag, Redis `XPENDING`, JetStream `num_pending`, SQS `ApproximateAgeOfOldestMessage`, RabbitMQ queue depth).
+
+| Broker | Redelivery window knob | Sizing | Watch |
+|:--|:--|:--|:--|
+| Redis Streams | `min_idle_ms` (default 60 s): a dead consumer's pending entries are reclaimed after this | above your slowest handler; `batch` near `max_in_flight`; `maxlen` for retention | `XPENDING`, `XINFO CONSUMERS` (stale names) |
+| Kafka | none per message: a crash rewinds to the first unsettled offset of the group | partitions ≥ consumers in the group (`group_id`); `batch` (50) | consumer-group lag |
+| RabbitMQ | channel close / connection loss returns un-acked messages | `prefetch` (20) bounds un-acked per consumer | queue depth, unacked count |
+| NATS JetStream | `ack_wait_s` (30 s) | above your slowest handler; `batch` (10) | `num_pending`, `num_redelivered` |
+| SQS | `visibility_timeout_s` (queue default 30 s); `extend_visibility()` for a slow one | above the time to handle a whole `batch` (≤ 10) | `ApproximateAgeOfOldestMessage`, the queue's redrive DLQ |
+
+A message fetched into the local buffer and not handed out within **half** the window is released (not acked) so the broker redelivers it; see *Local hold window* above.
+
 ## Guarantees
 
-> **What this does:** at-least-once delivery on every broker, and effectively-once *processing* when you pass an inbox to `InboundDispatcher` (redeliveries are answered, not re-run). Order is per subject: publish order is kept for one `subject` on one topic. Poison envelopes are dead-lettered after `max_attempts`, counting the broker's own redeliveries, and acked (X0.8). An oversized or undecodable message is dropped, never looped. On all five brokers, a consumer that stops or crashes mid-batch resumes without losing an envelope; this is tested with a container restart.
+> **What this does:** at-least-once delivery on every broker, and effectively-once *processing* when you pass an inbox to `InboundDispatcher` (redeliveries are answered, not re-run). Order is per subject: publish order is kept for one `subject` on one topic **as long as one consumer handles that subject**. Kafka (one partition per consumer in the group) and SQS FIFO (a message group is locked to one receiver) do this for you. On Redis Streams (one stream), RabbitMQ (one queue) and NATS (one durable), consumers that compete on the same topic each get the next batch, so two of them can handle one subject's messages concurrently and out of order. Run one consumer per stream, or use Redis `shards` with one consumer per shard, the RabbitMQ consistent-hash exchange with one queue per consumer, or NATS subject filters. Poison envelopes are dead-lettered after `max_attempts`, counting the broker's own redeliveries, and acked (X0.8). An oversized or undecodable message is dropped, never looped. On all five brokers, a consumer that stops or crashes mid-batch resumes without losing an envelope; this is tested with a container restart.
+>
+> **Deduplication at the broker.** NATS JetStream (`Nats-Msg-Id = envelope.id`, default 2-minute window) and SQS FIFO (`MessageDeduplicationId = envelope.id`, 5 minutes) drop a re-published envelope **at publish**, so the inbox never sees that duplicate and `InboundDispatcher` reports `duplicates == 0` for it. Redis Streams, Kafka and RabbitMQ deliver it again, and the inbox answers it (`duplicates == 1`). Either way the machine runs once. Do not alert on the duplicate counter being zero on NATS or SQS.
 >
 > **What this does not do:** no exactly-once delivery, and no global ordering across subjects. Standard SQS queues have no order at all. Kafka carries no broker-side delivery count. Broker-level retention, replication and DLX policy stay your broker's configuration.
 >
@@ -158,3 +178,13 @@ Live broker suite: `XSM_CONTAINERS=1 pytest tests/contrib/brokers -m containers`
 | A poison message loops on Kafka after restarts | Kafka has no delivery count | republish with `with_attempt(n + 1)`, or lower `max_attempts` |
 | Redis entries of a crashed consumer are never processed | `min_idle_ms` not reached yet | wait, or lower `min_idle_ms` (never below your handler time) |
 | "dropping undecodable message" warnings | non-CloudEvents producers on the topic | fix the producer, or use a separate topic |
+| `MissingExtraError: … pip install "xstate-statemachine[redis]"` (or `[rabbitmq]`, `[nats]`, `[sqs]`) | importing `contrib.brokers.<name>` without its extra | install the extra the message names |
+| `BUSYGROUP Consumer Group name already exists` in a Redis log | another process created the group first | nothing: the adapter treats it as success |
+| `ResponseError: NOGROUP` / no such stream (Redis) | the stream or group was deleted under a running consumer | restart the consumer: it recreates both (`MKSTREAM`) |
+| `QueueDoesNotExist` (SQS) on publish or subscribe | the topic is a queue **name** that does not exist in this region/account | create the queue (FIFO names end in `.fifo`); the adapter never creates queues |
+| `healthy` is `False`, `on_disconnect` fired, one `broker call failed: <Type>` warning | the broker is unreachable | nothing to do in the app: the client reconnects, `on_reconnect` fires, the outbox keeps unsent rows. Alert if it lasts |
+| A message is processed later than expected and arrives with a higher attempt | the local hold window released it to the broker (it waited longer than half the redelivery window) | lower `batch`, or raise `ack_wait_s` / `visibility_timeout_s` / `min_idle_ms` |
+| A replayed or re-published envelope is never processed on SQS FIFO or NATS | the broker's dedup window dropped the same envelope id (SQS 5 min, NATS 2 min default) | wait out the window; or publish a new envelope |
+| Two *different* messages collapse into one on an SQS FIFO queue | the queue has content-based deduplication and a non-xsm producer sends identical bodies | the adapter always sets `MessageDeduplicationId`; give other producers their own id |
+| After a Kafka consumer crash, already-processed messages come back | offsets after the first unsettled one were never committed | expected: the inbox answers them (`duplicates`) |
+| `TypeError: _Core.__init__() got an unexpected keyword argument 'sasl_…'` | client options passed as adapter keywords | pass them in `client_kw=` (Kafka) or `connect_kw=` (RabbitMQ, NATS) |

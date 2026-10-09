@@ -12,7 +12,9 @@ folders, then end-to-end checks straight from the issues:
   consumer's pending entries are reclaimed with the attempt count and
   poison reaches the dead-letter store; the adapters are listed under
   the ``xstate_statemachine.brokers`` entry-point group; each module
-  raises `MissingExtraError` naming its own extra.
+  raises `MissingExtraError` naming its own extra; a broker outage
+  fires on_disconnect / on_reconnect once and loses nothing; two
+  consumers on one topic see every envelope once, in subject order.
 * #292: the issue's snippet verbatim; `@statechart_task` refuses pickle;
   8 threads x 100 sends on one key lose nothing; the Beat scheduler fires
   a matured deadline once and skips a stale ``eta`` generation.
@@ -255,6 +257,71 @@ def f3_entry_points_and_extras() -> None:
     print("  blocked aiokafka -> MissingExtraError naming [kafka]")
 
 
+def f3_outage_and_two_consumers() -> None:
+    step("#294 outage observable, nothing lost; two consumers once each")
+    import fakeredis
+
+    from xstate_statemachine.contrib.brokers.redis_streams import (
+        SyncRedisStreamsBroker,
+    )
+    from xstate_statemachine.eda import Envelope
+
+    r = fakeredis.FakeRedis()
+    events: List[str] = []
+    broker = SyncRedisStreamsBroker(
+        r,
+        prefix="g7o",
+        consumer="a",
+        on_disconnect=lambda exc: events.append("down"),
+        on_reconnect=lambda: events.append("up"),
+    )
+    real_send = broker.transport.send
+    failures = {"left": 3}
+
+    def flaky(topic: str, env: Any) -> None:
+        if failures["left"]:
+            failures["left"] -= 1
+            raise ConnectionError("broker gone")
+        real_send(topic, env)
+
+    broker.transport.send = flaky  # type: ignore[method-assign]
+    pending = [
+        Envelope.new(type="xsm.m.GO", subject=f"s{n % 4}", data={"n": n})
+        for n in range(40)
+    ]
+    while pending:  # an outbox: keep the row until publish succeeds
+        try:
+            broker.publish("t", pending[0])
+        except ConnectionError:
+            assert not broker.healthy
+            continue
+        pending.pop(0)
+    assert broker.healthy and events == ["down", "up"], events
+
+    second = SyncRedisStreamsBroker(r, prefix="g7o", consumer="b")
+    seen: List[Any] = []
+    for _ in range(20):
+        for b in (broker, second):
+            for d in b.subscribe("t", timeout=0):
+                seen.append((b, d.envelope.subject, d.envelope.data["n"]))
+                b.ack(d)
+                break
+    for b in (broker, second):
+        for d in b.subscribe("t", timeout=0):
+            seen.append((b, d.envelope.subject, d.envelope.data["n"]))
+            b.ack(d)
+    assert sorted(n for _, _, n in seen) == list(range(40)), seen
+    # 📝 Competing consumers on ONE unsharded stream split a subject
+    #    between them: order holds per consumer, not across both (the
+    #    guide's ordering caveat). Order across consumers needs shards
+    #    (or Kafka partitions / SQS FIFO groups).
+    for who in (broker, second):
+        for k in range(4):
+            ns = [n for b_, s_, n in seen if b_ is who and s_ == f"s{k}"]
+            assert ns == sorted(ns), (k, ns)
+    print(f"  callbacks {events}; 40 envelopes, 2 consumers, once each")
+
+
 def f1_issue_snippet() -> None:
     step("#292 issue snippet (eager Celery, no broker)")
     from celery import Celery
@@ -416,6 +483,7 @@ def main() -> None:
     f3_thousand()
     f3_reclaim_and_poison()
     f3_entry_points_and_extras()
+    f3_outage_and_two_consumers()
     f1_issue_snippet()
     f1_statechart_task()
     f1_beat()
