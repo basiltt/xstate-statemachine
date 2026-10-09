@@ -72,3 +72,43 @@ def test_annotated_constraint_is_in_the_schema_the_model_sees():
     prop = reg.get("_refund_annotated").parameters["properties"]
     assert prop["amount_cents"]["maximum"] == MAX_CENTS
     assert prop["amount_cents"]["exclusiveMinimum"] == 0
+
+
+# -----------------------------------------------------------------------------
+# 🔐 hostile provider usage numbers cannot refund or poison a budget
+# -----------------------------------------------------------------------------
+def _lookup(x: int) -> str:
+    """Look something up."""
+    return "ok"
+
+
+def _spend(usage, budgets):
+    script = [
+        {"tool": "_lookup", "args": {"x": 1}, "usage": usage},
+        {"tool": "_lookup", "args": {"x": 1}, "usage": usage},
+        {"text": "done", "usage": usage},
+    ]
+    return run_agent_sync(
+        model=FakeModel(script, is_async=False),
+        tools=tool_registry(_lookup),
+        prompt="p",
+        budgets=budgets,
+    )
+
+
+def test_negative_token_usage_is_spent_as_zero_not_refunded():
+    res = _spend(
+        {"input_tokens": -(10**9), "output_tokens": -5}, {"max_tokens": 10}
+    )
+    assert res.usage["input_tokens"] == 0
+    assert res.usage["output_tokens"] == 0
+
+
+def test_negative_cost_is_spent_as_zero():
+    res = _spend({"cost_usd": -5.0}, {"max_usd": 1.0})
+    assert res.usage["cost_usd"] == 0.0
+
+
+def test_nan_cost_fails_closed_on_the_cost_budget():
+    res = _spend({"cost_usd": float("nan")}, {"max_usd": 1.0})
+    assert res.error is not None and res.error["kind"] == "budget"

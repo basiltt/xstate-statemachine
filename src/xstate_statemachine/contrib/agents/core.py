@@ -27,6 +27,7 @@ import importlib
 import inspect
 import json
 import logging
+import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -325,6 +326,28 @@ def _is_async_model(model: Any) -> bool:
     )
 
 
+def _spent_tokens(value: Any) -> int:
+    """A provider-reported token count, clamped to ``>= 0``.
+
+    🔐 Usage numbers come from the provider (or a proxy in front of it):
+    a negative count would REFUND the budget, so it is spent as zero.
+    """
+    return max(0, int(value or 0))
+
+
+def _spent_usd(value: Any) -> float:
+    """A reported cost: negative → 0, NaN → +inf (fail closed).
+
+    📝 NaN would otherwise make every later total NaN; ``inf`` makes the
+    cost guard refuse the next turn, which is the honest outcome when the
+    spend is unknowable.
+    """
+    cost = float(value or 0.0)
+    if math.isnan(cost):
+        return math.inf
+    return max(0.0, cost)
+
+
 def _usage_totals(ctx: Mapping[str, Any]) -> Dict[str, Any]:
     return {
         "turns": int(ctx.get("turns", 0)),
@@ -596,13 +619,13 @@ class _AgentLogic:
         d = self._data(e)
         usage = d.get("usage") or {}
         ctx["turns"] = int(ctx.get("turns", 0)) + 1
-        ctx["tokens_in"] = int(ctx.get("tokens_in", 0)) + int(
+        ctx["tokens_in"] = int(ctx.get("tokens_in", 0)) + _spent_tokens(
             usage.get("input_tokens", 0)
         )
-        ctx["tokens_out"] = int(ctx.get("tokens_out", 0)) + int(
+        ctx["tokens_out"] = int(ctx.get("tokens_out", 0)) + _spent_tokens(
             usage.get("output_tokens", 0)
         )
-        ctx["cost_usd"] = float(ctx.get("cost_usd", 0.0)) + float(
+        ctx["cost_usd"] = float(ctx.get("cost_usd", 0.0)) + _spent_usd(
             usage.get("cost_usd", 0.0)
         )
         ctx["attempt"] = 0  # a successful call resets the retry counter
