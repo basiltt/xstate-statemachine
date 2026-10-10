@@ -1472,7 +1472,7 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
   again from another site, and re-arms after `reset`; the 1.0
   checklist mechanically -- every contrib `__all__` name in the API
   index (read statically, so a name behind a missing extra is caught),
-  no TODO / FIXME comments in `src/`, the shipped examples or the
+  no open to-do markers in `src/`, the shipped examples or the
   guide's prose, the Python range one truth across `requires-python`,
   classifiers, the CI matrix and the README, `[all]` covering every
   contrib extra (`tests/test_battle_296_scenario.py`,
@@ -1513,7 +1513,12 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
   at (every oldest / newest pin on the page is the pin the compat
   workflow installs); SECURITY.md gains the SemVer statement, contrib
   provisional, the `allow=` look-alike caveat and the `xsm plugins`
-  audit step; the README names `[all]`. Held: a plugin blocking in
+  audit step; the README names `[all]`; **review:** `allow="name"` (a
+  bare string) was iterated letter by letter and matched nothing in
+  silence (`TypeError` now; `allow=[]` documented as closed); a
+  failure before loading left a stale `last_failed`; the CLI blamed
+  `--strict` for errors raised without it; the kill-switch log said
+  `=1` whatever the value; class-dedupe documented. Held: a plugin blocking in
   `on_interpreter_start` hangs `start()` (in-process code with full
   privileges, as SECURITY.md says); a plugin calling
   `interpreter.stop()` from a hook stops it cleanly; the deprecation

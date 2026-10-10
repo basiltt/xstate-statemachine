@@ -178,7 +178,11 @@ def _disabled() -> bool:
         return False
     if not _disabled_logged:
         _disabled_logged = True
-        logger.info("Plugin discovery disabled by %s=1.", DISABLE_ENV)
+        logger.info(
+            "Plugin discovery disabled by %s=%s.",
+            DISABLE_ENV,
+            os.environ.get(DISABLE_ENV, "").strip(),
+        )
     return True
 
 
@@ -222,10 +226,19 @@ def _discover(
     strict: bool,
     skipped: List[SkippedPlugin],
 ) -> List[DiscoveredPlugin]:
+    # 📝 #296 review (5): a failure BEFORE loading (corrupt metadata)
+    #    left the previous call's `last_failed` in place.
+    with _PUBLISH_LOCK:
+        last_failed.clear()
     if _disabled():
-        with _PUBLISH_LOCK:
-            last_failed.clear()
         return []
+    # 🔥 #296 review (3): `allow="acme-audit"` iterated the STRING -- one
+    #    letter per name, matched nothing, said nothing.
+    if isinstance(allow, (str, bytes)):
+        raise TypeError(
+            "allow= must be a collection of names, not a bare string "
+            f"(got {allow!r}); allow=[] loads nothing"
+        )
     # 🔥 #296 battle (A): `allow=["xsm_thirdparty_plugin"]` did not match
     #    distribution "xsm-thirdparty-plugin"; names are PEP 503 normalised.
     allowed = None if allow is None else {_normalise(a) for a in allow}

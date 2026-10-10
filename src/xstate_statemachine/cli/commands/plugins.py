@@ -58,6 +58,11 @@ def run_plugins(as_json: bool = False, strict: bool = False) -> int:
     try:
         rows, skipped = ([], []) if disabled else _rows(strict=strict)
     except Exception as exc:  # noqa: BLE001 -- --strict: name it, exit 1
+        # 📝 #296 review (4): without --strict a loader never raises here;
+        #    anything else (corrupt site-packages metadata) is a real
+        #    error -- let it surface instead of blaming a flag not given.
+        if not strict:
+            raise
         who = (
             f"{last_failed['name']!r} from {last_failed['dist'] or '?'}"
             if last_failed
