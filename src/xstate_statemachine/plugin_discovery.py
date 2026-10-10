@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import inspect
 import os
-from typing import Any, Iterable, List, NamedTuple, Optional, Tuple
+from typing import Dict, Any, Iterable, List, NamedTuple, Optional, Tuple
 
 from .logger import logger
 
@@ -33,11 +33,14 @@ __all__ = [
     "BROKERS_GROUP",
     "DISABLE_ENV",
     "DiscoveredPlugin",
+    "SkippedPlugin",
     "GROUPS",
     "PLUGINS_GROUP",
     "STORES_GROUP",
     "attach_discovered",
     "discover",
+    "last_failed",
+    "last_skipped",
 ]
 
 PLUGINS_GROUP = "xstate_statemachine.plugins"
@@ -49,6 +52,30 @@ GROUPS: Tuple[str, ...] = (PLUGINS_GROUP, STORES_GROUP, BROKERS_GROUP)
 DISABLE_ENV = "XSM_DISABLE_PLUGIN_DISCOVERY"
 
 _disabled_logged = False
+
+
+class SkippedPlugin(NamedTuple):
+    """An entry point `discover()` could not load (non-strict mode).
+
+    🔥 #296 battle: a skipped loader was a WARNING log line and nothing
+    else -- `xsm plugins` listed a marketplace with the broken plugin
+    simply missing, and an operator had no way to tell "not installed"
+    from "installed but broken" without reading logs.
+    """
+
+    name: str
+    distribution: str
+    version: str
+    group: str
+    error: str
+
+
+#: The entry points the LAST `discover()` call skipped (per group), for
+#: `xsm plugins` and operators; cleared at the start of every call.
+last_skipped: List["SkippedPlugin"] = []
+#: Under ``strict=True`` the entry point whose loader raised (name, dist),
+#: so a CLI can name it without a traceback; ``{}`` otherwise.
+last_failed: Dict[str, str] = {}
 
 
 class DiscoveredPlugin(NamedTuple):
@@ -147,6 +174,8 @@ def discover(
         The loaded entry points, sorted by (distribution, name). ``[]`` when
         ``XSM_DISABLE_PLUGIN_DISCOVERY=1``.
     """
+    del last_skipped[:]
+    last_failed.clear()
     if _disabled():
         return []
     allowed = None if allow is None else set(allow)
@@ -157,9 +186,20 @@ def discover(
             continue
         try:
             obj = ep.load()
-        except Exception:
+        except Exception as exc:  # noqa: BLE001 -- third-party loader
             if strict:
+                last_failed.clear()
+                last_failed.update(name=ep.name, dist=dist)
                 raise
+            last_skipped.append(
+                SkippedPlugin(
+                    ep.name,
+                    dist,
+                    version,
+                    group,
+                    f"{type(exc).__name__}: {exc}",
+                )
+            )
             logger.warning(
                 "Skipping plugin entry point %r (%s) from %r: its loader "
                 "raised.",
@@ -201,11 +241,21 @@ def attach_discovered(
     Returns:
         The plugin instances attached, in discovery order.
     """
+    from .plugins import PluginBase
+
     attached: List[Any] = []
     for found in discover(group=PLUGINS_GROUP, allow=allow, strict=strict):
         try:
             plugin = _instantiate(found.obj)
-        except Exception:
+            # 🔥 #296 battle: an entry point naming a class that is NOT a
+            #    PluginBase was `.use()`d anyway -- the engine then called
+            #    hooks that do not exist on every step. Refused (strict) or
+            #    skipped, like a failing loader.
+            if not isinstance(plugin, PluginBase):
+                raise TypeError(
+                    f"{type(plugin).__name__} is not a PluginBase subclass"
+                )
+        except Exception:  # noqa: BLE001 -- third-party constructor
             if strict:
                 raise
             logger.warning(
