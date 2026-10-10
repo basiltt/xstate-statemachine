@@ -27,6 +27,8 @@ HERE = Path(__file__).resolve().parent
 #: Promotion needs BOTH: error rate at most 1 %, p99 at most 800 ms.
 MAX_ERROR_RATE = 0.01
 MAX_P99_MS = 800.0
+#: Exposure history kept in context (newest last).
+MAX_HISTORY = 50
 
 Metrics = Callable[[], Dict[str, float]]
 
@@ -49,7 +51,9 @@ def build_machine(
         #    was never pushed. Now `percent` is what was really applied.
         apply_percent(ctx["flag"], pct)
         ctx["percent"] = pct
-        ctx["history"].append(pct)
+        # 📝 #308 battle (integrator): bounded -- a flag that cycles
+        #    START / ROLLBACK for months must not grow its snapshot forever.
+        ctx["history"] = (ctx["history"] + [pct])[-MAX_HISTORY:]
 
     logic = MachineLogic(
         actions={"setPercent": set_percent},

@@ -116,4 +116,6 @@ When a server restarts, every client drops at the same instant. With pure expone
 
 No message is buffered or re-sent: anything you `send` while `reconnecting` is yours to queue. Reconnection state lives in memory, so a process restart starts `disconnected`.
 
+On `SyncInterpreter`, socket callbacks are **mailbox events**: `from_callback`'s `send_back` posts through `send_threadsafe()`, so a `MESSAGE` the socket thread delivers is processed at the next `send()` / `tick()` on the owning thread, not the instant it arrives. A long-lived sync client should `tick()` on a schedule, or run on the async `Interpreter`, where the loop delivers them.
+
 Related: [Resilience patterns → RetryPolicy](../patterns/), [Actors → callback logic](../actors/), [Circuit breaker & retry](../circuit-breaker-retry/), [all recipes](../recipes/).

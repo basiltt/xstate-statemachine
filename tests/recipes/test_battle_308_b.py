@@ -104,9 +104,7 @@ def test_block_runs_from_a_copied_recipe_folder(
 def test_fragment_compiles(block: Tuple[Any, ...]) -> None:
     """A fragment need not run, but it must be Python (a broken nested
     fence once ended a block mid-f-string)."""
-    compile(
-        block[2], _id(block), "exec", flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT
-    )
+    compile(block[2], _id(block), "exec", flags=ast.PyCF_ALLOW_TOP_LEVEL_AWAIT)
 
 
 # -----------------------------------------------------------------------------
@@ -153,9 +151,9 @@ def test_anchor_discovery_is_not_empty() -> None:
 def test_anchored_test_exists(anchor: Tuple[str, str, str]) -> None:
     slug, path, name = anchor
     src = (ROOT / path).read_text("utf-8")
-    assert re.search(rf"^\s*(async )?def {name}\(", src, re.M), (
-        f"{slug} cites {path}::{name}, which no longer exists"
-    )
+    assert re.search(
+        rf"^\s*(async )?def {name}\(", src, re.M
+    ), f"{slug} cites {path}::{name}, which no longer exists"
 
 
 @pytest.mark.parametrize("slug", sorted(SLUGS))
@@ -270,9 +268,9 @@ def test_task_queue_rows_quote_real_errors(tmp_path: Path) -> None:
     saved = qw.STORE, qw.MACHINE
     try:
         qw.STORE = None
-        with pytest.raises(AttributeError) as exc:
+        with pytest.raises(RuntimeError) as exc:
             qw.apply_event("shipment.1", "LABEL_PRINTED")
-        assert f"`AttributeError: {exc.value}`" in page
+        assert str(exc.value).split(" (")[0] in page
     finally:
         qw.STORE, qw.MACHINE = saved
 
@@ -325,9 +323,13 @@ def test_rollout_apply_percent_that_raises_is_not_retried() -> None:
         i = SyncInterpreter(m, clock=clock).start()
         i.send("START")
         clock.increment(3_600_000)  # -> canary_1, apply_percent raises
-        assert i.context["percent"] == 1  # the chart moved on anyway
+        # 🔥 (A): exposure is recorded only after the push succeeded --
+        #    the chart moved on, but `percent` still says what is LIVE
+        assert i.context["percent"] == 0.1
+        assert i.value == {"exposed": "canary_1"}
         clock.increment(3_600_000)
         assert i.value == {"exposed": "canary_25"}
+        assert i.context["percent"] == 25
         assert pushed.count(1) == 1  # never retried
         i.stop()
     finally:

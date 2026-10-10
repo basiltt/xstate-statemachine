@@ -95,6 +95,6 @@ send_event.send("shipment.42", "PICKED_UP")
 | `ConflictError: Store conflict on 'shipment.42': expected version 3, found 4. Reload the snapshot and retry.` in the queue's failed jobs | `apply_event` re-applies on a conflict `RETRIES` times (5 in `queue_workers.py`), then re-raises so the queue's own retry or dead-letter takes over. Many workers hammering **one** key exhaust the budget. | Raise `RETRIES`, route one key's jobs to one queue, or use `PessimisticLock()`. |
 | `ModuleNotFoundError: No module named 'dramatiq'` | `dramatiq_actor()` imports Dramatiq lazily; only the Dramatiq worker needs it. | `pip install dramatiq` on that worker. |
 | An event counted twice after a worker crash | The queue redelivered a job whose save had already committed (at-least-once). | Send an event id and attach `IdempotencyPlugin`. |
-| `AttributeError: 'NoneType' object has no attribute 'load'` | The job ran in a process that never called `configure()`. | Call it in the worker's start-up hook (`on_startup` for arq). |
+| `RuntimeError: queue_workers: call configure(store) at worker start-up` | The job ran in a process that never called `configure()`. | Call it in the worker's start-up hook (`on_startup` for arq). |
 
 Related: [Persistence → locking](../persistence/), [all recipes](../recipes/).

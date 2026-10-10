@@ -88,9 +88,7 @@ class TestStripeSignature:
         v1 = sw.sign(body, SECRET, NOW).split("v1=")[1]
         sw.verify_signature(body, f"t={NOW},t=1,v1={v1}", SECRET, now=NOW)
         with pytest.raises(sw.SignatureError):
-            sw.verify_signature(
-                body, f"t=1,t={NOW},v1={v1}", SECRET, now=NOW
-            )
+            sw.verify_signature(body, f"t=1,t={NOW},v1={v1}", SECRET, now=NOW)
 
     @pytest.mark.parametrize("tol", [0, -1])
     def test_zero_or_negative_tolerance(self, tol: int) -> None:
@@ -160,9 +158,10 @@ class TestStripeEventShape:
         # key, so a re-signed evt_1 aimed at another subscription is a
         # NEW delivery there. Only a leaked secret can produce it.
         store, inbox = mem
-        assert _deliver(store, inbox, _body(subscription="sub_A"))[1][
-            "duplicate"
-        ] is False
+        assert (
+            _deliver(store, inbox, _body(subscription="sub_A"))[1]["duplicate"]
+            is False
+        )
         r = _deliver(store, inbox, _body(subscription="sub_B"))[1]
         assert r["duplicate"] is False and r["state"] == "active"
 
@@ -320,15 +319,16 @@ class TestRollout:
         assert not r.changed and i.value == state
         i.stop()
 
-    def test_history_grows_per_cycle(self) -> None:
-        # Held (for the integrator): `history` is unbounded -- 3 entries
-        # per START/ROLLBACK/RETRY cycle. Bound it if you loop forever.
+    def test_history_is_bounded_per_cycle(self) -> None:
+        # 🔥 (integrator): `history` grew 3 entries per START/ROLLBACK/
+        #    RETRY cycle without bound; it keeps the newest MAX_HISTORY.
         i, _, _ = _rollout()
         for _ in range(100):
             i.send("START")
             i.send("ROLLBACK")
             i.send("RETRY")
-        assert len(i.context["history"]) == 1 + 300
+        assert len(i.context["history"]) == ro.MAX_HISTORY
+        assert i.context["history"][-1] == 0.0  # newest last (ROLLBACK)
         i.stop()
 
     def test_restart_mid_bake_keeps_the_deadline(self) -> None:
@@ -426,6 +426,7 @@ class TestQueueRetry:
                 return None
 
         monkeypatch.setattr(qw, "persisted", lambda *a, **k: Always())
+        monkeypatch.setattr(qw, "STORE", object())  # configured
         with pytest.raises(qw.ConflictError):
             qw.apply_event("k", "E")
         assert len(calls) == qw.RETRIES + 1
