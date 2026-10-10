@@ -94,4 +94,21 @@ The example's `apscheduler_timers.py` runs this as `python apscheduler_timers.py
 >
 > See [Guarantees](../guarantees/) and [Persistence → durable timers](../persistence/).
 
+<!-- test: tests/persistence/test_durable_timers.py::test_sync_arm_persist_forget -->
+<!-- test: tests/persistence/test_durable_timers.py::test_stale_under_lock_is_skipped -->
+<!-- test: tests/persistence/test_battle_264_scanner_concurrency.py::test_web_request_advances_key_between_scan_and_lock -->
+<!-- test: tests/persistence/test_battle_264_scanner_concurrency.py::test_eight_scanners_fire_every_key_exactly_once -->
+<!-- test: tests/persistence/test_durable_timers.py::test_skew_tolerance_and_prefix_and_limit -->
+<!-- test: tests/persistence/test_durable_timers.py::test_error_in_one_key_does_not_stop_scan -->
+<!-- test: tests/recipes/test_apscheduler_timers.py::test_scanner_fires_reminder_then_expiry -->
+
+## Troubleshooting
+
+| You see | Why | Fix |
+|:--|:--|:--|
+| The reminder fires twice, or `last_result.skipped_stale` keeps growing | Two scheduler roles scan one store (a second replica, or the job registered in every web worker). The version check keeps the *commit* exactly-once, but each role runs the transition in memory first. | Run **one** scheduler role per store. Start the job in a dedicated process, not in the web app's start-up hook. |
+| A deadline never fires | No scheduler role is running, or its `prefix=` does not match the keys (`"trial."` vs `"trial:"`). | Check `scanner.due_keys(now)` from a shell. |
+| A key is listed in `last_result.errors` on every run | `machine_for_key` raised for it, or its snapshot no longer matches the chart. The other keys still fire. | Fix or migrate that record; the error names the key. |
+| `run_once` returns `0` although the deadline has passed by a few seconds | The scanner's clock is behind the web host's. | Run NTP, or pass `skew_tolerance_s=`. |
+
 Related: [Delayed transitions](../delayed-transitions/), [all recipes](../recipes/).

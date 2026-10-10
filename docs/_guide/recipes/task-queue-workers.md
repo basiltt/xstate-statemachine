@@ -83,4 +83,18 @@ send_event.send("shipment.42", "PICKED_UP")
 >
 > **What this does not do:** queues deliver **at least once**. A job retried after a successful save sends its event again. Give each event an id and attach `IdempotencyPlugin` (as in the [Stripe recipe](../stripe-webhooks/)) when a duplicate must be a no-op. Ordering between jobs for one key is whatever order the queue delivers them in. Nothing here is a distributed lock. Use `PessimisticLock()` if the work inside the block is slow and conflicts are frequent.
 
+<!-- test: tests/recipes/test_task_queue_workers.py::test_threads_racing_one_key_lose_no_update -->
+<!-- test: tests/recipes/test_task_queue_workers.py::test_conflict_is_retried_and_nothing_is_lost -->
+<!-- test: tests/recipes/test_task_queue_workers.py::test_conflict_gives_up_after_retries -->
+<!-- test: tests/persistence/test_locking.py::test_exception_in_block_writes_nothing -->
+
+## Troubleshooting
+
+| You see | Why | Fix |
+|:--|:--|:--|
+| `ConflictError: Store conflict on 'shipment.42': expected version 3, found 4. Reload the snapshot and retry.` in the queue's failed jobs | `apply_event` re-applies on a conflict `RETRIES` times (5 in `queue_workers.py`), then re-raises so the queue's own retry or dead-letter takes over. Many workers hammering **one** key exhaust the budget. | Raise `RETRIES`, route one key's jobs to one queue, or use `PessimisticLock()`. |
+| `ModuleNotFoundError: No module named 'dramatiq'` | `dramatiq_actor()` imports Dramatiq lazily; only the Dramatiq worker needs it. | `pip install dramatiq` on that worker. |
+| An event counted twice after a worker crash | The queue redelivered a job whose save had already committed (at-least-once). | Send an event id and attach `IdempotencyPlugin`. |
+| `AttributeError: 'NoneType' object has no attribute 'load'` | The job ran in a process that never called `configure()`. | Call it in the worker's start-up hook (`on_startup` for arq). |
+
 Related: [Persistence → locking](../persistence/), [all recipes](../recipes/).

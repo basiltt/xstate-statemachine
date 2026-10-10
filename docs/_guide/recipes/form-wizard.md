@@ -72,7 +72,8 @@ elif wiz.step == "plan":
         wiz.send("NEXT", plan=plan)
 # ... confirm / done ...
 with st.expander("How this form works"):
-    st.markdown(f"```mermaid\n{diagram()}\n```")    # the chart, embedded
+    fence = "`" * 3                     # a literal fence would end this block
+    st.markdown(f"{fence}mermaid\n{diagram()}\n{fence}")    # the chart, embedded
 ```
 
 ## Gradio
@@ -94,10 +95,19 @@ with gr.Blocks() as demo:
     header = gr.Markdown("## Sign up -- account")
     email, plan, terms = gr.Textbox(label="Email"), gr.Radio(list(PLANS)), gr.Checkbox()
     gr.Button("Next").click(on_next, [session, email, plan, terms], [session, header])
-    gr.Markdown(f"```mermaid\n{diagram()}\n```")
+    fence = "`" * 3
+    gr.Markdown(f"{fence}mermaid\n{diagram()}\n{fence}")
 ```
 
 Neither library is a dependency. `tests/recipes/test_form_wizard.py` imports both apps against stub `streamlit` and `gradio` modules. It clicks through the whole wizard, refused input included, and checks that the Mermaid diagram is rendered.
+
+## Troubleshooting
+
+| You see | Why | Fix |
+|:--|:--|:--|
+| *Next* does nothing | The guard refused the input: `send()` returns `False` (`xsm simulate … --events NEXT --guards-false accountValid` prints `NEXT  denied by guard`). | Show an error when `send()` returns `False`. |
+| `ModuleNotFoundError: No module named 'wizard'` | The apps import `wizard.py` from their own folder. | Copy the whole `examples/recipes/form_wizard/` folder and run from inside it. |
+| The wizard restarts on every click | The snapshot was stored somewhere that does not survive a rerun (a local variable instead of `st.session_state` / `gr.State`). | Pass the session mapping to `Wizard(...)`. |
 
 ## Why a chart here
 
