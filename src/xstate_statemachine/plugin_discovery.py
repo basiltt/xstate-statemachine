@@ -125,6 +125,21 @@ def _entry_points(group: str) -> List[Any]:
 _Index = Dict[Tuple[str, str, str], Tuple[str, str]]
 
 
+def _meta_name(dist: Any) -> str:
+    """``Name`` from a distribution's metadata, ``""`` when absent.
+
+    📝 `PackageMetadata.get` is typed only on newer typeshed (3.12+), so
+    the lookup goes through `getattr` -- identical at runtime everywhere.
+    """
+    try:
+        md = dist.metadata
+        getter = getattr(md, "get", None)
+        value = getter("Name") if callable(getter) else md["Name"]
+    except Exception:  # noqa: BLE001 -- malformed metadata
+        return ""
+    return str(value or "")
+
+
 def _dist_index() -> _Index:
     """🐍 3.9: (group, name, value) → (dist, version), first dist wins.
 
@@ -136,7 +151,7 @@ def _dist_index() -> _Index:
     index: _Index = {}
     for d in metadata.distributions():
         try:
-            meta = (d.metadata.get("Name") or "", d.version or "")
+            meta = (_meta_name(d), d.version or "")
             for o in d.entry_points:
                 index.setdefault((o.group, o.name, o.value), meta)
         except Exception:  # noqa: BLE001 -- malformed third-party metadata
@@ -147,7 +162,7 @@ def _dist_index() -> _Index:
 def _dist_of(ep: Any, index: Optional[_Index] = None) -> Tuple[str, str]:
     dist = getattr(ep, "dist", None)  # 3.10+
     if dist is not None:
-        name = dist.metadata.get("Name") or ""
+        name = _meta_name(dist)
         return name, dist.version or ""
     # 🐍 3.9: EntryPoint has no `.dist`; find the owning distribution.
     if index is None:
