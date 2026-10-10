@@ -185,6 +185,8 @@ Nested (hierarchical) states are fully supported. A transition defined on a pare
 }
 ```
 
+<div class="stately" data-machine="05472ecd62" data-height="420" data-title="app"></div>
+
 Use `#machineId.stateName` syntax for absolute state references, or relative names for sibling states.
 
 ---

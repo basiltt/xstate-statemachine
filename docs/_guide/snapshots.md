@@ -67,6 +67,8 @@ snapshot_json = interp.get_snapshot()
 print(snapshot_json)
 ```
 
+<div class="stately" data-machine="7f43015eb2" data-height="420" data-title="workflow"></div>
+
 **Output:**
 
 ```json
@@ -196,6 +198,8 @@ async def main():
 
 asyncio.run(main())
 ```
+
+<div class="stately" data-machine="c4d112e2a1" data-height="320" data-title="oms"></div>
 
 Each entry is a `PendingInvocation(state_id, invoke_id, src)` namedtuple — the state that owns the `invoke`, the invoke's id (explicit, or the parser's default), and the service key. Check this list first, then decide whether to re-drive the work.
 
@@ -385,6 +389,8 @@ restored.context["steps_completed"].append("profile")
 restored.stop()
 ```
 
+<div class="stately" data-machine="bb6354f15c" data-height="420" data-title="onboarding"></div>
+
 ## 🗄️ Database Persistence: SQLite Example
 
 For production systems, store snapshots in a database:
@@ -463,6 +469,8 @@ if saved_json:
 conn.close()
 ```
 
+<div class="stately" data-machine="e7ef5700a1" data-height="420" data-title="order-42"></div>
+
 ## ⚡ Async Snapshots
 
 Snapshots work identically with the async `Interpreter`:
@@ -501,6 +509,8 @@ async def main():
 
 asyncio.run(main())
 ```
+
+<div class="stately" data-machine="49b9f8360b" data-height="320" data-title="asyncWorkflow"></div>
 
 ## 🧪 Testing with Snapshots
 
@@ -589,6 +599,8 @@ def test_payment_failure_retry():
 test_payment_flow()
 test_payment_failure_retry()
 ```
+
+<div class="stately" data-machine="ff87ee3591" data-height="420" data-title="checkout"></div>
 
 ## 🏁 Complete Example: Long-Running Workflow with Checkpointing
 
@@ -689,6 +701,8 @@ if CHECKPOINT_FILE.exists():
     print("Checkpoint cleaned up.")
 ```
 
+<div class="stately" data-machine="4a5d4aeb2d" data-height="420" data-title="dataProcessing"></div>
+
 ## 🛟 Complete Example: Crash Recovery Pattern
 
 ```python
@@ -769,3 +783,5 @@ workflow.send("TESTS_PASS")
 workflow.send("DEPLOY_OK")
 workflow.finish()
 ```
+
+<div class="stately" data-machine="11e73cd318" data-height="420" data-title="deploy"></div>

@@ -67,6 +67,8 @@ A session that warns the user before expiring:
 }
 ```
 
+<div class="stately" data-machine="8158a0c746" data-height="320" data-title="sessionTimeout"></div>
+
 Running it:
 
 ```python
@@ -101,6 +103,8 @@ print(interp.active_state_ids)
 
 interp.stop()
 ```
+
+<div class="stately" data-machine="8158a0c746" data-height="320" data-title="sessionTimeout"></div>
 
 This machine:
 
@@ -368,6 +372,8 @@ Delayed transitions work inside compound (hierarchical) states. Timers in a chil
 }
 ```
 
+<div class="stately" data-machine="e8e4e1b68f" data-height="420" data-title="nestedTimer"></div>
+
 When `LOGOUT` fires, the machine exits `dashboard` (cancelling its 60-second refresh timer) and then exits `loggedIn`.
 
 ## ⚖️ Sync vs Async Timers
@@ -476,6 +482,8 @@ print(interp.active_state_ids)   # {'sessionTimeout.expired'}
 
 interp.stop()
 ```
+
+<div class="stately" data-machine="8158a0c746" data-height="320" data-title="sessionTimeout"></div>
 
 On the async `Interpreter`, `increment()` returns an awaitable so the caller can be sure the fired timer has finished being processed (including any onward transitions) before checking state:
 
@@ -628,6 +636,8 @@ print(interp.active_state_ids)
 interp.stop()
 ```
 
+<div class="stately" data-machine="5907d4edd7" data-height="420" data-title="poller"></div>
+
 ## 💾 Complete Example: Auto-Save with Debounce
 
 A document editor that auto-saves 2 seconds after the last edit:
@@ -704,5 +714,7 @@ print(interp.active_state_ids)
 # After 2 seconds of no edits, auto-save would fire
 interp.stop()
 ```
+
+<div class="stately" data-machine="f363f37eac" data-height="320" data-title="autoSave"></div>
 
 The key insight: each `EDIT` event **re-enters** `dirty`, which resets the 2-second timer. The save only fires after the user stops typing for 2 full seconds. This is the classic debounce pattern, expressed declaratively.

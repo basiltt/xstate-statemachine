@@ -192,6 +192,8 @@ assert isinstance(interp.last_error, TypeError)      # ...and the failure is sti
 interp.stop()
 ```
 
+<div class="stately" data-machine="250e43429f" data-height="320" data-title="gate"></div>
+
 Every failure path also fires a `PluginBase` hook — `on_action_error`, `on_guard_error`, `on_resolve_error` (an unresolvable target under `strict_targets=False`), `on_unhandled_event`, `on_event_dropped`, `on_transition_failed`, and `on_plugin_error` for a failure inside *another* plugin — so you can ship metrics without touching machine code.
 
 ---

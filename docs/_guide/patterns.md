@@ -96,6 +96,8 @@ assert interp.matches("job.done") and calls["n"] == 4
 assert interp.context["attempt"] == 0  # retryReset ran on success
 ```
 
+<div class="stately" data-machine="49ba251fae" data-height="420" data-title="job"></div>
+
 Three failures, then success on the fourth attempt — driven entirely by the chart and a `SimulatedClock`, with no `sleep` anywhere.
 
 ### Custom names
@@ -145,6 +147,8 @@ assert [e["message"] for e in record.errors] == [
 assert record.snapshot["context"]["api_key"] == "***"     # redacted before it reached the sink
 print(record.to_json()[:80], "…")
 ```
+
+<div class="stately" data-machine="afe4ad5ce0" data-height="420" data-title="job"></div>
 
 What the record guarantees:
 

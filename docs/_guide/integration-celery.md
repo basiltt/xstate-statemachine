@@ -46,6 +46,8 @@ with persisted(store, "o1", machine) as order:
     assert order.matches("o.paid")
 ```
 
+<div class="stately" data-machine="2899718d61" data-height="320" data-title="o"></div>
+
 ## Reference
 
 ### `celery_service(task, *, args_from=..., timeout_s=None, queue=None, poll_s=0.05, watch=True)`

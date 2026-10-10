@@ -90,6 +90,8 @@ snapshot = order.get_snapshot()          # JSON: state, context and deadlines
 order.stop()
 ```
 
+<div class="stately" data-machine="d97f91cb9e" data-height="420" data-title="order"></div>
+
 The `after` deadline is part of `snapshot`. With a store and `DueTimerScanner`, it fires even when no process kept the order in memory. See [Persistence](../persistence/).
 
 ## When to choose transitions instead

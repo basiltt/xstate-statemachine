@@ -215,6 +215,8 @@ print(interp.current_state_ids)  # {"purchaseGate.approved"}
 interp.stop()
 ```
 
+<div class="stately" data-machine="2611550c1d" data-height="320" data-title="purchaseGate"></div>
+
 ## 🪆 Context with Nested Objects
 
 Context can hold deeply nested structures. Actions access them with standard Python dictionary operations:
@@ -460,6 +462,8 @@ print(interp.context["total"])         # 40.47
 print(interp.context["appliedCoupon"]) # SAVE10
 interp.stop()
 ```
+
+<div class="stately" data-machine="5ab97e54fa" data-height="320" data-title="shoppingCart"></div>
 
 ## 📝 Updating Context Declaratively with `assign`
 

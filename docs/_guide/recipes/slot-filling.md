@@ -74,6 +74,8 @@ bot.send("YES")
 assert bot.value == "booked"
 ```
 
+<div class="stately" data-machine="cc8a1051ad" data-height="420" data-title="booking"></div>
+
 The example module adds per-slot prompts ("For how many people?"), a confirmation read-back, and `NO` → clear and restart. Its tests run the **same script on `SyncInterpreter` and `Interpreter`** on a `SimulatedClock`, so a conversation lasting minutes is tested in milliseconds.
 
 ## Troubleshooting

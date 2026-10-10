@@ -102,6 +102,8 @@ async def main():
 asyncio.run(main())
 ```
 
+<div class="stately" data-machine="787d392d98" data-height="420" data-title="fetchMachine"></div>
+
 ### Key Points
 
 - `await interpreter.start()` — enters the initial state and returns the interpreter (for chaining).
@@ -691,6 +693,8 @@ interp.stop()
 print(interp.is_running)        # False
 ```
 
+<div class="stately" data-machine="daf3941ff0" data-height="320" data-title="lifecycle"></div>
+
 ### Idempotency and Safety
 
 Both `start()` and `stop()` are safe to call multiple times:
@@ -755,6 +759,8 @@ print(interp.active_state_ids)
 interp.stop()
 ```
 
+<div class="stately" data-machine="a6fcdb50e6" data-height="320" data-title="autoRouter"></div>
+
 > **Note:** A single `send()` call can trigger a chain of transitions if states along the path have `always` transitions. The interpreter keeps processing until it reaches a stable state with no pending eventless transitions.
 
 ---
@@ -797,6 +803,8 @@ async def main():
 
 asyncio.run(main())
 ```
+
+<div class="stately" data-machine="f55e97caaa" data-height="420" data-title="auth"></div>
 
 Because `value` is tree-walked rather than built from dotted ids, a state key that itself contains a `.` (e.g. `"v2.0"`) is safe — it is never confused with a path separator.
 
@@ -857,6 +865,8 @@ interp.send("GO")    # a → b — logged by plugin
 interp.send("GO")    # b → c — logged by plugin
 interp.stop()
 ```
+
+<div class="stately" data-machine="309fb57dc3" data-height="320" data-title="demo"></div>
 
 **Output:**
 
@@ -990,6 +1000,8 @@ print(interp.status)             # "running"
 
 interp.stop()
 ```
+
+<div class="stately" data-machine="223a5d329b" data-height="320" data-title="risky"></div>
 
 To surface the failure to the rest of the machine, catch it inside the action
 and record it on `context`, then guard a transition on that flag:

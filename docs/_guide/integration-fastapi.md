@@ -70,6 +70,8 @@ with TestClient(app) as client:
     assert union["discriminator"]["propertyName"] == "type"
 ```
 
+<div class="stately" data-machine="d1c78c6594" data-height="320" data-title="order"></div>
+
 For a hand-written route, `get_interpreter` is a ready-made `Depends` that yields a started interpreter and persists it when the handler returns:
 
 <!-- doc-fragment -->
@@ -179,6 +181,8 @@ with TestClient(app) as client:
 assert sent == ["1"]
 ```
 
+<div class="stately" data-machine="533ae74a8a" data-height="320" data-title="order"></div>
+
 `send_event` returns only after the save has committed. A `409`, a guard denial or an `Idempotency-Key` replay therefore never schedules the task. `BackgroundTasks` still runs *in the web worker*, and a crash after the response loses the task. When the side effect must happen, write it to an **outbox** in the same transaction and deliver it from a separate process. See the event-driven architecture guide (arriving with the Phase F integrations).
 
 ## Request rules
@@ -240,6 +244,8 @@ with TestClient(app) as ann, TestClient(app) as bob:
     assert ann.post("/checkout/next").json()["state"] == "review"
     assert bob.post("/checkout/next").json()["state"] == "payment"
 ```
+
+<div class="stately" data-machine="6a0bc67c9c" data-height="320" data-title="checkout"></div>
 
 The key never appears in the URL, so one visitor cannot drive another visitor's wizard by editing a path. Use a session id that you signed or that is stored server-side, not a raw user id. Expired wizards stay in the store until you delete them. Give the store a `ttl_s=` (Redis), or delete finished keys in a scheduled job.
 

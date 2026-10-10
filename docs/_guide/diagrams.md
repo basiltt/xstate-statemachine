@@ -46,6 +46,8 @@ plantuml = machine.to_plantuml()
 print(plantuml)
 ```
 
+<div class="stately" data-machine="9716e04c54" data-height="320" data-title="trafficLight"></div>
+
 ### Sample Output
 
 ```
@@ -114,6 +116,8 @@ machine = create_machine(config)
 mermaid = machine.to_mermaid()
 print(mermaid)
 ```
+
+<div class="stately" data-machine="9716e04c54" data-height="320" data-title="trafficLight"></div>
 
 ### Sample Output
 
@@ -288,6 +292,8 @@ machine = create_machine(config)
 print(machine.to_plantuml())
 ```
 
+<div class="stately" data-machine="274db684e7" data-height="420" data-title="editor"></div>
+
 **PlantUML output (nested):**
 
 ```
@@ -351,6 +357,8 @@ config = {
 machine = create_machine(config)
 print(machine.to_mermaid())
 ```
+
+<div class="stately" data-machine="77056f1d1c" data-height="520" data-title="player"></div>
 
 **Mermaid output:**
 
@@ -488,5 +496,7 @@ Path("order_system.mmd").write_text(machine.to_mermaid())
 # Print Mermaid for quick preview
 print(machine.to_mermaid())
 ```
+
+<div class="stately" data-machine="10fa219c77" data-height="520" data-title="orderSystem"></div>
 
 > **Note:** The `onDone` transition from compound states is included in the exported diagrams, showing the flow from the compound state to the next top-level state.

@@ -49,6 +49,8 @@ assert click(session, "NEXT", plan="pro")
 assert '"done"' in session["wizard"]
 ```
 
+<div class="stately" data-machine="aa8828ea91" data-height="320" data-title="signup"></div>
+
 `wizard.Wizard(session)` in the example wraps exactly this, and adds `.step`, `.data` and `diagram()`.
 
 ## Streamlit

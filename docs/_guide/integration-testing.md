@@ -272,6 +272,8 @@ assert [c["send"] for c in json.loads(out.read_text())] == [
     "ADD", "PAY", "REFUND", "REFUND"]           # shrunk to the minimal 4 events
 ```
 
+<div class="stately" data-machine="7806ba49ee" data-height="420" data-title="refund"></div>
+
 In a test module you only write `TestRefund = model_test(...)`. The plugin collects it through its generated `TestCase` (plain unittest discovery can use `TestRefund.TestCase`). A failing run prints Hypothesis's usual step list, followed by:
 
 ```text
@@ -361,6 +363,8 @@ machine = create_machine({
 given(machine).in_state("pending").when("PAY").then_state("paid")
 given(machine).in_state("paid").after(1000).then_done()
 ```
+
+<div class="stately" data-machine="81c82f6f1d" data-height="320" data-title="order"></div>
 
 | Method | Behaviour |
 |:--|:--|

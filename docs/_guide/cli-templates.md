@@ -64,6 +64,8 @@ All examples below use this `checkout.json` as input:
 }
 ```
 
+<div class="stately" data-machine="dd562e4f17" data-height="320" data-title="checkout"></div>
+
 This machine has:
 - **3 states**: `cart`, `payment`, `confirmed` (final)
 - **1 guard**: `cartNotEmpty`

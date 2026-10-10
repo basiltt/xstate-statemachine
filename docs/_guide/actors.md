@@ -85,6 +85,8 @@ interp.send("HIRE")  # Spawns the 'worker' actor
 interp.stop()
 ```
 
+<div class="stately" data-machine="23f24e6af9" data-height="320" data-title="worker"></div>
+
 > **Note:** The action name `spawn_worker` maps to the service key `worker`. The interpreter strips the `spawn_` prefix to look up the service.
 
 ## 🏭 Spawning with a Factory Function
@@ -449,6 +451,8 @@ interp = SyncInterpreter(machine).start()
 interp.send("START")  # Spawns the processor actor
 interp.stop()
 ```
+
+<div class="stately" data-machine="75f69fca8a" data-height="320" data-title="processor"></div>
 
 > **Note:** Communication between parent and child actors happens through the event system. The parent sends events that trigger child transitions. Actors created via `invoke` automatically fire the parent's `onDone`/`onError` when they finish. Actors created via the `spawn_`/`spawn_blocking_` action-prefix convention — as in the example above — do **not** auto-notify the parent; the child must explicitly `sendParent` a completion event (as this example's `DONE` transition assumes) for the parent to react.
 

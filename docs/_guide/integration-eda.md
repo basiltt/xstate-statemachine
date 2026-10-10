@@ -77,6 +77,8 @@ async def main() -> None:
 asyncio.run(main())
 ```
 
+<div class="stately" data-machine="e3cc467e71" data-height="320" data-title="order"></div>
+
 ## Reference
 
 ### Envelope
@@ -347,6 +349,8 @@ async def main() -> None:
 
 asyncio.run(main())
 ```
+
+<div class="stately" data-machine="678f33d70e" data-height="320" data-title="order"></div>
 
 **Orchestration or choreography?** Use a saga when one business process owns the steps, needs compensation in a defined order, and someone must be able to answer "where is order 42?" by looking at one instance. Use choreography when services are owned by different teams and each only needs to react to facts, not to a plan. Choreography scales organisationally but spreads the process across machines, so the causation chain is the only thing that ties it together. Keep `correlationid` on every envelope. Choreography has no compensation of its own: an undo is just another event each service must handle, and nothing guarantees the order. A cycle between two routes is not caught by the engine's `RunawayChainError` (that guards one machine's internal chain); `run_until_quiet` stops it after `max_rounds` with a `RuntimeError`, and in production it simply loops on the bus.
 

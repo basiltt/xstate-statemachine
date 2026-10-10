@@ -57,6 +57,8 @@ A simple checkout that progresses through three stages:
 }
 ```
 
+<div class="stately" data-machine="345a62aa18" data-height="320" data-title="checkout"></div>
+
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter
 
@@ -88,6 +90,8 @@ print(interp.active_state_ids)
 
 interp.stop()
 ```
+
+<div class="stately" data-machine="345a62aa18" data-height="320" data-title="checkout"></div>
 
 Once the machine reaches `confirmation`, it stays there. No event can move it out — that's the guarantee of a final state.
 
@@ -155,6 +159,8 @@ The most powerful use of final states is inside **compound (hierarchical) states
 }
 ```
 
+<div class="stately" data-machine="057d533ae4" data-height="420" data-title="workflow"></div>
+
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter
 
@@ -192,6 +198,8 @@ print(interp.active_state_ids)
 
 interp.stop()
 ```
+
+<div class="stately" data-machine="057d533ae4" data-height="420" data-title="workflow"></div>
 
 The flow:
 
@@ -261,6 +269,8 @@ print(interp.active_state_ids)
 interp.stop()
 ```
 
+<div class="stately" data-machine="4e6bb1722d" data-height="420" data-title="withActions"></div>
+
 ## 🎛️ Final States in Parallel Regions
 
 In a parallel state, each region can have its own final state. Important rules:
@@ -300,6 +310,8 @@ In a parallel state, each region can have its own final state. Important rules:
   }
 }
 ```
+
+<div class="stately" data-machine="a3ea16cc2d" data-height="520" data-title="parallelFinal"></div>
 
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter
@@ -353,6 +365,8 @@ print(interp.active_state_ids)
 interp.stop()
 ```
 
+<div class="stately" data-machine="a3ea16cc2d" data-height="520" data-title="parallelFinal"></div>
+
 > **Note:** The `onDone` on `processing` only fires when **both** `upload` and `validate` have reached their final states. This is how parallel states enable "wait for all" patterns.
 
 ## 🔀 Multiple Final States: Success/Failure Patterns
@@ -376,6 +390,8 @@ A machine can have **multiple** final states to represent different outcomes:
   }
 }
 ```
+
+<div class="stately" data-machine="ba12db1e76" data-height="320" data-title="payment"></div>
 
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
@@ -416,6 +432,8 @@ elif "payment.failed" in interp.active_state_ids:
 interp.stop()
 ```
 
+<div class="stately" data-machine="ba12db1e76" data-height="320" data-title="payment"></div>
+
 This pattern is useful when a parent needs to distinguish between different completion outcomes:
 
 ```json
@@ -443,6 +461,8 @@ This pattern is useful when a parent needs to distinguish between different comp
   }
 }
 ```
+
+<div class="stately" data-machine="d6842e9ef2" data-height="420" data-title="d6842e9ef2"></div>
 
 ## 🐍 Pythonic Final States
 
@@ -665,6 +685,8 @@ print(interp.active_state_ids)
 
 interp.stop()
 ```
+
+<div class="stately" data-machine="bf690f5bad" data-height="640" data-title="orderProcess"></div>
 
 ## ✅ Complete Example: Multi-Step Approval Workflow
 

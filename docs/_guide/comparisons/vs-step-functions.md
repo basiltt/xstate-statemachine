@@ -83,6 +83,8 @@ An order: charge the card with retries, wait for the warehouse to confirm shipme
 }
 ```
 
+<div class="stately" data-machine="f0f6415643" data-height="420" data-title="order"></div>
+
 The shapes map closely. `Retry` becomes `RetryPolicy` plus a `retrying` state. `Catch` becomes `onError`, and a `.waitForTaskToken` task becomes a state with `on` events. The difference is in who may move the machine. In ASL, the flow moves from task to task, and outside input enters only through the token you handed out. In a statechart, **any state can react to any event**, so "cancel while waiting", "the address changed while charging" and "pause" are transitions, not extra plumbing.
 
 ## Local testing
@@ -122,6 +124,8 @@ assert order.value == "awaitingShipment"
 clock.increment(3 * 24 * 3_600_000)           # three days, instantly
 assert order.value == "cancelled"
 ```
+
+<div class="stately" data-machine="f0f6415643" data-height="420" data-title="order"></div>
 
 The same file runs in CI with no Docker, no AWS credentials and no network. `xsm simulate chart.json --events +259200000` does the same from a shell.
 

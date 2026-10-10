@@ -127,6 +127,8 @@ print(interp.current_state_ids)
 interp.stop()
 ```
 
+<div class="stately" data-machine="fc51c5c761" data-height="420" data-title="userLoader"></div>
+
 ## 🧠 Service Implementation
 
 ### Service Signature
@@ -658,6 +660,8 @@ print(interp.context["user"])
 interp.stop()
 ```
 
+<div class="stately" data-machine="2a684453cb" data-height="420" data-title="userDataLoader"></div>
+
 ## Complete Example: Payment Processing Flow
 
 A multi-stage payment flow with validation, charging, and confirmation:
@@ -807,6 +811,8 @@ print(interp.context["receipt"])
 # {"receiptId": "RCP-TXN-20260323-001", "amount": 49.99, "currency": "USD", "status": "paid"}
 interp.stop()
 ```
+
+<div class="stately" data-machine="2388959f06" data-height="520" data-title="paymentProcessor"></div>
 
 ## Services and Snapshots
 

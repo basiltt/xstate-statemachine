@@ -63,6 +63,8 @@ assert scanner.run_once(now=14 * DAY + 60) == 1
 assert sent == ["reminder", "expired"]
 ```
 
+<div class="stately" data-machine="c524021238" data-height="420" data-title="trial"></div>
+
 ## Scheduler role: the APScheduler job
 
 <!-- doc-requires: apscheduler -->

@@ -50,6 +50,8 @@ import json
 assert json.loads(STORE.load("shipment.42").snapshot)["context"]["scans"] == 8   # no lost update
 ```
 
+<div class="stately" data-machine="981313a915" data-height="420" data-title="shipment"></div>
+
 `persisted_retry(store, key, machine, fn)` is the library's built-in form of the same loop, if you prefer not to write it yourself.
 
 ## Three queues, one function

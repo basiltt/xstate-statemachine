@@ -265,6 +265,8 @@ assert interp.matches("order.timed_out")    # the 30 s timer just fired
 interp.stop()
 ```
 
+<div class="stately" data-machine="ba190c1994" data-height="320" data-title="order"></div>
+
 That test asserts a 30-second timeout without burning 30 seconds of real time.
 
 ### Async interpreters: `await` the increment
@@ -372,6 +374,8 @@ assert i.current_state_ids == set(target.final_states)
 
 assert "pay.success" in reachable_states(machine)
 ```
+
+<div class="stately" data-machine="7249aa2479" data-height="420" data-title="pay"></div>
 
 - **`guards`** — `"true"` (default), `"false"`, or `"both"`. With `"both"` every guarded step is tried each way and each `Step` records the **assumption** the path relies on (`guard:isValid=False`, `service:fetch=error`, `delay:slow=unknown`), so a path to an `onError` branch says so.
 - **`weight="time"`** turns BFS into Dijkstra over `after` delays: the path with the least simulated time wins, not the fewest steps.

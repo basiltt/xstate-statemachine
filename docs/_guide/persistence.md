@@ -139,6 +139,8 @@ with persisted(store, "order:42", machine) as order:
 assert store.load("order:42").version == 2
 ```
 
+<div class="stately" data-machine="4e56eb44ff" data-height="320" data-title="order"></div>
+
 Two rules make the block predictable:
 
 1. **An exception inside the block writes nothing.** The store is exactly as it was; the interpreter is stopped. Your `try`/`except` around the block *is* the transaction boundary.
@@ -484,6 +486,8 @@ for r in log.read("expense"):
 rebuilt = replay(machine, log.read("expense"))   # re-run from context₀ on a SimulatedClock
 assert rebuilt.current_state_ids == expense.current_state_ids
 ```
+
+<div class="stately" data-machine="449794f48c" data-height="420" data-title="expense"></div>
 
 Each `TransitionRecord` carries: `machine_id` (the store key under `persisted()`, else the interpreter id), a **gap-free `seq`**, `ts` (`interpreter.wall_now()`), `event_type` and a **redacted** `event_payload`, `from_states` / `to_states` (leaves), the `actions` that ran, a `disposition` (`transition` · `denied` · `unhandled` · `deferred` · `error` · `duplicate`), `actor` / `reason` / `correlation_id`, `machine_version`, `engine=True` for timer and service-completion events, and `origin` (`"external"` for a caller's `send()`, `"internal"` for a `raise`, a self-`send()` from an action, or a re-released deferred event — `replay()` re-sends only external records). Records are plain JSON and round-trip through `JSONLinesLog`.
 

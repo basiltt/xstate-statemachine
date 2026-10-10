@@ -205,6 +205,8 @@ interp.send("SUCCESS")
 interp.stop()
 ```
 
+<div class="stately" data-machine="f5f3e25e82" data-height="320" data-title="formMachine"></div>
+
 ## 🐍 Pythonic Actions
 
 ### `@action` Decorator
@@ -865,6 +867,8 @@ print(interp.context["submissionId"])  # FORM-12345
 interp.stop()
 ```
 
+<div class="stately" data-machine="eb38f3141a" data-height="420" data-title="contactForm"></div>
+
 ## Auto-Discovery with LogicLoader
 
 The `LogicLoader` is a singleton that automatically discovers actions, guards, and services from Python modules or class instances. It maps `snake_case` Python function names to `camelCase` JSON names.
@@ -934,6 +938,8 @@ print(interp.active_state_ids)
 
 interp.stop()
 ```
+
+<div class="stately" data-machine="f4d5d2f880" data-height="420" data-title="autoDiscover"></div>
 
 ### Class-Based Discovery (logic_providers)
 

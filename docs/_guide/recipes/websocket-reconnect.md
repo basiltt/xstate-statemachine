@@ -87,6 +87,8 @@ for _ in range(3): clock.increment(4000)
 assert s.value == "failed"                                 # gave up after max_attempts
 ```
 
+<div class="stately" data-machine="19bd205b78" data-height="420" data-title="socket"></div>
+
 ## Why jitter
 
 When a server restarts, every client drops at the same instant. With pure exponential backoff they all come back at the same instants too (1 s, 2 s, 4 s) and knock the server over again. `jitter="full"` spreads each retry uniformly over `[0, delay]`. Inject `rng=random.Random(seed).random` in tests and the delays become exact. The recipe's test uses a seeded RNG and asserts that the machine stays `reconnecting` until one millisecond before the computed delay, then reconnects.

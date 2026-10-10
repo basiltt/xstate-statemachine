@@ -56,6 +56,8 @@ with TestClient(app) as client:
     assert "/doors/{id}/send" in app.openapi_schema.paths
 ```
 
+<div class="stately" data-machine="c00355f959" data-height="320" data-title="door"></div>
+
 ## Owning an event route
 
 A hand-written handler takes the interpreter as a `Provide` dependency and answers with `ReceiptResponse` — the Litestar-native one exported by this package (Starlette's `ReceiptResponse` cannot be returned from a Litestar handler; that is a 500).
@@ -109,6 +111,8 @@ with TestClient(app) as client:
     assert client.post("/orders/2/send", json={"type": "PAY"}).status_code == 403
 assert charged == ["1"]
 ```
+
+<div class="stately" data-machine="533ae74a8a" data-height="320" data-title="order"></div>
 
 `get_interpreter` saves when the handler returns and discards when it raises; the [FastAPI Request rules](../integration-fastapi/#request-rules) (persistence, `Idempotency-Key`, guards on `GET /events`, gate on `authorize`) apply unchanged. `guards=` and `dependencies=` attach Litestar guards / `Provide`s to every generated route.
 

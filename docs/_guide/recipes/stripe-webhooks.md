@@ -94,6 +94,8 @@ rec = store.load("subscription.sub_1")
 assert json.loads(rec.snapshot)["context"]["failures"] == 1   # the retry did NOT count twice
 ```
 
+<div class="stately" data-machine="f4b060b692" data-height="420" data-title="subscription"></div>
+
 The example module splits this into `verify_signature()`, which also accepts several `v1=` entries during secret rotation, and `handle_webhook()`, which returns `(status, json)` and never raises on bad input. The endpoints stay three lines long. If the official SDK is installed, `verify_with_sdk()` calls `stripe.Webhook.construct_event` instead. That import is soft: the recipe itself needs nothing beyond this library.
 
 ## The endpoint: FastAPI and Flask

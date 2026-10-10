@@ -670,3 +670,19 @@ pre > code { display: block; width: max-content; min-width: 100%; }
   .page-wrapper { display: block; }
   body { background: #fff; color: #000; }
 }
+
+/* ----------------------------------------------------------------------------
+   Stately editor embeds (assets/js/stately.js turns <div class="stately"> into
+   a theme-following iframe of the chart in the public Stately project)
+---------------------------------------------------------------------------- */
+.stately-embed { margin: 1.4em 0 1.8em; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--panel); box-shadow: var(--glass-hi); overflow: hidden; }
+.stately-frame { position: relative; width: 100%; background: var(--panel-solid); }
+.stately-iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; opacity: 0; transition: opacity .35s ease; }
+.stately-iframe.is-ready { opacity: 1; }
+.stately-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 12px; color: var(--fg-faint); }
+.stately-caption { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 14px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--fg-dim); }
+.stately-name { font-family: var(--font-mono); }
+.stately-name::before { content: "statechart · "; color: var(--fg-faint); }
+.stately-open { font-weight: 600; color: var(--a1); text-decoration: none; white-space: nowrap; }
+.stately-open:hover { text-decoration: underline; }
+@media (max-width: 760px) { .stately-frame { min-height: 320px; } .stately-caption { padding: 8px 10px; } }

@@ -68,6 +68,8 @@ asyncio.run(main())
 assert '"total": 99' in store.load("o-42").snapshot
 ```
 
+<div class="stately" data-machine="67af4beae5" data-height="320" data-title="order"></div>
+
 Replace the constructor to change brokers. The rest of the code stays the same:
 
 ```text

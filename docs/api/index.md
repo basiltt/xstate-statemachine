@@ -84,6 +84,8 @@ config = {
 machine = create_machine(config)
 ```
 
+<div class="stately" data-machine="9545ba22c8" data-height="320" data-title="toggle"></div>
+
 #### Example 2 -- With explicit `MachineLogic`
 
 ```python

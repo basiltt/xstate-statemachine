@@ -362,6 +362,8 @@ Save this as `checkout.json`:
 }
 ```
 
+<div class="stately" data-machine="dd562e4f17" data-height="320" data-title="checkout"></div>
+
 ### Step 2: Generate Python Code
 
 ```bash

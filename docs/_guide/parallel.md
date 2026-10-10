@@ -71,6 +71,8 @@ stateDiagram-v2
 }
 ```
 
+<div class="stately" data-machine="34db8b3bc3" data-height="640" data-title="mediaPlayer"></div>
+
 Running it:
 
 ```python
@@ -137,6 +139,8 @@ print(interp.active_state_ids)
 interp.stop()
 ```
 
+<div class="stately" data-machine="34db8b3bc3" data-height="640" data-title="mediaPlayer"></div>
+
 All three regions (`video`, `audio`, `controls`) are active at the same time. Sending `VIDEO_LOADED` only affects the `video` region — the other regions stay in their current states.
 
 ## How It Works
@@ -180,6 +184,8 @@ When the machine enters a parallel state:
   }
 }
 ```
+
+<div class="stately" data-machine="a332b2becf" data-height="420" data-title="a332b2becf"></div>
 
 ### Pythonic: `parallel=True` Parameter
 
@@ -347,6 +353,8 @@ print(interp.active_state_ids)
 interp.stop()
 ```
 
+<div class="stately" data-machine="95fca98534" data-height="640" data-title="game"></div>
+
 > **Tip:** The `QUIT` event is on the parent parallel state `running`. It catches the event from **any** combination of region states and exits them all, transitioning to `gameOver`.
 
 ## Parallel with Actions
@@ -415,6 +423,8 @@ interp.send("SHUTDOWN")
 interp.stop()
 ```
 
+<div class="stately" data-machine="deb267f83e" data-height="520" data-title="withActions"></div>
+
 ## Parallel with Guards
 
 Guards work within parallel regions just like in any other state:
@@ -453,6 +463,8 @@ Guards work within parallel regions just like in any other state:
   }
 }
 ```
+
+<div class="stately" data-machine="5993c63d33" data-height="420" data-title="5993c63d33"></div>
 
 ## Parallel Containing Nested States
 
@@ -516,6 +528,8 @@ print(interp.active_state_ids)
 
 interp.stop()
 ```
+
+<div class="stately" data-machine="bb74f90d4f" data-height="520" data-title="nestedParallel"></div>
 
 ## active_state_ids with Parallel
 
@@ -737,6 +751,8 @@ print(interp.active_state_ids)
 
 interp.stop()
 ```
+
+<div class="stately" data-machine="ff265f0d35" data-height="640" data-title="dashboard"></div>
 
 This dashboard runs three completely independent processes:
 

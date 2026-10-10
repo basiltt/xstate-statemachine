@@ -88,6 +88,8 @@ interp.send("FINISH")
 interp.stop()
 ```
 
+<div class="stately" data-machine="3001645f0c" data-height="320" data-title="demo"></div>
+
 ### Output Format
 
 All `LoggingInspector` messages are prefixed with `🕵️ [INSPECT]` for easy filtering:
@@ -819,6 +821,8 @@ print(audit.export_json())
 # ]
 ```
 
+<div class="stately" data-machine="7bc3b1e722" data-height="320" data-title="auditDemo"></div>
+
 ## 📈 Complete Example: Performance Monitoring
 
 ```python
@@ -983,6 +987,8 @@ print(tracker.was_in_state("nav.settings"))  # False
 print(tracker.current_state)  # ['nav.home']
 print(tracker.previous_state)  # ['nav.contact']
 ```
+
+<div class="stately" data-machine="c5664c75f2" data-height="320" data-title="nav"></div>
 
 ## ⚡ Plugins with the Async Interpreter
 

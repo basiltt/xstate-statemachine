@@ -71,6 +71,8 @@ stateDiagram-v2
 }
 ```
 
+<div class="stately" data-machine="453b97e99f" data-height="420" data-title="retryMachine"></div>
+
 ### Logic Implementation
 
 ```python
@@ -313,6 +315,8 @@ stateDiagram-v2
 }
 ```
 
+<div class="stately" data-machine="73bfd9006f" data-height="520" data-title="ecommerce"></div>
+
 ### Logic Implementation
 
 <!-- doc-fragment -->
@@ -505,6 +509,8 @@ stateDiagram-v2
 }
 ```
 
+<div class="stately" data-machine="08056081fa" data-height="520" data-title="auth"></div>
+
 ```python
 from xstate_statemachine import create_machine, MachineLogic
 import time
@@ -679,6 +685,8 @@ print(f"Deploy URL: {interp.context['deploy_url']}")
 interp.stop()
 ```
 
+<div class="stately" data-machine="f8a5be3055" data-height="520" data-title="cicd"></div>
+
 ---
 
 ## Pattern 6: Traffic Light Controller
@@ -772,6 +780,8 @@ interp.send("RESUME")
 
 interp.stop()
 ```
+
+<div class="stately" data-machine="f8b07d0217" data-height="420" data-title="trafficLight"></div>
 
 ---
 
@@ -1027,6 +1037,8 @@ assert machine.get_next_state("nav.about", Event("GO_HOME")) == {"nav.home"}
 assert machine.get_next_state("nav.home", Event("UNKNOWN")) is None
 ```
 
+<div class="stately" data-machine="29b434a4af" data-height="320" data-title="nav"></div>
+
 > **Note:** `get_next_state()` does **not** evaluate guards. It shows the potential transition target assuming all guards pass.
 
 ### Testing with Snapshots
@@ -1078,6 +1090,8 @@ def test_checkout_from_payment():
 
     interp.stop()
 ```
+
+<div class="stately" data-machine="be296e8263" data-height="320" data-title="shop"></div>
 
 ### Testing Timers with `SimulatedClock`
 

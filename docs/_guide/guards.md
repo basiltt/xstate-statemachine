@@ -77,6 +77,8 @@ Attach a `guard` key to a transition object:
 }
 ```
 
+<div class="stately" data-machine="35240d731d" data-height="320" data-title="ageGate"></div>
+
 If `isAdult` returns `False`, the `VERIFY` event is silently discarded — no transition happens.
 
 ### Multiple Guarded Transitions (Array Form)
@@ -104,6 +106,8 @@ Use an **array** of transition objects to define multiple candidate transitions 
   }
 }
 ```
+
+<div class="stately" data-machine="dc051fdb1b" data-height="420" data-title="ageGate"></div>
 
 ### Fallback Transition (No Guard)
 
@@ -186,6 +190,8 @@ interp.send("SUBMIT")
 print(interp.current_state_ids)  # {"checkout.allowed"}
 interp.stop()
 ```
+
+<div class="stately" data-machine="3d85c309dc" data-height="320" data-title="checkout"></div>
 
 Nested guards can also be declared inline under `children`, or (for `not`) under `params.guard` — the parser accepts whichever shape you emit.
 
@@ -330,6 +336,8 @@ print(interp2.current_state_ids)  # {"withdrawalMachine.denied"} — below minAm
 interp2.stop()
 ```
 
+<div class="stately" data-machine="ef130834de" data-height="320" data-title="withdrawalMachine"></div>
+
 The interpreter arity-checks the guard callable, so a plain two-argument `(context, event)` guard keeps working unchanged even if it's never given `params`. `params` may also be a function of `{context, event}`, re-evaluated on every use, instead of a static dict.
 
 ## 🧠 Guard Implementation with MachineLogic
@@ -375,6 +383,8 @@ interp.send("VERIFY")
 print(interp.current_state_ids)  # {"ageGate.teen"} — age is 16
 interp.stop()
 ```
+
+<div class="stately" data-machine="dc051fdb1b" data-height="420" data-title="ageGate"></div>
 
 ## 🐍 Pythonic Guards
 
@@ -507,6 +517,8 @@ interp.send("WITHDRAW", amount=200.00)
 print(interp.current_state_ids)  # {"withdrawalMachine.processing"}
 interp.stop()
 ```
+
+<div class="stately" data-machine="28f6cf6f1f" data-height="320" data-title="withdrawalMachine"></div>
 
 ## 📨 Guards with Event Data
 
@@ -686,6 +698,8 @@ for test_age in [70, 30, 15, 8, -5]:
 # Age   8 -> child
 # Age  -5 -> invalid
 ```
+
+<div class="stately" data-machine="1c85847323" data-height="420" data-title="ageVerification"></div>
 
 ## Complete Example: Role-Based Routing
 

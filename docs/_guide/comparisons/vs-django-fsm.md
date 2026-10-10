@@ -88,6 +88,8 @@ assert order.current_state_ids == {"order.shipped"}
 order.stop()
 ```
 
+<div class="stately" data-machine="d97f91cb9e" data-height="420" data-title="order"></div>
+
 On a database row, the [sqlalchemy_orders example](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/sqlalchemy_orders) runs this chart with optimistic locking, and the `after` deadline is fired by `DueTimerScanner` for orders nobody touches.
 
 ## Migration recipe
