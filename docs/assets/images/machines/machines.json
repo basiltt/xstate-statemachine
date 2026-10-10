@@ -1,0 +1,346 @@
+{
+  "_comment": "Source charts for the README diagrams (docs/assets/images/machines/*.png). They live in a public Stately project (ids in links.json); `python capture.py` re-screenshots every chart from the editor's embed view in dark mode at 3x, and the README links each image to its editor page. The Python in README.md runs the same configs. order_eda / warehouse are examples/integrations/eda_fulfilment/{machine,warehouse}.json and tool_loop is src/xstate_statemachine/contrib/agents/charts/tool_loop.json.",
+  "toggle": {
+    "id": "toggle",
+    "initial": "inactive",
+    "states": {
+      "inactive": {
+        "on": {
+          "TOGGLE": "active"
+        }
+      },
+      "active": {
+        "on": {
+          "TOGGLE": "inactive"
+        }
+      }
+    }
+  },
+  "fetch": {
+    "id": "fetch",
+    "initial": "idle",
+    "context": {
+      "user": null,
+      "error": null
+    },
+    "states": {
+      "idle": {
+        "on": {
+          "FETCH": "loading"
+        }
+      },
+      "loading": {
+        "invoke": {
+          "src": "fetchUser",
+          "onDone": {
+            "target": "success",
+            "actions": "storeUser"
+          },
+          "onError": {
+            "target": "failure",
+            "actions": "storeError"
+          }
+        }
+      },
+      "success": {
+        "type": "final"
+      },
+      "failure": {
+        "on": {
+          "RETRY": "loading"
+        }
+      }
+    }
+  },
+  "atm": {
+    "id": "atm",
+    "initial": "idle",
+    "context": {
+      "balance": 100,
+      "frozen": false
+    },
+    "states": {
+      "idle": {
+        "on": {
+          "WITHDRAW": [
+            {
+              "target": "approved",
+              "guard": "hasFundsAndNotFrozen"
+            },
+            {
+              "target": "denied"
+            }
+          ]
+        }
+      },
+      "approved": {},
+      "denied": {}
+    }
+  },
+  "backoff": {
+    "id": "api",
+    "initial": "idle",
+    "context": {
+      "attempt": 0
+    },
+    "states": {
+      "idle": {
+        "on": {
+          "CALL": "loading"
+        }
+      },
+      "loading": {
+        "invoke": {
+          "src": "callApi",
+          "onDone": "success",
+          "onError": [
+            {
+              "target": "waiting",
+              "guard": "canRetry"
+            },
+            {
+              "target": "failed"
+            }
+          ]
+        }
+      },
+      "waiting": {
+        "entry": "bumpAttempt",
+        "after": {
+          "BACKOFF": "loading"
+        }
+      },
+      "success": {
+        "type": "final"
+      },
+      "failed": {
+        "type": "final"
+      }
+    }
+  },
+  "session": {
+    "id": "session",
+    "initial": "loggedOut",
+    "states": {
+      "loggedOut": {
+        "on": {
+          "LOGIN": "authenticated"
+        }
+      },
+      "authenticated": {
+        "initial": "browsing",
+        "on": {
+          "LOGOUT": "loggedOut"
+        },
+        "states": {
+          "browsing": {
+            "on": {
+              "CHECKOUT": "paying"
+            }
+          },
+          "paying": {
+            "on": {
+              "DONE": "confirmed"
+            }
+          },
+          "confirmed": {}
+        }
+      }
+    }
+  },
+  "ci": {
+    "id": "ci",
+    "initial": "running",
+    "states": {
+      "running": {
+        "type": "parallel",
+        "onDone": "deployed",
+        "states": {
+          "build": {
+            "initial": "b",
+            "states": {
+              "b": {
+                "on": {
+                  "BUILD_OK": "done"
+                }
+              },
+              "done": {
+                "type": "final"
+              }
+            }
+          },
+          "lint": {
+            "initial": "l",
+            "states": {
+              "l": {
+                "on": {
+                  "LINT_OK": "done"
+                }
+              },
+              "done": {
+                "type": "final"
+              }
+            }
+          }
+        }
+      },
+      "deployed": {}
+    }
+  },
+  "wizard": {
+    "id": "wizard",
+    "initial": "steps",
+    "states": {
+      "steps": {
+        "initial": "step1",
+        "on": {
+          "HELP": "helpModal"
+        },
+        "states": {
+          "step1": {
+            "on": {
+              "NEXT": "step2"
+            }
+          },
+          "step2": {
+            "on": {
+              "NEXT": "step3",
+              "BACK": "step1"
+            }
+          },
+          "step3": {
+            "on": {
+              "FINISH": "#wizard.done",
+              "BACK": "step2"
+            }
+          },
+          "hist": {
+            "type": "history",
+            "history": "shallow"
+          }
+        }
+      },
+      "helpModal": {
+        "on": {
+          "CLOSE": "steps.hist"
+        }
+      },
+      "done": {
+        "type": "final"
+      }
+    }
+  },
+  "order": {
+    "id": "order",
+    "initial": "cart",
+    "context": {
+      "items": 0,
+      "attempts": 0,
+      "error": null
+    },
+    "states": {
+      "cart": {
+        "on": {
+          "ADD": {
+            "actions": "addItem"
+          },
+          "CHECKOUT": {
+            "target": "charging",
+            "guard": "hasItems"
+          }
+        }
+      },
+      "charging": {
+        "entry": "bumpAttempt",
+        "invoke": {
+          "src": "chargeCard",
+          "onDone": "shipped",
+          "onError": {
+            "target": "failed",
+            "actions": "storeError"
+          }
+        }
+      },
+      "failed": {
+        "on": {
+          "RETRY": {
+            "target": "charging",
+            "guard": "canRetry"
+          }
+        }
+      },
+      "shipped": {
+        "type": "final"
+      }
+    }
+  },
+  "subscription": {
+    "id": "subscription",
+    "initial": "incomplete",
+    "context": {
+      "failures": 0,
+      "last_invoice": null
+    },
+    "states": {
+      "incomplete": {
+        "on": {
+          "PAYMENT_SUCCEEDED": {
+            "target": "active",
+            "actions": "recordPayment"
+          },
+          "CANCELED": "canceled"
+        }
+      },
+      "active": {
+        "tags": [
+          "billable"
+        ],
+        "on": {
+          "PAYMENT_FAILED": {
+            "target": "past_due",
+            "actions": "recordFailure"
+          },
+          "CANCELED": "canceled"
+        }
+      },
+      "past_due": {
+        "tags": [
+          "billable",
+          "dunning"
+        ],
+        "after": {
+          "259200000": "canceled"
+        },
+        "on": {
+          "PAYMENT_SUCCEEDED": {
+            "target": "active",
+            "actions": "recordPayment"
+          },
+          "PAYMENT_FAILED": {
+            "actions": "recordFailure"
+          },
+          "CANCELED": "canceled"
+        }
+      },
+      "canceled": {
+        "tags": [
+          "terminal"
+        ]
+      }
+    }
+  },
+  "supervisor": {
+    "id": "super",
+    "initial": "up",
+    "states": {
+      "up": {
+        "entry": "spawnWorkerPool",
+        "on": {
+          "DISPATCH": {
+            "actions": "sendJobToPool"
+          }
+        }
+      }
+    }
+  }
+}
