@@ -175,6 +175,7 @@ class TestShim(unittest.TestCase):
         self.assertEqual(pd.hooks_of(len), ())
 
     def test_attach_skips_a_failing_constructor(self) -> None:
+        @pd.plugin_factory
         def boom() -> None:
             raise ValueError("x")
 

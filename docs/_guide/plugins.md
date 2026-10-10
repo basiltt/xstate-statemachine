@@ -578,7 +578,7 @@ Other packages can ship plugins, stores and brokers **without a core change** by
 
 | Entry-point group | Holds | What the library does with it |
 |:--|:--|:--|
-| `xstate_statemachine.plugins` | `PluginBase` subclasses (or zero-argument factories returning a plugin) | `discover()` loads and describes them; `attach_discovered(interp)` constructs each one and `.use()`s it |
+| `xstate_statemachine.plugins` | `PluginBase` subclasses (or zero-argument factories decorated with `plugin_factory`) | `discover()` loads and describes them; `attach_discovered(interp)` constructs each one and `.use()`s it |
 | `xstate_statemachine.stores` | Store adapters | Discovered and listed only. Never instantiated: stores need your configuration |
 | `xstate_statemachine.brokers` | Broker adapters | Discovered and listed only |
 
@@ -646,7 +646,7 @@ class AuditPlugin(PluginBase):
 
 Guidelines:
 
-- **Construct with no arguments.** `attach_discovered` calls the class (or factory) without arguments. Read configuration from environment variables or offer a factory function as the entry point.
+- **Construct with no arguments.** `attach_discovered` calls the class (or factory) without arguments. Read configuration from environment variables or offer a factory function as the entry point, decorated with `xstate_statemachine.plugin_discovery.plugin_factory` -- an undecorated callable is refused **without being called** (so an entry point like `os:system` can never be executed by discovery).
 - **Override only the hooks you need.** `xsm plugins` reports exactly those, and every hook is optional.
 - **Keep import cheap and side-effect free.** Your module is imported by `discover()` and `xsm plugins`. Do no I/O at import time.
 - **Pin a major range** of `xstate-statemachine`. `PluginBase` hooks follow the [deprecation policy](../deprecation-policy/).
