@@ -532,6 +532,11 @@ examples:
     plugins_parser.add_argument(
         "--json", action="store_true", help="Emit as JSON."
     )
+    plugins_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit 1 if any entry point fails to load (CI gate).",
+    )
 
     # ⬆️ update subcommand -- self-update via the installer that installed us
     update_parser = subparsers.add_parser(

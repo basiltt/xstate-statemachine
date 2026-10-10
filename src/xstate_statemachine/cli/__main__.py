@@ -1258,7 +1258,12 @@ def _dispatch() -> None:
     if args.subcommand == "plugins":
         from .commands.plugins import run_plugins
 
-        run_plugins(as_json=bool(getattr(args, "json", False)))
+        code = run_plugins(
+            as_json=bool(getattr(args, "json", False)),
+            strict=bool(getattr(args, "strict", False)),
+        )
+        if code:
+            raise SystemExit(code)
         return
 
     if args.subcommand == "update":

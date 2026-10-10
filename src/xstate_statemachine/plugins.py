@@ -1142,4 +1142,5 @@ from .plugin_discovery import (  # noqa: E402
     DiscoveredPlugin,
     attach_discovered,
     discover,
+    plugin_factory,
 )

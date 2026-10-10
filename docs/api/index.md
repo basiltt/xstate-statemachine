@@ -2055,10 +2055,21 @@ Third-party plugins declared under the `xstate_statemachine.plugins` / `.stores`
 |----------|-----------|-------------|
 | `discover(*, group=PLUGINS_GROUP, allow=None, strict=False)` | `-> List[DiscoveredPlugin]` | Load the entry points in *group*. `allow` names entry points or distributions (others are not imported); a raising loader is logged and skipped unless `strict`. `[]` under `XSM_DISABLE_PLUGIN_DISCOVERY=1`. |
 | `attach_discovered(interpreter, *, allow=None, strict=False)` | `-> List[Any]` | Discover `PLUGINS_GROUP`, construct each plugin (no arguments), and `.use()` it. Returns the instances. `instrument_all(discovered=True)` in `[observability]` calls this. |
+| `plugin_factory(fn)` | `-> fn` | Decorator marking a zero-argument factory that `attach_discovered` may CALL to obtain a plugin. An entry point naming an unmarked callable (e.g. `os:system`) is refused unexecuted (#296). |
 | `DiscoveredPlugin` | `NamedTuple(name, distribution, version, obj, hooks, group)` | One loaded entry point. `hooks` lists the `PluginBase` hooks the class overrides. |
 | `PLUGINS_GROUP` / `STORES_GROUP` / `BROKERS_GROUP` | `str` | `"xstate_statemachine.plugins"` / `".stores"` / `".brokers"`. Stores and brokers are discovered, never instantiated. |
 
-CLI: `xsm plugins [--json] [--plain]` lists name, distribution, version, group and hooks.
+| Name (`xstate_statemachine.plugin_discovery`) | Signature | Description |
+|----------|-----------|-------------|
+| `discover` / `attach_discovered` / `DiscoveredPlugin` / `PLUGINS_GROUP` / `STORES_GROUP` / `BROKERS_GROUP` | as above | The implementations `xstate_statemachine.plugins` re-exports. |
+| `SkippedPlugin` | `NamedTuple(name, distribution, version, group, error)` | An entry point whose loader raised in non-strict mode. `error` is `"ExcType: message"`. |
+| `last_skipped` | `List[SkippedPlugin]` | What the **last** `discover()` call skipped; cleared at the start of every call. `xsm plugins` lists these as `SKIPPED`. |
+| `last_failed` | `Dict[str, str]` | Under `strict=True`, `{"name": ..., "dist": ...}` of the entry point whose loader raised; `{}` otherwise. |
+| `DISABLE_ENV` | `str` | `"XSM_DISABLE_PLUGIN_DISCOVERY"`. Set to `1` and `discover()` returns `[]` without importing anything. |
+| `GROUPS` | `Tuple[str, ...]` | The three groups, in the order `xsm plugins` lists them. |
+| `hooks_of(obj)` | `-> Tuple[str, ...]` | The `PluginBase` hook names a class or instance overrides (empty for non-plugins). |
+
+CLI: `xsm plugins [--json] [--strict]` (plus the global `--plain`) lists name, distribution, version, group and hooks, then every skipped entry point as `SKIPPED: <error>`. `--json` emits `{"disabled", "plugins", "skipped"}`. Exit `0`, or `1` under `--strict` when a loader raises (one stderr line naming it). See [`xsm plugins`](../guide/plugins/#xsm-plugins).
 
 ### Deprecations **[1.0]**
 
