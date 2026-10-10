@@ -1494,7 +1494,12 @@ _No unreleased changes yet._
   `'NoneType' object has no attribute 'load'` (a `RuntimeError` naming
   `configure(store)`); the form-wizard Streamlit / Gradio snippets were
   cut mid-string on the page (a literal ``` inside the f-string closed
-  the fence). Docs: the Stripe Guarantees box said "answer 409/500 and
+  the fence); **review:** a REAL load-save conflict is proven to leave
+  no idempotency mark (the 409'd delivery's redelivery is a first
+  delivery, never a swallowed `duplicate`); U+2028 / U+2029 line
+  separators are refused as slot values like a newline; an expanded
+  `subscription` object without an id (or `""`) is 400 instead of a
+  silent per-invoice record. Docs: the Stripe Guarantees box said "answer 409/500 and
   Stripe will redeliver" (the exact 409 body now; the window applies in
   both directions; `MemoryInbox` forgets on restart; one Stripe account
   per inbox -- scope the principal by secret hash otherwise);

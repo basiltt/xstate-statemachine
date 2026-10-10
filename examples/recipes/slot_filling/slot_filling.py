@@ -38,7 +38,11 @@ def valid_slot_value(value: Any) -> bool:
     # 🔥 #308 battle (A): the bot echoes slots back to a human. A bidi
     #    override (U+202E) or zero-width char in `name` rewrote the
     #    confirmation prompt; control/format characters are refused.
-    if any(unicodedata.category(ch) in ("Cc", "Cf") for ch in value):
+    # 📝 #308 review (2): Zl / Zp (U+2028 / U+2029) break the prompt's line
+    #    like a newline does -- refused with the control / format classes.
+    if any(
+        unicodedata.category(ch) in ("Cc", "Cf", "Zl", "Zp") for ch in value
+    ):
         return False
     return 0 < len(value.strip()) <= MAX_SLOT_CHARS
 

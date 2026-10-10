@@ -140,8 +140,12 @@ def subscription_id(event: Dict[str, Any]) -> str:
     #    whole object; `str(dict)` made the store key
     #    "subscription.{'id': ...}" -- a second record for one subscription.
     if isinstance(sub, dict):
-        sub = sub.get("id")
+        # 📝 #308 review (4): an expanded object WITHOUT an id used to fall
+        #    back to the invoice id -- a silent per-invoice record.
+        sub = sub.get("id") or ""
     if sub is not None and not isinstance(sub, str):
+        raise SignatureError("data.object.subscription is not an id")
+    if sub == "":
         raise SignatureError("data.object.subscription is not an id")
     return str(sub or obj["id"])
 
