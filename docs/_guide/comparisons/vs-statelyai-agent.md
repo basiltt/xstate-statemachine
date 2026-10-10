@@ -9,7 +9,7 @@ permalink: /guide/vs-statelyai-agent/
 `@statelyai/agent` is Stately's TypeScript library for agents built on XState and the Vercel AI SDK. Same chart model, different runtime.
 
 {% assign c = site.data.comparisons.competitors.statelyai_agent %}
-This table is generated from [`docs/_data/comparisons.json`](https://github.com/basiltt/xstate-statemachine/blob/main/docs/_data/comparisons.json), and corrections are welcome as PRs against that file. Every row carries a source note. It was checked against {{ c.checked }}; see [{{ c.name }}]({{ c.url }}) for the current state.
+This table is generated from [`docs/_data/comparisons.json`](https://github.com/basiltt/xstate-statemachine/blob/main/docs/_data/comparisons.json), and corrections are welcome as PRs against that file. Every row carries a source note. It was checked against {{ c.checked }}; see [{{ c.name }}]({{ c.url }}) for the current state. A test (`tests/test_battle_291_a.py`) fails the nightly `comparisons` CI job when this check is more than 180 days old, or when the installed release's major version differs from the one checked, so the table cannot silently go stale (a pull request is never blocked by a competitor's release).
 
 ## Feature table
 

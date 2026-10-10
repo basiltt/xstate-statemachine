@@ -201,7 +201,7 @@ PROBES = {
     "python_statemachine": ("python-statemachine", PSM, []),
     "django_fsm": ("django-fsm-2", DJANGO_FSM, []),
     "langgraph": ("langgraph", LANGGRAPH, []),
-    "burr": ("burr", BURR, []),
+    "burr": ("apache-burr", BURR, []),  # renamed on PyPI (#291)
 }
 
 

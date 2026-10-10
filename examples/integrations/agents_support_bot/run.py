@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import re
 import sys
 import uuid
@@ -30,6 +31,7 @@ from bot import (  # noqa: E402
     provider_model,
 )
 from xstate_statemachine.contrib.agents import pending_approval  # noqa: E402
+from xstate_statemachine.exceptions import StoreError  # noqa: E402
 
 
 def _args(argv: Optional[List[str]]) -> argparse.Namespace:
@@ -38,8 +40,17 @@ def _args(argv: Optional[List[str]]) -> argparse.Namespace:
     src.add_argument("--fake", action="store_true", help="offline FakeModel")
     src.add_argument("--provider", choices=["openai", "anthropic"])
     p.add_argument("--prompt", default="refund order 42")
-    p.add_argument("--db", default="support.db")
-    p.add_argument("--trace", default="support-trace.jsonl")
+    p.add_argument(
+        "--db",
+        default=os.environ.get("XSM_SUPPORT_BOT_DB", "support.db"),
+        help="SQLite file (default: $XSM_SUPPORT_BOT_DB or ./support.db)",
+    )
+    p.add_argument(
+        "--trace",
+        default=os.environ.get("XSM_SUPPORT_BOT_TRACE", "support-trace.jsonl"),
+        help="JSONL trace (default: $XSM_SUPPORT_BOT_TRACE or "
+        "./support-trace.jsonl)",
+    )
     p.add_argument("--reject", action="store_true", help="human says no")
     return p.parse_args(argv)
 
@@ -55,7 +66,20 @@ async def main(argv: Optional[List[str]] = None) -> int:
         except ProviderUnavailable as exc:
             print(f"error: {exc}", file=sys.stderr)
             return 2
-    bot = SupportBot(model, db=a.db, trace=a.trace)
+    # 🔥 #291 review (5): an unwritable --trace failed SILENTLY (the plugin's
+    #    open() raised inside an action, which the engine contains) and the
+    #    run printed zero usage with exit 0. Probe it before anything runs.
+    try:
+        with open(a.trace, "a", encoding="utf-8"):
+            pass
+    except OSError as exc:
+        print(f"error: cannot open {a.trace!r}: {exc}", file=sys.stderr)
+        return 2
+    try:
+        bot = SupportBot(model, db=a.db, trace=a.trace)
+    except (OSError, StoreError) as exc:  # 🔥 unwritable / directory --db
+        print(f"error: cannot open {a.db!r}: {exc}", file=sys.stderr)
+        return 2
     key = f"ticket:{uuid.uuid4().hex[:8]}"
     try:
         res = await bot.ticket(key, a.prompt)

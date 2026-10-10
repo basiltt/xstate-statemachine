@@ -1457,6 +1457,69 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **Comparison pages, the support-bot example and the launch kit, as
+  battle-tested (#291).** A reader's day: every "ours" cell of the three
+  agent comparison tables (`vs-langgraph`, `vs-burr`,
+  `vs-statelyai-agent`) verified against the code -- compound states
+  three deep and a `done.state` join; `run_tool` re-checking the
+  per-state allow-list with the `toolAllowed` guard EDITED OUT of the
+  chart; a `DueTimerScanner` waking an hour-old `after` deadline from a
+  SQLite store after every worker died; `awaiting_human` parked with the
+  exact pending call id and an escalation deadline; the stores, the
+  trace's `gen_ai.*` names and secret redaction, `spawn_agent`,
+  `statechart_node` / `langgraph_service` / `agent_tool_from_machine`;
+  the "theirs" columns re-checked against the INSTALLED LangGraph
+  (`interrupt`, `Send`, `Command`, `RetryPolicy`, `TimeoutPolicy`,
+  checkpointers -- "no durable timers" and "conditional edges are code"
+  hold), the real Burr package and the npm registry; every "ours"
+  snippet run under `-X dev -W error`, with `instructor` and `langgraph`
+  hidden, from a cwd outside the repo (writes nothing, `refund` never
+  runs before approval); the example's `run.py --fake` offline with ONE
+  refund, `--reject` with none, a missing SDK / key as one line and exit
+  2, four processes on one database intact, a fake key appearing in
+  neither trace nor database; every launch draft under its DRAFT banner
+  with no live post URL (`tests/test_battle_291_scenario.py`,
+  `tests/test_battle_291_a.py`, `tests/test_battle_291_b.py`). Found and
+  fixed: **the Show HN draft's headline snippet imported
+  `xstate_statemachine.agents`** (does not exist) with made-up API
+  names -- it now runs; `RETRY_OUTPUT` called a state in three drafts
+  (it is a guarded transition); Burr is published as `apache-burr`
+  0.43.0 (the `burr` name stopped at 0.42.0; `checked` and 11 source
+  notes updated); @statelyai/agent is maintained (a 2.0 alpha on XState
+  6) though 1.1.6 is still npm `latest`, and `zod` is a dev dependency,
+  not a dependency; four "ours" cells claimed more than the code does
+  ("Redis / Postgres stores" → "Redis / SQLAlchemy (e.g. Postgres)",
+  "event log replay" → "transition-log `replay()`", "Stately editor
+  round-trip" → "Opens in the Stately editor", "OTel plugin" → "OTel
+  spans (`on_span=\"otel\"`)"), each now anchored by a test; the pages
+  rot silently -- a test fails when a competitor's `checked` date is
+  over 180 days old or the installed LangGraph major differs (the rule
+  is stated in each page's intro); `run.py` ignored
+  `XSM_SUPPORT_BOT_DB` (every run wrote `support.db` into the cwd) and
+  crashed with a `PermissionError` traceback on an unwritable `--db`
+  (one `error:` line, exit 2; `--trace` / `XSM_SUPPORT_BOT_TRACE`
+  override added); **review:** the 180-day freshness and
+  LangGraph-major checks were time bombs on every pull request -- they
+  are nightly-only now (`XSM_COMPARISON_DRIFT=1`, run by the
+  `comparisons` CI job, which installs langgraph for it; the pages say
+  "nightly", not "the build"); `tomllib` in two scenario tests broke
+  Python 3.9 / 3.10 (skip-guarded); `run.py --db <directory>` was a
+  `StoreError` traceback (one line, exit 2); an unwritable `--trace`
+  ran SILENTLY with zero usage and exit 0 -- the trace path is probed
+  before the run (one line, exit 2); the example README promised "2 minutes" without a
+  measured time (~2 s cold) and did not say what the example writes or
+  that the SQLite snapshot holds the conversation (`context.messages`,
+  prompt included); the README's "Find your way" table had no agents
+  row; the AI classifier was missing from `pyproject.toml`; the agents
+  guide's Compatibility section now lists each competitor's "checked
+  against" version from the data file. Docs tests: every repo path and
+  `/guide/<slug>/` link in the launch kit resolves, every `xsm <cmd>`
+  passes `--help`, every TOOL_LOOP state named exists, every snippet
+  import works and every Python snippet runs. Held: the three pages are
+  in `pages_order`, searchable and cross-linked; the "when to choose"
+  sections are substantive in both directions; a "Theirs" sketch is
+  deliberately NOT added to the agent pages (a competitor snippet we
+  cannot run is a claim we cannot test).
 - **Multi-agent recipes, as battle-tested (#290).** The support bot as
   a SUPERVISOR: a planner hands 100 tickets to a worker region that
   spawns one `TOOL_LOOP` sub-agent per ticket with its OWN budget;

@@ -44,6 +44,7 @@ and your Python backend. Async **and** sync interpreters. Zero dependencies.
 | 🔌 | [**Services**](#-services--invoke) · [**Timers**](#️-timers--delayed-transitions) | Async work and time |
 | 🌳 | [**Nested**](#-nested--parallel-states) · [**Parallel**](#parallel-states--concurrent-regions) · [**History**](#-history--final-states) | Real-world hierarchy |
 | 🤖 | [**Actors**](#-the-actor-model) · [**Persistence**](#-persistence--snapshots-and-stores) · [**Integrations**](#-integrations--optional-extras) | Systems of machines; stores, locks, FastAPI |
+| 🤖 | [**For LLM agents**](#-for-llm-agents) | The model proposes, the machine decides: tool allow-lists, budgets, durable human approval |
 | 🔍 | [**Introspection**](#-introspection--plugins) · [**Pure API**](#-the-pure-api--no-interpreter) | Observe and test |
 | 🐍 | [**Pythonic API**](#-prefer-pure-python-three-more-ways-to-define-a-machine) | No JSON required |
 | 🛠️ | [**CLI Tool**](#️-cli-tool) | Generate, inspect, simulate, diagram — zero deps |

@@ -71,7 +71,7 @@ PYPI = {
     "transitions": "transitions",
     "python_statemachine": "python-statemachine",
     "langgraph": "langgraph",
-    "burr": "burr",
+    "burr": "apache-burr",  # renamed on PyPI (#291)
 }
 
 
