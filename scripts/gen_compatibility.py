@@ -84,6 +84,11 @@ def _version(spec: str) -> str:
     return spec
 
 
+def verified() -> str:
+    data = json.loads(MATRIX.read_text(encoding="utf-8"))
+    return str(data.get("verified", "unknown"))
+
+
 def render(extras: Dict[str, Dict[str, Any]]) -> str:
     rows: List[str] = []
     notes: List[str] = []
@@ -104,7 +109,14 @@ def render(extras: Dict[str, Dict[str, Any]]) -> str:
     body = HEADER + "\n".join(rows) + "\n"
     if notes:
         body += "\n### Notes\n\n" + "\n".join(notes) + "\n"
-    return body + FOOTER
+    stamp = (
+        "\nThis table is generated and asserted, not hand-written:\n"
+        "`tests/test_compat_matrix.py` fails if the page drifts from the\n"
+        "matrix or the matrix from `pyproject.toml`, and the compat\n"
+        "workflow installs exactly these pins. Matrix verified: "
+        f"{verified()}.\n"
+    )
+    return body + stamp + FOOTER
 
 
 def matrix(extras: Dict[str, Dict[str, Any]]) -> List[Dict[str, str]]:
