@@ -116,7 +116,24 @@ def _entry_points(group: str) -> List[Any]:
     """`entry_points(group=)` on 3.10+, dict selection on 3.9."""
     from importlib import metadata
 
-    eps = metadata.entry_points()
+    try:
+        eps = metadata.entry_points()
+    except Exception:  # noqa: BLE001 -- see below
+        # 🔥 #296 battle (A, 3.9): one distribution with a malformed
+        #    `entry_points.txt` made the whole `entry_points()` call raise
+        #    (ConfigParser error) on 3.9, where newer Pythons skip it.
+        #    Walk the distributions one by one and skip the broken one.
+        found: List[Any] = []
+        for d in metadata.distributions():
+            try:
+                found.extend(e for e in d.entry_points if e.group == group)
+            except Exception:  # noqa: BLE001 -- malformed metadata
+                logger.warning(
+                    "Skipping a distribution with unreadable entry points "
+                    "(%s).",
+                    getattr(d, "_path", "?"),
+                )
+        return found
     if hasattr(eps, "select"):  # 3.10+: EntryPoints / SelectableGroups
         return list(eps.select(group=group))
     return list(eps.get(group, ()))  # type: ignore[attr-defined]
