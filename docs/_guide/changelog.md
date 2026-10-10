@@ -1457,6 +1457,78 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **The recipes pack, as battle-tested (#308).** A SaaS billing day
+  through the recipes: 1,000 Stripe deliveries across 200 subscriptions
+  -- forged signature, body tampered by one byte, timestamp a day old,
+  an hour in the future, a header with 50 `v1=` entries (one valid), no
+  `t=`, a body that is not JSON, a 2 MB body, a Stripe retry of a seen
+  `event.id`, and the same `event.id` from 8 threads at once: every
+  forged / stale / tampered one is 400 and changes nothing, every retry
+  is `duplicate`, the race yields exactly one transition, every
+  subscription ends where its valid events say; FastAPI and Flask
+  endpoints answer byte-identically; 500 slot-filling conversations
+  under a hostile extractor (unknown slots, `None`, `""`, `__class__`,
+  nested dicts, lists, 100 empty turns) never book with a missing slot
+  and nudge exactly `MAX_NUDGES` times; a rollout whose metrics raise /
+  return NaN / strings / `None` never promotes and `METRICS_BAD` rolls
+  back from any stage; WebSocket backoff stays within
+  `[0, min(base·factor^n, max)]`, never exceeds `max_attempts`, and the
+  socket's `close` runs exactly once per connection however the state
+  is left; a `past_due` dunning deadline survives the process dying and
+  fires from a `DueTimerScanner` (`tests/recipes/
+  test_battle_308_scenario.py`, `test_battle_308_a.py`,
+  `test_battle_308_b.py`). Found and fixed in the recipes: **a
+  correctly SIGNED body that is not JSON / not an object / has no
+  `data.object.id` raised out of `handle_webhook`** -- a 500 Stripe
+  retries for days (400 now); **`ConflictError` escaped the handler as
+  a 500 with the exception text** although the page promised a 409 (409
+  with a fixed body, once, for both endpoints); a non-ASCII `v1=`
+  crashed `compare_digest` (bytes now, still constant time); a 400-digit
+  `t=` overflowed the time arithmetic; an `event.id` over 255 chars /
+  non-ASCII was refused by the inbox AFTER verification as a 500 (400
+  before the store is touched); an EXPANDED `subscription` object made
+  the store key `subscription.{'id': ...}` -- a second record per
+  subscription (the object's `id` now; a number / list is 400); slot
+  values accepted dicts, lists and megabyte strings -- and a bidi
+  override / zero-width / control character was echoed into the
+  confirmation prompt (short scalars only, format and control
+  characters refused: `valid_slot_value`, `MAX_SLOT_CHARS`); the
+  rollout recorded `percent` / `history` BEFORE `apply_percent` ran, so
+  a failed push claimed an exposure that was never live (recorded after
+  success only) and `history` grew without bound (`MAX_HISTORY`);
+  `queue_workers.apply_event` before `configure()` died with
+  `'NoneType' object has no attribute 'load'` (a `RuntimeError` naming
+  `configure(store)`); the form-wizard Streamlit / Gradio snippets were
+  cut mid-string on the page (a literal ``` inside the f-string closed
+  the fence); **review:** a REAL load-save conflict is proven to leave
+  no idempotency mark (the 409'd delivery's redelivery is a first
+  delivery, never a swallowed `duplicate`); U+2028 / U+2029 line
+  separators are refused as slot values like a newline; an expanded
+  `subscription` object without an id (or `""`) is 400 instead of a
+  silent per-invoice record. Docs: the Stripe Guarantees box said "answer 409/500 and
+  Stripe will redeliver" (the exact 409 body now; the window applies in
+  both directions; `MemoryInbox` forgets on restart; one Stripe account
+  per inbox -- scope the principal by secret hash otherwise);
+  Troubleshooting tables on all eight recipe pages whose error texts
+  are checked against the code in both directions; every Guarantees /
+  Troubleshooting claim carries a `<!-- test: ... -->` anchor that fails
+  when the test disappears; WebSocket "What this does not do" (no
+  buffering; on `SyncInterpreter` socket callbacks are mailbox events
+  processed at the next `send()` / `tick()`); every recipe code block
+  runs verbatim from a temp dir holding only the copied folder; every
+  `xsm simulate` line ends where the prose says; the Step Functions
+  page's ASL is validated (`StartAt`, every `Next` / `Catch`, every
+  state reachable) and its XState builds strict; the recipes index
+  lists all nine with nav / search asserted. Held: a leading `+` in
+  `t=`, duplicate `t=`, `tolerance_s=0`, `1e9` / `nan` / 10 KB / non-hex
+  `v1=` (all 400); every `v1` candidate compared, no early exit on
+  length; 16 threads × 5 rounds on a default SQLite store give only
+  200 / 409, never "database is locked"; a non-string `event.type` is
+  ignored with 200; `YES` during `collecting` and a `slots=` key do
+  nothing; 10,000 turns keep the context under 300 bytes; an
+  `on_message` callback raising is contained and the message counted;
+  a `close()` raising still completes the disconnect; the queue retry
+  loop stops after `RETRIES + 1` and re-raises.
 - **Comparison pages, the support-bot example and the launch kit, as
   battle-tested (#291).** A reader's day: every "ours" cell of the three
   agent comparison tables (`vs-langgraph`, `vs-burr`,

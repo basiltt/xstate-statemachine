@@ -49,10 +49,22 @@ def configure(store: Any, machine: Optional[Any] = None) -> None:
     STORE, MACHINE = store, machine or build_machine()
 
 
+def _configured() -> None:
+    # 🔥 #308 battle (integrator): a worker process that skipped
+    #    `configure()` failed with "'NoneType' object has no attribute
+    #    'load'" deep inside persisted() -- say what to do instead.
+    if STORE is None:
+        raise RuntimeError(
+            "queue_workers: call configure(store) at worker start-up "
+            "(on_startup for arq, a module-level call for RQ / Dramatiq)"
+        )
+
+
 def apply_event(
     key: str, event: str, payload: Optional[Dict] = None
 ) -> Dict[str, Any]:
     """Load, send, save; reload and re-apply on `ConflictError`."""
+    _configured()
     for attempt in range(RETRIES + 1):
         try:
             with persisted(STORE, key, MACHINE) as inst:
@@ -68,6 +80,7 @@ async def apply_event_async(
     key: str, event: str, payload: Optional[Dict] = None
 ) -> Dict[str, Any]:
     """The same loop on the async engine (for arq)."""
+    _configured()
     for attempt in range(RETRIES + 1):
         try:
             async with apersisted(STORE, key, MACHINE) as inst:

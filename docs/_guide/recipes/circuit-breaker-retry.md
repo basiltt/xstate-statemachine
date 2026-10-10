@@ -110,6 +110,18 @@ assert breaker.state == "closed"                       # 2 failures < threshold 
 | 3 requests fail → breaker opens → a 4th request | `failed` with `CircuitOpenError` and **zero** transport calls |
 | cooldown elapses → next request | the half-open probe succeeds and the breaker closes |
 
+## Troubleshooting
+
+| `ctx["error"]` says | Why |
+|:--|:--|
+| `HTTPStatusError: HTTP 404` (any 4xx but 429) | Not retryable: the request is wrong. One call, then `failed`. |
+| `HTTPStatusError: HTTP 503` after several calls | Retryable, and `max_attempts` ran out. The state is tagged `dead-letter`. |
+| `CircuitOpenError: Circuit 'circuitBreaker' is open; call rejected without invoking the target.` | The breaker is open; the upstream was **not** called. Wait for `cooldown_ms`. |
+
+The breaker is per-process and in memory: N workers have N breakers.
+
+<!-- test: tests/recipes/test_battle_308_b.py::test_circuit_breaker_error_strings -->
+
 Pair the `dead-letter` tag with `DeadLetterPlugin` ([patterns](../patterns/#dead-lettering-with-error-context)) to get a redacted record of every request that gave up.
 
 Related: [WebSocket reconnect](../websocket-reconnect/), [all recipes](../recipes/).

@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 import json
+import unicodedata
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
@@ -21,6 +22,31 @@ from xstate_statemachine import MachineLogic, create_machine
 
 HERE = Path(__file__).resolve().parent
 MAX_NUDGES = 2
+#: A slot value is a short scalar. 🔥 #308 battle: the extractor is the
+#: UNTRUSTED side (an LLM); a dict, a list or a megabyte string landed in
+#: the slot and the bot "confirmed" it.
+MAX_SLOT_CHARS = 200
+
+
+def valid_slot_value(value: Any) -> bool:
+    if isinstance(value, bool) or value is None:
+        return False
+    if isinstance(value, (int, float)):
+        return value == value and abs(value) < 10**9
+    if not isinstance(value, str):
+        return False
+    # 🔥 #308 battle (A): the bot echoes slots back to a human. A bidi
+    #    override (U+202E) or zero-width char in `name` rewrote the
+    #    confirmation prompt; control/format characters are refused.
+    # 📝 #308 review (2): Zl / Zp (U+2028 / U+2029) break the prompt's line
+    #    like a newline does -- refused with the control / format classes.
+    if any(
+        unicodedata.category(ch) in ("Cc", "Cf", "Zl", "Zp") for ch in value
+    ):
+        return False
+    return 0 < len(value.strip()) <= MAX_SLOT_CHARS
+
+
 PROMPTS = {
     "date": "What day would you like?",
     "party_size": "For how many people?",
@@ -37,8 +63,8 @@ def build_machine(say: Optional[Callable[[str], None]] = None) -> Any:
 
     def fill_slots(i: Any, ctx: Dict, e: Any, a: Any) -> None:
         for k, v in e.payload.items():
-            if k in ctx["slots"] and v not in (None, ""):
-                ctx["slots"][k] = v
+            if k in ctx["slots"] and valid_slot_value(v):
+                ctx["slots"][k] = v.strip() if isinstance(v, str) else v
         ctx["nudges"] = 0
         todo = missing(ctx)
         if todo:
