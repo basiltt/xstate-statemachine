@@ -2234,6 +2234,8 @@ Guides · API reference · [What's new and the upgrade notes](https://basiltt.gi
 
 **Semantic Versioning.** The core API, the JSON machine format, the `xsm` CLI and the persistence layer (including the snapshot layout) follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html): breaking changes happen only in a new major. `contrib` extras are **provisional**. A deprecated API warns for at least one minor release and is removed no earlier than the next major. See the [Deprecation Policy](https://basiltt.github.io/xstate-statemachine/guide/deprecation-policy/) and the tested framework versions in [Compatibility](https://basiltt.github.io/xstate-statemachine/guide/compatibility/).
 
+**Install everything:** `pip install "xstate-statemachine[all]"` pulls every shipped extra (each is also installable alone; see [Integrations & extras](https://basiltt.github.io/xstate-statemachine/guide/integrations-extras/)).
+
 **Supported Python: 3.9 – 3.14** (CPython), tested on Linux, plus Windows and macOS spot-checks, on every PR.
 
 <br>

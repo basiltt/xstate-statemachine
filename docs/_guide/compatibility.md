@@ -61,6 +61,11 @@ tested version as the practical minimum.
 - **`[sqlalchemy]`**: 2.0.0-2.0.1: the optimistic-lock version check does not raise ConflictError on a stale row.
 - **`[starlette]`**: 0.27-0.45.0 on Python 3.9: the TestClient hangs in the WebSocket close-1008 test (teardown), so the cell cannot prove them. The HTTP surface passes.
 
+This table is generated and asserted, not hand-written:
+`tests/test_compat_matrix.py` fails if the page drifts from the
+matrix or the matrix from `pyproject.toml`, and the compat
+workflow installs exactly these pins. Matrix verified: 2026-09-30, commit 45ca4e6 (last edit of the version pins).
+
 The core library has **no runtime dependencies** and supports **Python 3.9 to
 3.14**. Extras not listed here are placeholders that install nothing yet. See
 [Integrations & extras](../integrations-extras/). How versions and

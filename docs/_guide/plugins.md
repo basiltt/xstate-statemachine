@@ -596,19 +596,69 @@ interp.start().stop()
 ```
 
 - **`allow=`** takes entry-point names **or** distribution names. An entry point that is not allowed is never imported.
-- **A broken plugin does not take you down.** A loader (or a constructor, in `attach_discovered`) that raises is logged at `WARNING` with its traceback and skipped. Pass `strict=True` to re-raise instead, which is what a CI check that "every plugin loads" wants.
+- **A broken plugin does not take you down.** A loader that raises is logged at `WARNING` with its traceback and skipped; it is recorded in `xstate_statemachine.plugin_discovery.last_skipped` (a list of `SkippedPlugin(name, distribution, version, group, error)`, reset by every `discover()` call). In `attach_discovered`, a constructor that raises, or an entry point whose object is **not a `PluginBase`**, is skipped the same way and never `.use()`d. Pass `strict=True` to re-raise instead (a `TypeError` for a non-`PluginBase`), which is what a CI check that "every plugin loads" wants.
 - **`XSM_DISABLE_PLUGIN_DISCOVERY=1`** turns discovery off for the whole process: `discover()` returns `[]` and logs that once. Use it in locked-down deployments where the environment may contain packages you did not vet.
 - **`DiscoveredPlugin`** is `(name, distribution, version, obj, hooks, group)`. `hooks` lists the `PluginBase` hooks the class overrides.
 - **Python 3.9.** `importlib.metadata.entry_points(group=...)` is 3.10+; on 3.9 the library selects the group from the dict the old API returns. The behaviour is identical.
-- **`[observability]`**: `instrument_all(discovered=True)` in the observability extra is built on `attach_discovered`.
+- **`[observability]`**: `instrument_all(interp, discovered=True, allow=[...])` is built on `attach_discovered`; with no interpreter it attaches the discovered plugins to the global collector instead.
 
-`xsm plugins` lists everything installed in all three groups (`--json` for tooling). Listing **imports** each entry point, since it has to load a plugin to report its hooks. That is why it is a command you run, not something the library does for you:
+```python
+from xstate_statemachine import SyncInterpreter, create_machine
+from xstate_statemachine.contrib.observability import instrument_all
+
+machine = create_machine({"id": "m", "initial": "a", "states": {"a": {}}})
+interp = SyncInterpreter(machine)
+attached = instrument_all(interp, discovered=True, allow=["acme-audit"])
+interp.start().stop()
+```
+
+### `xsm plugins`
+
+`xsm plugins` lists everything installed in all three groups. Listing **imports** each entry point, since it has to load a plugin to report its hooks. That is why it is a command you run, not something the library does for you. The library itself declares its `contrib` brokers in `xstate_statemachine.brokers`, so those rows are always present. This is real output with the test fixture package (`tests/fixtures/xsm_thirdparty_plugin`, which ships one working plugin, one store and one plugin whose module raises on import) installed; the broken loader also logs its `WARNING` and traceback to stderr:
 
 ```text
 $ xsm plugins --plain
-acme_audit  acme-audit 1.2.3  [xstate_statemachine.plugins]
+thirdparty_audit  xsm-thirdparty-plugin 1.2.3  [xstate_statemachine.plugins]
     hooks: on_interpreter_start, on_transition
+thirdparty_memory  xsm-thirdparty-plugin 1.2.3  [xstate_statemachine.stores]
+kafka  xstate-statemachine 0.11.0  [xstate_statemachine.brokers]
+nats  xstate-statemachine 0.11.0  [xstate_statemachine.brokers]
+rabbitmq  xstate-statemachine 0.11.0  [xstate_statemachine.brokers]
+redis-streams  xstate-statemachine 0.11.0  [xstate_statemachine.brokers]
+sqs  xstate-statemachine 0.11.0  [xstate_statemachine.brokers]
+thirdparty_broken  xsm-thirdparty-plugin 1.2.3  [xstate_statemachine.plugins]  SKIPPED: RuntimeError: xsm_thirdparty_plugin.broken: import-time failure
 ```
+
+A loaded entry point is `name  distribution version  [group]`, followed by its hooks if it overrides any. An entry point whose loader raised is listed **last** with `SKIPPED:` and the exception, so "installed but broken" is never confused with "not installed".
+
+`--json` emits one object (the order of keys is fixed):
+
+```json
+{
+  "disabled": false,
+  "plugins": [
+    {"name": "thirdparty_audit", "distribution": "xsm-thirdparty-plugin",
+     "version": "1.2.3", "group": "xstate_statemachine.plugins",
+     "hooks": ["on_interpreter_start", "on_transition"]}
+  ],
+  "skipped": [
+    {"name": "thirdparty_broken", "distribution": "xsm-thirdparty-plugin",
+     "version": "1.2.3", "group": "xstate_statemachine.plugins",
+     "error": "RuntimeError: xsm_thirdparty_plugin.broken: import-time failure"}
+  ]
+}
+```
+
+With `XSM_DISABLE_PLUGIN_DISCOVERY=1` it prints `Plugin discovery is disabled (XSM_DISABLE_PLUGIN_DISCOVERY=1).` (or `"disabled": true` with empty lists) and imports nothing.
+
+**Exit codes.** `0` whenever the listing completes, **including when entries were SKIPPED**. `--strict` turns a failing loader into exit **`1`**: it stops at the first one and prints a single line to stderr, no traceback:
+
+```text
+$ xsm plugins --strict
+error: plugin entry point 'thirdparty_broken' from xsm-thirdparty-plugin failed to load (RuntimeError: xsm_thirdparty_plugin.broken: import-time failure); run `xsm plugins` without --strict for the full list
+```
+
+Use `xsm plugins --strict` as the CI gate for "every installed plugin imports". It checks loading only; constructing a plugin is checked by `attach_discovered(..., strict=True)`.
 
 ## 📦 Writing a third-party plugin
 
@@ -650,9 +700,35 @@ Guidelines:
 - **Override only the hooks you need.** `xsm plugins` reports exactly those, and every hook is optional.
 - **Keep import cheap and side-effect free.** Your module is imported by `discover()` and `xsm plugins`. Do no I/O at import time.
 - **Pin a major range** of `xstate-statemachine`. `PluginBase` hooks follow the [deprecation policy](../deprecation-policy/).
-- **Test it** the way the library tests its fixture package (`tests/fixtures/xsm_thirdparty_plugin`): install it, then assert that `discover()` finds it and that `xsm plugins --json` lists your hooks.
+- **Subclass `PluginBase`.** `discover()` lists any object, but `attach_discovered` refuses one that is not a `PluginBase` instance once constructed.
+- **Test it** the way the library tests its fixture package (`tests/fixtures/xsm_thirdparty_plugin`): `pip install -e .`, then assert that `discover()` finds it, that `xsm plugins --json` lists your hooks, and that `xsm plugins --strict` exits 0.
+
+```bash
+pip install -e .
+xsm plugins --strict
+```
+
+```python
+from xstate_statemachine.plugins import discover
+
+found = [p for p in discover() if p.distribution == "acme-audit"]
+# [DiscoveredPlugin(name='acme_audit', distribution='acme-audit',
+#   version='1.2.3', obj=<class 'acme_audit.AuditPlugin'>,
+#   hooks=('on_interpreter_start', 'on_transition'), group=...)]
+```
+
+Stores and brokers use the same table under their own group:
+
+```toml
+[project.entry-points."xstate_statemachine.stores"]
+acme_store = "acme_audit:MemoryStore"
+
+[project.entry-points."xstate_statemachine.brokers"]
+acme_broker = "acme_audit:Broker"
+```
 
 > 🔐 **Trust model.** A discovered plugin runs **in your process with your privileges**. There is no sandbox, and it sees every event and the context. Only allow plugins from distributions you would `import` yourself. See [SECURITY.md](https://github.com/basiltt/xstate-statemachine/blob/main/SECURITY.md#trust-model).
+
 ## 📜 Complete Example: Custom Audit Logger
 
 ```python

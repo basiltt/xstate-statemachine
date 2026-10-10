@@ -1,5 +1,6 @@
 {
   "_comment": "Source of truth for docs/_guide/compatibility.md (scripts/gen_compatibility.py) and the compat CI workflow (.github/workflows/compat.yml). One entry per SHIPPED extra. 'declared' is the lower bound in pyproject.toml (a test keeps them equal). 'oldest' is the oldest release PROVEN to pass the extra's test folder on the oldest supported Python: equal to 'declared' where the floor holds, higher where probing showed it does not (see 'note'). 'newest' lets the resolver pick the latest release. 'extra_pins' pin companion packages for the oldest cell only; 'test_deps' are test-only packages for both cells.",
+  "verified": "2026-09-30, commit 45ca4e6 (last edit of the version pins)",
   "extras": {
     "agents": {
       "package": "pydantic",
