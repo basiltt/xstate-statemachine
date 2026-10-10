@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import inspect
 import os
+import re
+import threading
 from typing import Dict, Any, Iterable, List, NamedTuple, Optional, Tuple
 
 from .logger import logger
@@ -41,6 +43,7 @@ __all__ = [
     "discover",
     "last_failed",
     "last_skipped",
+    "plugin_factory",
 ]
 
 PLUGINS_GROUP = "xstate_statemachine.plugins"
@@ -52,6 +55,16 @@ GROUPS: Tuple[str, ...] = (PLUGINS_GROUP, STORES_GROUP, BROKERS_GROUP)
 DISABLE_ENV = "XSM_DISABLE_PLUGIN_DISCOVERY"
 
 _disabled_logged = False
+# 🔥 #296 battle (A): "TRUE", "on", " yes " left discovery ON -- an
+#    operator's kill switch must not depend on spelling.
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+#: Guards publication of `last_skipped` / `last_failed` (see `discover`).
+_PUBLISH_LOCK = threading.Lock()
+
+
+def _normalise(name: str) -> str:
+    """PEP 503 name normalisation (``Foo_Bar.baz`` → ``foo-bar-baz``)."""
+    return re.sub(r"[-_.]+", "-", name).lower()
 
 
 class SkippedPlugin(NamedTuple):
@@ -85,7 +98,7 @@ class DiscoveredPlugin(NamedTuple):
         name: The entry-point name.
         distribution: The distribution that declared it (``""`` if unknown).
         version: That distribution's version (``""`` if unknown).
-        obj: The loaded object (a class, factory or instance).
+        obj: The loaded object (normally a class or an instance).
         hooks: `PluginBase` hook names the object overrides (empty for
             stores/brokers and for objects that are not plugins).
         group: The entry-point group it came from.
@@ -109,23 +122,37 @@ def _entry_points(group: str) -> List[Any]:
     return list(eps.get(group, ()))  # type: ignore[attr-defined]
 
 
-def _dist_of(ep: Any) -> Tuple[str, str]:
-    dist = getattr(ep, "dist", None)  # 3.10+
-    if dist is not None:
-        name = dist.metadata["Name"] or ""
-        return name, dist.version or ""
-    # 🐍 3.9: EntryPoint has no `.dist`; find the owning distribution.
+_Index = Dict[Tuple[str, str, str], Tuple[str, str]]
+
+
+def _dist_index() -> _Index:
+    """🐍 3.9: (group, name, value) → (dist, version), first dist wins.
+
+    🔥 #296 battle (A): `_dist_of` rescanned EVERY distribution per entry
+    point (O(dists x eps)); one index is now built per `discover()` call.
+    """
     from importlib import metadata
 
+    index: _Index = {}
     for d in metadata.distributions():
-        for other in d.entry_points:
-            if (
-                other.group == ep.group
-                and other.name == ep.name
-                and other.value == ep.value
-            ):
-                return d.metadata["Name"] or "", d.version or ""
-    return "", ""
+        try:
+            meta = (d.metadata.get("Name") or "", d.version or "")
+            for o in d.entry_points:
+                index.setdefault((o.group, o.name, o.value), meta)
+        except Exception:  # noqa: BLE001 -- malformed third-party metadata
+            continue
+    return index
+
+
+def _dist_of(ep: Any, index: Optional[_Index] = None) -> Tuple[str, str]:
+    dist = getattr(ep, "dist", None)  # 3.10+
+    if dist is not None:
+        name = dist.metadata.get("Name") or ""
+        return name, dist.version or ""
+    # 🐍 3.9: EntryPoint has no `.dist`; find the owning distribution.
+    if index is None:
+        index = _dist_index()
+    return index.get((ep.group, ep.name, ep.value), ("", ""))
 
 
 def hooks_of(obj: Any) -> Tuple[str, ...]:
@@ -147,7 +174,7 @@ def hooks_of(obj: Any) -> Tuple[str, ...]:
 
 def _disabled() -> bool:
     global _disabled_logged
-    if os.environ.get(DISABLE_ENV, "").strip() not in ("1", "true", "yes"):
+    if os.environ.get(DISABLE_ENV, "").strip().lower() not in _TRUTHY:
         return False
     if not _disabled_logged:
         _disabled_logged = True
@@ -168,30 +195,62 @@ def discover(
             `BROKERS_GROUP`, or any custom group).
         allow: If given, only entry points whose name OR distribution name
             is in this collection are loaded; others are never imported.
+            Matching is PEP 503 normalised (case, ``-``/``_``/``.``).
         strict: Re-raise a failing loader instead of logging and skipping.
 
     Returns:
         The loaded entry points, sorted by (distribution, name). ``[]`` when
         ``XSM_DISABLE_PLUGIN_DISCOVERY=1``.
     """
-    del last_skipped[:]
-    last_failed.clear()
+    # 🔥 #296 battle (A): the module-level lists were mutated in place
+    #    while loading, so two threads (or a plugin whose import calls
+    #    discover() re-entrantly) interleaved/wiped each other's results.
+    #    Collected locally, published once under a lock: the globals hold
+    #    the result of the most recently FINISHED call (thread-affinity is
+    #    not promised -- `xsm plugins` is single-threaded).
+    skipped: List[SkippedPlugin] = []
+    try:
+        return _discover(group, allow, strict, skipped)
+    finally:
+        with _PUBLISH_LOCK:
+            last_skipped[:] = skipped
+
+
+def _discover(
+    group: str,
+    allow: Optional[Iterable[str]],
+    strict: bool,
+    skipped: List[SkippedPlugin],
+) -> List[DiscoveredPlugin]:
     if _disabled():
+        with _PUBLISH_LOCK:
+            last_failed.clear()
         return []
-    allowed = None if allow is None else set(allow)
+    # 🔥 #296 battle (A): `allow=["xsm_thirdparty_plugin"]` did not match
+    #    distribution "xsm-thirdparty-plugin"; names are PEP 503 normalised.
+    allowed = None if allow is None else {_normalise(a) for a in allow}
+    eps = _entry_points(group)
+    index = (
+        _dist_index()
+        if eps and getattr(eps[0], "dist", None) is None
+        else None
+    )
     found: List[DiscoveredPlugin] = []
-    for ep in _entry_points(group):
-        dist, version = _dist_of(ep)
-        if allowed is not None and not (ep.name in allowed or dist in allowed):
+    for ep in eps:
+        dist, version = _dist_of(ep, index)
+        if allowed is not None and not (
+            _normalise(ep.name) in allowed or _normalise(dist) in allowed
+        ):
             continue
         try:
             obj = ep.load()
         except Exception as exc:  # noqa: BLE001 -- third-party loader
             if strict:
-                last_failed.clear()
-                last_failed.update(name=ep.name, dist=dist)
+                with _PUBLISH_LOCK:
+                    last_failed.clear()
+                    last_failed.update(name=ep.name, dist=dist)
                 raise
-            last_skipped.append(
+            skipped.append(
                 SkippedPlugin(
                     ep.name,
                     dist,
@@ -214,16 +273,47 @@ def discover(
             DiscoveredPlugin(ep.name, dist, version, obj, hooks, group)
         )
     found.sort(key=lambda p: (p.distribution, p.name))
+    with _PUBLISH_LOCK:
+        last_failed.clear()
     return found
 
 
+_FACTORY_MARK = "__xsm_plugin_factory__"
+
+
+def plugin_factory(fn: Any) -> Any:
+    """Mark *fn* as a zero-argument factory `attach_discovered` may CALL.
+
+    An entry point naming an unmarked function is refused unexecuted
+    (#296 battle A): ``"os:system"`` must never be invoked by discovery.
+    """
+    setattr(fn, _FACTORY_MARK, True)
+    return fn
+
+
 def _instantiate(obj: Any) -> Any:
-    """A class or zero-arg factory becomes an instance; an instance stays."""
-    if inspect.isclass(obj) or (
-        callable(obj) and not hasattr(obj, "on_interpreter_start")
-    ):
-        return obj()
-    return obj
+    """A `PluginBase` subclass is instantiated; an instance is kept.
+
+    🔥 #296 battle (A): ANY zero-arg callable used to be CALLED -- an
+    entry point ``= "os:getpid"`` / ``"atexit:_run_exitfuncs"`` (or a
+    hostile ``"os:abort"``) executed it before the PluginBase check ran.
+    A factory must opt in with `plugin_factory`; anything else is refused
+    unexecuted.
+    """
+    from .plugins import PluginBase
+
+    if inspect.isclass(obj):
+        if issubclass(obj, PluginBase):
+            return obj()
+        raise TypeError(f"{obj.__name__} is not a PluginBase subclass")
+    if isinstance(obj, PluginBase):
+        return obj
+    if callable(obj) and getattr(obj, _FACTORY_MARK, False) is True:
+        return obj()  # opt-in factory; its RESULT is checked by the caller
+    raise TypeError(
+        f"{type(obj).__name__} object is not a PluginBase subclass or "
+        "instance (unmarked factories are not called; see plugin_factory)"
+    )
 
 
 def attach_discovered(

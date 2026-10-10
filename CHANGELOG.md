@@ -9,6 +9,10 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
 
 ## [Unreleased]
 
+### Fixed
+
+- Plugin discovery (#296 battle A): `attach_discovered()` no longer calls arbitrary loaded callables: only `PluginBase` subclasses/instances, or a factory explicitly marked with the new `plugin_discovery.plugin_factory` decorator (**behaviour change** for undecorated factory entry points, which are now skipped/refused); `allow=` matching is PEP 503 normalised; `XSM_DISABLE_PLUGIN_DISCOVERY` accepts `TRUE`/`on` in any case; `last_skipped`/`last_failed` are published atomically per call (thread/re-entrancy safe); the Python 3.9 distribution lookup is built once per `discover()` instead of per entry point.
+
 _No unreleased changes yet._
 
 ## [0.11.0] - 2026-10-01
