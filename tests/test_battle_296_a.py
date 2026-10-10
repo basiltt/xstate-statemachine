@@ -480,6 +480,7 @@ class TestDeprecations:
 # 4-6. observability, compat matrix, 1.0 checklist
 # --------------------------------------------------------------------------
 def test_instrument_all_discovered_no_duplicates(site: pathlib.Path) -> None:
+    pytest.importorskip("opentelemetry")  # the extra's own dependency
     obs = pytest.importorskip("xstate_statemachine.contrib.observability")
     _dist(site, "bt296a-o", "1.0", "bt296a_o", GOOD, {"o": "bt296a_o:Good"})
     i = SyncInterpreter(_machine())

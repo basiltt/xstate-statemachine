@@ -16,6 +16,8 @@ import subprocess
 import sys
 import tempfile
 import unittest
+
+import pytest
 from unittest import mock
 
 from xstate_statemachine import plugin_discovery as pd
@@ -93,12 +95,18 @@ class TestThirdPartyPluginDocsExecute(_Fixture):
         blocks = _fences(_third_party_docs(), "python")
         self.assertGreaterEqual(len(blocks), 4)
         for src in blocks:
+            if "contrib.observability" in src:
+                try:
+                    import opentelemetry  # noqa: F401
+                except ImportError:
+                    continue  # [observability] absent: the fence is skipped
             with self.subTest(src=src[:60]):
                 with contextlib.redirect_stdout(io.StringIO()):
                     exec(compile(src, str(PLUGINS_MD), "exec"), {})
 
     def test_documented_calls_with_the_fixture_names(self):
         # the docs' `acme-audit` spelled as the fixture's real names
+        pytest.importorskip("opentelemetry")  # [observability] extra
         from xstate_statemachine import SyncInterpreter, create_machine
         from xstate_statemachine.contrib.observability import instrument_all
         from xstate_statemachine.plugins import attach_discovered, discover
@@ -136,21 +144,33 @@ class TestXsmPluginsDocsMatchRealOutput(_Fixture):
         doc_lines = doc.splitlines()[1:]
         real = _run_cli(self.tmp, "--plain", "plugins")
         self.assertEqual(real.returncode, 0, real.stderr)
-        real_lines = real.stdout.splitlines()
-        # 📝 versions of the library's own brokers float; compare the rest
-        norm = re.compile(r"xstate-statemachine \S+")
+        # 📝 the library's OWN broker entry points (xstate-statemachine
+        #    dist) are listed too, as SKIPPED where their extra is absent --
+        #    that depends on the environment; compare third-party rows only
+        own = re.compile(r"\bxstate-statemachine \S+")
+
+        def third_party(lines):
+            return [x for x in lines if not own.search(x)]
+
         self.assertEqual(
-            [norm.sub("xstate-statemachine V", x) for x in doc_lines],
-            [norm.sub("xstate-statemachine V", x) for x in real_lines],
+            third_party(doc_lines), third_party(real.stdout.splitlines())
         )
-        self.assertTrue(real_lines[-1].split("SKIPPED:")[0].strip())
+        self.assertTrue(any("SKIPPED:" in x for x in real.stdout.splitlines()))
 
     def test_json_keys_and_skipped_entry_are_documented(self):
         real = _run_cli(self.tmp, "plugins", "--json")
         data = json.loads(real.stdout)
         doc = json.loads(_fences(_third_party_docs(), "json")[0])
         self.assertEqual(list(doc), list(data))
-        self.assertEqual(doc["skipped"], data["skipped"])
+
+        def third_party(rows):
+            return [
+                r for r in rows if r["distribution"] != "xstate-statemachine"
+            ]
+
+        self.assertEqual(
+            third_party(doc["skipped"]), third_party(data["skipped"])
+        )
         self.assertEqual(set(doc["plugins"][0]), set(data["plugins"][0]))
         self.assertIn(doc["plugins"][0], data["plugins"])
 
@@ -243,8 +263,18 @@ class TestPromiseConsistency(unittest.TestCase):
             cwd=ROOT,
             capture_output=True,
         )
-        if ok.returncode not in (0, 128):  # pragma: no cover
-            self.skipTest("git unavailable")
+        if ok.returncode != 0:
+            # 📝 CI checks out a shallow clone: an older commit is unknown
+            #    there without being wrong. Accept it when the clone is
+            #    shallow or git is unavailable; a full clone must know it.
+            shallow = subprocess.run(
+                ["git", "rev-parse", "--is-shallow-repository"],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+            )
+            if shallow.returncode != 0 or shallow.stdout.strip() == "true":
+                self.skipTest("shallow clone or git unavailable")
         self.assertEqual(ok.returncode, 0, "stamp names an unknown commit")
 
     def test_table_pins_are_the_pins_ci_installs(self):
@@ -270,6 +300,9 @@ class TestPromiseConsistency(unittest.TestCase):
                     self.assertIn(f"`{pin}`", page)
 
     def test_agents_ranges_match_the_code_and_ci(self):
+        pytest.importorskip("pydantic")
+        pytest.importorskip("langgraph")
+        pytest.importorskip("pydantic_ai")
         from xstate_statemachine.contrib.agents.langgraph import (
             LANGGRAPH_TESTED,
         )

@@ -602,6 +602,7 @@ interp.start().stop()
 - **Python 3.9.** `importlib.metadata.entry_points(group=...)` is 3.10+; on 3.9 the library selects the group from the dict the old API returns. The behaviour is identical.
 - **`[observability]`**: `instrument_all(interp, discovered=True, allow=[...])` is built on `attach_discovered`; with no interpreter it attaches the discovered plugins to the global collector instead.
 
+<!-- doc-requires: opentelemetry -->
 ```python
 from xstate_statemachine import SyncInterpreter, create_machine
 from xstate_statemachine.contrib.observability import instrument_all
