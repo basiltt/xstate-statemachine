@@ -44,9 +44,12 @@ def build_machine(
 ) -> Any:
     def set_percent(i: Any, ctx: Dict, e: Any, a: Any) -> None:
         pct = float(a.params["percent"])
+        # 🔥 #308 battle (A): apply FIRST. Recording first meant a flag
+        #    system outage left ctx["percent"] claiming an exposure that
+        #    was never pushed. Now `percent` is what was really applied.
+        apply_percent(ctx["flag"], pct)
         ctx["percent"] = pct
         ctx["history"].append(pct)
-        apply_percent(ctx["flag"], pct)
 
     logic = MachineLogic(
         actions={"setPercent": set_percent},
