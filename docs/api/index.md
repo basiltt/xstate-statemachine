@@ -2055,6 +2055,7 @@ Third-party plugins declared under the `xstate_statemachine.plugins` / `.stores`
 |----------|-----------|-------------|
 | `discover(*, group=PLUGINS_GROUP, allow=None, strict=False)` | `-> List[DiscoveredPlugin]` | Load the entry points in *group*. `allow` names entry points or distributions (others are not imported); a raising loader is logged and skipped unless `strict`. `[]` under `XSM_DISABLE_PLUGIN_DISCOVERY=1`. |
 | `attach_discovered(interpreter, *, allow=None, strict=False)` | `-> List[Any]` | Discover `PLUGINS_GROUP`, construct each plugin (no arguments), and `.use()` it. Returns the instances. `instrument_all(discovered=True)` in `[observability]` calls this. |
+| `plugin_factory(fn)` | `-> fn` | Decorator marking a zero-argument factory that `attach_discovered` may CALL to obtain a plugin. An entry point naming an unmarked callable (e.g. `os:system`) is refused unexecuted (#296). |
 | `DiscoveredPlugin` | `NamedTuple(name, distribution, version, obj, hooks, group)` | One loaded entry point. `hooks` lists the `PluginBase` hooks the class overrides. |
 | `PLUGINS_GROUP` / `STORES_GROUP` / `BROKERS_GROUP` | `str` | `"xstate_statemachine.plugins"` / `".stores"` / `".brokers"`. Stores and brokers are discovered, never instantiated. |
 

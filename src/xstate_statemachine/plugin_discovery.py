@@ -355,6 +355,26 @@ def attach_discovered(
                 exc_info=True,
             )
             continue
+        # 📝 #296 battle (integrator): `instrument_all(discovered=True)`
+        #    called twice attached a second instance of every plugin --
+        #    one class per interpreter; a re-run is a no-op for it.
+        present = {
+            type(existing) for existing in _attached_plugins(interpreter)
+        }
+        if type(plugin) in present:
+            logger.debug(
+                "Plugin %r from %r already attached; skipping duplicate.",
+                found.name,
+                found.distribution or "?",
+            )
+            continue
         interpreter.use(plugin)
         attached.append(plugin)
     return attached
+
+
+def _attached_plugins(interpreter: Any) -> List[Any]:
+    """The plugin instances already on *interpreter* (unwrapping the
+    engine's fail-open wrapper), or ``[]`` for a duck-typed collector."""
+    raw = getattr(interpreter, "_plugins", None) or ()
+    return [getattr(p, "wrapped", p) for p in raw]

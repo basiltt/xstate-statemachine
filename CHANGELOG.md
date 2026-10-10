@@ -13,8 +13,6 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
 
 - Plugin discovery (#296 battle A): `attach_discovered()` no longer calls arbitrary loaded callables: only `PluginBase` subclasses/instances, or a factory explicitly marked with the new `plugin_discovery.plugin_factory` decorator (**behaviour change** for undecorated factory entry points, which are now skipped/refused); `allow=` matching is PEP 503 normalised; `XSM_DISABLE_PLUGIN_DISCOVERY` accepts `TRUE`/`on` in any case; `last_skipped`/`last_failed` are published atomically per call (thread/re-entrancy safe); the Python 3.9 distribution lookup is built once per `discover()` instead of per entry point.
 
-_No unreleased changes yet._
-
 ## [0.11.0] - 2026-10-01
 
 ### Brokers & Celery (Phase F) -- #294, #292
@@ -1455,6 +1453,73 @@ _No unreleased changes yet._
 
 ### Fixed
 
+- **1.0 hardening, as battle-tested (#296).** A plugin author's day
+  against a marketplace of third-party distributions laid out as
+  installed `.dist-info`s: a good audit plugin, one whose loader
+  raises, one naming a class that is not a `PluginBase`, one whose
+  constructor needs arguments, one whose module import has side
+  effects, one raising in EVERY hook, and two distributions declaring
+  the same entry-point name. Held: `import xstate_statemachine` and
+  building / running an interpreter import NO plugin module (the
+  side-effect file never appears, `entry_points()` is never called);
+  `discover()` lists the loadable ones and logs the rest;
+  `strict=True` raises on the first failure; `allow=` by entry-point or
+  distribution name never imports the others; the kill-switch returns
+  `[]` with nothing imported; a plugin raising in every hook never
+  stops the interpreter and the good one still sees the transition;
+  the 3.9 dict-shaped `entry_points()` shim selects by key;
+  `deprecated()` emits once per call site across 16 threads × 4 calls,
+  again from another site, and re-arms after `reset`; the 1.0
+  checklist mechanically -- every contrib `__all__` name in the API
+  index (read statically, so a name behind a missing extra is caught),
+  no TODO / FIXME comments in `src/`, the shipped examples or the
+  guide's prose, the Python range one truth across `requires-python`,
+  classifiers, the CI matrix and the README, `[all]` covering every
+  contrib extra (`tests/test_battle_296_scenario.py`,
+  `test_battle_296_a.py`, `test_battle_296_b.py`). Found and fixed:
+  **`attach_discovered()` CALLED any zero-argument callable an entry
+  point named** -- `"os:abort"` or `"atexit:_run_exitfuncs"` ran
+  before anything checked it was a plugin (a `PluginBase` subclass is
+  instantiated, an instance kept, a factory must be marked with the
+  new `plugin_factory` decorator, anything else is refused unexecuted
+  -- **behaviour change:** an undecorated factory entry point is now
+  skipped, or refused under `strict=True`); an entry point naming a
+  non-`PluginBase` class was `.use()`d anyway (refused / skipped);
+  **`xsm plugins` hid skipped loaders** -- a broken plugin was simply
+  missing from the list (a `SKIPPED` row naming the error; `--json`
+  carries a `skipped` list; `discover()` publishes `last_skipped` /
+  `last_failed`); no CI gate existed (`xsm plugins --strict` exits 1
+  naming the entry point and its distribution, no traceback); `allow=`
+  did not normalise names (`xsm_thirdparty_plugin` vs
+  `xsm-thirdparty-plugin`: PEP 503 now); `XSM_DISABLE_PLUGIN_DISCOVERY`
+  ignored `TRUE` / `on` (1 / true / yes / on, any case); the skipped /
+  failed results were module globals edited in place (concurrent or
+  re-entrant `discover()` calls corrupted each other -- collected per
+  call, published once under a lock); the 3.9 `_dist_of` rescanned
+  every installed distribution per entry point (one index per call);
+  a distribution without `Name` metadata raised; `instrument_all(
+  discovered=True)` called twice attached a second instance of every
+  plugin (one class per interpreter). Docs: the plugins guide's
+  `xsm plugins` sample was invented (real output with the fixture
+  installed, SKIPPED row included, compared line by line); `--json`
+  shape, `--strict` and exit codes documented; the API index listed
+  `--plain` as a `plugins` flag and lacked rows for `SkippedPlugin`,
+  `last_skipped`, `last_failed`, `DISABLE_ENV`, `GROUPS`, `hooks_of`,
+  `plugin_factory`; `attach_discovered` refusing non-plugins,
+  `last_skipped`, `instrument_all(discovered=True)`, the stores /
+  brokers entry-point table and the `pip install -e . && xsm plugins
+  --strict` CI recipe added; the compatibility page now says it is
+  generated and asserted and names the date and commit it was verified
+  at (every oldest / newest pin on the page is the pin the compat
+  workflow installs); SECURITY.md gains the SemVer statement, contrib
+  provisional, the `allow=` look-alike caveat and the `xsm plugins`
+  audit step; the README names `[all]`. Held: a plugin blocking in
+  `on_interpreter_start` hangs `start()` (in-process code with full
+  privileges, as SECURITY.md says); a plugin calling
+  `interpreter.stop()` from a hook stops it cleanly; the deprecation
+  seen-set clears past 4,096 sites and warns again (documented); the
+  compat workflow installs oldest and newest per extra and the `[all]`
+  smoke asserts the core import is third-party-free.
 - **The recipes pack, as battle-tested (#308).** A SaaS billing day
   through the recipes: 1,000 Stripe deliveries across 200 subscriptions
   -- forged signature, body tampered by one byte, timestamp a day old,

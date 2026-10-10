@@ -50,9 +50,7 @@ def _fences(text: str, lang: str):
 
 def _run_cli(fixture_dir: pathlib.Path, *args: str, disabled=False):
     env = dict(os.environ)
-    env["PYTHONPATH"] = os.pathsep.join(
-        [str(ROOT / "src"), str(fixture_dir)]
-    )
+    env["PYTHONPATH"] = os.pathsep.join([str(ROOT / "src"), str(fixture_dir)])
     env["PYTHONUTF8"] = "1"
     env.pop(pd.DISABLE_ENV, None)
     if disabled:
@@ -124,10 +122,12 @@ class TestThirdPartyPluginDocsExecute(_Fixture):
         toml = "\n".join(_fences(_third_party_docs(), "toml"))
         for group in pd.GROUPS:
             self.assertIn(f'[project.entry-points."{group}"]', toml)
-        fixture = _read(ROOT / "tests/fixtures/xsm_thirdparty_plugin/"
-                        "pyproject.toml")
-        self.assertIn('[project.entry-points."xstate_statemachine.plugins"]',
-                      fixture)
+        fixture = _read(
+            ROOT / "tests/fixtures/xsm_thirdparty_plugin/" "pyproject.toml"
+        )
+        self.assertIn(
+            '[project.entry-points."xstate_statemachine.plugins"]', fixture
+        )
 
 
 class TestXsmPluginsDocsMatchRealOutput(_Fixture):
@@ -157,8 +157,7 @@ class TestXsmPluginsDocsMatchRealOutput(_Fixture):
     def test_strict_exit_code_and_stderr_line_are_documented(self):
         real = _run_cli(self.tmp, "plugins", "--strict")
         self.assertEqual(real.returncode, 1)
-        line = [x for x in real.stderr.splitlines()
-                if x.startswith("error:")]
+        line = [x for x in real.stderr.splitlines() if x.startswith("error:")]
         self.assertEqual(len(line), 1)
         self.assertNotIn("Traceback", real.stderr)
         self.assertIn(line[0], _third_party_docs())
@@ -210,7 +209,7 @@ class TestPromiseConsistency(unittest.TestCase):
             "in-process with full privileges",
             "never discovers implicitly",
             "allow=",
-            "XSM_DISABLE_PLUGIN_DISCOVERY=1",
+            "XSM_DISABLE_PLUGIN_DISCOVERY",
             "private vulnerability reporting",
             "Semantic Versioning",
         ):
@@ -225,9 +224,10 @@ class TestPromiseConsistency(unittest.TestCase):
         self.assertIn("Semantic Versioning", text)
         self.assertIn("**provisional**", text)
         self.assertIn("Supported Python: 3.9 – 3.14", text)
-        self.assertIn('xstate-statemachine[all]', text)
-        py = re.search(r'requires-python = ">=(3\.\d+)"',
-                       _read(ROOT / "pyproject.toml"))
+        self.assertIn("xstate-statemachine[all]", text)
+        py = re.search(
+            r'requires-python = ">=(3\.\d+)"', _read(ROOT / "pyproject.toml")
+        )
         self.assertEqual(py.group(1), "3.9")
 
     def test_compat_page_names_its_source_commit_rule(self):
@@ -240,7 +240,8 @@ class TestPromiseConsistency(unittest.TestCase):
         self.assertIsNotNone(stamp)
         ok = subprocess.run(
             ["git", "cat-file", "-e", stamp.group(2) + "^{commit}"],
-            cwd=ROOT, capture_output=True,
+            cwd=ROOT,
+            capture_output=True,
         )
         if ok.returncode not in (0, 128):  # pragma: no cover
             self.skipTest("git unavailable")
@@ -283,9 +284,7 @@ class TestPromiseConsistency(unittest.TestCase):
         self.assertIn(f"`>={a}.{b},<{c}`", doc)
         ci = _read(ROOT / ".github/workflows/ci.yml")
         lg = LANGGRAPH_TESTED
-        self.assertIn(
-            f'"langgraph>={lg[0][0]}.{lg[0][1]},<{lg[1][0]}"', ci
-        )
+        self.assertIn(f'"langgraph>={lg[0][0]}.{lg[0][1]},<{lg[1][0]}"', ci)
 
     def test_deprecated_and_removed_entries_name_a_replacement(self):
         text = _read(ROOT / "CHANGELOG.md")

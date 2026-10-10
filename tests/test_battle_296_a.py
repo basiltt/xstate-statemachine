@@ -44,8 +44,11 @@ def site(
 
 def _machine() -> Any:
     return create_machine(
-        {"id": "m", "initial": "a", "states": {"a": {"on": {"GO": "b"}},
-                                               "b": {}}}
+        {
+            "id": "m",
+            "initial": "a",
+            "states": {"a": {"on": {"GO": "b"}}, "b": {}},
+        }
     )
 
 
@@ -62,26 +65,31 @@ class _Fake:
 # 1. discovery as an attack surface
 # --------------------------------------------------------------------------
 class TestCallableEntryPoints:
-    def test_loaded_callable_is_never_called(
-        self, site: pathlib.Path
-    ) -> None:
+    def test_loaded_callable_is_never_called(self, site: pathlib.Path) -> None:
         """🔥 `_instantiate` used to CALL any zero-arg callable."""
         code = (
             "import os\nCALLS = []\n"
             "def factory():\n    CALLS.append(1)\n    return None\n"
         )
-        _dist(site, "bt296a-evil", "1.0", "bt296a_evil", code,
-              {"evil": "bt296a_evil:factory"})
+        _dist(
+            site,
+            "bt296a-evil",
+            "1.0",
+            "bt296a_evil",
+            code,
+            {"evil": "bt296a_evil:factory"},
+        )
         assert pd.attach_discovered(_Fake(), allow=["evil"]) == []
         assert sys.modules["bt296a_evil"].CALLS == []
 
     def test_os_system_entry_point_not_executed(
         self, site: pathlib.Path
     ) -> None:
-        _dist(site, "bt296a-os", "1.0", "bt296a_os", "",
-              {"sys": "os:getpid"})
+        _dist(site, "bt296a-os", "1.0", "bt296a_os", "", {"sys": "os:getpid"})
         fake = _Fake()
-        with pytest.raises(TypeError, match="unmarked factories are not called"):
+        with pytest.raises(
+            TypeError, match="unmarked factories are not called"
+        ):
             pd.attach_discovered(fake, allow=["sys"], strict=True)
         assert fake.used == []
 
@@ -89,8 +97,14 @@ class TestCallableEntryPoints:
         self, site: pathlib.Path
     ) -> None:
         code = "MADE = []\nclass X:\n    def __init__(self): MADE.append(1)\n"
-        _dist(site, "bt296a-cls", "1.0", "bt296a_cls", code,
-              {"cls": "bt296a_cls:X"})
+        _dist(
+            site,
+            "bt296a-cls",
+            "1.0",
+            "bt296a_cls",
+            code,
+            {"cls": "bt296a_cls:X"},
+        )
         assert pd.attach_discovered(_Fake(), allow=["cls"]) == []
         assert sys.modules["bt296a_cls"].MADE == []
 
@@ -98,11 +112,18 @@ class TestCallableEntryPoints:
         self, site: pathlib.Path
     ) -> None:
         code = GOOD + "class Holder:\n    Inner = Good\nINST = Good()\n"
-        _dist(site, "bt296a-ok", "1.0", "bt296a_ok", code, {
-            "dotted": "bt296a_ok:Holder.Inner",
-            "inst": "bt296a_ok : INST",
-            "extra": "bt296a_ok:Good [fancy]",
-        })
+        _dist(
+            site,
+            "bt296a-ok",
+            "1.0",
+            "bt296a_ok",
+            code,
+            {
+                "dotted": "bt296a_ok:Holder.Inner",
+                "inst": "bt296a_ok : INST",
+                "extra": "bt296a_ok:Good [fancy]",
+            },
+        )
         fake = _Fake()
         got = pd.attach_discovered(fake, allow=["bt296a-ok"])
         assert len(got) == 3
@@ -115,8 +136,14 @@ class TestCallableEntryPoints:
             "@plugin_factory\ndef make():\n    return Good()\n"
             "@plugin_factory\ndef bad():\n    return 42\n"
         )
-        _dist(site, "bt296a-f", "1.0", "bt296a_f", code,
-              {"make": "bt296a_f:make", "bad": "bt296a_f:bad"})
+        _dist(
+            site,
+            "bt296a-f",
+            "1.0",
+            "bt296a_f",
+            code,
+            {"make": "bt296a_f:make", "bad": "bt296a_f:bad"},
+        )
         got = pd.attach_discovered(_Fake(), allow=["bt296a-f"])
         assert len(got) == 1 and isinstance(got[0], PluginBase)
 
@@ -124,14 +151,23 @@ class TestCallableEntryPoints:
 class TestAllowAndKillSwitch:
     @pytest.mark.parametrize(
         "spelling",
-        ["xsm_thirdparty_plugin", "XSM-ThirdParty-Plugin",
-         "xsm.thirdparty.plugin"],
+        [
+            "xsm_thirdparty_plugin",
+            "XSM-ThirdParty-Plugin",
+            "xsm.thirdparty.plugin",
+        ],
     )
     def test_allow_is_pep503_normalised(
         self, site: pathlib.Path, spelling: str
     ) -> None:
-        _dist(site, "xsm-thirdparty-plugin", "1.0", "bt296a_tp", GOOD,
-              {"tp": "bt296a_tp:Good"})
+        _dist(
+            site,
+            "xsm-thirdparty-plugin",
+            "1.0",
+            "bt296a_tp",
+            GOOD,
+            {"tp": "bt296a_tp:Good"},
+        )
         assert [p.name for p in pd.discover(allow=[spelling])] == ["tp"]
 
     def test_allow_name_matching_benign_and_hostile(
@@ -140,10 +176,22 @@ class TestAllowAndKillSwitch:
         """Held: `allow=` by ENTRY name matches every distribution that
         uses the name -- pin the distribution name to exclude a squatter
         (documented in SECURITY.md)."""
-        _dist(site, "bt296a-good", "1.0", "bt296a_g", GOOD,
-              {"audit": "bt296a_g:Good"})
-        _dist(site, "bt296a-bad", "1.0", "bt296a_b", GOOD,
-              {"audit": "bt296a_b:Good"})
+        _dist(
+            site,
+            "bt296a-good",
+            "1.0",
+            "bt296a_g",
+            GOOD,
+            {"audit": "bt296a_g:Good"},
+        )
+        _dist(
+            site,
+            "bt296a-bad",
+            "1.0",
+            "bt296a_b",
+            GOOD,
+            {"audit": "bt296a_b:Good"},
+        )
         assert len(pd.discover(allow=["audit"])) == 2
         only = pd.discover(allow=["bt296a-good"])
         assert [p.distribution for p in only] == ["bt296a-good"]
@@ -153,8 +201,9 @@ class TestAllowAndKillSwitch:
     def test_disable_spellings(
         self, site: pathlib.Path, monkeypatch: pytest.MonkeyPatch, val: str
     ) -> None:
-        _dist(site, "bt296a-k", "1.0", "bt296a_k", GOOD,
-              {"k": "bt296a_k:Good"})
+        _dist(
+            site, "bt296a-k", "1.0", "bt296a_k", GOOD, {"k": "bt296a_k:Good"}
+        )
         monkeypatch.setenv(pd.DISABLE_ENV, val)
         assert pd.discover() == []
         assert "bt296a_k" not in sys.modules
@@ -163,8 +212,9 @@ class TestAllowAndKillSwitch:
     def test_enable_spellings(
         self, site: pathlib.Path, monkeypatch: pytest.MonkeyPatch, val: str
     ) -> None:
-        _dist(site, "bt296a-k", "1.0", "bt296a_k", GOOD,
-              {"k": "bt296a_k:Good"})
+        _dist(
+            site, "bt296a-k", "1.0", "bt296a_k", GOOD, {"k": "bt296a_k:Good"}
+        )
         monkeypatch.setenv(pd.DISABLE_ENV, val)
         assert [p.name for p in pd.discover(allow=["k"])] == ["k"]
 
@@ -178,8 +228,14 @@ class TestHostileHooks:
             "class Stopper(PluginBase):\n"
             "    def on_transition(self, i, *a):\n        i.stop()\n"
         )
-        _dist(site, "bt296a-s", "1.0", "bt296a_s", code,
-              {"s": "bt296a_s:Stopper"})
+        _dist(
+            site,
+            "bt296a-s",
+            "1.0",
+            "bt296a_s",
+            code,
+            {"s": "bt296a_s:Stopper"},
+        )
         i = SyncInterpreter(_machine())
         pd.attach_discovered(i, allow=["s"])
         i.start()
@@ -201,8 +257,14 @@ class TestConcurrency:
         """🔥 last_skipped was cleared/appended in place by every call."""
         bad = "raise ImportError('broken')\n"
         for n in range(4):
-            _dist(site, f"bt296a-x{n}", "1.0", f"bt296a_x{n}", bad,
-                  {f"x{n}": f"bt296a_x{n}:Nope"})
+            _dist(
+                site,
+                f"bt296a-x{n}",
+                "1.0",
+                f"bt296a_x{n}",
+                bad,
+                {f"x{n}": f"bt296a_x{n}:Nope"},
+            )
         errs: List[BaseException] = []
         seen: List[int] = []
 
@@ -227,10 +289,22 @@ class TestConcurrency:
             "from xstate_statemachine import plugin_discovery as pd\n"
             "INNER = pd.discover(allow=['bt296a-leaf'])\n" + GOOD
         )
-        _dist(site, "bt296a-leaf", "1.0", "bt296a_leaf", GOOD,
-              {"leaf": "bt296a_leaf:Good"})
-        _dist(site, "bt296a-re", "1.0", "bt296a_re", code,
-              {"re": "bt296a_re:Good"})
+        _dist(
+            site,
+            "bt296a-leaf",
+            "1.0",
+            "bt296a_leaf",
+            GOOD,
+            {"leaf": "bt296a_leaf:Good"},
+        )
+        _dist(
+            site,
+            "bt296a-re",
+            "1.0",
+            "bt296a_re",
+            code,
+            {"re": "bt296a_re:Good"},
+        )
         got = pd.discover(allow=["bt296a-re", "bt296a-leaf"])
         assert {p.name for p in got} == {"re", "leaf"}
         assert [p.name for p in sys.modules["bt296a_re"].INNER] == ["leaf"]
@@ -245,8 +319,14 @@ class TestShim:
     ) -> None:
         """🔥 3.9 `_dist_of` scanned all distributions per entry point."""
         for n in range(60):
-            _dist(site, f"bt296a-m{n}", "1.0", f"bt296a_m{n}", GOOD,
-                  {f"m{n}": f"bt296a_m{n}:Good"})
+            _dist(
+                site,
+                f"bt296a-m{n}",
+                "1.0",
+                f"bt296a_m{n}",
+                GOOD,
+                {f"m{n}": f"bt296a_m{n}:Good"},
+            )
         real = pd._entry_points
 
         class EP:  # a 3.9-style EntryPoint: no `.dist`
@@ -266,7 +346,8 @@ class TestShim:
         got = pd.discover(allow=[f"m{n}" for n in range(60)])
         assert len(got) == 60 and len(calls) == 1
         assert {p.distribution for p in got} == {
-            f"bt296a-m{n}" for n in range(60)}
+            f"bt296a-m{n}" for n in range(60)
+        }
         assert time.perf_counter() - t0 < 30
 
     def test_identical_triple_first_dist_wins(self) -> None:
@@ -325,7 +406,8 @@ class TestDeprecations:
         with warnings.catch_warnings(record=True) as w:
             warnings.simplefilter("always")
             for _ in range(3):
-                dep.deprecated("bt-a", **_kw()); dep.deprecated("bt-b", **_kw())  # noqa: E702,E501
+                dep.deprecated("bt-a", **_kw())
+                dep.deprecated("bt-b", **_kw())  # noqa: E702,E501
         assert len(w) == 2
 
     def test_seen_overflow_clears_and_repeats(
@@ -363,8 +445,9 @@ class TestDeprecations:
         def writer() -> None:
             n = 0
             while not stop.is_set():
-                dep.register(f"bt-t{n}", since="1", removal="2",
-                             alternative="a")
+                dep.register(
+                    f"bt-t{n}", since="1", removal="2", alternative="a"
+                )
                 n += 1
 
         t = threading.Thread(target=writer)
@@ -386,9 +469,11 @@ class TestDeprecations:
         args = (src / "cli" / "args.py").read_text(encoding="utf-8")
         assert events.count("deprecated(") >= 2
         assert "deprecated(" in args and "--style" in args
-        assert re.search(r"actionErrorPolicy", " ".join(
-            d.what for d in dep.deprecations())) or "register(" in "".join(
-            p.read_text(encoding="utf-8") for p in src.rglob("*.py"))
+        assert re.search(
+            r"actionErrorPolicy", " ".join(d.what for d in dep.deprecations())
+        ) or "register(" in "".join(
+            p.read_text(encoding="utf-8") for p in src.rglob("*.py")
+        )
 
 
 # --------------------------------------------------------------------------
@@ -401,9 +486,12 @@ def test_instrument_all_discovered_no_duplicates(site: pathlib.Path) -> None:
     obs.instrument_all(i, discovered=True, allow=["o"])
     n = len(i._plugins)
     assert n >= 1
-    # Held: a second call constructs a NEW instance (identity dedupe only)
+    # 🔥 (integrator): a second call used to attach a NEW instance of
+    #    every discovered plugin -- one class per interpreter now
     obs.instrument_all(i, discovered=True, allow=["o"])
-    assert len(i._plugins) in (n, n + 1)
+    assert len(i._plugins) == n
+    classes = [type(getattr(p, "wrapped", p)).__name__ for p in i._plugins]
+    assert classes.count("Good") == 1, classes
 
 
 def test_ci_compat_and_smoke_cover_promises() -> None:
@@ -413,7 +501,8 @@ def test_ci_compat_and_smoke_cover_promises() -> None:
     assert "matrix.kind" in compat and "--check" in compat
     assert "all_smoke.py" in ci
     smoke = (ROOT / "scripts" / "verify" / "all_smoke.py").read_text(
-        encoding="utf-8")
+        encoding="utf-8"
+    )
     assert "core import pulled third-party modules" in smoke
 
 
