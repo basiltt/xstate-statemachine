@@ -1,6 +1,7 @@
 <div align="center">
 
-<img src="docs/assets/images/machines/order_eda.png" alt="An order-fulfilment statechart in the Stately editor: placed → paid → packed → shipped, with PAY publishing OrderPaid, a 60 s packing escalation, shipOrder invoked, and CANCEL from every state" width="720">
+<a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=8232a8c5-b681-4e0f-a26d-57983804d72c"><img src="docs/assets/images/machines/order_eda.png" alt="An order-fulfilment statechart in the Stately editor: placed → paid → packed → shipped, with PAY publishing OrderPaid, a 60 s packing escalation, shipOrder invoked, and CANCEL from every state" width="900"></a>
+<br><sub>🔗 <a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=8232a8c5-b681-4e0f-a26d-57983804d72c">Open this machine in the Stately editor</a> — public, no account needed.</sub>
 
 # ⚙️ xstate-statemachine
 
@@ -88,7 +89,8 @@ print(light.current_state_ids)      # {'toggle.active'}  ← ignored, not crashe
 ```
 
 <div align="center">
-<img src="docs/assets/images/machines/toggle.png" alt="toggle: inactive ⇄ active on TOGGLE" width="400">
+<a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=6938bbd2-1666-42dc-838f-542837486866"><img src="docs/assets/images/machines/toggle.png" alt="toggle: inactive ⇄ active on TOGGLE" width="440"></a>
+<br><sub>🔗 <a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=6938bbd2-1666-42dc-838f-542837486866">Open this machine in the Stately editor</a> — public, no account needed.</sub>
 <br><sub>That dict, as the Stately editor draws it. Paste the JSON into <a href="https://stately.ai/editor">stately.ai/editor</a> and you get this picture; export from the editor and you get that dict.</sub>
 </div>
 
@@ -266,7 +268,8 @@ The split that matters: **state** is *where you are*, **context** is *what you k
 statechart design.
 
 <div align="center">
-<img src="docs/assets/images/machines/fetch.png" alt="fetch machine: idle →FETCH→ loading (invoke fetchUser) → success (final) or failure →RETRY→ loading" width="540">
+<a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=4ef7b8e7-dda0-44a9-9b3a-b5d59f2b0763"><img src="docs/assets/images/machines/fetch.png" alt="fetch machine: idle →FETCH→ loading (invoke fetchUser) → success (final) or failure →RETRY→ loading" width="600"></a>
+<br><sub>🔗 <a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=4ef7b8e7-dda0-44a9-9b3a-b5d59f2b0763">Open this machine in the Stately editor</a> — public, no account needed.</sub>
 </div>
 
 Two more words you'll meet constantly: an **`invoke`** runs a service (an API call, a Celery
@@ -301,7 +304,8 @@ Every hand-off is an event. This runs as-is — the broker, the store, the inbox
 outbox are all in-process:
 
 <div align="center">
-<img src="docs/assets/images/machines/warehouse.png" alt="warehouse: waiting →PACK (publishes OrderPacked)→ packed" width="440">
+<a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=e42d1fe7-8c71-42a2-b9a2-e9591112bc19"><img src="docs/assets/images/machines/warehouse.png" alt="warehouse: waiting →PACK (publishes OrderPacked)→ packed" width="480"></a>
+<br><sub>🔗 <a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=e42d1fe7-8c71-42a2-b9a2-e9591112bc19">Open this machine in the Stately editor</a> — public, no account needed.</sub>
 </div>
 
 ```python
@@ -421,7 +425,8 @@ OK Generated typed file: billing/subscription_types.py
 ```
 
 <div align="center">
-<img src="docs/assets/images/machines/subscription.png" alt="Stripe subscription chart: incomplete → active ⇄ past_due (3-day durable after → canceled)" width="440">
+<a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=330b8f3c-e2c5-44c8-8c35-16c23839e9ff"><img src="docs/assets/images/machines/subscription.png" alt="Stripe subscription chart: incomplete → active ⇄ past_due (3-day durable after → canceled)" width="560"></a>
+<br><sub>🔗 <a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=330b8f3c-e2c5-44c8-8c35-16c23839e9ff">Open this machine in the Stately editor</a> — public, no account needed.</sub>
 <br><sub>The input: the Stripe-subscription chart from the recipes.</sub>
 </div>
 
@@ -628,7 +633,8 @@ A guard is a pure function returning `bool`. List transitions in priority order;
 whose guard passes wins.
 
 <div align="center">
-<img src="docs/assets/images/machines/atm.png" alt="atm machine: idle —WITHDRAW IF hasFundsAndNotFrozen→ approved, else → denied" width="400">
+<a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=d83d2253-ce02-483b-a7a1-bc559c9110e1"><img src="docs/assets/images/machines/atm.png" alt="atm machine: idle —WITHDRAW IF hasFundsAndNotFrozen→ approved, else → denied" width="480"></a>
+<br><sub>🔗 <a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=d83d2253-ce02-483b-a7a1-bc559c9110e1">Open this machine in the Stately editor</a> — public, no account needed.</sub>
 </div>
 
 ```python
@@ -884,7 +890,8 @@ Three things make timers production-grade here rather than a `threading.Timer` p
 Group related substates so shared transitions live in one place:
 
 <div align="center">
-<img src="docs/assets/images/machines/session.png" alt="session machine: loggedOut →LOGIN→ authenticated {browsing → paying → confirmed}; LOGOUT from the whole compound state back to loggedOut" width="760">
+<a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=f09dfce3-a06f-46b5-b68f-8cb9a0298313"><img src="docs/assets/images/machines/session.png" alt="session machine: loggedOut →LOGIN→ authenticated {browsing → paying → confirmed}; LOGOUT from the whole compound state back to loggedOut" width="900"></a>
+<br><sub>🔗 <a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=f09dfce3-a06f-46b5-b68f-8cb9a0298313">Open this machine in the Stately editor</a> — public, no account needed.</sub>
 </div>
 
 ```jsonc
@@ -910,7 +917,8 @@ Regions run independently. `onDone` fires **exactly once**, when *all* of them r
 state — fan-out and fan-in with no bookkeeping:
 
 <div align="center">
-<img src="docs/assets/images/machines/ci.png" alt="ci machine: a parallel 'running' state with build and lint regions, each ending in a final state; onDone → deployed" width="640">
+<a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=f5951ce8-b462-41e3-868b-e641ada282c6"><img src="docs/assets/images/machines/ci.png" alt="ci machine: a parallel 'running' state with build and lint regions, each ending in a final state; onDone → deployed" width="760"></a>
+<br><sub>🔗 <a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=f5951ce8-b462-41e3-868b-e641ada282c6">Open this machine in the Stately editor</a> — public, no account needed.</sub>
 </div>
 
 ```python
@@ -951,7 +959,8 @@ This is where `current_state_ids` returning a **set** finally makes sense.
 "resume the wizard where the user left off":
 
 <div align="center">
-<img src="docs/assets/images/machines/wizard.png" alt="wizard machine: steps {step1 → step2 → step3, a shallow history node}; HELP → helpModal; CLOSE → steps.hist resumes the exact step; FINISH → done" width="460">
+<a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=051ddb7e-0e0b-4d5e-befa-8028f9871591"><img src="docs/assets/images/machines/wizard.png" alt="wizard machine: steps {step1 → step2 → step3, a shallow history node}; HELP → helpModal; CLOSE → steps.hist resumes the exact step; FINISH → done" width="560"></a>
+<br><sub>🔗 <a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=051ddb7e-0e0b-4d5e-befa-8028f9871591">Open this machine in the Stately editor</a> — public, no account needed.</sub>
 </div>
 
 ```jsonc
@@ -984,7 +993,8 @@ a supervision tree, not a callback pile. Register a child under a `systemId` and
 in the system can address it by name.
 
 <div align="center">
-<img src="docs/assets/images/machines/supervisor.png" alt="super machine: a single 'up' state whose entry spawns the worker pool and whose DISPATCH event forwards a JOB to it" width="400">
+<a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=d7897555-d098-4080-b33f-95c06f3ce8a7"><img src="docs/assets/images/machines/supervisor.png" alt="super machine: a single 'up' state whose entry spawns the worker pool and whose DISPATCH event forwards a JOB to it" width="480"></a>
+<br><sub>🔗 <a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=d7897555-d098-4080-b33f-95c06f3ce8a7">Open this machine in the Stately editor</a> — public, no account needed.</sub>
 </div>
 
 ```python
@@ -1187,7 +1197,8 @@ reference `TOOL_LOOP` chart the extra ships — every budget check, timeout, den
 human-approval wait is a state you can see, test, persist and diagram:
 
 <div align="center">
-<img src="docs/assets/images/machines/tool_loop.png" alt="TOOL_LOOP: idle → checking_budget → awaiting_model → awaiting_tool / awaiting_human / done / error, with timeouts to timed_out and retry back to checking_budget" width="760">
+<a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=20b6e732-e957-448d-9584-ae207227d9f1"><img src="docs/assets/images/machines/tool_loop.png" alt="TOOL_LOOP: idle → checking_budget → awaiting_model → awaiting_tool / awaiting_human / done / error, with timeouts to timed_out and retry back to checking_budget" width="900"></a>
+<br><sub>🔗 <a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=20b6e732-e957-448d-9584-ae207227d9f1">Open this machine in the Stately editor</a> — public, no account needed.</sub>
 </div>
 
 - **Per-state tool allow-lists** (`meta.tools`) are re-checked inside `run_tool` — editing
@@ -1522,7 +1533,8 @@ records the failure reason, in 40 lines:
 <br>
 
 <div align="center">
-<img src="docs/assets/images/machines/order.png" alt="order machine: cart (ADD / CHECKOUT if hasItems) → charging (invoke chargeCard) → shipped (final) or failed →RETRY if canRetry→ charging" width="520">
+<a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=3cda1413-fd94-434c-b10e-418d8153fb35"><img src="docs/assets/images/machines/order.png" alt="order machine: cart (ADD / CHECKOUT if hasItems) → charging (invoke chargeCard) → shipped (final) or failed →RETRY if canRetry→ charging" width="680"></a>
+<br><sub>🔗 <a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=3cda1413-fd94-434c-b10e-418d8153fb35">Open this machine in the Stately editor</a> — public, no account needed.</sub>
 </div>
 
 ```python
@@ -1600,7 +1612,8 @@ has no `CHECKOUT` handler.
 <br>
 
 <div align="center">
-<img src="docs/assets/images/machines/backoff.png" alt="api machine: idle →CALL→ loading (invoke callApi) → success, or onError → waiting if canRetry else failed; waiting —after BACKOFF→ loading" width="520">
+<a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=738d033e-bb9b-4e1e-9e08-18e4edb72900"><img src="docs/assets/images/machines/backoff.png" alt="api machine: idle →CALL→ loading (invoke callApi) → success, or onError → waiting if canRetry else failed; waiting —after BACKOFF→ loading" width="680"></a>
+<br><sub>🔗 <a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=738d033e-bb9b-4e1e-9e08-18e4edb72900">Open this machine in the Stately editor</a> — public, no account needed.</sub>
 </div>
 
 The pattern that turns into unreadable nested loops when hand-written:

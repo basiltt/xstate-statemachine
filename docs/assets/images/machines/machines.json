@@ -1,5 +1,5 @@
 {
-  "_comment": "Source charts for the README diagrams (docs/assets/images/machines/*.png, Stately editor dark theme). Each is imported into the Stately editor and screenshotted; the Python in README.md runs the same configs. order_eda / warehouse are examples/integrations/eda_fulfilment/{machine,warehouse}.json and tool_loop is src/xstate_statemachine/contrib/agents/charts/tool_loop.json.",
+  "_comment": "Source charts for the README diagrams (docs/assets/images/machines/*.png). They live in a public Stately project (ids in links.json); `python capture.py` re-screenshots every chart from the editor's embed view in dark mode at 3x, and the README links each image to its editor page. The Python in README.md runs the same configs. order_eda / warehouse are examples/integrations/eda_fulfilment/{machine,warehouse}.json and tool_loop is src/xstate_statemachine/contrib/agents/charts/tool_loop.json.",
   "toggle": {
     "id": "toggle",
     "initial": "inactive",
