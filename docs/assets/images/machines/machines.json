@@ -1,40 +1,75 @@
 {
-  "_comment": "Source charts for the README diagrams (docs/assets/images/machines/*.png). Each is imported into the Stately editor (https://stately.ai/registry/projects) and screenshotted; the Python in README.md runs the same configs.",
+  "_comment": "Source charts for the README diagrams (docs/assets/images/machines/*.png, Stately editor dark theme). Each is imported into the Stately editor and screenshotted; the Python in README.md runs the same configs. order_eda / warehouse are examples/integrations/eda_fulfilment/{machine,warehouse}.json and tool_loop is src/xstate_statemachine/contrib/agents/charts/tool_loop.json.",
   "toggle": {
     "id": "toggle",
     "initial": "inactive",
     "states": {
-      "inactive": {"on": {"TOGGLE": "active"}},
-      "active": {"on": {"TOGGLE": "inactive"}}
+      "inactive": {
+        "on": {
+          "TOGGLE": "active"
+        }
+      },
+      "active": {
+        "on": {
+          "TOGGLE": "inactive"
+        }
+      }
     }
   },
   "fetch": {
     "id": "fetch",
     "initial": "idle",
-    "context": {"user": null, "error": null},
+    "context": {
+      "user": null,
+      "error": null
+    },
     "states": {
-      "idle": {"on": {"FETCH": "loading"}},
+      "idle": {
+        "on": {
+          "FETCH": "loading"
+        }
+      },
       "loading": {
         "invoke": {
           "src": "fetchUser",
-          "onDone": {"target": "success", "actions": "storeUser"},
-          "onError": {"target": "failure", "actions": "storeError"}
+          "onDone": {
+            "target": "success",
+            "actions": "storeUser"
+          },
+          "onError": {
+            "target": "failure",
+            "actions": "storeError"
+          }
         }
       },
-      "success": {"type": "final"},
-      "failure": {"on": {"RETRY": "loading"}}
+      "success": {
+        "type": "final"
+      },
+      "failure": {
+        "on": {
+          "RETRY": "loading"
+        }
+      }
     }
   },
   "atm": {
     "id": "atm",
     "initial": "idle",
-    "context": {"balance": 100, "frozen": false},
+    "context": {
+      "balance": 100,
+      "frozen": false
+    },
     "states": {
       "idle": {
         "on": {
           "WITHDRAW": [
-            {"target": "approved", "guard": "hasFundsAndNotFrozen"},
-            {"target": "denied"}
+            {
+              "target": "approved",
+              "guard": "hasFundsAndNotFrozen"
+            },
+            {
+              "target": "denied"
+            }
           ]
         }
       },
@@ -45,38 +80,69 @@
   "backoff": {
     "id": "api",
     "initial": "idle",
-    "context": {"attempt": 0},
+    "context": {
+      "attempt": 0
+    },
     "states": {
-      "idle": {"on": {"CALL": "loading"}},
+      "idle": {
+        "on": {
+          "CALL": "loading"
+        }
+      },
       "loading": {
         "invoke": {
           "src": "callApi",
           "onDone": "success",
           "onError": [
-            {"target": "waiting", "guard": "canRetry"},
-            {"target": "failed"}
+            {
+              "target": "waiting",
+              "guard": "canRetry"
+            },
+            {
+              "target": "failed"
+            }
           ]
         }
       },
       "waiting": {
         "entry": "bumpAttempt",
-        "after": {"BACKOFF": "loading"}
+        "after": {
+          "BACKOFF": "loading"
+        }
       },
-      "success": {"type": "final"},
-      "failed": {"type": "final"}
+      "success": {
+        "type": "final"
+      },
+      "failed": {
+        "type": "final"
+      }
     }
   },
   "session": {
     "id": "session",
     "initial": "loggedOut",
     "states": {
-      "loggedOut": {"on": {"LOGIN": "authenticated"}},
+      "loggedOut": {
+        "on": {
+          "LOGIN": "authenticated"
+        }
+      },
       "authenticated": {
         "initial": "browsing",
-        "on": {"LOGOUT": "loggedOut"},
+        "on": {
+          "LOGOUT": "loggedOut"
+        },
         "states": {
-          "browsing": {"on": {"CHECKOUT": "paying"}},
-          "paying": {"on": {"DONE": "confirmed"}},
+          "browsing": {
+            "on": {
+              "CHECKOUT": "paying"
+            }
+          },
+          "paying": {
+            "on": {
+              "DONE": "confirmed"
+            }
+          },
           "confirmed": {}
         }
       }
@@ -92,11 +158,29 @@
         "states": {
           "build": {
             "initial": "b",
-            "states": {"b": {"on": {"BUILD_OK": "done"}}, "done": {"type": "final"}}
+            "states": {
+              "b": {
+                "on": {
+                  "BUILD_OK": "done"
+                }
+              },
+              "done": {
+                "type": "final"
+              }
+            }
           },
           "lint": {
             "initial": "l",
-            "states": {"l": {"on": {"LINT_OK": "done"}}, "done": {"type": "final"}}
+            "states": {
+              "l": {
+                "on": {
+                  "LINT_OK": "done"
+                }
+              },
+              "done": {
+                "type": "final"
+              }
+            }
           }
         }
       },
@@ -109,27 +193,61 @@
     "states": {
       "steps": {
         "initial": "step1",
-        "on": {"HELP": "helpModal"},
+        "on": {
+          "HELP": "helpModal"
+        },
         "states": {
-          "step1": {"on": {"NEXT": "step2"}},
-          "step2": {"on": {"NEXT": "step3", "BACK": "step1"}},
-          "step3": {"on": {"FINISH": "#wizard.done", "BACK": "step2"}},
-          "hist": {"type": "history", "history": "shallow"}
+          "step1": {
+            "on": {
+              "NEXT": "step2"
+            }
+          },
+          "step2": {
+            "on": {
+              "NEXT": "step3",
+              "BACK": "step1"
+            }
+          },
+          "step3": {
+            "on": {
+              "FINISH": "#wizard.done",
+              "BACK": "step2"
+            }
+          },
+          "hist": {
+            "type": "history",
+            "history": "shallow"
+          }
         }
       },
-      "helpModal": {"on": {"CLOSE": "steps.hist"}},
-      "done": {"type": "final"}
+      "helpModal": {
+        "on": {
+          "CLOSE": "steps.hist"
+        }
+      },
+      "done": {
+        "type": "final"
+      }
     }
   },
   "order": {
     "id": "order",
     "initial": "cart",
-    "context": {"items": 0, "attempts": 0, "error": null},
+    "context": {
+      "items": 0,
+      "attempts": 0,
+      "error": null
+    },
     "states": {
       "cart": {
         "on": {
-          "ADD": {"actions": "addItem"},
-          "CHECKOUT": {"target": "charging", "guard": "hasItems"}
+          "ADD": {
+            "actions": "addItem"
+          },
+          "CHECKOUT": {
+            "target": "charging",
+            "guard": "hasItems"
+          }
         }
       },
       "charging": {
@@ -137,41 +255,78 @@
         "invoke": {
           "src": "chargeCard",
           "onDone": "shipped",
-          "onError": {"target": "failed", "actions": "storeError"}
+          "onError": {
+            "target": "failed",
+            "actions": "storeError"
+          }
         }
       },
-      "failed": {"on": {"RETRY": {"target": "charging", "guard": "canRetry"}}},
-      "shipped": {"type": "final"}
+      "failed": {
+        "on": {
+          "RETRY": {
+            "target": "charging",
+            "guard": "canRetry"
+          }
+        }
+      },
+      "shipped": {
+        "type": "final"
+      }
     }
   },
   "subscription": {
     "id": "subscription",
     "initial": "incomplete",
-    "context": {"failures": 0, "last_invoice": null},
+    "context": {
+      "failures": 0,
+      "last_invoice": null
+    },
     "states": {
       "incomplete": {
         "on": {
-          "PAYMENT_SUCCEEDED": {"target": "active", "actions": "recordPayment"},
+          "PAYMENT_SUCCEEDED": {
+            "target": "active",
+            "actions": "recordPayment"
+          },
           "CANCELED": "canceled"
         }
       },
       "active": {
-        "tags": ["billable"],
+        "tags": [
+          "billable"
+        ],
         "on": {
-          "PAYMENT_FAILED": {"target": "past_due", "actions": "recordFailure"},
+          "PAYMENT_FAILED": {
+            "target": "past_due",
+            "actions": "recordFailure"
+          },
           "CANCELED": "canceled"
         }
       },
       "past_due": {
-        "tags": ["billable", "dunning"],
-        "after": {"259200000": "canceled"},
+        "tags": [
+          "billable",
+          "dunning"
+        ],
+        "after": {
+          "259200000": "canceled"
+        },
         "on": {
-          "PAYMENT_SUCCEEDED": {"target": "active", "actions": "recordPayment"},
-          "PAYMENT_FAILED": {"actions": "recordFailure"},
+          "PAYMENT_SUCCEEDED": {
+            "target": "active",
+            "actions": "recordPayment"
+          },
+          "PAYMENT_FAILED": {
+            "actions": "recordFailure"
+          },
           "CANCELED": "canceled"
         }
       },
-      "canceled": {"tags": ["terminal"]}
+      "canceled": {
+        "tags": [
+          "terminal"
+        ]
+      }
     }
   },
   "supervisor": {
@@ -180,7 +335,11 @@
     "states": {
       "up": {
         "entry": "spawnWorkerPool",
-        "on": {"DISPATCH": {"actions": "sendJobToPool"}}
+        "on": {
+          "DISPATCH": {
+            "actions": "sendJobToPool"
+          }
+        }
       }
     }
   }
