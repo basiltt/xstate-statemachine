@@ -28,6 +28,7 @@ from typing import Any, Dict, Optional, Tuple
 
 from xstate_statemachine import MachineLogic, create_machine
 from xstate_statemachine import receipt_to_status
+from xstate_statemachine.exceptions import ConflictError
 from xstate_statemachine.persistence import IdempotencyPlugin, persisted
 
 HERE = Path(__file__).resolve().parent
@@ -76,7 +77,17 @@ def verify_signature(
     # 🔐 constant time, and ANY of the v1 signatures may match (rotation)
     if not any(hmac.compare_digest(expected, s) for s in parts.get("v1", [])):
         raise SignatureError("signature mismatch")
-    return json.loads(body)
+    # 🔥 #308 battle: a correctly SIGNED body that is not a JSON object
+    #    raised JSONDecodeError / AttributeError out of the handler -- a
+    #    500, which Stripe retries forever. It is a 400 like any other bad
+    #    delivery (the signature proves who sent it, not that it is sane).
+    try:
+        event = json.loads(body)
+    except ValueError:
+        raise SignatureError("body is not JSON") from None
+    if not isinstance(event, dict):
+        raise SignatureError("body is not a JSON object")
+    return event
 
 
 def verify_with_sdk(body: bytes, header: str, secret: str) -> Dict:
@@ -113,8 +124,18 @@ def build_machine() -> Any:
 
 
 def subscription_id(event: Dict[str, Any]) -> str:
-    obj = event["data"]["object"]
+    obj = _object(event)
     return str(obj.get("subscription") or obj["id"])
+
+
+def _object(event: Dict[str, Any]) -> Dict[str, Any]:
+    """``event.data.object`` or `SignatureError` (a 400) when the shape is
+    not Stripe's -- never a KeyError traceback."""
+    data = event.get("data")
+    obj = data.get("object") if isinstance(data, dict) else None
+    if not isinstance(obj, dict) or not obj.get("id"):
+        raise SignatureError("event has no data.object.id")
+    return obj
 
 
 def handle_webhook(
@@ -133,17 +154,30 @@ def handle_webhook(
         event = verify_signature(body, header, secret, now=now)
     except SignatureError as exc:
         return 400, {"error": "invalid_signature", "detail": str(exc)}
-    kind = EVENT_MAP.get(event.get("type", ""))
+    kind = EVENT_MAP.get(str(event.get("type", "")))
     if kind is None:
         return 200, {"ignored": event.get("type")}
+    if not isinstance(event.get("id"), str) or not event["id"]:
+        return 400, {"error": "invalid_event", "detail": "event has no id"}
+    try:
+        obj = _object(event)
+    except SignatureError as exc:
+        return 400, {"error": "invalid_event", "detail": str(exc)}
     plugin = IdempotencyPlugin(inbox, principal=lambda e: "stripe")
     key = f"subscription.{subscription_id(event)}"
-    obj = event["data"]["object"]
-    with persisted(store, key, machine, plugins=[plugin]) as sub:
-        receipt = sub.send(
-            kind, id=event["id"], invoice=obj.get("id"), wait=True
-        )
-        value = sub.value
+    # 🔥 #308 battle: the guide promised "answer 409 and Stripe redelivers"
+    #    for two deliveries racing on one subscription, but `ConflictError`
+    #    escaped the handler -- a framework 500 with the exception text in
+    #    it. It is a 409 with a fixed body (X0.7), here, once, for both
+    #    endpoints.
+    try:
+        with persisted(store, key, machine, plugins=[plugin]) as sub:
+            receipt = sub.send(
+                kind, id=event["id"], invoice=obj.get("id"), wait=True
+            )
+            value = sub.value
+    except ConflictError:
+        return 409, {"error": "conflict", "detail": "retry the delivery"}
     return receipt_to_status(receipt), {
         "state": value,
         "changed": receipt.changed,
