@@ -387,6 +387,21 @@ class TestRecipesSection(unittest.TestCase):
         self.assertIn("](../recipes/)", where_next)
         self.assertIn("](../vs-step-functions/)", where_next)
 
+    def test_ninth_recipe_vs_step_functions_is_in_nav_and_search(
+        self,
+    ) -> None:
+        """#308-b: the index lists nine entries; the ninth (the Step
+        Functions comparison) lives under comparisons/ but must be as
+        reachable as the eight recipes."""
+        layout = _read(ROOT / "docs" / "_layouts" / "default.html")
+        index = _read(ROOT / "docs" / "assets" / "js" / "search-index.json")
+        recipes = _read(self.RECIPES / "recipes.md")
+        for page in (*self.PAGES[1:], "vs-step-functions"):
+            self.assertIn(f"](../{page}/)", recipes, page)
+        self.assertIn("/guide/vs-step-functions/", layout)
+        self.assertIn("vs-step-functions,", layout)
+        self.assertIn("/guide/vs-step-functions/", index)
+
 
 class TestSecurityBaseline(unittest.TestCase):
     """X0.1 + X0.3 (#303): the trust model and the crash-consistency spec

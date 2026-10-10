@@ -123,11 +123,31 @@ def stripe_webhook():
 
 ## Guarantees
 
-> **What this does:** a delivery whose signature does not verify under your secret, or whose timestamp is more than 300 s from now, is answered `400` and never reaches the store. The comparison is constant-time (`hmac.compare_digest`). A redelivered `event.id` is answered from the inbox with the **original** receipt (`duplicate=True`), and the machine does not see it again (**X0.2**, idempotency: the inbox scope is `principal / machine / subscription`). Each delivery is **load → send → save** under an optimistic version check (`persisted()`), so two concurrent deliveries for one subscription produce one winner and a `ConflictError`, never a lost update. Error bodies carry a fixed code, not the exception text (**X0.7**, web hardening).
+> **What this does:** a delivery whose signature does not verify under your secret, or whose timestamp is more than 300 s from now (in either direction), is answered `400` and never reaches the store. The comparison is constant-time (`hmac.compare_digest`). A correctly signed body that is not a JSON object, or has no `data.object.id`, is also a `400`, never a `500` that Stripe would retry forever. A redelivered `event.id` is answered from the inbox with the **original** receipt (`duplicate=True`), and the machine does not see it again (**X0.2**, idempotency: the inbox scope is `principal / machine / subscription`). Each delivery is **load → send → save** under an optimistic version check (`persisted()`), so concurrent deliveries for one subscription produce one winner; a loser is answered `409 {"error": "conflict", "detail": "retry the delivery"}` and the update is never lost. Error bodies carry a fixed code, not the exception text (**X0.7**, web hardening).
 >
-> **What this does not do:** Stripe does not guarantee ordering. A `PAYMENT_SUCCEEDED` that overtakes its `PAYMENT_FAILED` is applied in arrival order, and the chart decides what each event means in each state. If you need strict ordering, compare `event.created` in a guard. Nothing retries a `ConflictError` for you: answer `409`/`500` and Stripe will redeliver. Side effects in *actions* (emails) are not covered by the inbox. Put them in an outbox or a service.
+> **What this does not do:** Stripe does not guarantee ordering. A `PAYMENT_SUCCEEDED` that overtakes its `PAYMENT_FAILED` is applied in arrival order, and the chart decides what each event means in each state. If you need strict ordering, compare `event.created` in a guard. Nothing retries a `ConflictError` *inside* the request: `handle_webhook` answers `409` and **Stripe** redelivers it later (it retries every non-2xx answer). The example's `MemoryInbox` forgets on restart; use `SQLiteInbox(store)` in production. Side effects in *actions* (emails) are not covered by the inbox. Put them in an outbox or a service.
 >
 > See [Guarantees](../guarantees/) and [Security](../security/).
+
+<!-- test: tests/recipes/test_stripe_webhooks.py::test_forged_signature_is_rejected -->
+<!-- test: tests/recipes/test_stripe_webhooks.py::test_stale_timestamp_is_rejected -->
+<!-- test: tests/recipes/test_stripe_webhooks.py::test_future_timestamp_is_rejected -->
+<!-- test: tests/recipes/test_battle_308_scenario.py::test_not_json_and_huge_bodies_are_refused_or_ignored -->
+<!-- test: tests/recipes/test_stripe_webhooks.py::test_same_event_id_replays_exactly_once -->
+<!-- test: tests/recipes/test_battle_308_scenario.py::test_same_event_id_concurrently_from_eight_threads -->
+<!-- test: tests/recipes/test_battle_308_b.py::test_stripe_conflict_is_409_with_a_fixed_body -->
+<!-- test: tests/recipes/test_battle_308_b.py::test_stripe_error_bodies_never_echo_input -->
+
+## Troubleshooting
+
+| You see | Why | Fix |
+|:--|:--|:--|
+| `400 {"error": "invalid_signature", "detail": "signature mismatch"}` | Wrong secret (each endpoint in the Dashboard has its own `whsec_…`), or a framework parsed and re-serialized the body before you read it. | Use the endpoint's secret; read the **raw** bytes (`await request.body()`, `request.get_data()`). |
+| `400 … "detail": "timestamp outside the tolerance window"` | The server clock is off by more than 300 s, or a captured request is being replayed. | Run NTP. Do not widen `TOLERANCE_S` to make it go away. |
+| `400 … "detail": "no timestamp in Stripe-Signature"` | The header is missing or mangled (a proxy dropped it, or you test with `curl` without signing). | Sign test bodies with `sign()` from the example. |
+| `400 … "detail": "body is not JSON"` / `"body is not a JSON object"` / `400 {"error": "invalid_event", "detail": "event has no id"}` / `"event has no data.object.id"` | The body was signed, but it is not a Stripe event. | Nothing to retry: Stripe never sends these. |
+| `409 {"error": "conflict", "detail": "retry the delivery"}` | Two deliveries for one subscription raced; the other one saved first. | Expected under load. Stripe redelivers, and the redelivery applies cleanly. |
+| `KeyError: 'STRIPE_WEBHOOK_SECRET'` at start-up | `create_app()` reads the secret from the environment and fails loudly when it is unset. | `export STRIPE_WEBHOOK_SECRET=whsec_…` (from `stripe listen` locally). |
 
 ## Test it
 

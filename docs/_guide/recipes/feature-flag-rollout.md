@@ -75,6 +75,17 @@ assert r.value == "rolled_back" and pushed == [0.1, 1, 25, 0]
 
 A two-day rollout runs in microseconds on a `SimulatedClock`. `tests/recipes/test_feature_flag_rollout.py` covers the healthy path to `ga`, degradation during a canary, an alert at `canary_25` (whose bake timer must *not* fire afterwards), and manual rollback from `ga`, each on both engines.
 
+## Troubleshooting
+
+| You see | Why | Fix |
+|:--|:--|:--|
+| The rollout is `rolled_back` and nothing was unhealthy | The metrics callable **raised** (Prometheus down, a timeout). A guard that raises is treated as `False`, so the bake gate fails closed and the rollout rolls back. | Intended: unknown health is not healthy. Fix the metrics source and restart the rollout. |
+| `context["percent"]` moved on but your flag system still serves the old exposure | `apply_percent` raised. An action that raises is logged and the state change still completes, so the chart moved on while your flag system did not (the `Receipt.error` carries the exception). That is the `actionErrorPolicy` default, `"continue"`, which becomes `"rollback"` in 1.0. | Make `apply_percent` retry internally, or alert on `receipt.error` / the logged action error. |
+| A two-day rollout never gets past `internal` in production | Nothing keeps the interpreter alive for hours. | Persist it and run `DueTimerScanner` (below). |
+
+<!-- test: tests/recipes/test_battle_308_b.py::test_rollout_metrics_that_raise_roll_back -->
+<!-- test: tests/recipes/test_battle_308_b.py::test_rollout_apply_percent_that_raises_is_not_retried -->
+
 ## Running it for real
 
 Bake times of hours must survive deploys. Persist the rollout, `persisted(store, "rollout:new_checkout", machine)`, and let one scheduler process run `DueTimerScanner`. The [APScheduler recipe](../apscheduler-timers/) shows the job. The guard then runs **in the scheduler process** when the deadline matures, so give that process access to your metrics.

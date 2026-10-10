@@ -100,4 +100,20 @@ When a server restarts, every client drops at the same instant. With pure expone
 - after `max_attempts` failed connects the machine is `failed`, having made 3 connects, not 4;
 - `DISCONNECT` during backoff cancels the pending retry, and no connect happens afterwards.
 
+## Troubleshooting
+
+| You see | Why | Fix |
+|:--|:--|:--|
+| The machine sits in `failed` | `max_attempts` connects in a row failed (5 in `ws_reconnect.py`, 3 above). `failed` is deliberate: retrying forever hides an outage. | Send `CONNECT` to start over (it resets `attempt`), e.g. when the user returns or the network comes back. |
+| Clients hammer the server in waves after a restart | Backoff without jitter. | Keep `jitter="full"`. |
+| Two sockets open at once | The socket was opened outside the `listen` callback, so leaving `connected` cannot close it. | Open it in `openSocket` and return `client.close` from `listen`: the cleanup runs exactly once on exit. |
+| A drop is never noticed | Your client's close callback is not wired to `send_back("DROPPED")`. | Wire it inside `listen`. |
+
+<!-- test: tests/recipes/test_websocket_reconnect.py::test_gives_up_after_max_attempts -->
+<!-- test: tests/recipes/test_battle_308_scenario.py::test_backoff_bounds_and_close_exactly_once -->
+
+## What this does not do
+
+No message is buffered or re-sent: anything you `send` while `reconnecting` is yours to queue. Reconnection state lives in memory, so a process restart starts `disconnected`.
+
 Related: [Resilience patterns → RetryPolicy](../patterns/), [Actors → callback logic](../actors/), [Circuit breaker & retry](../circuit-breaker-retry/), [all recipes](../recipes/).

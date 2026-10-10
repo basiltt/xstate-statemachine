@@ -76,6 +76,17 @@ assert bot.value == "booked"
 
 The example module adds per-slot prompts ("For how many people?"), a confirmation read-back, and `NO` → clear and restart. Its tests run the **same script on `SyncInterpreter` and `Interpreter`** on a `SimulatedClock`, so a conversation lasting minutes is tested in milliseconds.
 
+## Troubleshooting
+
+| You see | Why | Fix |
+|:--|:--|:--|
+| A value the user gave never lands in its slot | `fillSlots` keeps only **short scalars**: a non-empty string of at most `MAX_SLOT_CHARS` (200) characters, or a finite number. A dict, a list, `True`/`None`, an empty string or a longer string is dropped, and the bot asks again. The extractor (often an LLM) is the untrusted side. | Have the extractor return plain strings or numbers. Raise `MAX_SLOT_CHARS` deliberately if a slot needs it. |
+| A key the user gave is ignored | Only the slots declared in `context.slots` are filled; any other key is dropped. | Add the slot to `machine.json`'s context and to `PROMPTS`. |
+
+<!-- test: tests/recipes/test_battle_308_scenario.py::test_slot_filling_hostile_extractor -->
+<!-- test: tests/recipes/test_slot_filling.py::test_empty_values_do_not_fill -->
+<!-- test: tests/recipes/test_slot_filling.py::test_an_answer_resets_the_silence_timer -->
+
 ## Variations
 
 - **Persist the conversation** between turns with `persisted(store, f"chat:{session_id}", machine)`, and the silence timer becomes a durable deadline (see the [APScheduler recipe](../apscheduler-timers/)).
