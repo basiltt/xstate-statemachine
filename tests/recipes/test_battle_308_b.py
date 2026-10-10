@@ -235,6 +235,44 @@ def test_stripe_conflict_is_409_with_a_fixed_body(
     )
 
 
+def test_stripe_duplicate_delivery_does_not_bump_the_version(
+    stripe_env: Any,
+) -> None:
+    """A redelivered `event.id` is answered from the inbox and must NOT
+    save -- saving bumps the version and, under eight racing identical
+    deliveries, made the ORIGINAL one lose with a 409 so that nobody won
+    (flaked on a slow CI runner). Deterministic twin of the race test."""
+    sw, store, inbox = stripe_env
+    machine = sw.build_machine()
+    body = json.dumps(
+        {"id": "evt_dup", "type": "invoice.paid",
+         "data": {"object": {"id": "in_1", "subscription": "sub_dup"}}}
+    ).encode()  # fmt: skip
+    kw = dict(secret="whsec_x", store=store, inbox=inbox, machine=machine,
+              now=1_000)  # fmt: skip
+    header = sw.sign(body, "whsec_x", 1_000)
+    status, first = sw.handle_webhook(body, header, **kw)
+    assert (status, first["duplicate"], first["state"]) == (
+        200,
+        False,
+        "active",
+    )
+    version = store.load("subscription.sub_dup").version
+    for _ in range(5):
+        status, again = sw.handle_webhook(body, header, **kw)
+        assert status == 200 and again["duplicate"] is True, again
+        assert again["state"] == "active"
+    # 🔥 the replays wrote nothing: the version is the first delivery's
+    assert store.load("subscription.sub_dup").version == version
+    # 📝 a cached key with a DIFFERENT body is still a mismatch (422)
+    other = body.replace(b"in_1", b"in_2")
+    status, out = sw.handle_webhook(
+        other, sw.sign(other, "whsec_x", 1_000), **kw
+    )
+    assert status == 422, out
+    assert store.load("subscription.sub_dup").version == version
+
+
 def test_stripe_error_bodies_never_echo_input(stripe_env: Any) -> None:
     sw, store, inbox = stripe_env
     marker = "<script>SECRET-INPUT</script>"

@@ -160,6 +160,10 @@ def _object(event: Dict[str, Any]) -> Dict[str, Any]:
     return obj
 
 
+class _NoSave(Exception):
+    """Leave a `persisted()` block without writing (a duplicate)."""
+
+
 def handle_webhook(
     body: bytes,
     header: str,
@@ -206,6 +210,17 @@ def handle_webhook(
                 kind, id=event["id"], invoice=obj.get("id"), wait=True
             )
             value = sub.value
+            if receipt.duplicate:
+                # 🔁 A replay / in-flight refusal changed nothing: do NOT
+                #    save. Saving would bump the version and make the
+                #    ORIGINAL delivery's save lose with a 409 -- under a
+                #    burst of eight identical deliveries nobody won (the
+                #    #277 finding, met again by the #308 race test on a
+                #    slow CI runner). Raising leaves the block without
+                #    writing; the inbox claim was never ours to mark.
+                raise _NoSave()
+    except _NoSave:
+        pass
     except ConflictError:
         return 409, {"error": "conflict", "detail": "retry the delivery"}
     return receipt_to_status(receipt), {

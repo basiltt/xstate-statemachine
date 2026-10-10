@@ -1,0 +1,19 @@
+{
+  "_comment": "Public Stately project holding every README chart. README links to https://stately.ai/registry/editor/<project>?mode=design&machineId=<id>; capture.py screenshots the embed view in dark mode at 2x.",
+  "project": "4dbe1227-e533-4104-9772-dd7c7b3a86df",
+  "machines": {
+    "order_eda": "8232a8c5-b681-4e0f-a26d-57983804d72c",
+    "toggle": "6938bbd2-1666-42dc-838f-542837486866",
+    "fetch": "4ef7b8e7-dda0-44a9-9b3a-b5d59f2b0763",
+    "warehouse": "e42d1fe7-8c71-42a2-b9a2-e9591112bc19",
+    "subscription": "330b8f3c-e2c5-44c8-8c35-16c23839e9ff",
+    "atm": "d83d2253-ce02-483b-a7a1-bc559c9110e1",
+    "session": "f09dfce3-a06f-46b5-b68f-8cb9a0298313",
+    "ci": "f5951ce8-b462-41e3-868b-e641ada282c6",
+    "wizard": "051ddb7e-0e0b-4d5e-befa-8028f9871591",
+    "supervisor": "d7897555-d098-4080-b33f-95c06f3ce8a7",
+    "tool_loop": "20b6e732-e957-448d-9584-ae207227d9f1",
+    "order": "3cda1413-fd94-434c-b10e-418d8153fb35",
+    "backoff": "738d033e-bb9b-4e1e-9e08-18e4edb72900"
+  }
+}
