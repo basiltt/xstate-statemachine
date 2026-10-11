@@ -20,6 +20,8 @@ MARKER = "XSM_IMPORT_START"
 #: makes.
 STDLIB_PROBES = {"org"}
 PLATFORM_STDLIB = {
+    # 🐍 3.15 private stdlib helper, absent from stdlib_module_names
+    "_missing_stdlib_info",
     "msvcrt",
     "winreg",
     "_winapi",
