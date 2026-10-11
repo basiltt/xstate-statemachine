@@ -428,7 +428,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest]
-        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14"]
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13", "3.14", "3.15"]
         # 🪟🍎 Spot-check the other platforms on the oldest and newest
         #     supported interpreters. The library is pure Python with no
         #     compiled deps, but it uses threads (SyncInterpreter) and asyncio,
@@ -437,9 +437,9 @@ jobs:
           - os: windows-latest
             python-version: "3.9"
           - os: windows-latest
-            python-version: "3.14"
+            python-version: "3.15"
           - os: macos-latest
-            python-version: "3.14"
+            python-version: "3.15"
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

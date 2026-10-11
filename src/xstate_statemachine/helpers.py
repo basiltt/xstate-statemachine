@@ -78,7 +78,11 @@ async def wait_for(
     Raises:
         TimeoutError: If the predicate does not hold within `timeout`.
     """
-    loop = asyncio.get_event_loop()
+    # 🐍 Inside a coroutine the running loop is the only correct answer;
+    #    `get_event_loop()` is deprecated here from 3.12 and errors on 3.14+
+    #    when no loop is set, which is exactly the case under the policy-free
+    #    3.14/3.15 asyncio.
+    loop = asyncio.get_running_loop()
     deadline = None if timeout is None else loop.time() + timeout
 
     while True:
