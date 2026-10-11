@@ -82,6 +82,8 @@ assert [h.event for h in order.history] == [       # the audit trail, same trans
     "CHECKOUT", "LEGAL_OK", "FINANCE_OK", "done.state.order.review", "PAY"]
 ```
 
+<div class="stately" data-machine="fdee9ad0ad" data-height="640" data-title="order"></div>
+
 ## Reference
 
 ### `StatechartField`
@@ -306,6 +308,8 @@ inv.forget_statechart()
 assert [h.seq for h in inv.history] == [1, 2, 3]
 assert all(h.actor_id is None and h.payload == {} for h in inv.history)
 ```
+
+<div class="stately" data-machine="5a02cec22b" data-height="320" data-title="invoice"></div>
 
 ### Admin
 

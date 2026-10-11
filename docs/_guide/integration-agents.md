@@ -388,6 +388,8 @@ async def main():
 assert asyncio.run(main()) == 42
 ```
 
+<div class="stately" data-machine="f9cbd0d985" data-height="320" data-title="host"></div>
+
 ### pydantic-ai
 
 `xstate_statemachine.contrib.agents.pydantic_ai` (soft import: `pip install pydantic-ai`):
@@ -423,6 +425,8 @@ async def main():
 i = asyncio.run(main())
 assert i.context["result"] == "Kochi is sunny" and i.current_state_ids == {"ask.over"}
 ```
+
+<div class="stately" data-machine="a50f44e7c1" data-height="420" data-title="ask"></div>
 
 ⚠️ Tools registered on a pydantic-ai `Agent` run inside pydantic-ai, **not** through `run_tool`, so X0.13's per-state allow-list does not apply to them. Give such an agent only tools that are safe in every state that invokes it, or keep tool execution in `TOOL_LOOP`.
 

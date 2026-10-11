@@ -58,6 +58,8 @@ with TestClient(app) as client:
     assert client.get("/_xsm/ready").json()["status"] == "ready"
 ```
 
+<div class="stately" data-machine="c00355f959" data-height="320" data-title="door"></div>
+
 For full control, use `act()` directly — it is an async context manager yielding a started interpreter:
 
 <!-- doc-fragment -->

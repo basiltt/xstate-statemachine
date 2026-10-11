@@ -185,6 +185,8 @@ Nested (hierarchical) states are fully supported. A transition defined on a pare
 }
 ```
 
+<div class="stately" data-machine="05472ecd62" data-height="420" data-title="app"></div>
+
 Use `#machineId.stateName` syntax for absolute state references, or relative names for sibling states.
 
 ---
@@ -403,6 +405,8 @@ def test_guard_blocks_transition():
     interp.stop()
 ```
 
+<div class="stately" data-machine="c6f3071f40" data-height="320" data-title="lightSwitch"></div>
+
 ---
 
 ## 🛠️ Environment & Setup
@@ -541,6 +545,8 @@ async def main():
     # Machine will transition to "timed_out" after 30 seconds of inactivity
     # Sending "ACTIVITY" resets the timer by re-entering "active"
 ```
+
+<div class="stately" data-machine="db1bd18a4e" data-height="320" data-title="session"></div>
 
 > **Note:** `after` transitions work with both interpreters. With the async `Interpreter`, timers run on the event loop. With `SyncInterpreter` (since 0.8.0), timers are thread-free deadlines that fire when you call `send()` or `tick()` — call `tick()` periodically (or after each `send()`) so due timers fire even when no new event arrives. See [Delayed Transitions](../delayed-transitions/).
 

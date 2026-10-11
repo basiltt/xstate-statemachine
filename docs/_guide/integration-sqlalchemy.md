@@ -62,6 +62,8 @@ with Session(engine) as s:
     assert order.machine.context["items"] == 1
 ```
 
+<div class="stately" data-machine="4e56eb44ff" data-height="320" data-title="order"></div>
+
 ## Reference
 
 ### `StatechartType(max_snapshot_bytes=1 MiB)`
@@ -183,6 +185,8 @@ assert OutboxRelay(outbox, broker).relay_once_sync() == 1
 [d] = list(broker.subscribe("billing", timeout=0))
 assert d.envelope.type == "invoice.paid" and d.envelope.data == {"n": 7}
 ```
+
+<div class="stately" data-machine="ea8481f572" data-height="320" data-title="inv"></div>
 
 The relay marks a row sent only **after** the broker accepted it. A crash in between re-publishes that row with the **same envelope id** (at-least-once), so consumers dedup on `envelope.id`. Several relays (one per replica) may drain one outbox: `claim()` leases rows through the `claimed_by` / `claimed_until` columns ([leases](../integration-eda/#several-relays-on-one-outbox-leases)).
 

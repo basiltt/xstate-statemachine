@@ -85,6 +85,8 @@ Here is a fully annotated machine configuration showing all top-level and state-
 }
 ```
 
+<div class="stately" data-machine="b47afb8b1a" data-height="420" data-title="orderMachine"></div>
+
 This machine has:
 
 - **`id`** — a unique identifier for the machine
@@ -129,6 +131,8 @@ This machine has:
 }
 ```
 
+<div class="stately" data-machine="1477e29fb6" data-height="320" data-title="toggle"></div>
+
 **Example — with context:**
 
 ```json
@@ -151,6 +155,8 @@ This machine has:
   }
 }
 ```
+
+<div class="stately" data-machine="58ffc54dc7" data-height="320" data-title="counter"></div>
 
 ---
 
@@ -223,6 +229,8 @@ print(interp.has_tag("billable"))  # True
 print(interp.tags)                 # {'active', 'billable'}
 print(interp.get_meta())           # {'order.pending': {'ui': {'color': 'blue'}}}
 ```
+
+<div class="stately" data-machine="6a28cbe7f8" data-height="320" data-title="order"></div>
 
 
 ---
@@ -343,6 +351,8 @@ Eventless transitions fire **immediately** when a state is entered — no event 
   }
 }
 ```
+
+<div class="stately" data-machine="36c9e56605" data-height="420" data-title="router"></div>
 
 When the machine enters `"checking"`:
 
@@ -518,6 +528,8 @@ This state:
 }
 ```
 
+<div class="stately" data-machine="8158a0c746" data-height="320" data-title="sessionTimeout"></div>
+
 > **Tip:** The `ACTIVITY` event on `"active"` triggers a self-transition, which **restarts the 5-minute timer**. This is how you implement "idle timeout with reset on activity".
 
 ---
@@ -612,6 +624,8 @@ interp.send("POWER")  # off -> on.hist -> restores on.paused
 print(interp.current_state_ids)  # {'player.on.paused'}
 ```
 
+<div class="stately" data-machine="d280609cd0" data-height="420" data-title="player"></div>
+
 ---
 
 ## 🪆 Nested (Compound) States
@@ -651,6 +665,8 @@ When a state has a `states` field, it becomes a **compound state**. It must also
   }
 }
 ```
+
+<div class="stately" data-machine="bbcb0b1463" data-height="420" data-title="auth"></div>
 
 **Key behavior:** The `LOGOUT` event on the parent `"loggedIn"` state catches the event **no matter which child state is active**. This is the power of hierarchy — parent transitions apply to all children.
 
@@ -708,6 +724,8 @@ When a compound state's child enters a `final` state, the parent can react via `
   }
 }
 ```
+
+<div class="stately" data-machine="873ad0798d" data-height="520" data-title="wizard"></div>
 
 When `step1.complete` is entered (a final state), it fires a `done.state.step1` event, which triggers `onDone` and moves the machine to `step2`.
 
@@ -803,6 +821,8 @@ This machine models a complete data-fetching flow with retries, timeout, and con
   }
 }
 ```
+
+<div class="stately" data-machine="f91e4e3597" data-height="420" data-title="fetchMachine"></div>
 
 ### Running It
 
@@ -911,6 +931,8 @@ interp = SyncInterpreter(machine).start()
 interp.send("FILLL")  # typo!
 ```
 
+<div class="stately" data-machine="68a15ec986" data-height="320" data-title="order"></div>
+
 ```
 xstate_statemachine.exceptions.UnknownEventError: Event 'FILLL' is not
 declared by machine 'order'. Known events: CANCEL, FILL. Did you mean 'FILL'?
@@ -980,6 +1002,8 @@ interp.send("CANCEL")   # known (declared in `pending`), but `filled` has no han
 print(interp.current_state_ids)  # {'order.filled'}
 ```
 
+<div class="stately" data-machine="a1aa3b0fa1" data-height="420" data-title="order"></div>
+
 > **Note:** `filled` is given an unrelated `on: {"SHIP": ...}` handler here (rather than being a bare `"type": "final"` state) so the example actually demonstrates "declared elsewhere, not handled here." A `final` state has no `on` at all, and `SyncInterpreter` auto-stops once the machine reaches a top-level final state — so sending `CANCEL` to an already-final `filled` would be a no-op because the interpreter had stopped, not because of any unhandled-event policy.
 
 ### Internal `raise` events
@@ -1032,6 +1056,8 @@ print(interp.deferred_count)  # 1
 interp.send("START_SHIP")     # pending -> filled; deferred SHIP replays here
 print(interp.current_state_ids)  # {'order.shipped'}
 ```
+
+<div class="stately" data-machine="73ae2424e6" data-height="320" data-title="order"></div>
 
 Switching the same config's `onUnhandled` to `"error"` and sending an unmatched event instead sets `interpreter.status == "error"` and `interpreter.error` to a `UnhandledEventError`.
 

@@ -70,6 +70,8 @@ with TestClient(app) as client:
     assert union["discriminator"]["propertyName"] == "type"
 ```
 
+<div class="stately" data-machine="d1c78c6594" data-height="320" data-title="order"></div>
+
 For a hand-written route, `get_interpreter` is a ready-made `Depends` that yields a started interpreter and persists it when the handler returns:
 
 <!-- doc-fragment -->
@@ -179,6 +181,8 @@ with TestClient(app) as client:
 assert sent == ["1"]
 ```
 
+<div class="stately" data-machine="533ae74a8a" data-height="320" data-title="order"></div>
+
 `send_event` returns only after the save has committed. A `409`, a guard denial or an `Idempotency-Key` replay therefore never schedules the task. `BackgroundTasks` still runs *in the web worker*, and a crash after the response loses the task. When the side effect must happen, write it to an **outbox** in the same transaction and deliver it from a separate process. See the event-driven architecture guide (arriving with the Phase F integrations).
 
 ## Request rules
@@ -241,6 +245,8 @@ with TestClient(app) as ann, TestClient(app) as bob:
     assert bob.post("/checkout/next").json()["state"] == "payment"
 ```
 
+<div class="stately" data-machine="6a0bc67c9c" data-height="320" data-title="checkout"></div>
+
 The key never appears in the URL, so one visitor cannot drive another visitor's wizard by editing a path. Use a session id that you signed or that is stored server-side, not a raw user id. Expired wizards stay in the store until you delete them. Give the store a `ttl_s=` (Redis), or delete finished keys in a scheduled job.
 
 ## Testing
@@ -278,6 +284,8 @@ results = asyncio.run(race())
 winners = [r for r in results if r.status_code == 200 and r.json()["changed"]]
 assert len(winners) == 1                         # the rest: 409 or unchanged
 ```
+
+<div class="stately" data-machine="8c1fd940a8" data-height="320" data-title="t"></div>
 
 Drive timers with `DueTimerScanner(store, ...).scan(now=time.time() + 901)`, which passes an explicit `now`, instead of sleeping. The `[testing]` extra's pytest plugin ([#268](https://github.com/basiltt/xstate-statemachine/issues/268)) provides machine-level fixtures (`xsm_machine`, `xsm_interp`, `xsm_store`, `xsm_clock`, …). It has no `TestClient` fixture, so build the client yourself as above; the example's `tests/test_orders_app.py` wraps one in a fixture over a per-test SQLite file.
 

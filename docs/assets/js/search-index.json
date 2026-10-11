@@ -298,6 +298,12 @@
     "url": "/guide/examples/"
   },
   {
+    "description": "Every statechart under examples/ drawn live by the Stately editor, following the site theme.",
+    "section": "Advanced",
+    "title": "Example Gallery",
+    "url": "/guide/example-gallery/"
+  },
+  {
     "description": "Generate production-ready Python from XState JSON \u2014 xsm command, generate-template, --template flag.",
     "section": "CLI",
     "title": "CLI Generator",

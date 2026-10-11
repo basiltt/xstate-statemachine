@@ -67,6 +67,8 @@ The `LOGOUT` event on the parent `loggedIn` catches the event **no matter which 
 }
 ```
 
+<div class="stately" data-machine="bbcb0b1463" data-height="420" data-title="auth"></div>
+
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter
 
@@ -114,6 +116,8 @@ print(interp.active_state_ids)
 interp.stop()
 ```
 
+<div class="stately" data-machine="bbcb0b1463" data-height="420" data-title="auth"></div>
+
 **Key behavior:** The `LOGOUT` event is defined on the parent `loggedIn` — it fires regardless of whether the user is on `dashboard`, `profile`, or `settings`. Without hierarchy, you'd need a `LOGOUT` transition on every single child state.
 
 ## 🎯 Initial Child State
@@ -132,6 +136,8 @@ Every compound state **must** specify which child to enter first using the `init
   }
 }
 ```
+
+<div class="stately" data-machine="38a72202d7" data-height="320" data-title="38a72202d7"></div>
 
 When the machine transitions to `loggedIn`, it automatically enters `dashboard` (the initial child). The machine is never "just" in `loggedIn` — it's always in `loggedIn.dashboard`, `loggedIn.profile`, or `loggedIn.settings`.
 
@@ -174,6 +180,8 @@ Children can transition between each other freely:
 }
 ```
 
+<div class="stately" data-machine="85bc7ac76a" data-height="320" data-title="85bc7ac76a"></div>
+
 ### Relative and Absolute Targets
 
 A target beginning with a dot, such as `".child"`, resolves into the **source** state's own children — matching XState v5. So `{target: ".profile"}` on `dashboard` means "my own child `profile`", not a sibling of `dashboard`.
@@ -188,6 +196,8 @@ The 0.7.x reading — resolving `.child` as a sibling of the source, i.e. a chil
   "states": { "loggedIn": {} }
 }
 ```
+
+<div class="stately" data-machine="18f6e6f442" data-height="320" data-title="m"></div>
 
 An absolute target such as `"#machineId.path.to.state"` resolves from the machine root regardless of where the transition is defined, and is unaffected by `strictTargets`.
 
@@ -235,6 +245,8 @@ Declare a child with `"type": "history"` and target it explicitly. The `"history
 }
 ```
 
+<div class="stately" data-machine="b74b150f53" data-height="420" data-title="player"></div>
+
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter
 
@@ -280,6 +292,8 @@ print(interp.active_state_ids)
 interp.stop()
 ```
 
+<div class="stately" data-machine="b74b150f53" data-height="420" data-title="player"></div>
+
 A history node is never itself an active state — it is only ever a transition *target* that gets expanded into the remembered child (or the declared `initial` child, the first time the parent is entered). See [services.md](../services/) for another way to model "resume" behavior across invoked actors.
 
 ### Parent-Level Transitions (Catch-All)
@@ -304,6 +318,8 @@ Transitions defined on the parent apply to **all** children. If a child doesn't 
   }
 }
 ```
+
+<div class="stately" data-machine="61c1e8a5e0" data-height="320" data-title="61c1e8a5e0"></div>
 
 - `REFRESH` is only handled in `dashboard` — it won't fire from `profile` or `settings`
 - `LOGOUT` and `SHOW_HELP` work from **any** child state, because they're on the parent
@@ -371,6 +387,8 @@ Hierarchical states can be nested to any depth:
 }
 ```
 
+<div class="stately" data-machine="54669c9357" data-height="420" data-title="deepNest"></div>
+
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter
 
@@ -412,6 +430,8 @@ print(interp.active_state_ids)
 
 interp.stop()
 ```
+
+<div class="stately" data-machine="54669c9357" data-height="420" data-title="deepNest"></div>
 
 > **Tip:** Keep nesting to 2-3 levels. Deeper than that usually means your machine should be split into separate machines using [services/actors](../services/).
 
@@ -566,6 +586,8 @@ When a compound state's child reaches a **final** state, a `done.state.*` event 
 }
 ```
 
+<div class="stately" data-machine="00031eef0d" data-height="420" data-title="workflow"></div>
+
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter
 
@@ -601,6 +623,8 @@ print(interp.active_state_ids)
 interp.stop()
 ```
 
+<div class="stately" data-machine="00031eef0d" data-height="420" data-title="workflow"></div>
+
 ## 🛡️ Mixing Hierarchy with Guards
 
 Guards work normally inside nested states:
@@ -623,6 +647,8 @@ Guards work normally inside nested states:
   }
 }
 ```
+
+<div class="stately" data-machine="884f9e017b" data-height="320" data-title="884f9e017b"></div>
 
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
@@ -671,6 +697,8 @@ print(interp.active_state_ids)
 interp.stop()
 ```
 
+<div class="stately" data-machine="7b7e3ed7ad" data-height="420" data-title="shop"></div>
+
 ## 🎬 Mixing Hierarchy with Actions
 
 Entry and exit actions fire in the correct order when entering/exiting nested states:
@@ -693,6 +721,8 @@ Entry and exit actions fire in the correct order when entering/exiting nested st
   }
 }
 ```
+
+<div class="stately" data-machine="fbeedc34be" data-height="320" data-title="fbeedc34be"></div>
 
 When transitioning from `loggedOut` to `loggedIn`:
 
@@ -736,6 +766,8 @@ Services (invoked operations) work inside nested states:
   }
 }
 ```
+
+<div class="stately" data-machine="bf3df967cf" data-height="320" data-title="bf3df967cf"></div>
 
 The service `fetchUserData` is invoked when `loading` is entered. On success, the machine moves to `dashboard` (within `loggedIn`). On failure, it moves to `error` (also within `loggedIn`).
 
@@ -893,6 +925,8 @@ print(interp.context["orderId"])
 
 interp.stop()
 ```
+
+<div class="stately" data-machine="0c14cbdcb5" data-height="520" data-title="checkout"></div>
 
 > **Note:** Methods like `cartNotEmpty`, `submitOrder`, and `validateAddress` above are undecorated and inferred by arity. As of 0.8.0, when the arity is ambiguous between roles (e.g. 2 args could be a guard or a 2-arg service; 3 args could be a service or an action), `create_machine()` emits a `UserWarning`. Decorate with `@guard`, `@service`, or `@action` to be explicit and silence the warning.
 

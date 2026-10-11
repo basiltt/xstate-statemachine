@@ -84,6 +84,8 @@ config = {
 machine = create_machine(config)
 ```
 
+<div class="stately" data-machine="9545ba22c8" data-height="320" data-title="toggle"></div>
+
 #### Example 2 -- With explicit `MachineLogic`
 
 ```python
@@ -2657,6 +2659,8 @@ assert receipt_to_status(receipt) == 200
 wire = json.dumps(receipt_to_json(receipt))
 assert receipt_from_json(json.loads(wire)) == receipt
 ```
+
+<div class="stately" data-machine="207017cf4f" data-height="320" data-title="m"></div>
 
 ### `interpreter.wall_now() -> float` **[0.11.0]**
 

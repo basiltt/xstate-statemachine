@@ -60,6 +60,8 @@ assert isinstance(receipt.error, ContextValidationError)   # ...reported as an a
 assert order.context["currency"] == "USD"                  # ...and rolled back: never an invalid context
 ```
 
+<div class="stately" data-machine="bf4b4c6159" data-height="320" data-title="order"></div>
+
 ## Reference
 
 ### Typed context

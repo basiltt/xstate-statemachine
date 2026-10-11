@@ -40,6 +40,8 @@ assert ("@xstate.event", "OPEN") in [(m["type"], m.get("event", {}).get("type"))
 assert sink.messages[-1]["snapshot"]["context"] == {"opens": 0}   # "pin" never leaves
 ```
 
+<div class="stately" data-machine="20a9f24043" data-height="320" data-title="door"></div>
+
 From the terminal:
 
 ```bash

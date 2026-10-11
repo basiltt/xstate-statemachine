@@ -110,6 +110,8 @@ Use this approach when you have an existing XState JSON file, or when you want t
 }
 ```
 
+<div class="stately" data-machine="e0b70fe57c" data-height="320" data-title="lightSwitch"></div>
+
 **Step 2 — Create `light_switch_logic.py`:**
 
 ```python

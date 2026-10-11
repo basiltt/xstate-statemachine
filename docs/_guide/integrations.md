@@ -121,6 +121,8 @@ for name in ("order_api.py", "order_models.py", "test_order.py"):
 run("gt", "--check", "order.machine.json", *flags)   # CI: fails when stale
 ```
 
+<div class="stately" data-machine="d74728ac8c" data-height="420" data-title="order"></div>
+
 `--with-api` writes `order_api.py`, an editable FastAPI router with one typed route per event, and `--with-models` writes `order_models.py`, one `EventModel` per event plus a context model ([CLI](../cli/)). Step 3 shows the same pieces inline, so you can see what the generated modules wire together.
 
 ### 3. Run it as a FastAPI app on SQLite
@@ -178,6 +180,8 @@ with TestClient(app) as client:
 assert store.load("order.o1").version == 2      # two committed changes
 ```
 
+<div class="stately" data-machine="a34c009588" data-height="320" data-title="order"></div>
+
 ### 4. Deduplicate retries with an inbox
 
 A client that times out retries. Give the registry an **inbox** and a **principal**: every request then runs with an `IdempotencyPlugin` scoped to the caller, and a repeated `Idempotency-Key` returns the original receipt instead of acting twice. `SQLiteInbox(store)` shares the store's connection, so the mark commits with the snapshot.
@@ -221,6 +225,8 @@ with TestClient(app) as client:
 assert store.load("order.o1").version == 1            # acted once
 ```
 
+<div class="stately" data-machine="f51fd79b79" data-height="320" data-title="order"></div>
+
 ### 5. Switch the store to Redis
 
 For several hosts, replace the two store lines. In production pass a URL — `RedisStore("redis://redis:6379/0", prefix="orders")` and `RedisInbox(...)` with the same arguments; here `fakeredis[lua]` stands in so the block runs anywhere (the `[lua]` extra is required: the store's saves are Lua scripts). Nothing else changes.
@@ -259,6 +265,8 @@ with TestClient(app) as client:
 record = store.load("order.o1")
 assert record.version == 1                      # three deliveries, one change
 ```
+
+<div class="stately" data-machine="f51fd79b79" data-height="320" data-title="order"></div>
 
 ### 6. Run four workers
 

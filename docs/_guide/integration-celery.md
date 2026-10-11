@@ -46,6 +46,8 @@ with persisted(store, "o1", machine) as order:
     assert order.matches("o.paid")
 ```
 
+<div class="stately" data-machine="2899718d61" data-height="320" data-title="o"></div>
+
 ## Reference
 
 ### `celery_service(task, *, args_from=..., timeout_s=None, queue=None, poll_s=0.05, watch=True)`
@@ -136,6 +138,8 @@ eu = DurableTimerScheduler(app, MemoryStore(), m,
                            name="eu.deadlines.scan", fire_name="eu.deadlines.fire")
 assert eu.task.name == "eu.deadlines.scan"
 ```
+
+<div class="stately" data-machine="32950f227a" data-height="320" data-title="t"></div>
 
 ### `assert_json_serializer(app)`
 

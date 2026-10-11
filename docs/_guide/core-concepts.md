@@ -142,6 +142,8 @@ except Exception as exc:
     print(type(exc).__name__)  # UnknownEventError -- raised by `strict`
 ```
 
+<div class="stately" data-machine="bef8ed8727" data-height="320" data-title="strictDemo"></div>
+
 See the [JSON Configuration Reference](../json-config/) for the full list of config keys, and [Troubleshooting](../troubleshooting/) for how these errors surface in practice.
 
 ---

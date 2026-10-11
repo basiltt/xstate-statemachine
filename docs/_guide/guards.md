@@ -77,6 +77,8 @@ Attach a `guard` key to a transition object:
 }
 ```
 
+<div class="stately" data-machine="35240d731d" data-height="320" data-title="ageGate"></div>
+
 If `isAdult` returns `False`, the `VERIFY` event is silently discarded — no transition happens.
 
 ### Multiple Guarded Transitions (Array Form)
@@ -104,6 +106,8 @@ Use an **array** of transition objects to define multiple candidate transitions 
   }
 }
 ```
+
+<div class="stately" data-machine="dc051fdb1b" data-height="420" data-title="ageGate"></div>
 
 ### Fallback Transition (No Guard)
 
@@ -187,6 +191,8 @@ print(interp.current_state_ids)  # {"checkout.allowed"}
 interp.stop()
 ```
 
+<div class="stately" data-machine="3d85c309dc" data-height="320" data-title="checkout"></div>
+
 Nested guards can also be declared inline under `children`, or (for `not`) under `params.guard` — the parser accepts whichever shape you emit.
 
 > **Note:** A *bare string* guard named `"and"`, `"or"`, or `"not"` is always treated as a user predicate, never as a composition — only the object form (`{"type": "and", ...}`) triggers composite behavior. This means you can still register a guard literally called `and` without conflict.
@@ -214,6 +220,8 @@ interp = SyncInterpreter(machine).start()
 interp.send("OPEN")
 assert interp.matches("door.open")
 ```
+
+<div class="stately" data-machine="286d43f7a3" data-height="320" data-title="door"></div>
 
 ## 📍 Built-in `stateIn` Guard
 
@@ -263,6 +271,8 @@ interp.send("BACK_TO_ONE")
 print(interp.current_state_ids)  # {"wizard.step1"}
 interp.stop()
 ```
+
+<div class="stately" data-machine="0bb758473f" data-height="320" data-title="wizard"></div>
 
 The state id accepts both the `#machine.a.b` and bare `machine.a.b` spellings.
 
@@ -330,6 +340,8 @@ print(interp2.current_state_ids)  # {"withdrawalMachine.denied"} — below minAm
 interp2.stop()
 ```
 
+<div class="stately" data-machine="ef130834de" data-height="320" data-title="withdrawalMachine"></div>
+
 The interpreter arity-checks the guard callable, so a plain two-argument `(context, event)` guard keeps working unchanged even if it's never given `params`. `params` may also be a function of `{context, event}`, re-evaluated on every use, instead of a static dict.
 
 ## 🧠 Guard Implementation with MachineLogic
@@ -375,6 +387,8 @@ interp.send("VERIFY")
 print(interp.current_state_ids)  # {"ageGate.teen"} — age is 16
 interp.stop()
 ```
+
+<div class="stately" data-machine="dc051fdb1b" data-height="420" data-title="ageGate"></div>
 
 ## 🐍 Pythonic Guards
 
@@ -508,6 +522,8 @@ print(interp.current_state_ids)  # {"withdrawalMachine.processing"}
 interp.stop()
 ```
 
+<div class="stately" data-machine="28f6cf6f1f" data-height="320" data-title="withdrawalMachine"></div>
+
 ## 📨 Guards with Event Data
 
 Guards can also inspect the incoming event payload:
@@ -600,6 +616,8 @@ If a guard raises an exception, the interpreter treats *that candidate* as decid
 }
 ```
 
+<div class="stately" data-machine="c8f5dbe5a7" data-height="320" data-title="m"></div>
+
 Whatever the policy, the raise is observable via the `on_guard_error(interpreter, guard_name, event, error)` plugin hook, fired *before* the substituted result is reported — previously a raising guard was indistinguishable from one that legitimately returned `False`. See [Plugins](../plugins/#plugin-hooks-reference).
 
 ```python
@@ -686,6 +704,8 @@ for test_age in [70, 30, 15, 8, -5]:
 # Age   8 -> child
 # Age  -5 -> invalid
 ```
+
+<div class="stately" data-machine="1c85847323" data-height="420" data-title="ageVerification"></div>
 
 ## Complete Example: Role-Based Routing
 

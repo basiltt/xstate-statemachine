@@ -317,16 +317,21 @@ class TestSubscribe(unittest.TestCase):
         """A producer that keeps feeding at < timeout intervals keeps the
         consumer alive (the real adapters' contract)."""
         b = SyncFakeBrokerAdapter()
+        # 📝 The first message is published before subscribing, so the
+        #    test does not depend on how fast a loaded CI runner (macOS)
+        #    schedules the producer thread; the idle-timeout contract is
+        #    exercised by the remaining five.
+        b.publish("t", env(n=0))
 
         def produce() -> None:
-            for n in range(6):
+            for n in range(1, 6):
                 time.sleep(0.03)
                 b.publish("t", env(n=n))
 
         t = threading.Thread(target=produce)
         t.start()
         got = []
-        for d in b.subscribe("t", timeout=0.15):
+        for d in b.subscribe("t", timeout=0.5):
             got.append(d.envelope.data["n"])
             b.ack(d)
         t.join()

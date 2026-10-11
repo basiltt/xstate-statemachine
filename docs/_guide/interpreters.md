@@ -102,6 +102,8 @@ async def main():
 asyncio.run(main())
 ```
 
+<div class="stately" data-machine="787d392d98" data-height="420" data-title="fetchMachine"></div>
+
 ### Key Points
 
 - `await interpreter.start()` — enters the initial state and returns the interpreter (for chaining).
@@ -171,6 +173,8 @@ print(interp.context)
 
 interp.stop()
 ```
+
+<div class="stately" data-machine="94b36856ec" data-height="320" data-title="toggleMachine"></div>
 
 > 📝 **Note:** `active_state_ids` reflects the *settled* configuration. Reading
 > it from inside an action (e.g. `logToggle` above) will not yet show the
@@ -280,6 +284,8 @@ interp.send("OPEN")
 unsubscribe()
 interp.stop()
 ```
+
+<div class="stately" data-machine="17f7689175" data-height="320" data-title="door"></div>
 
 See also [Plugins](../plugins/) for heavier-weight introspection (logging,
 persistence hooks) and [Snapshots](../snapshots/) for `pending_invocations()`
@@ -399,6 +405,8 @@ print(interp.current_state_ids)  # {'order.a'}
 await asyncio.sleep(0.05)  # let the run loop drain the raised "GO"
 print(interp.current_state_ids)  # {'order.b'}
 ```
+
+<div class="stately" data-machine="bc81406870" data-height="320" data-title="order"></div>
 
 The same ordering applies mid-run: everything `START` transitively raised on itself is processed before the next external event is taken. Each raised event is nonetheless its *own* macrostep with its own `Receipt` (see below) — `await interp.send("START", wait=True)` resolves when `START`'s step ends, and the raised events follow immediately in the internal queue. To wait for the whole chain, use `await_settled()`.
 
@@ -624,6 +632,8 @@ print(interp.context["user"])
 interp.stop()
 ```
 
+<div class="stately" data-machine="112333260e" data-height="320" data-title="userMachine"></div>
+
 > **Note:** For service `onDone` events, the service's return value is available as `event.data`. For `onError` events, the raised exception is in `event.data`.
 
 ---
@@ -691,6 +701,8 @@ interp.stop()
 print(interp.is_running)        # False
 ```
 
+<div class="stately" data-machine="daf3941ff0" data-height="320" data-title="lifecycle"></div>
+
 ### Idempotency and Safety
 
 Both `start()` and `stop()` are safe to call multiple times:
@@ -755,6 +767,8 @@ print(interp.active_state_ids)
 interp.stop()
 ```
 
+<div class="stately" data-machine="a6fcdb50e6" data-height="320" data-title="autoRouter"></div>
+
 > **Note:** A single `send()` call can trigger a chain of transitions if states along the path have `always` transitions. The interpreter keeps processing until it reaches a stable state with no pending eventless transitions.
 
 ---
@@ -797,6 +811,8 @@ async def main():
 
 asyncio.run(main())
 ```
+
+<div class="stately" data-machine="f55e97caaa" data-height="420" data-title="auth"></div>
 
 Because `value` is tree-walked rather than built from dotted ids, a state key that itself contains a `.` (e.g. `"v2.0"`) is safe — it is never confused with a path separator.
 
@@ -857,6 +873,8 @@ interp.send("GO")    # a → b — logged by plugin
 interp.send("GO")    # b → c — logged by plugin
 interp.stop()
 ```
+
+<div class="stately" data-machine="309fb57dc3" data-height="320" data-title="demo"></div>
 
 **Output:**
 
@@ -991,6 +1009,8 @@ print(interp.status)             # "running"
 interp.stop()
 ```
 
+<div class="stately" data-machine="223a5d329b" data-height="320" data-title="risky"></div>
+
 To surface the failure to the rest of the machine, catch it inside the action
 and record it on `context`, then guard a transition on that flag:
 
@@ -1030,6 +1050,8 @@ Per XState, an event that selects no transition in any active state is silently 
   "states": { "a": {} }
 }
 ```
+
+<div class="stately" data-machine="80b7bbff60" data-height="320" data-title="m"></div>
 
 `"defer"` is library-owned: a still-unhandled event is re-deferred, the buffer survives `get_snapshot()` / `from_snapshot()`, and it is bounded by `Interpreter.DEFER_MAX` — once full, the oldest entry is evicted. `interpreter.deferred_count` reports how many events are currently buffered.
 

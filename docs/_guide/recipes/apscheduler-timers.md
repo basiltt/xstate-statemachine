@@ -63,6 +63,8 @@ assert scanner.run_once(now=14 * DAY + 60) == 1
 assert sent == ["reminder", "expired"]
 ```
 
+<div class="stately" data-machine="c524021238" data-height="420" data-title="trial"></div>
+
 ## Scheduler role: the APScheduler job
 
 <!-- doc-requires: apscheduler -->
@@ -81,6 +83,8 @@ sched.start()
 # ... serve until SIGTERM ...
 sched.shutdown()
 ```
+
+<div class="stately" data-machine="9d4d847125" data-height="320" data-title="trial"></div>
 
 `max_instances=1` means a slow scan is never overlapped by the next one. `coalesce=True` collapses runs missed during a pause into one run. `run_once` catches and logs a failure per key, and `last_result.errors` lists them, so one broken record cannot stall the job.
 

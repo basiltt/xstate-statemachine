@@ -53,6 +53,8 @@ Define context at the top level of your machine config:
 }
 ```
 
+<div class="stately" data-machine="55ba05c4f5" data-height="320" data-title="counterMachine"></div>
+
 > **Tip:** Keep context values JSON-serializable (strings, numbers, booleans, `null`, lists, dicts). This ensures snapshots and persistence work smoothly.
 
 ## 📝 Modifying Context in Actions (JSON Style)
@@ -97,6 +99,8 @@ print(interp.context)
 
 interp.stop()
 ```
+
+<div class="stately" data-machine="8cc9ac2eec" data-height="320" data-title="counter"></div>
 
 > **Note:** Actions mutate context directly — there is no immutable update pattern. The interpreter passes the same dictionary reference to every action.
 
@@ -215,6 +219,8 @@ print(interp.current_state_ids)  # {"purchaseGate.approved"}
 interp.stop()
 ```
 
+<div class="stately" data-machine="2611550c1d" data-height="320" data-title="purchaseGate"></div>
+
 ## 🪆 Context with Nested Objects
 
 Context can hold deeply nested structures. Actions access them with standard Python dictionary operations:
@@ -252,6 +258,8 @@ print(interp.context["user"])
 # {"name": "Alice", "role": "admin", "preferences": {"theme": "light", "language": "en"}}
 interp.stop()
 ```
+
+<div class="stately" data-machine="c7a91b2615" data-height="320" data-title="userMachine"></div>
 
 ## 📚 Context with Arrays
 
@@ -296,6 +304,8 @@ print(interp.context["items"])    # ["banana"]
 print(interp.context["history"])  # ["Added: apple", "Added: banana", "Removed: apple"]
 interp.stop()
 ```
+
+<div class="stately" data-machine="8d7ff5959f" data-height="320" data-title="collector"></div>
 
 ## 🎨 Context with Mixed Types
 
@@ -461,6 +471,8 @@ print(interp.context["appliedCoupon"]) # SAVE10
 interp.stop()
 ```
 
+<div class="stately" data-machine="5ab97e54fa" data-height="320" data-title="shoppingCart"></div>
+
 ## 📝 Updating Context Declaratively with `assign`
 
 Every example above mutates context imperatively inside a `MachineLogic` action method. XState v5's idiomatic alternative is `assign`, a built-in action creator that declares context updates without a hand-written action method — each value can be a plain value or a callable of `{context, event}`:
@@ -538,6 +550,8 @@ total: float = interp.context["total"]             # ✅ typed as float
 assert total == 9.5
 ```
 
+<div class="stately" data-machine="21aec9d719" data-height="320" data-title="shop"></div>
+
 With `context_type` set, mypy and pyright both report:
 
 <!-- doc-fragment -->
@@ -575,6 +589,8 @@ interp = SyncInterpreter(machine, input={"userId": 42}).start()
 print(interp.context)  # {"count": 0, "input": {"userId": 42}}
 interp.stop()
 ```
+
+<div class="stately" data-machine="2875adad75" data-height="320" data-title="m"></div>
 
 ## See Also
 

@@ -84,6 +84,8 @@ assert order.current_state_ids == {"order.shipped"}
 order.stop()
 ```
 
+<div class="stately" data-machine="d97f91cb9e" data-height="420" data-title="order"></div>
+
 If you prefer classes to JSON, the [Pythonic API](../pythonic-api/) builds the same chart from Python, and it stays exportable to XState JSON.
 
 ## When to choose python-statemachine instead

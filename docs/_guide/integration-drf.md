@@ -87,6 +87,8 @@ assert r.status_code == 409                       # finished: refused
 assert client.get(f"/api/orders/{order.pk}/").json()["statechart"]["state"] == "paid"
 ```
 
+<div class="stately" data-machine="1e721b2c3b" data-height="320" data-title="order"></div>
+
 ## Reference
 
 ### `StatechartViewSetMixin`

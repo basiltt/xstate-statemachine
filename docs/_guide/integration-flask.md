@@ -61,6 +61,8 @@ assert c.get("/orders/42/send", headers=h).status_code == 405   # no state chang
 assert c.post("/orders/42/send", json={"type": "CHECKOUT"}).status_code == 403
 ```
 
+<div class="stately" data-machine="18e9b981b0" data-height="320" data-title="order"></div>
+
 ## Reference
 
 ### `XState(app=None)` and `init_app(app, store, *, lock=None, plugins=(), inbox=None, principal=None, log=None, max_body_bytes=1 MiB, heartbeat_s=15, max_connections_per_key=16, allowed_origins=(), cli=True)`
@@ -120,6 +122,8 @@ with app.test_request_context(method="POST"):
     assert xsm.peek("counter", "1")["context"] == {"n": 20}
 ```
 
+<div class="stately" data-machine="5f610880d8" data-height="320" data-title="counter"></div>
+
 **Retry the work** -- keep the optimistic lock and run the block through `persisted_retry` (or `OptimisticLock(retries=...).run(...)`), which reloads and re-applies your function on a conflict. The function may run more than once, so it must only send events:
 
 <!-- doc-requires: flask -->
@@ -163,6 +167,8 @@ assert codes == [200] * 20
 with app.test_request_context(method="POST"):
     assert xsm.peek("counter", "1")["context"] == {"n": 20}
 ```
+
+<div class="stately" data-machine="5f610880d8" data-height="320" data-title="counter"></div>
 
 `persisted_retry` bypasses `act()`'s extras -- the app's plugins, inbox and SSE fan-out are not applied; pass `plugins=` yourself if you need them. Use `PessimisticLock` when you need those.
 
@@ -242,6 +248,8 @@ stranger = app.test_client()                          # token, but not its sessi
 assert stranger.post("/o/2/send", json={"type": "GO"},
                      headers={"X-CSRFToken": token}).status_code == 400
 ```
+
+<div class="stately" data-machine="b777201d68" data-height="320" data-title="o"></div>
 
 ### Quart: `xstate_statemachine.contrib.quart`
 

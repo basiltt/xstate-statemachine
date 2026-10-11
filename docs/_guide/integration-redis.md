@@ -52,6 +52,8 @@ with persisted(store, "order:42", machine) as order:
     assert order.context["items"] == 1 and order.matches("order.paid")
 ```
 
+<div class="stately" data-machine="4e56eb44ff" data-height="320" data-title="order"></div>
+
 ## Reference
 
 ### `RedisStore(client_or_url, *, prefix, codec=None, max_snapshot_bytes=1 MiB, ttl_s=None, lock_ttl_ms=30_000)`

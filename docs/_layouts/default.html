@@ -142,6 +142,7 @@
           <a href="{{ '/guide/testing-and-pure-api/' | relative_url }}" class="sidebar-link">Testing &amp; Pure API</a>
           <a href="{{ '/guide/diagrams/' | relative_url }}" class="sidebar-link">Diagram Export</a>
           <a href="{{ '/guide/examples/' | relative_url }}" class="sidebar-link">Advanced Patterns</a>
+          <a href="{{ '/guide/example-gallery/' | relative_url }}" class="sidebar-link">Example Gallery (diagrams)</a>
         </div>
         <div class="sidebar-section">
           <h3 class="sidebar-heading">CLI Tool</h3>
@@ -254,7 +255,7 @@
         </div>
 
         <!-- Previous / Next Navigation -->
-        {% assign pages_order = "getting-started,quick-start,core-concepts,json-config,pythonic-api,interpreters,context,guards,actions,services,delayed-transitions,hierarchical,parallel,final-states,actors,plugins,snapshots,reliability,testing-and-pure-api,diagrams,examples,cli,cli-templates,cli-hierarchy,stately-export,integrations,integrations-extras,patterns,persistence,guarantees,security,compatibility,deprecation-policy,integration-redis,integration-pydantic,integration-starlette,integration-fastapi,integration-litestar,integration-sqlalchemy,integration-flask,integration-django,integration-drf,integration-agents,integration-testing,integration-observability,integration-inspector,integration-eda,integration-brokers,integration-celery,vs-langgraph,vs-burr,vs-statelyai-agent,vs-django-fsm,vs-transitions,vs-python-statemachine,vs-step-functions,recipes,stripe-webhooks,apscheduler-timers,task-queue-workers,form-wizard,slot-filling,feature-flag-rollout,websocket-reconnect,circuit-breaker-retry,production-characteristics,troubleshooting,faq,changelog" | split: "," %}
+        {% assign pages_order = "getting-started,quick-start,core-concepts,json-config,pythonic-api,interpreters,context,guards,actions,services,delayed-transitions,hierarchical,parallel,final-states,actors,plugins,snapshots,reliability,testing-and-pure-api,diagrams,examples,example-gallery,cli,cli-templates,cli-hierarchy,stately-export,integrations,integrations-extras,patterns,persistence,guarantees,security,compatibility,deprecation-policy,integration-redis,integration-pydantic,integration-starlette,integration-fastapi,integration-litestar,integration-sqlalchemy,integration-flask,integration-django,integration-drf,integration-agents,integration-testing,integration-observability,integration-inspector,integration-eda,integration-brokers,integration-celery,vs-langgraph,vs-burr,vs-statelyai-agent,vs-django-fsm,vs-transitions,vs-python-statemachine,vs-step-functions,recipes,stripe-webhooks,apscheduler-timers,task-queue-workers,form-wizard,slot-filling,feature-flag-rollout,websocket-reconnect,circuit-breaker-retry,production-characteristics,troubleshooting,faq,changelog" | split: "," %}
         {% assign current_name = page.url | remove: "/guide/" | remove: "/" %}
         {% assign prev_page = nil %}
         {% assign next_page = nil %}
@@ -346,6 +347,8 @@
   {% endif %}
 
   <script src="{{ '/assets/js/main.js' | relative_url }}"></script>
+  <!-- Stately editor embeds: <div class="stately" data-machine="…"> → theme-following iframe -->
+  <script src="{{ '/assets/js/stately.js' | relative_url }}" data-base="{{ site.baseurl }}" defer></script>
   <!-- Mermaid statecharts: ```mermaid blocks become live SVG diagrams in the site theme -->
   <script type="module">
     import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';

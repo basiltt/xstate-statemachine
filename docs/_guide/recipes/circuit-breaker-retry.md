@@ -97,6 +97,8 @@ assert req.value == "succeeded" and req.context["result"] == {"px": 1.08}
 assert breaker.state == "closed"                       # 2 failures < threshold of 5
 ```
 
+<div class="stately" data-machine="9281faa300" data-height="420" data-title="fetch"></div>
+
 ## What the tests pin down
 
 `tests/recipes/test_circuit_breaker_retry.py` drives the example through a `FakeTransport` that replays scripted responses:

@@ -71,6 +71,8 @@ stateDiagram-v2
 }
 ```
 
+<div class="stately" data-machine="453b97e99f" data-height="420" data-title="retryMachine"></div>
+
 ### Logic Implementation
 
 ```python
@@ -313,6 +315,8 @@ stateDiagram-v2
 }
 ```
 
+<div class="stately" data-machine="73bfd9006f" data-height="520" data-title="ecommerce"></div>
+
 ### Logic Implementation
 
 <!-- doc-fragment -->
@@ -505,6 +509,8 @@ stateDiagram-v2
 }
 ```
 
+<div class="stately" data-machine="08056081fa" data-height="520" data-title="auth"></div>
+
 ```python
 from xstate_statemachine import create_machine, MachineLogic
 import time
@@ -679,6 +685,8 @@ print(f"Deploy URL: {interp.context['deploy_url']}")
 interp.stop()
 ```
 
+<div class="stately" data-machine="f8a5be3055" data-height="520" data-title="cicd"></div>
+
 ---
 
 ## Pattern 6: Traffic Light Controller
@@ -773,6 +781,8 @@ interp.send("RESUME")
 interp.stop()
 ```
 
+<div class="stately" data-machine="f8b07d0217" data-height="420" data-title="trafficLight"></div>
+
 ---
 
 ## Testing State Machines
@@ -865,6 +875,8 @@ class TestToggleMachine:
         interp.stop()
 ```
 
+<div class="stately" data-machine="ad6709a0f1" data-height="320" data-title="toggle"></div>
+
 ### Testing Guards
 
 ```python
@@ -935,6 +947,8 @@ class TestGuards:
         interp.stop()
 ```
 
+<div class="stately" data-machine="2e9496df56" data-height="320" data-title="guarded"></div>
+
 ### Testing Actions
 
 ```python
@@ -1001,6 +1015,8 @@ def test_action_modifies_context():
     interp.stop()
 ```
 
+<div class="stately" data-machine="a3e48edbe7" data-height="320" data-title="cart"></div>
+
 ### Testing Transitions with `get_next_state`
 
 The `MachineNode` provides a `get_next_state()` utility for pure transition testing without running an interpreter:
@@ -1026,6 +1042,8 @@ assert machine.get_next_state("nav.home", Event("GO_CONTACT")) == {"nav.contact"
 assert machine.get_next_state("nav.about", Event("GO_HOME")) == {"nav.home"}
 assert machine.get_next_state("nav.home", Event("UNKNOWN")) is None
 ```
+
+<div class="stately" data-machine="29b434a4af" data-height="320" data-title="nav"></div>
 
 > **Note:** `get_next_state()` does **not** evaluate guards. It shows the potential transition target assuming all guards pass.
 
@@ -1079,6 +1097,8 @@ def test_checkout_from_payment():
     interp.stop()
 ```
 
+<div class="stately" data-machine="be296e8263" data-height="320" data-title="shop"></div>
+
 ### Testing Timers with `SimulatedClock`
 
 Machines with `after` (delayed) transitions are otherwise hard to test deterministically — you'd have to actually sleep. Pass a `SimulatedClock` to the interpreter instead: virtual time never moves on its own, so timers only fire when you call `increment()` or `set()`.
@@ -1111,6 +1131,8 @@ assert interp.current_state_ids == {"trafficTimer.green"}
 interp.stop()
 ```
 
+<div class="stately" data-machine="1c079b41c2" data-height="320" data-title="trafficTimer"></div>
+
 `increment(ms)` advances by a relative amount and fires every timer that becomes due, in order; `set(ms)` jumps to an absolute virtual time and raises if that would move backwards. Inside a running asyncio loop both return an awaitable, so `await clock.increment(...)` is required there — in sync code (as above) they run to completion immediately.
 
 ### Asserting Delivery with `send(wait=True)`
@@ -1142,6 +1164,8 @@ assert receipt.changed is False
 
 interp.stop()
 ```
+
+<div class="stately" data-machine="1477e29fb6" data-height="320" data-title="toggle"></div>
 
 `Receipt` is a `NamedTuple` with five fields: `state_ids` (the active leaf ids once processing finished), `changed` (whether this event actually caused a transition), `error` (the exception raised while processing this event, or `None`), `deferred` (parked under `onUnhandled: "defer"`) and `denied` (a handler existed but every guard refused). Read them by attribute — a three- or four-way positional destructure raises `ValueError`. This is the async `Interpreter`'s `send(..., wait=True)` API too — see [Testing & the Pure API](../testing-and-pure-api/) for the fully synchronous, no-interpreter-needed alternative (`pure_transition`, `get_next_snapshot`, etc.).
 

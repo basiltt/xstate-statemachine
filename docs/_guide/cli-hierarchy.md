@@ -107,6 +107,8 @@ Is this correct? [Y/n]
 }
 ```
 
+<div class="stately" data-machine="419824d88e" data-height="420" data-title="orderOrchestrator"></div>
+
 **`payment.json`** (child):
 
 ```json
@@ -132,6 +134,8 @@ Is this correct? [Y/n]
 }
 ```
 
+<div class="stately" data-machine="237e2e4e91" data-height="420" data-title="payment"></div>
+
 **`shipping.json`** (child):
 
 ```json
@@ -149,6 +153,8 @@ Is this correct? [Y/n]
   }
 }
 ```
+
+<div class="stately" data-machine="dc99243e76" data-height="320" data-title="shipping"></div>
 
 ### Generation Command
 

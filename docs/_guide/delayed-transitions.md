@@ -67,6 +67,8 @@ A session that warns the user before expiring:
 }
 ```
 
+<div class="stately" data-machine="8158a0c746" data-height="320" data-title="sessionTimeout"></div>
+
 Running it:
 
 ```python
@@ -101,6 +103,8 @@ print(interp.active_state_ids)
 
 interp.stop()
 ```
+
+<div class="stately" data-machine="8158a0c746" data-height="320" data-title="sessionTimeout"></div>
 
 This machine:
 
@@ -154,6 +158,8 @@ interp = SyncInterpreter(machine).start()
 # After 5 seconds, "log_timeout" fires and machine moves to "done"
 interp.stop()
 ```
+
+<div class="stately" data-machine="2d54eee384" data-height="320" data-title="timedAction"></div>
 
 ## 🛡️ After with Guards
 
@@ -219,6 +225,8 @@ print(interp.active_state_ids)
 
 interp.stop()
 ```
+
+<div class="stately" data-machine="1480d93e94" data-height="320" data-title="guardedTimer"></div>
 
 > **Note:** Guard functions receive `(context, event)` and must return a `bool`. They must be synchronous.
 
@@ -368,6 +376,8 @@ Delayed transitions work inside compound (hierarchical) states. Timers in a chil
 }
 ```
 
+<div class="stately" data-machine="e8e4e1b68f" data-height="420" data-title="nestedTimer"></div>
+
 When `LOGOUT` fires, the machine exits `dashboard` (cancelling its 60-second refresh timer) and then exits `loggedIn`.
 
 ## ⚖️ Sync vs Async Timers
@@ -412,6 +422,8 @@ async def main():
 
 asyncio.run(main())
 ```
+
+<div class="stately" data-machine="8fb51e4ff8" data-height="320" data-title="watchdog"></div>
 
 If `lateness_ms` trends upward over time, the event loop (or, for the `SyncInterpreter`, the calling thread) isn't being given enough opportunities to `pump()` due timers — see [Production Characteristics § 2](../production-characteristics/#2-after-timers-are-best-effort-and-starve-under-load) for the underlying guarantee.
 
@@ -477,6 +489,8 @@ print(interp.active_state_ids)   # {'sessionTimeout.expired'}
 interp.stop()
 ```
 
+<div class="stately" data-machine="8158a0c746" data-height="320" data-title="sessionTimeout"></div>
+
 On the async `Interpreter`, `increment()` returns an awaitable so the caller can be sure the fired timer has finished being processed (including any onward transitions) before checking state:
 
 ```python
@@ -520,6 +534,8 @@ async def main():
     print(set(kid.current_state_ids), set(i.current_state_ids))  # {'kid.d'} {'p.b'}
     await i.stop()
 ```
+
+<div class="stately" data-machine="aa9de412aa" data-height="320" data-title="kid"></div>
 
 One `increment()` call fires timers for **every** interpreter attached to the clock, in due order, regardless of which engine owns each one.
 
@@ -628,6 +644,8 @@ print(interp.active_state_ids)
 interp.stop()
 ```
 
+<div class="stately" data-machine="5907d4edd7" data-height="420" data-title="poller"></div>
+
 ## 💾 Complete Example: Auto-Save with Debounce
 
 A document editor that auto-saves 2 seconds after the last edit:
@@ -704,5 +722,7 @@ print(interp.active_state_ids)
 # After 2 seconds of no edits, auto-save would fire
 interp.stop()
 ```
+
+<div class="stately" data-machine="f363f37eac" data-height="320" data-title="autoSave"></div>
 
 The key insight: each `EDIT` event **re-enters** `dirty`, which resets the 2-second timer. The save only fires after the user stops typing for 2 full seconds. This is the classic debounce pattern, expressed declaratively.

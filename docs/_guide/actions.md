@@ -118,6 +118,8 @@ This order is guaranteed and consistent across all interpreter types.
 }
 ```
 
+<div class="stately" data-machine="7f622fde3d" data-height="320" data-title="7f622fde3d"></div>
+
 ### Multiple Entry/Exit Actions
 
 Entry and exit support arrays too:
@@ -132,6 +134,8 @@ Entry and exit support arrays too:
   }
 }
 ```
+
+<div class="stately" data-machine="eb8aa34500" data-height="320" data-title="eb8aa34500"></div>
 
 ## 🧠 Action Implementation with MachineLogic
 
@@ -204,6 +208,8 @@ interp.send("SUBMIT")
 interp.send("SUCCESS")
 interp.stop()
 ```
+
+<div class="stately" data-machine="f5f3e25e82" data-height="320" data-title="formMachine"></div>
 
 ## 🐍 Pythonic Actions
 
@@ -347,6 +353,8 @@ print(interp.context["todos"])
 print(interp.context["completedCount"])  # 1
 interp.stop()
 ```
+
+<div class="stately" data-machine="9d7d80df57" data-height="320" data-title="todoApp"></div>
 
 ## 📨 Accessing Event Data in Actions
 
@@ -627,6 +635,8 @@ The behavior above is one of three policies, controlled by the machine-config ke
 }
 ```
 
+<div class="stately" data-machine="1a58abf6dd" data-height="320" data-title="m"></div>
+
 Guards have an analogous `guardErrorPolicy` (`"false"`/`"true"`/`"raise"`, see
 [Guards](../guards/)) and unhandled events have their own `onUnhandled`
 (`"ignore"`/`"defer"`/`"error"`, see [JSON Configuration](../json-config/)) —
@@ -865,6 +875,8 @@ print(interp.context["submissionId"])  # FORM-12345
 interp.stop()
 ```
 
+<div class="stately" data-machine="eb38f3141a" data-height="420" data-title="contactForm"></div>
+
 ## Auto-Discovery with LogicLoader
 
 The `LogicLoader` is a singleton that automatically discovers actions, guards, and services from Python modules or class instances. It maps `snake_case` Python function names to `camelCase` JSON names.
@@ -935,6 +947,8 @@ print(interp.active_state_ids)
 interp.stop()
 ```
 
+<div class="stately" data-machine="f4d5d2f880" data-height="420" data-title="autoDiscover"></div>
+
 ### Class-Based Discovery (logic_providers)
 
 ```python
@@ -980,6 +994,8 @@ print(interp.context["total"])
 
 interp.stop()
 ```
+
+<div class="stately" data-machine="055d558d66" data-height="320" data-title="order"></div>
 
 ### Global Registration
 

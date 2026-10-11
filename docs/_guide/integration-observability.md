@@ -48,6 +48,8 @@ assert 'disposition="unhandled"' in text and "KNOCK" not in text
 uninstrument_all(attached)                   # tests: leave the process as found
 ```
 
+<div class="stately" data-machine="c00355f959" data-height="320" data-title="door"></div>
+
 A Grafana-ready starting point:
 
 ```text

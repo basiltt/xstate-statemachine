@@ -213,6 +213,8 @@ assert (report.states_visited, report.transitions_hit) == (2, 1)
 print(report.to_text())      # also .to_json(), .to_html()
 ```
 
+<div class="stately" data-machine="c6c85df5ca" data-height="320" data-title="t"></div>
+
 **JSON schema (`version: 1`, stable).** A reader must reject any other `version`.
 
 ```text
@@ -271,6 +273,8 @@ except AssertionError as exc:
 assert [c["send"] for c in json.loads(out.read_text())] == [
     "ADD", "PAY", "REFUND", "REFUND"]           # shrunk to the minimal 4 events
 ```
+
+<div class="stately" data-machine="7806ba49ee" data-height="420" data-title="refund"></div>
 
 In a test module you only write `TestRefund = model_test(...)`. The plugin collects it through its generated `TestCase` (plain unittest discovery can use `TestRefund.TestCase`). A failing run prints Hypothesis's usual step list, followed by:
 
@@ -361,6 +365,8 @@ machine = create_machine({
 given(machine).in_state("pending").when("PAY").then_state("paid")
 given(machine).in_state("paid").after(1000).then_done()
 ```
+
+<div class="stately" data-machine="81c82f6f1d" data-height="320" data-title="order"></div>
 
 | Method | Behaviour |
 |:--|:--|
