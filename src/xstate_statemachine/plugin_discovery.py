@@ -136,7 +136,10 @@ def _entry_points(group: str) -> List[Any]:
         return found
     if hasattr(eps, "select"):  # 3.10+: EntryPoints / SelectableGroups
         return list(eps.select(group=group))
-    return list(eps.get(group, ()))  # type: ignore[attr-defined]
+    # 📝 3.9: ``entry_points()`` is a plain dict. Typeshed models the 3.10+
+    #    object, so this branch is unreachable to the checker on 3.10+ but
+    #    an attr-defined error on 3.9 -- hence the broad, documented ignore.
+    return list(eps.get(group, ()))  # type: ignore[attr-defined,unused-ignore]
 
 
 _Index = Dict[Tuple[str, str, str], Tuple[str, str]]

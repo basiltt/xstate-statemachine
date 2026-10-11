@@ -294,9 +294,21 @@ std = set(getattr(sys, "stdlib_module_names", ()))
 #    runners (setuptools' distutils shim on 3.10/3.11 CI cells), never by
 #    the library. Not stdlib, not ours, not a leak.
 PTH = {"_distutils_hack", "_virtualenv", "sitecustomize", "usercustomize"}
+# 🐍 3.15 ships private stdlib helpers (``_missing_stdlib_info``) that are
+#    NOT in ``sys.stdlib_module_names``; anything that lives under the
+#    interpreter's own prefix (and not in site-packages) is stdlib too.
+import os
+_base = os.path.realpath(sys.base_prefix)
+def _under_stdlib(name):
+    f = getattr(sys.modules.get(name), "__file__", None)
+    if not f:
+        return True  # built-in / frozen
+    f = os.path.realpath(f)
+    return f.startswith(_base) and "site-packages" not in f and "dist-packages" not in f
 tops = sorted({m.split(".")[0] for m in sys.modules})
 third = [t for t in tops if std and t not in std
-         and t not in ("xstate_statemachine", "__main__") and t not in PTH]
+         and t not in ("xstate_statemachine", "__main__") and t not in PTH
+         and not _under_stdlib(t)]
 bad_all = []
 contrib_syms = []
 for n in x.__all__:
