@@ -222,6 +222,9 @@ class PydanticCodec:
         self.model = model
 
     def encode(self, snapshot: str) -> str:
+        """Validate the snapshot's context against the model (logging field
+        paths on failure) and return the snapshot.
+        """
         blob = json.loads(snapshot)
         ctx = blob.get("context")
         if isinstance(ctx, dict):

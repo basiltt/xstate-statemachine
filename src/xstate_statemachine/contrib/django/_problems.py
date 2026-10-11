@@ -58,6 +58,17 @@ _TABLE: Tuple[Tuple[type, int, str], ...] = (
 def problem_body(
     status: int, title: str, detail: Optional[str] = None, **ext: Any
 ) -> Dict[str, Any]:
+    """Build an RFC 7807 problem dict.
+
+    Args:
+        status: The HTTP status code.
+        title: The short problem title.
+        detail: Optional human-readable detail.
+        **ext: Extra members merged into the body.
+
+    Returns:
+        The problem body with ``type`` ``about:blank``.
+    """
     body: Dict[str, Any] = {"type": "about:blank", "title": title}
     body["status"] = status
     if detail is not None:

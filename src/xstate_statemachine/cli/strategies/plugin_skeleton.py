@@ -211,6 +211,8 @@ HOOKS = [
 
 
 class PluginSkeletonStrategy(BaseStrategy):
+    """Strategy that generates an observer plugin skeleton."""
+
     @property
     def name(self) -> str:
         return "plugin"
@@ -219,6 +221,7 @@ class PluginSkeletonStrategy(BaseStrategy):
         return ""
 
     def generate_logic(self, ctx: GenerationContext) -> str:
+        """Emit a ``PluginBase`` observer with only the selected hooks."""
         config = ctx.configs[0]
         feats = _features(config)
         cls = (

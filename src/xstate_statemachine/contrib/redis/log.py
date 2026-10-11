@@ -167,6 +167,7 @@ class RedisLog:
     # -- read ------------------------------------------------------------------
     @redis_errors_typed
     def next_seq(self, machine_id: str) -> int:
+        """`Log.next_seq` on Redis: last stream entry's seq + 1 (XREVRANGE)."""
         last = self.r.xrevrange(self.k.log(machine_id), count=1)
         return _seq_of(last[0][0]) + 1 if last else 1
 
@@ -174,6 +175,7 @@ class RedisLog:
     def read(
         self, machine_id: str, *, after_seq: int = 0, limit: int = 1000
     ) -> List[TransitionRecord]:
+        """`Log.read` on Redis: XRANGE from ``after_seq + 1``, up to *limit*."""
         _check_read(after_seq, limit)
         if limit == 0:
             return []
@@ -229,6 +231,7 @@ class RedisLog:
 
     @redis_errors_typed
     def forget(self, machine_id: str) -> int:
+        """`Log.forget` on Redis: XLEN and DEL in one MULTI; returns the count."""
         name = self.k.log(machine_id)
         pipe = self.r.pipeline(transaction=True)  # MULTI: count + delete
         pipe.xlen(name)

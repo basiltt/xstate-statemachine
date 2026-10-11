@@ -176,6 +176,9 @@ def statechart_node(
     built = _machine(machine, logic)
 
     def node(state: Dict[str, Any]) -> Dict[str, Any]:
+        """Run one step of the machine on the graph state: restore or start,
+        apply the event, write back the snapshot.
+        """
         from ...sync_interpreter import SyncInterpreter
 
         snap = _snapshot_of(state, state_key)
@@ -240,6 +243,9 @@ def route_by_statechart(
     table = dict(mapping)
 
     def route(state: Dict[str, Any]) -> str:
+        """Map the machine's current state in the graph state's snapshot to a
+        graph edge name.
+        """
         raw = _snapshot_of(state, state_key)
         try:
             snap = json.loads(raw) if raw is not None else {}

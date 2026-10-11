@@ -166,6 +166,7 @@ class MemoryOutboxStore:
         return n
 
     def mark_sent(self, seqs: List[int]) -> int:
+        """`Outbox.mark_sent` in memory: flag the given seqs, return the count."""
         wanted = set(seqs)
         n = 0
         with self._lock:
@@ -274,6 +275,7 @@ class SQLiteOutboxStore:
         ]
 
     def add(self, topic: str, envelope: Envelope) -> None:
+        """`Outbox.add` on SQLite: INSERT the envelope with the current time."""
         conn = self._conn()
         with self._store._tx(conn, immediate=True):
             conn.execute(
@@ -290,6 +292,7 @@ class SQLiteOutboxStore:
             )
 
     def pending(self, *, limit: int = 100) -> List[OutboxRecord]:
+        """`Outbox.pending` on SQLite: unsent rows in seq order, up to *limit*."""
         rows = (
             self._conn()
             .execute(
@@ -321,6 +324,7 @@ class SQLiteOutboxStore:
             )
 
     def mark_sent(self, seqs: List[int]) -> int:
+        """`Outbox.mark_sent` on SQLite: stamp sent_at on still-unsent seqs."""
         if not seqs:
             return 0
         conn = self._conn()
@@ -345,6 +349,7 @@ class SQLiteOutboxStore:
             ).rowcount
 
     def count(self, *, pending_only: bool = False) -> int:
+        """`Outbox.count` on SQLite: all rows, or only unsent ones."""
         sql = "SELECT count(*) FROM xsm_outbox"
         if pending_only:
             sql += " WHERE sent_at IS NULL"
@@ -514,6 +519,9 @@ class OutboxPlugin(PluginBase[Any]):
         to_states: Any,
         transition: Any,
     ) -> None:
+        """Queue envelopes for a transition and for newly entered published
+        states.
+        """
         machine = interpreter.machine
         cause = getattr(interpreter, "_xsm_cause", None)
         out: List[Envelope] = []
@@ -559,6 +567,9 @@ class OutboxPlugin(PluginBase[Any]):
     def on_event_processed(
         self, interpreter: Any, event: Any, receipt: Any
     ) -> None:
+        """Flush the step's queued envelopes (buffered while a session is
+        open).
+        """
         with self._lock:
             batch = self._step.pop(interpreter, None)
         if not batch:

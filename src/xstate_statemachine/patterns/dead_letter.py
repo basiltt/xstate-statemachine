@@ -117,6 +117,14 @@ class DeadLetter:
 
     @classmethod
     def from_dict(cls, raw: Dict[str, Any]) -> "DeadLetter":
+        """Build a `DeadLetter` from a dict.
+
+        Args:
+            raw: A mapping of field values; unknown keys are ignored.
+
+        Returns:
+            The new record.
+        """
         names = {f.name for f in fields(cls)}
         return cls(**{k: v for k, v in raw.items() if k in names})
 
@@ -155,6 +163,18 @@ class DeadLetterStore:
     def list(
         self, *, include_resolved: bool = False, limit: int = 1000
     ) -> List[DeadLetter]:
+        """List dead letters, oldest first.
+
+        Args:
+            include_resolved: Also return resolved records.
+            limit: Maximum number of records to return.
+
+        Returns:
+            Records sorted by ``(taken_at, id)``, at most *limit*.
+
+        Raises:
+            ValueError: If *limit* is negative.
+        """
         # 📝 #265 battle: `limit=-1` used to slice `rows[:-1]` (silently
         #    drop the newest record). Negative is a caller error.
         if limit < 0:
@@ -375,6 +395,7 @@ class DeadLetterPlugin(PluginBase[Any]):
         to_states: Set[Any],
         transition: Any,
     ) -> None:
+        """Note dead-letter states entered here; the record is written later."""
         # 📝 `on_transition` fires MID-macrostep (the configuration may not
         #    have settled; a snapshot here raises `SnapshotMidStepError`).
         #    Only NOTE the entry; the record is written from
@@ -394,6 +415,7 @@ class DeadLetterPlugin(PluginBase[Any]):
     def on_event_processed(
         self, interpreter: Any, event: Any, receipt: Any
     ) -> None:
+        """Capture a record per noted state and pass it to the sink."""
         with self._lock:
             entered = self._pending.pop(interpreter, None)
         if not entered:

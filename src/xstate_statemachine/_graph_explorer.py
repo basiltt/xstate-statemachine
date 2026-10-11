@@ -184,6 +184,11 @@ class _Explorer:
         return True
 
     def initial(self) -> Tuple[Config, bool]:
+        """Return the initial configuration and whether the run is done.
+
+        Returns:
+            A ``(configuration, is_done)`` pair.
+        """
         interp, _ = self.run(())
         try:
             return frozenset(interp.current_state_ids), self._done(interp)

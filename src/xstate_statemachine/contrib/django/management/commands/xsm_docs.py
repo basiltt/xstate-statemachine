@@ -10,6 +10,8 @@ from ._cli_command import CLICommand
 
 
 class Command(CLICommand):
+    """Management command generating a Markdown page for a model's chart."""
+
     help = "Generate a Markdown reference page for a statechart model."
 
     def add_cli_arguments(self, parser: Any) -> None:

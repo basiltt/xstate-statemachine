@@ -39,9 +39,14 @@ def _models(labels: List[str]) -> List[Any]:
 
 
 class Command(BaseCommand):  # type: ignore[misc]  # BaseCommand is untyped (Any base)
+    """Management command that fires matured ``after`` deadlines."""
+
     help = "Fire matured `after` deadlines of statechart models."
 
     def add_arguments(self, parser: Any) -> None:
+        """Declare the models, ``--forever``, interval, limit, database, now
+        flags.
+        """
         parser.add_argument("models", nargs="*", metavar="app.Model")
         parser.add_argument("--forever", action="store_true")
         parser.add_argument("--interval", type=float, default=1.0)
@@ -55,6 +60,7 @@ class Command(BaseCommand):  # type: ignore[misc]  # BaseCommand is untyped (Any
         )
 
     def handle(self, *args: Any, **opts: Any) -> None:
+        """Validate options, then scan once or loop forever, mapping DB errors."""
         if opts["limit"] < 1:
             raise CommandError("--limit must be >= 1")
         if opts["interval"] <= 0:

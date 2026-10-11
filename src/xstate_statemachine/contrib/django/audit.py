@@ -83,6 +83,7 @@ class DjangoTransitionLogStore:
         )
 
     def next_seq(self, machine_id: str) -> int:
+        """Return the next ``seq`` for this row (provisional while buffering)."""
         if self.buffer is not None:
             # 📝 Provisional (1, 2, ...): the real seq is assigned by
             #    `flush()` AFTER the fenced UPDATE, so an optimistic send
@@ -94,6 +95,9 @@ class DjangoTransitionLogStore:
         return self._next
 
     def append(self, rec: TransitionRecord, *, connection: Any = None) -> None:
+        """Record a transition, buffering it or writing it straight to the
+        table.
+        """
         if rec.machine_id != self.machine_id:
             raise ValueError(
                 f"record for {rec.machine_id!r} on a log bound to "
@@ -143,6 +147,9 @@ class DjangoTransitionLogStore:
     def read(
         self, machine_id: str, *, after_seq: int = 0, limit: int = 1000
     ) -> List[TransitionRecord]:
+        """Return this row's records with ``seq`` above *after_seq*, oldest
+        first.
+        """
         rows = self._qs().filter(seq__gt=after_seq).order_by("seq")[:limit]
         return [
             TransitionRecord(
@@ -164,6 +171,7 @@ class DjangoTransitionLogStore:
         ]
 
     def purge_older_than(self, cutoff_ts: float) -> int:
+        """Delete audit rows created before *cutoff_ts* and return the count."""
         from datetime import datetime, timezone
 
         cutoff = datetime.fromtimestamp(cutoff_ts, tz=timezone.utc)

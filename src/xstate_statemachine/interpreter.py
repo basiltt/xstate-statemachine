@@ -166,6 +166,7 @@ class _PreStartQueue:
         return not self._items
 
     def drain(self) -> List[AnyEvent]:
+        """Remove and return all queued events, leaving the queue empty."""
         items, self._items = self._items, []
         return items
 

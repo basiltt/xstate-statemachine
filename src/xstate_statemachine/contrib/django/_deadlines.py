@@ -58,6 +58,7 @@ def write(
 
 
 def read(using: str, source: str, key: str) -> List[Deadline]:
+    """Return the stored deadlines for (*source*, *key*), earliest first."""
     m = _model()
     return [
         Deadline(
@@ -76,6 +77,7 @@ def read(using: str, source: str, key: str) -> List[Deadline]:
 def due(
     using: str, source: str, until_wall: float, limit: int
 ) -> List[Tuple[str, float]]:
+    """Return up to *limit* ``(key, earliest due)`` pairs due by *until_wall*."""
     m = _model()
     rows = (
         m.objects.using(using)

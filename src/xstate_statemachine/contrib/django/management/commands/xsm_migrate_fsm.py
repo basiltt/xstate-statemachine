@@ -43,9 +43,12 @@ Migrating {label}.{field} from django-fsm to a statechart:
 
 
 class Command(BaseCommand):  # type: ignore[misc]  # BaseCommand is untyped (Any base)
+    """Management command migrating a django-fsm field to a StatechartField."""
+
     help = "Migrate a django-fsm FSMField to a StatechartField."
 
     def add_arguments(self, parser: Any) -> None:
+        """Declare the model, field names, dry-run, batch, map and chart flags."""
         parser.add_argument("model", metavar="app.Model")
         parser.add_argument(
             "--field", default="state", help="the FSMField (state)"
@@ -82,6 +85,9 @@ class Command(BaseCommand):  # type: ignore[misc]  # BaseCommand is untyped (Any
         )
 
     def handle(self, *args: Any, **opts: Any) -> None:
+        """Extract the chart, then dry-run print it or migrate the rows in
+        batches.
+        """
         from django.core.exceptions import FieldDoesNotExist
         from django.db import DatabaseError
 

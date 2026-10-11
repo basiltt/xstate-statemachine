@@ -148,6 +148,9 @@ class _OneKeyScanner(DueTimerScanner):
         self._key = key
 
     def due_keys(self, now: Optional[float] = None) -> List[Any]:
+        """Return ``[(key, earliest)]`` if the stored record's earliest
+        deadline is due (within skew tolerance), else ``[]``.
+        """
         at = (self.now() if now is None else now) + self.skew_tolerance_s
         rec = self.store.load(self._key)
         if rec is None or not rec.deadlines:
@@ -210,6 +213,9 @@ def outbox_relay_task(
         return cast("asyncio.AbstractEventLoop", loop)
 
     def relay_once() -> int:
+        """Relay one outbox batch (on a shared event loop for an async broker);
+        returns the count.
+        """
         if not inspect.iscoroutinefunction(getattr(broker, "publish", None)):
             return relay.relay_once_sync()
         with lock:  # a loop is not re-entrant across worker threads

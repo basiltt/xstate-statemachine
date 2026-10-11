@@ -42,6 +42,10 @@ class StatechartSnapshot(models.Model):  # type: ignore[misc]  # Model is untype
     updated_at = models.FloatField()
 
     class Meta:
+        """Django options for the snapshot table (app label, indexes,
+        constraints).
+        """
+
         app_label = "xsm_django"
         constraints = [
             models.UniqueConstraint(
@@ -65,6 +69,10 @@ class StatechartDeadline(models.Model):  # type: ignore[misc]  # Model is untype
     event_type = models.CharField(max_length=600)
 
     class Meta:
+        """Django options for the deadline table (app label, indexes,
+        constraints).
+        """
+
         app_label = "xsm_django"
         indexes = [
             models.Index(
@@ -86,6 +94,10 @@ class StatechartLock(models.Model):  # type: ignore[misc]  # Model is untyped (A
     expires_at = models.FloatField()
 
     class Meta:
+        """Django options for the lease table (app label, indexes,
+        constraints).
+        """
+
         app_label = "xsm_django"
         constraints = [
             models.UniqueConstraint(
@@ -128,6 +140,10 @@ class TransitionLog(models.Model):  # type: ignore[misc]  # Model is untyped (An
     created = models.DateTimeField(auto_now_add=True)
 
     class Meta:
+        """Django options for the audit log table (app label, indexes,
+        constraints).
+        """
+
         app_label = "xsm_django"
         ordering = ["content_type", "object_id", "seq"]
         constraints = [
@@ -158,6 +174,10 @@ class OutboxMessage(models.Model):  # type: ignore[misc]  # Model is untyped (An
     sent_at = models.FloatField(null=True, blank=True)
 
     class Meta:
+        """Django options for the outbox table (app label, indexes,
+        constraints).
+        """
+
         app_label = "xsm_django"
         indexes = [
             models.Index(fields=["sent_at", "seq"], name="xsm_outbox_pending")
@@ -174,6 +194,10 @@ class IdempotencyRecord(models.Model):  # type: ignore[misc]  # Model is untyped
     expires_at = models.FloatField(null=True, blank=True)
 
     class Meta:
+        """Django options for the inbox table (app label, indexes,
+        constraints).
+        """
+
         app_label = "xsm_django"
         constraints = [
             models.UniqueConstraint(

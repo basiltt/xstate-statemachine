@@ -76,6 +76,8 @@ def problem_response(status: int, title: str, **ext: Any) -> Response:
 # 📐 Response serializers (for the schema; the views build dicts)
 # -----------------------------------------------------------------------------
 class StateSerializer(serializers.Serializer):  # type: ignore[misc]  # Serializer is untyped (Any base)
+    """Response schema for a row's current state."""
+
     state = serializers.JSONField()
     state_ids = serializers.ListField(child=serializers.CharField())
     available_events = serializers.ListField(child=serializers.CharField())
@@ -84,6 +86,8 @@ class StateSerializer(serializers.Serializer):  # type: ignore[misc]  # Serializ
 
 
 class ReceiptSerializer(StateSerializer):
+    """Response schema for a send: the state plus the receipt flags."""
+
     changed = serializers.BooleanField()
     denied = serializers.BooleanField()
     deferred = serializers.BooleanField()
@@ -92,6 +96,8 @@ class ReceiptSerializer(StateSerializer):
 
 
 class ProblemSerializer(serializers.Serializer):  # type: ignore[misc]  # Serializer is untyped (Any base)
+    """Response schema for an RFC 7807 problem body."""
+
     type = serializers.CharField()
     title = serializers.CharField()
     status = serializers.IntegerField()
@@ -100,15 +106,21 @@ class ProblemSerializer(serializers.Serializer):  # type: ignore[misc]  # Serial
 
 
 class EventsSerializer(serializers.Serializer):  # type: ignore[misc]  # Serializer is untyped (Any base)
+    """Response schema for the available and declared event lists."""
+
     available = serializers.ListField(child=serializers.CharField())
     declared = serializers.ListField(child=serializers.CharField())
 
 
 class SendSerializer(serializers.Serializer):  # type: ignore[misc]  # Serializer is untyped (Any base)
+    """Request schema for the generic send route (the event ``type``)."""
+
     type = serializers.CharField()
 
 
 class HistorySerializer(serializers.Serializer):  # type: ignore[misc]  # Serializer is untyped (Any base)
+    """Response schema for one audit-history entry."""
+
     seq = serializers.IntegerField()
     event = serializers.CharField()
     disposition = serializers.CharField()
@@ -433,6 +445,7 @@ class StatechartViewSetMixin:
     def xsm_send_any(
         self, request: Any, *args: Any, **kwargs: Any
     ) -> Response:
+        """Send the event named by the body's ``type`` after validating it."""
         data = request.data
         etype = data.get("type") if isinstance(data, dict) else None
         if not isinstance(etype, str) or not etype:
@@ -449,6 +462,7 @@ class StatechartViewSetMixin:
         detail=True, methods=["get"], url_path="events", url_name="xsm-events"
     )
     def xsm_events(self, request: Any, *args: Any, **kwargs: Any) -> Response:
+        """List the events the user may send now and all declared events."""
         obj = self._xsm_object(None)
         return Response(
             {
@@ -465,6 +479,7 @@ class StatechartViewSetMixin:
         url_name="xsm-history",
     )
     def xsm_history(self, request: Any, *args: Any, **kwargs: Any) -> Response:
+        """Return the row's audit history, permission-checked and paginated."""
         obj = self._xsm_object(None)
         for perm_cls in self.xsm_history_permission_classes:
             perm = perm_cls()

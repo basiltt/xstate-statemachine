@@ -21,18 +21,24 @@ __all__ = ["Command"]
 
 
 class Command(BaseCommand):  # type: ignore[misc]  # BaseCommand is untyped (Any base)
+    """Management command recomputing denormalised state columns."""
+
     help = (
         "Recompute a statechart model's denormalised state columns from "
         "its snapshots (batched; --dry-run counts only)."
     )
 
     def add_arguments(self, parser: Any) -> None:
+        """Declare the model, ``--batch``, ``--database`` and ``--dry-run``."""
         parser.add_argument("model", metavar="app.Model")
         parser.add_argument("--batch", type=int, default=1000)
         parser.add_argument("--database", default="default")
         parser.add_argument("--dry-run", action="store_true")
 
     def handle(self, *args: Any, **opts: Any) -> None:
+        """Refresh (or count with ``--dry-run``) the columns and report the
+        total.
+        """
         from ...migration_helpers import refresh_statechart_columns
 
         if opts["batch"] < 1:

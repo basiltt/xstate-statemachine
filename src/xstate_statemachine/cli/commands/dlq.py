@@ -129,6 +129,14 @@ def _dispatcher(
         machines[str(m.id)] = m
 
     def machine_for(envelope_type: str) -> Any:
+        """Pick the machine for an envelope type.
+
+        Args:
+            envelope_type: Dotted ``xsm.<id>...`` type string.
+
+        Returns:
+            The matching machine, the only loaded machine, or None.
+        """
         parts = envelope_type.split(".")
         if len(parts) >= 3 and parts[0] == "xsm" and parts[1] in machines:
             return machines[parts[1]]

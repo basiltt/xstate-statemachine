@@ -381,6 +381,17 @@ def circuit_breaker(
     """
 
     def deco(fn: Callable[..., Any]) -> Callable[..., Any]:
+        """Wrap *fn* in a new `CircuitBreaker`.
+
+        Args:
+            fn: The function or coroutine function to guard.
+
+        Returns:
+            A wrapper (async if *fn* is) exposing the breaker as ``.breaker``.
+
+        Raises:
+            TypeError: If *fn* is a generator function.
+        """
         # 📝 #265 battle: a generator's body runs AFTER the wrapper has
         #    returned, so the breaker would record SUCCESS before any work
         #    happened and never see the failures. Refuse loudly.

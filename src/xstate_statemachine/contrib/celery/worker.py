@@ -217,8 +217,15 @@ def statechart_task(
     from ...persistence import persisted
 
     def decorate(fn: Callable[..., Any]) -> Any:
+        """Wrap ``fn`` as a Celery task that loads the keyed machine under the
+        store and lock.
+        """
+
         @functools.wraps(fn)
         def run(key: str, *args: Any, **kwargs: Any) -> Any:
+            """Load the keyed machine instance via ``persisted`` and call
+            ``fn`` with it.
+            """
             machine = (
                 machine_for_key(key)
                 if callable(machine_for_key)

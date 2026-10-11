@@ -201,6 +201,16 @@ class _GuardNames:
         self.used: Dict[str, Any] = {}
 
     def name(self, obj: Any, fallback: str) -> str:
+        """Return a unique guard name for *obj*, stable across repeat calls.
+
+        Args:
+            obj: The guard callable or string.
+            fallback: Name source used when *obj* is a lambda or generic.
+
+        Returns:
+            A name unused by any other guard, suffixed with a counter on
+            collision.
+        """
         ident = obj if isinstance(obj, str) else id(obj)
         if ident in self.by_obj:
             return self.by_obj[ident]
@@ -481,6 +491,16 @@ class _Job:
             return _NO_VALUE
 
     def migrate(self, mgr: Any, row: Any) -> int:
+        """Convert one legacy row into a statechart snapshot.
+
+        Args:
+            mgr: The manager (queryset source) used for the guarded update.
+            row: The legacy row to convert.
+
+        Returns:
+            The number of rows updated: 0 if the value is unmapped, the
+            context failed, or a concurrent writer got there first; else 1.
+        """
         from .fields import sibling_values
 
         raw = row.__dict__.get(self.fsm_field)

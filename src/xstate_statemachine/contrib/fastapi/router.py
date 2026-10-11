@@ -94,7 +94,10 @@ def _problem_route_class(
     max_body_bytes: int, body_timeout_s: float = DEFAULT_BODY_TIMEOUT_S
 ) -> type:
     class StatechartRoute(APIRoute):
+        """An `APIRoute` that answers request failures as problems."""
+
         def get_route_handler(self) -> Callable[[Request], Any]:
+            """Wrap the route handler so request failures become problem responses."""
             handler = super().get_route_handler()
 
             async def route(request: Request) -> Response:
@@ -212,6 +215,16 @@ def get_interpreter(
     async def interpreter_dependency(
         request: Request, principal: Optional[str] = Depends(actor_dep)
     ) -> Any:
+        """Authorize the request and yield a started interpreter for its key.
+
+        Args:
+            request: The incoming request.
+            principal: The caller identity from the actor dependency.
+
+        Returns:
+            An async generator yielding the interpreter; state is saved
+            when the handler finishes without error.
+        """
         k = str(key_of(request))
         await registry.authorize(request, name, k, None)
         # 🔥 battle #276: the dependency never looked at `Idempotency-Key`
@@ -344,6 +357,7 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
         )
 
     async def get_state(request: Request, key: str = KeyPath) -> Response:
+        """``GET /{id}`` -- the instance's state."""
         try:
             await _guard_read(request, key)
             body = await registry.peek(name, key)
@@ -358,6 +372,7 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
         body: Any = _body(),
         principal: Optional[str] = Actor,
     ) -> Response:
+        """``POST /{id}/send`` -- send the body's event; returns the receipt."""
         etype = str(body.type)
         if etype in gated:
             return problem(403, "Use this event's dedicated route")
@@ -376,6 +391,7 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
     send.__annotations__["body"] = body_type
 
     async def list_events(request: Request, key: str = KeyPath) -> Response:
+        """``GET /{id}/events`` -- available and declared events."""
         try:
             await _guard_read(request, key)
             available = (await registry.peek(name, key))["available_events"]
@@ -393,6 +409,7 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
         return JSONResponse({"available": available, "declared": declared})
 
     async def diagram(request: Request, key: str = KeyPath) -> Response:
+        """``GET /{id}/diagram.mmd`` -- the machine as a Mermaid diagram."""
         try:
             await registry.authorize(request, name, key, None)
         except Exception as exc:  # noqa: BLE001
@@ -403,6 +420,7 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
         # 🔥 battle #278 (parity): with create_if_missing=False `/stream`
         #    opened an endless SSE for a key that does not exist while
         #    every other route answered 404.
+        """``GET /{id}/stream`` -- SSE: snapshot, then each transition."""
         try:
             await _guard_read(request, key)
         except Exception as exc:  # noqa: BLE001 -- mapped, never leaked
@@ -478,6 +496,7 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
         async def ws_guarded(websocket: Any) -> None:
             # 🔥 battle #278 (parity): a missing key must not open a socket
             #    (a send would CREATE the instance). Refused like a denied.
+            """WebSocket route that refuses (1008) a key with no stored instance."""
             key = str(websocket.path_params[key_param])
             if not await registry.exists(name, key):
                 await websocket.close(code=1008)
@@ -506,6 +525,7 @@ def _event_handler(
             body: Optional[model] = Body(None),  # type: ignore[valid-type]
             principal: Optional[str] = actor,
         ) -> Response:
+            """``POST /{id}/events/<event>`` -- send this event; body optional."""
             payload: Dict[str, Any] = (
                 {}
                 if body is None

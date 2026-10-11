@@ -133,15 +133,29 @@ class TransitionLogInline(GenericTabularInline):  # type: ignore[misc]  # Generi
         return super().get_queryset(request).select_related("actor")
 
     def get_formset(self, request: Any, obj: Any = None, **kw: Any) -> Any:
+        """Return the inline formset, capped to ``max_rows`` rows.
+
+        Args:
+            request: The current admin request.
+            obj: The parent object being edited, if any.
+            **kw: Passed through to ``InlineModelAdmin.get_formset``.
+
+        Returns:
+            The base formset class, or a subclass that slices its queryset to
+            ``max_rows`` when a limit is configured.
+        """
         formset = super().get_formset(request, obj, **kw)
         limit = self.max_rows
         if limit is None:
             return formset
 
         class Capped(formset):  # type: ignore[misc, valid-type]
+            """Formset subclass whose queryset is sliced to ``max_rows``."""
+
             # 📝 The generic formset FILTERS the queryset it is given, so
             #    the slice must happen here, after that filter.
             def get_queryset(self) -> Any:
+                """Return the base queryset sliced once to ``max_rows``."""
                 if not hasattr(self, "_xsm_capped"):
                     self._xsm_capped = super().get_queryset()[:limit]
                 return self._xsm_capped
@@ -153,6 +167,7 @@ class TransitionLogInline(GenericTabularInline):  # type: ignore[misc]  # Generi
         return False
 
     def has_view_permission(self, request: Any, obj: Any = None) -> bool:
+        """Allow viewing history to anyone who may view or change the parent."""
         # 🔥 #280 battle: the default asks for ``xsm_django.view_
         #    transitionlog`` -- a permission nobody grants -- so every
         #    non-superuser saw NO history. Whoever may view the row may
@@ -195,6 +210,15 @@ class TransitionLogAdmin(admin.ModelAdmin):  # type: ignore[misc]  # ModelAdmin 
 
     @admin.display(description=_("payload"))  # type: ignore[untyped-decorator]  # admin.display stub is untyped
     def short_payload(self, obj: Any) -> str:
+        """Render the event payload as JSON, truncated for the changelist.
+
+        Args:
+            obj: The `TransitionLog` row.
+
+        Returns:
+            The sorted-key JSON text, cut to ``payload_preview`` characters
+            with a trailing ellipsis when longer.
+        """
         import json
 
         text = json.dumps(obj.payload, default=str, sort_keys=True)
@@ -239,6 +263,15 @@ class StateListFilter(admin.SimpleListFilter):  # type: ignore[misc]  # SimpleLi
     parameter_name = "xsm_state"
 
     def lookups(self, request: Any, model_admin: Any) -> List[Tuple[str, str]]:
+        """Offer one filter choice per state of the model's chart.
+
+        Args:
+            request: The current admin request.
+            model_admin: The admin whose model supplies the chart.
+
+        Returns:
+            ``(state id, label)`` pairs for every node except the root.
+        """
         from ...validation import walk
 
         machine = model_admin.model().statechart_machine_node()
@@ -249,6 +282,16 @@ class StateListFilter(admin.SimpleListFilter):  # type: ignore[misc]  # SimpleLi
         ]
 
     def queryset(self, request: Any, queryset: Any) -> Any:
+        """Narrow the changelist to rows in the chosen state.
+
+        Args:
+            request: The current admin request.
+            queryset: The changelist queryset (a `StatechartQuerySet`).
+
+        Returns:
+            The queryset filtered with ``in_state`` or unchanged when no state
+            is selected.
+        """
         value = self.value()
         if not value:
             return queryset
@@ -278,6 +321,7 @@ class StatechartAdminMixin:
 
     # -- wiring ---------------------------------------------------------------------
     def get_inlines(self, request: Any, obj: Any) -> List[Any]:
+        """Append the audit-history inline on existing objects when enabled."""
         inlines = list(super().get_inlines(request, obj))  # type: ignore[misc]
         if self.xsm_history_inline and obj is not None:
             if TransitionLogInline not in inlines:
@@ -285,21 +329,33 @@ class StatechartAdminMixin:
         return inlines
 
     def get_readonly_fields(self, request: Any, obj: Any = None) -> Any:
+        """Add the read-only ``statechart_state_display`` column."""
         base = tuple(super().get_readonly_fields(request, obj))  # type: ignore[misc]
         return base + ("statechart_state_display",)
 
     def get_list_display(self, request: Any) -> Any:
+        """Add the state column to the changelist unless already listed."""
         base = tuple(super().get_list_display(request))  # type: ignore[misc]
         if "statechart_state_display" not in base:
             base = base + ("statechart_state_display",)
         return base
 
     def get_list_filter(self, request: Any) -> Any:
+        """Append the `StateListFilter` to the changelist filters."""
         base = tuple(super().get_list_filter(request))  # type: ignore[misc]
         return base + (StateListFilter,)
 
     @admin.display(description=_("state"))  # type: ignore[untyped-decorator]  # admin.display stub is untyped
     def statechart_state_display(self, obj: Any) -> Any:
+        """Render the active state as a badge linking to the diagram view.
+
+        Args:
+            obj: The model instance, or ``None``.
+
+        Returns:
+            A ``-`` placeholder for unsaved objects, otherwise safe HTML with
+            the state labels and a link to the diagram page.
+        """
         if obj is None or obj.pk is None:
             return "-"
         machine = obj.statechart_machine_node()
@@ -338,6 +394,7 @@ class StatechartAdminMixin:
     def render_change_form(
         self, request: Any, context: Dict[str, Any], *args: Any, **kw: Any
     ) -> Any:
+        """Inject the transition buttons and URLs into the change-form context."""
         obj = kw.get("obj") or (args[2] if len(args) > 2 else None)
         context["xsm_buttons"] = self.xsm_buttons(request, obj)
         context["xsm_event_field"] = EVENT_FIELD
@@ -350,6 +407,7 @@ class StatechartAdminMixin:
 
     # -- urls / views -----------------------------------------------------------------
     def get_urls(self) -> List[Any]:
+        """Add the transition and diagram views ahead of the stock admin URLs."""
         info = self.model._meta.app_label, self.model._meta.model_name
         wrap = self.admin_site.admin_view  # type: ignore[attr-defined]
         return [
@@ -497,6 +555,16 @@ class StatechartAdminMixin:
     def get_actions(
         self, request: Any, action_location: Any = None
     ) -> Dict[str, Any]:
+        """Add one bulk action per declared event for users who may change.
+
+        Args:
+            request: The current admin request.
+            action_location: Django 6.1+ action location, forwarded if given.
+
+        Returns:
+            The stock admin actions plus ``xsm_<EVENT>`` actions, unchanged
+            when bulk actions are off or the user lacks change permission.
+        """
         # 📝 Django 6.1 passes ``action_location`` (and warns when an
         #    override does not accept it); older releases never do.
         if action_location is None:
@@ -521,6 +589,18 @@ class StatechartAdminMixin:
 
     def _bulk_action(self, event: str, label: str) -> Any:
         def action(modeladmin: Any, request: Any, queryset: Any) -> None:
+            """Send the event to every selected row and report the outcome.
+
+            Args:
+                modeladmin: The admin running the action.
+                request: The current admin request.
+                queryset: The selected rows.
+
+            Rows the user may not send to, refused sends and rows deleted mid-run
+            count as denied; retryable store errors count as failed. A summary
+            message is posted with an error level if any failed, a warning level
+            if any were denied, otherwise success.
+            """
             changed = denied = failed = 0
             # 📝 ``iterator()``: a 10k-row selection is streamed, not
             #    cached on the queryset for the life of the request.

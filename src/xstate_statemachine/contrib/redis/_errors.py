@@ -57,6 +57,15 @@ def typed(exc: redis.RedisError, backend: str = "RedisStore") -> StoreError:
 
 
 def redis_errors_typed(fn: _F) -> _F:
+    """Wrap a method so `redis.RedisError` becomes the typed xsm error.
+
+    Args:
+        fn: The method to wrap.
+
+    Returns:
+        The wrapped method.
+    """
+
     @functools.wraps(fn)
     def wrapper(self: Any, *a: Any, **kw: Any) -> Any:
         try:
@@ -68,6 +77,15 @@ def redis_errors_typed(fn: _F) -> _F:
 
 
 def aredis_errors_typed(fn: _F) -> _F:
+    """Wrap a coroutine method so `redis.RedisError` becomes the typed error.
+
+    Args:
+        fn: The coroutine method to wrap.
+
+    Returns:
+        The wrapped coroutine method.
+    """
+
     @functools.wraps(fn)
     async def wrapper(self: Any, *a: Any, **kw: Any) -> Any:
         try:

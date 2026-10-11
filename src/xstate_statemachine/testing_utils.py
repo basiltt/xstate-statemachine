@@ -162,6 +162,15 @@ def stub_logic(
     results: Mapping[str, Any] = service_results or {}
 
     def mk_action(name: str) -> Callable[..., Any]:
+        """Build a stub action that records *name* when it runs.
+
+        Args:
+            name: The action name to append to the record.
+
+        Returns:
+            The stub action callable.
+        """
+
         def _action(i: Any, c: Any, e: Any, ad: Any) -> None:
             record.append(name)
 
@@ -169,6 +178,15 @@ def stub_logic(
         return _action
 
     def mk_guard(name: str) -> Callable[..., Any]:
+        """Build a stub guard looking *name* up in the guard table.
+
+        Args:
+            name: The guard name.
+
+        Returns:
+            A guard returning the table entry, or the default verdict.
+        """
+
         def _guard(c: Any, e: Any) -> bool:
             return bool(guard_table.get(name, default_guard))
 
@@ -176,6 +194,15 @@ def stub_logic(
         return _guard
 
     def mk_service(name: str) -> Callable[..., Any]:
+        """Build a stub service returning the canned result for *name*.
+
+        Args:
+            name: The service name.
+
+        Returns:
+            A service returning ``service_results[name]`` or ``None``.
+        """
+
         def _service(i: Any, c: Any, e: Any) -> Any:
             return results.get(name)
 

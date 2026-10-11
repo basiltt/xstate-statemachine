@@ -81,6 +81,7 @@ class _SiblingTransform(Transform):  # type: ignore[misc]  # Transform is untype
     sibling: str = ""
 
     def as_sql(self, compiler: Any, connection: Any) -> Any:
+        """Compile to the sibling denormalised column instead of the JSON."""
         field = self.lhs.output_field
         model = field.model
         target = model._meta.get_field(f"{field.name}_{self.sibling}")
@@ -138,6 +139,9 @@ class StatechartField(models.JSONField):  # type: ignore[misc]  # JSONField is u
 
     # -- migrations -------------------------------------------------------------
     def deconstruct(self) -> Any:
+        """Serialise the field for migrations, keeping the explicit null/blank
+        values.
+        """
         name, path, args, kwargs = super().deconstruct()
         path = "xstate_statemachine.contrib.django.fields.StatechartField"
         # 📝 Our defaults are null/blank=True, Django's are False: the base
@@ -199,6 +203,7 @@ class StatechartField(models.JSONField):  # type: ignore[misc]  # JSONField is u
     def contribute_to_class(
         self, cls: Any, name: str, *args: Any, **kwargs: Any
     ) -> None:
+        """Attach the field and, when denormalising, its sibling columns."""
         super().contribute_to_class(cls, name, *args, **kwargs)
         if not self.denormalize or cls.__module__ == "__fake__":
             # 📝 Historical (migration) models list the siblings
@@ -211,6 +216,9 @@ class StatechartField(models.JSONField):  # type: ignore[misc]  # JSONField is u
 
     # -- lookups ------------------------------------------------------------------
     def get_transform(self, name: str) -> Any:
+        """Return the sibling-column transform for known names, else the
+        default.
+        """
         if self.denormalize and name in _TRANSFORMS:
             return _TRANSFORMS[name]
         return super().get_transform(name)

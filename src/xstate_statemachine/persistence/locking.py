@@ -422,6 +422,28 @@ class OptimisticLock:
         verify_machine_hash: bool = True,
         expected_machine_hash: Optional[str] = None,
     ) -> T:
+        """Run *fn* in a load, act, save cycle, retrying on `ConflictError`.
+
+        Args:
+            store: The state store.
+            key: The snapshot key.
+            machine: The machine definition.
+            fn: Called with the restored interpreter.
+            clock: Optional clock for the interpreter.
+            plugins: Plugins to attach.
+            create_if_missing: Start a fresh machine when no snapshot exists.
+            migrator: Optional snapshot migrator.
+            on_version_mismatch: Policy when machine versions differ.
+            restart_timers: Timer restart policy on restore.
+            verify_machine_hash: Check the stored machine hash.
+            expected_machine_hash: Hash to expect instead of the machine's.
+
+        Returns:
+            Whatever *fn* returned.
+
+        Raises:
+            ConflictError: When conflicts persist beyond the retry budget.
+        """
         attempt = 0
         while True:
             attempt += 1

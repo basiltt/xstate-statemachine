@@ -34,6 +34,7 @@ class _ProbesMixin:
         are not draining; else a 503 problem."""
 
         async def ready(request: Request) -> Response:
+            """``GET`` ready path: 200 if started, not draining, store healthy; else 503."""
             if not self.started or self.draining:
                 return problem(503, "Not Ready")
             probe = getattr(self._astore, "health", None)

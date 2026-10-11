@@ -84,6 +84,8 @@ class HTTPProblemError(XStateMachineError):
 
 
 class BadRequestError(HTTPProblemError):
+    """The request is malformed (HTTP 400)."""
+
     pass
 
 
@@ -123,16 +125,22 @@ class MethodNotAllowedError(HTTPProblemError):
 
 
 class PayloadTooLargeError(HTTPProblemError):
+    """The request body exceeds the size limit (HTTP 413)."""
+
     status = 413
     title = "Request body too large"
 
 
 class UnsupportedMediaTypeError(HTTPProblemError):
+    """The request body is not ``application/json`` (HTTP 415)."""
+
     status = 415
     title = "Request body must be application/json"
 
 
 class UnprocessableBodyError(HTTPProblemError):
+    """The request body is not a JSON object (HTTP 422)."""
+
     status = 422
     title = "Request body must be a JSON object"
 

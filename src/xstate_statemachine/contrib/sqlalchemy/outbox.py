@@ -139,6 +139,9 @@ class SQLAlchemyOutboxStore:
             )
 
     def pending(self, *, limit: int = 100) -> List[OutboxRecord]:
+        """`Outbox.pending` on SQLAlchemy: unsent rows in seq order, up to
+        *limit*.
+        """
         t = self.t
         with self.store._tx() as conn:
             rows = conn.execute(
@@ -223,6 +226,9 @@ class SQLAlchemyOutboxStore:
             )
 
     def mark_sent(self, seqs: List[int]) -> int:
+        """`Outbox.mark_sent` on SQLAlchemy: stamp sent_at on still-unsent
+        seqs.
+        """
         if not seqs:
             return 0
         t = self.t
@@ -238,6 +244,7 @@ class SQLAlchemyOutboxStore:
             )
 
     def count(self, *, pending_only: bool = False) -> int:
+        """`Outbox.count` on SQLAlchemy: all rows, or only unsent ones."""
         from sqlalchemy import func
 
         t = self.t

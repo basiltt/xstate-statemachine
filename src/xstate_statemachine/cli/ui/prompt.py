@@ -33,6 +33,11 @@ class _Painter:
         self.out, self.drawn = out, 0
 
     def draw(self, lines: Sequence[str]) -> None:
+        """Redraw the block in place with *lines*.
+
+        Args:
+            lines: Lines that replace the previous block.
+        """
         self.out.write(_up(self.drawn))
         for line in lines:
             self.out.write(_CLEAR + line + "\n")
@@ -40,6 +45,7 @@ class _Painter:
         self.out.flush()
 
     def clear(self) -> None:
+        """Erase the previously drawn block and reset the line count."""
         self.out.write(_up(self.drawn))
         for _ in range(self.drawn):
             self.out.write(_CLEAR + "\n")
@@ -71,6 +77,11 @@ def select(
     label_w = max(visible_width(o[0]) for o in options)
 
     def lines() -> List[str]:
+        """Build the rows for the single-choice menu.
+
+        Returns:
+            Title and option lines for the current cursor.
+        """
         rows = [paint(title, "title", caps)]
         for i, (label, desc) in enumerate(options):
             active = i == cur
@@ -132,6 +143,11 @@ def multiselect(
     label_w = max(visible_width(o[0]) for o in options)
 
     def lines() -> List[str]:
+        """Build the rows for the multi-select menu.
+
+        Returns:
+            Title and option lines for the current cursor and selection.
+        """
         rows = [paint(title, "title", caps)]
         for i, (label, desc) in enumerate(options):
             active = i == cur
@@ -245,6 +261,7 @@ def text(
     buf = list(default)
 
     def draw() -> None:
+        """Redraw the question line with the current input buffer."""
         shown = "".join(buf)
         out.write(
             _CLEAR

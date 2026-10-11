@@ -320,6 +320,7 @@ class AsyncRedisStore:
 
     @aredis_errors_typed
     async def load(self, key: str) -> Optional[StoredSnapshot]:
+        """`StateStore.load` on Redis: HGETALL snapshot and deadlines, decode."""
         validate_key(key)
         await self._ensure_schema()
         h = await self.r.hgetall(self.k.snap(key))
@@ -347,6 +348,7 @@ class AsyncRedisStore:
         machine_version: str = "",
         deadlines: Sequence[Deadline] = (),
     ) -> int:
+        """`StateStore.save` on Redis: versioned write by one Lua script."""
         data, expected_version, machine_version, dls = _check_save_call(
             self._policy,
             key,
@@ -366,6 +368,9 @@ class AsyncRedisStore:
 
     @aredis_errors_typed
     async def delete(self, key: str) -> bool:
+        """`StateStore.delete` on Redis: Lua delete; True if a snapshot
+        existed.
+        """
         validate_key(key)
         await self._ensure_schema()
         res = await self._delete(keys=self._layout.save_keys(key), args=[key])
@@ -373,6 +378,14 @@ class AsyncRedisStore:
 
     @aredis_errors_typed
     async def forget(self, key: str) -> Dict[str, int]:
+        """Remove every Redis key held for *key*.
+
+        Args:
+            key: The snapshot key.
+
+        Returns:
+            Per-kind counts of what the forget script removed.
+        """
         validate_key(key)
         await self._ensure_schema()
         res = await self._forget(
@@ -384,6 +397,9 @@ class AsyncRedisStore:
     async def list_keys(
         self, *, prefix: str = "", limit: int = 1000
     ) -> List[str]:
+        """`StateStore.list_keys` on Redis: SSCAN the key set, sorted, valid
+        only.
+        """
         # 📝 Same policy as `BaseStore.list_keys`: negative limit refused,
         #    and a planted key `load()` would reject is never advertised.
         if limit < 0:
@@ -408,6 +424,7 @@ class AsyncRedisStore:
         return out[:limit]
 
     def lock(self, key: str, *, timeout: float = 10.0) -> Any:
+        """`StateStore.lock` on Redis: ``SET NX PX`` token lock, Lua release."""
         validate_key(key)
         if timeout < 0:
             raise ValueError("timeout must be >= 0")

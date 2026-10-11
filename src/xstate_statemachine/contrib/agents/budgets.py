@@ -53,6 +53,9 @@ class Budget:
     def coerce(
         cls, value: Union["Budget", Mapping[str, Any], None]
     ) -> "Budget":
+        """Return a ``Budget`` from a ``Budget``, a mapping of its fields, or
+        ``None`` (defaults).
+        """
         if value is None:
             return cls()
         if isinstance(value, Budget):
@@ -76,6 +79,9 @@ def budget_guards(
     """
 
     def under_tokens(ctx: Dict[str, Any], e: Any) -> bool:
+        """Guard: tokens spent so far are below ``max_tokens`` (always true
+        when unset).
+        """
         if max_tokens is None:
             return True
         spent = int(ctx.get("tokens_in", 0)) + int(ctx.get("tokens_out", 0))

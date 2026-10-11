@@ -97,6 +97,7 @@ class _BufferLog:
         self._first = first_seq
 
     def next_seq(self, machine_id: str) -> int:
+        """Return the next seq: after buffered records, else the table's first."""
         mine = [r for r in self.records if r.machine_id == machine_id]
         return (mine[-1].seq + 1) if mine else self._first(machine_id)
 
@@ -405,6 +406,9 @@ class StatechartMixin:
             t = tables.transitions
 
             def first(mid: str) -> int:
+                """Return ``MAX(seq) + 1`` for *mid* from the transitions
+                table.
+                """
                 from sqlalchemy import func, select
 
                 q = select(func.coalesce(func.max(t.c.seq), 0)).where(

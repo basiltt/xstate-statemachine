@@ -14,6 +14,10 @@
 # -----------------------------------------------------------------------------
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
+"""Defines the argparse parser for the ``xsm`` command line: commands,
+flags and help text.
+"""
+
 import argparse
 import logging
 import sys

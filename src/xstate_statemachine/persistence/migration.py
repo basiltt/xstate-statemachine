@@ -142,6 +142,7 @@ class SnapshotMigrator:
             raise ValueError("a migration step must change the version")
 
         def deco(fn: MigrationStep) -> MigrationStep:
+            """Register *fn* as the migration step and return it unchanged."""
             self._steps[(machine_id, str(from_version), str(to_version))] = fn
             return fn
 

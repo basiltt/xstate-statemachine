@@ -20,6 +20,10 @@
 # -----------------------------------------------------------------------------
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
+"""Entry point for the ``xsm`` CLI: parses arguments, loads machines and
+writes generated code.
+"""
+
 import argparse
 import ast
 import difflib

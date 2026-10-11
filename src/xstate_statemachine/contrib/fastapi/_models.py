@@ -67,6 +67,8 @@ class ReceiptModel(StateModel):
 
 
 class DeclaredEvent(BaseModel):
+    """One declared event type with its optional JSON schema."""
+
     type: str
     json_schema: Optional[Dict[str, Any]] = Field(None, alias="schema")
 

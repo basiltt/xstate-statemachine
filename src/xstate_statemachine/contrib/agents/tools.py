@@ -201,6 +201,9 @@ class _PendingTool:
     description: Optional[str]
 
     def build(self, default_timeout: float, default_side: bool) -> Tool:
+        """Build the ``Tool``, applying the default timeout and side-effect
+        flag where unset.
+        """
         name = self.name or self.fn.__name__
         timeout = (
             self.timeout_s if self.timeout_s is not None else (default_timeout)
@@ -303,6 +306,9 @@ class ToolRegistry:
         return self.tools[call.name].validate(call.arguments)
 
     def truncate(self, value: Any) -> str:
+        """Render a result as text, cut to ``max_output_chars`` with a
+        truncation marker.
+        """
         text = value if isinstance(value, str) else _to_text(value)
         limit = self.max_output_chars
         if len(text) <= limit:

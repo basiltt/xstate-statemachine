@@ -40,6 +40,9 @@ def _non_negative_int(text: str) -> int:
 
 
 def add_path_options(group: Any) -> None:
+    """Register the ``--xsm-full-paths`` and ``--xsm-max-paths`` pytest options
+    on ``group``.
+    """
     group.addoption(
         "--xsm-full-paths",
         action="store_true",

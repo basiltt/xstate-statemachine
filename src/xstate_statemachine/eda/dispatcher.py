@@ -94,6 +94,11 @@ class DispatchResult:
     outcomes: List[Tuple[str, str]] = field(default_factory=list)
 
     def add(self, other: "DispatchResult") -> None:
+        """Add *other*'s counters and outcomes into this result in place.
+
+        Args:
+            other: The result to merge in.
+        """
         self.processed += other.processed
         self.duplicates += other.duplicates
         self.dead_lettered += other.dead_lettered
@@ -188,6 +193,15 @@ class InboundDispatcher:
 
     # -- lookup ---------------------------------------------------------------
     def machine_for(self, envelope_type: str) -> Any:
+        """Look up the machine for an envelope type.
+
+        Args:
+            envelope_type: The envelope ``type`` being dispatched.
+
+        Returns:
+            The machine from the mapping or callable, or ``None`` if the
+            mapping has no entry or the callable raises `KeyError`.
+        """
         m = self._machine_for_type
         try:
             if isinstance(m, dict):
@@ -198,6 +212,14 @@ class InboundDispatcher:
 
     # -- attempts -------------------------------------------------------------
     def attempts_of(self, envelope: Envelope) -> int:
+        """Return the delivery attempt count for an envelope.
+
+        Args:
+            envelope: The envelope being dispatched.
+
+        Returns:
+            The larger of the envelope's own attempt and the locally counted one.
+        """
         with self._lock:
             local = self._attempts.get(envelope.id, 0)
         return max(envelope.attempt, local)
@@ -389,6 +411,17 @@ class InboundDispatcher:
             )
 
         def act(interp: Any) -> Any:
+            """Send the event with ``wait=True``; raise on a failed receipt.
+
+            Args:
+                interp: The interpreter handling the envelope.
+
+            Returns:
+                The receipt from the send.
+
+            Raises:
+                ProcessingFailedError: If the receipt carries a non-duplicate error.
+            """
             interp._xsm_cause = env
             receipt = interp.send(event, wait=True)
             err = getattr(receipt, "error", None)

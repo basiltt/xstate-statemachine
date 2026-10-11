@@ -20,10 +20,12 @@ class StatechartEventPermission(BasePermission):  # type: ignore[misc]  # BasePe
     message = "You may not send this event to this object now."
 
     def has_permission(self, request: Any, view: Any) -> bool:
+        """Require an authenticated user."""
         user = getattr(request, "user", None)
         return bool(user is not None and user.is_authenticated)
 
     def has_object_permission(self, request: Any, view: Any, obj: Any) -> bool:
+        """Reads pass; a send must pass ``has_event_permission``."""
         event = getattr(view, "xsm_event", None)
         if event is None:
             return True
@@ -35,6 +37,7 @@ class StatechartHistoryPermission(BasePermission):  # type: ignore[misc]  # Base
     carries actors and reasons -- a separate grant from sending)."""
 
     def has_object_permission(self, request: Any, view: Any, obj: Any) -> bool:
+        """Require the model's ``view`` permission."""
         opts = obj._meta
         return bool(
             request.user.has_perm(f"{opts.app_label}.view_{opts.model_name}")

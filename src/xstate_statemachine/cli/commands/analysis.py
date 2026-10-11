@@ -67,6 +67,14 @@ class Facts:
         )
 
     def state_count(self, *, all_levels: bool = False) -> int:
+        """Count the states of the machine.
+
+        Args:
+            all_levels: Count nested states too, not only top-level ones.
+
+        Returns:
+            The number of states.
+        """
         if self.machine is None:
             return (
                 len(self.config.get("states", {}))
@@ -122,6 +130,11 @@ def _unreachable(machine: MachineNode[Any]) -> List[str]:
     reachable: Set[str] = set()
 
     def enter(node: StateNode[Any]) -> None:
+        """Mark *node* reachable, then follow its default entry path.
+
+        Args:
+            node: State being entered.
+        """
         if node.id in reachable:
             return
         reachable.add(node.id)
@@ -139,6 +152,11 @@ def _unreachable(machine: MachineNode[Any]) -> List[str]:
         #    every sibling region of a parallel ancestor. Only the target
         #    itself used to be marked, so `xsm inspect` / `validate` called
         #    `m.a` "unreachable" while the engine sat in `m.a.b.leaf`.
+        """Mark a transition target and the ancestors entered with it.
+
+        Args:
+            node: Target state of a transition or history node.
+        """
         enter(node)
         if node.type == "history":
             parent = node.parent

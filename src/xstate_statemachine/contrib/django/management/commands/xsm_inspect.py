@@ -13,9 +13,14 @@ from ._cli_command import CLICommand
 
 
 class Command(CLICommand):
+    """Management command printing a model's chart report."""
+
     help = "Show a statechart model's state tree, events, logic, policies."
 
     def add_cli_arguments(self, parser: Any) -> None:
+        """Add the optional ``pk``, ``--json``, ``--no-events``,
+        ``--database``.
+        """
         parser.add_argument("pk", nargs="?", default=None)
         parser.add_argument("--json", action="store_true", dest="as_json")
         parser.add_argument("--no-events", action="store_true")
@@ -31,6 +36,9 @@ class Command(CLICommand):
         )
 
     def handle(self, *args: Any, **options: Any) -> None:
+        """Run the chart report, then print the row's state and versions if
+        *pk*.
+        """
         from ._resolve import database, field_name, get_row, model_from_label
 
         pk = options.get("pk")

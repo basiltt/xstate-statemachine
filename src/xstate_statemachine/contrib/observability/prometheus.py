@@ -77,6 +77,9 @@ class _QueueDepthCollector:
         )
 
     def collect(self) -> Iterator[Any]:
+        """Yield the running-interpreters gauge, polled from live interpreters
+        at scrape time.
+        """
         fam = self._family()
         act = self._active_family()
         totals: Dict[str, int] = {}
@@ -225,6 +228,7 @@ class PrometheusPlugin(PluginBase[Any]):
 
     # -- lifecycle --------------------------------------------------------
     def on_interpreter_start(self, interpreter: Any) -> None:
+        """Register the interpreter with the queue-depth collector."""
         # the collector polls `status` at scrape time (see header)
         qd = self.m["queue_depth"]
         with qd._lock:
@@ -262,6 +266,9 @@ class PrometheusPlugin(PluginBase[Any]):
     def on_event_processed(
         self, interpreter: Any, event: Any, receipt: Any
     ) -> None:
+        """Record the event's outcome and duration metrics; drop cancelled-
+        service state.
+        """
         key = id(interpreter)
         self._drop_cancelled_services(interpreter)
         started = self._started.pop(key, None)
@@ -303,6 +310,7 @@ class PrometheusPlugin(PluginBase[Any]):
         to_states: Any,
         transition: Any,
     ) -> None:
+        """Count the transition, labelled by source and target state."""
         target = getattr(transition, "resolved_target", None)
         src = transition.source.id
         self.m["transitions"].labels(
@@ -346,6 +354,9 @@ class PrometheusPlugin(PluginBase[Any]):
 
     # -- services ---------------------------------------------------------
     def on_service_start(self, interpreter: Any, invocation: Any) -> None:
+        """Remember the service's start time and owning state for duration
+        metrics.
+        """
         owner = str(getattr(getattr(invocation, "source", None), "id", ""))
         with self._lock:
             self._services[(id(interpreter), str(invocation.id))] = (

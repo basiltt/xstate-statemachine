@@ -15,9 +15,14 @@ from ._resolve import database, field_name, model_from_label
 
 
 class Command(BaseCommand):  # type: ignore[misc]  # BaseCommand is untyped (Any base)
+    """Management command listing snapshot rows and their machine versions."""
+
     help = "List statechart rows and their machine versions (--stale)."
 
     def add_arguments(self, parser: Any) -> None:
+        """Declare the model, ``--stale``, ``--json``, ``--limit``,
+        ``--database``.
+        """
         parser.add_argument("model", metavar="app.Model")
         parser.add_argument("--stale", action="store_true")
         parser.add_argument("--json", action="store_true", dest="as_json")
@@ -25,6 +30,7 @@ class Command(BaseCommand):  # type: ignore[misc]  # BaseCommand is untyped (Any
         parser.add_argument("--database", default="default")
 
     def handle(self, *args: Any, **options: Any) -> None:
+        """List rows (only stale ones with ``--stale``) as text or JSON."""
         from django.core.management.base import CommandError
 
         if options["limit"] < 1:

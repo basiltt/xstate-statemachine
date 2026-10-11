@@ -88,6 +88,17 @@ def _prefix_clause(col: Any, prefix: str) -> Any:
 
 
 def load_raw(conn: Any, t: XsmTables, key: str) -> Optional[RawRecord]:
+    """Read a snapshot row and its deadlines.
+
+    Args:
+        conn: Open connection.
+        t: Table set.
+        key: Snapshot key.
+
+    Returns:
+        ``(snapshot, version, machine_version, updated_at, deadlines)`` or
+        ``None`` if the key is absent.
+    """
     s = t.snapshots
     row = conn.execute(
         select(
@@ -167,6 +178,24 @@ def save_raw(
     machine_version: str,
     deadlines: Tuple[Deadline, ...],
 ) -> int:
+    """Write a snapshot with optimistic versioning, and its deadlines.
+
+    Args:
+        conn: Open connection.
+        t: Table set.
+        key: Snapshot key.
+        data: Encoded snapshot.
+        expected_version: 0 creates only, N updates only at version N,
+            None upserts.
+        machine_version: Machine version string.
+        deadlines: Deadlines to replace the stored ones.
+
+    Returns:
+        The new version.
+
+    Raises:
+        ConflictError: If the expected version does not match.
+    """
     s = t.snapshots
     now = time.time()
     values = {
@@ -213,6 +242,16 @@ def save_raw(
 
 
 def delete_raw(conn: Any, t: XsmTables, key: str) -> bool:
+    """Delete a snapshot and its deadlines.
+
+    Args:
+        conn: Open connection.
+        t: Table set.
+        key: Snapshot key.
+
+    Returns:
+        True if a snapshot row was deleted.
+    """
     s = t.snapshots
     n = conn.execute(delete(s).where(s.c.key == key)).rowcount
     write_deadlines(conn, t, s.name, key, ())
@@ -242,6 +281,17 @@ def forget_raw(conn: Any, t: XsmTables, key: str) -> Dict[str, int]:
 def list_keys_raw(
     conn: Any, t: XsmTables, prefix: str, limit: int
 ) -> List[str]:
+    """List snapshot keys.
+
+    Args:
+        conn: Open connection.
+        t: Table set.
+        prefix: Only keys starting with this (empty for all).
+        limit: Maximum number of keys.
+
+    Returns:
+        Keys in ascending order.
+    """
     s = t.snapshots
     q = select(s.c.key)
     if prefix:
@@ -253,6 +303,18 @@ def list_keys_raw(
 def due_keys_raw(
     conn: Any, t: XsmTables, source: str, until_wall: float, limit: int
 ) -> List[Tuple[str, float]]:
+    """Find keys with a matured deadline.
+
+    Args:
+        conn: Open connection.
+        t: Table set.
+        source: Snapshot table name the deadlines belong to.
+        until_wall: Wall-clock cutoff.
+        limit: Maximum number of keys.
+
+    Returns:
+        ``(key, earliest_due_at)`` pairs, soonest first.
+    """
     d = t.deadlines
     rows = conn.execute(
         select(d.c.key, func.min(d.c.due_at_wall))

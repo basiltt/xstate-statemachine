@@ -48,6 +48,7 @@ class SQLAlchemyInbox:
         return self.store
 
     def get(self, scope: str, key: str) -> Optional[InboxEntry]:
+        """`Inbox.get` on SQLAlchemy: the unexpired row, or None."""
         t = self.t
         with self.store._tx() as conn:
             row = conn.execute(
@@ -63,6 +64,10 @@ class SQLAlchemyInbox:
     def claim(
         self, scope: str, key: str, fp: str, *, ttl_s: Optional[float]
     ) -> bool:
+        """`Inbox.claim` on SQLAlchemy: purge an expired row, then INSERT.
+
+        A unique-key clash means the claim is held and returns False.
+        """
         t = self.t
         now = time.time()
         with self.store._tx() as conn:
@@ -97,6 +102,7 @@ class SQLAlchemyInbox:
         *,
         ttl_s: Optional[float],
     ) -> None:
+        """`Inbox.mark` on SQLAlchemy: UPDATE the receipt and expiry."""
         t = self.t
         with self.store._tx() as conn:
             conn.execute(
@@ -109,6 +115,9 @@ class SQLAlchemyInbox:
             )
 
     def release(self, scope: str, key: str) -> None:
+        """`Inbox.release` on SQLAlchemy: DELETE the row only while it has no
+        receipt.
+        """
         t = self.t
         with self.store._tx() as conn:
             conn.execute(
@@ -120,6 +129,7 @@ class SQLAlchemyInbox:
             )
 
     def purge_expired(self, *, now: Optional[float] = None) -> int:
+        """`Inbox.purge_expired` on SQLAlchemy: DELETE rows expired at *now*."""
         t = self.t
         now = time.time() if now is None else now
         with self.store._tx() as conn:
@@ -133,6 +143,7 @@ class SQLAlchemyInbox:
             )
 
     def forget(self, scope: str) -> int:
+        """`Inbox.forget` on SQLAlchemy: DELETE every row of *scope*."""
         t = self.t
         with self.store._tx() as conn:
             return int(
@@ -153,6 +164,9 @@ class SQLAlchemyLog:
         self.t = store.tables.transitions
 
     def append(self, rec: TransitionRecord, *, connection: Any = None) -> None:
+        """`Log.append` on SQLAlchemy: INSERT, on *connection* when it is
+        given.
+        """
         stmt = insert(self.t).values(
             machine_id=rec.machine_id,
             seq=rec.seq,
@@ -166,6 +180,7 @@ class SQLAlchemyLog:
             conn.execute(stmt)
 
     def next_seq(self, machine_id: str, *, connection: Any = None) -> int:
+        """`Log.next_seq` on SQLAlchemy: ``MAX(seq) + 1`` for the machine."""
         t = self.t
         q = select(func.coalesce(func.max(t.c.seq), 0)).where(
             t.c.machine_id == machine_id
@@ -178,6 +193,7 @@ class SQLAlchemyLog:
     def read(
         self, machine_id: str, *, after_seq: int = 0, limit: int = 1000
     ) -> List[TransitionRecord]:
+        """`Log.read` on SQLAlchemy: ordered SELECT decoded to records."""
         t = self.t
         with self.store._tx() as conn:
             rows = conn.execute(
@@ -189,6 +205,9 @@ class SQLAlchemyLog:
         return [TransitionRecord.from_dict(json.loads(r[0])) for r in rows]
 
     def purge_older_than(self, cutoff_ts: float) -> int:
+        """`Log.purge_older_than` on SQLAlchemy: DELETE rows with ``ts <
+        cutoff_ts``.
+        """
         t = self.t
         with self.store._tx() as conn:
             return int(
@@ -196,6 +215,9 @@ class SQLAlchemyLog:
             )
 
     def forget(self, machine_id: str) -> int:
+        """`Log.forget` on SQLAlchemy: DELETE the machine's rows, return the
+        count.
+        """
         t = self.t
         with self.store._tx() as conn:
             return int(

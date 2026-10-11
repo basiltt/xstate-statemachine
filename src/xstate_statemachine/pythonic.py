@@ -479,6 +479,7 @@ def action(fn_or_name: Any = None) -> Any:
         name = fn_or_name
 
         def decorator(fn: _DecoratedF) -> _DecoratedF:
+            """Tag *fn* as an action registered under the chosen name."""
             setattr(fn, "_xsm_type", "action")
             setattr(fn, "_xsm_name", name)
             return fn
@@ -530,6 +531,11 @@ def guard(fn_or_name: Any = None) -> Any:
         name = fn_or_name
 
         def decorator(fn: _DecoratedF) -> _DecoratedF:
+            """Tag *fn* as a guard under the chosen name.
+
+            Raises:
+                NotSupportedError: If *fn* is a coroutine function.
+            """
             if inspect.iscoroutinefunction(fn):
                 raise NotSupportedError(
                     f"Guard '{fn.__name__}' must be "
@@ -577,6 +583,7 @@ def service(fn_or_name: Any = None) -> Any:
         name = fn_or_name
 
         def decorator(fn: _DecoratedF) -> _DecoratedF:
+            """Tag *fn* as a service registered under the chosen name."""
             setattr(fn, "_xsm_type", "service")
             setattr(fn, "_xsm_name", name)
             return fn

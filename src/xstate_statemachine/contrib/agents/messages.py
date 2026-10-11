@@ -102,6 +102,9 @@ class ToolCall:
     arguments: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
+        """Return a dict copy of the call; arguments nested too deeply become
+        an unparseable marker.
+        """
         try:
             args = copy.deepcopy(self.arguments)
         except RecursionError:
@@ -114,6 +117,9 @@ class ToolCall:
 
     @classmethod
     def from_dict(cls, d: Mapping[str, Any]) -> "ToolCall":
+        """Build a call from a dict, keeping non-object arguments as-is so tool
+        validation denies them.
+        """
         # 🔥 #287 battle (A): `dict(arguments)` coerced a list of pairs
         #    into an object (schema bypass) and crashed on a string/int.
         #    A non-object is kept as-is so `Tool.validate` denies it.
@@ -133,6 +139,7 @@ class Usage:
     cost_usd: float = 0.0
 
     def to_dict(self) -> Dict[str, Any]:
+        """Return the usage as a dict of ints and a float."""
         return {
             "input_tokens": int(self.input_tokens),
             "output_tokens": int(self.output_tokens),
@@ -141,6 +148,9 @@ class Usage:
 
     @classmethod
     def from_dict(cls, d: Optional[Mapping[str, Any]]) -> "Usage":
+        """Build usage from an optional mapping; non-numeric values pass
+        through to be sanitised downstream.
+        """
         d = d or {}
         # 📝 #287 battle (B's note): a provider's "nan" / garbage string
         #    crashed `int()` -- a usage number that is not a number is

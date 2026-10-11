@@ -162,6 +162,9 @@ class OpenTelemetryPlugin(PluginBase[Any]):
 
     # -- event span -------------------------------------------------------
     def on_event_received(self, interpreter: Any, event: Any) -> None:
+        """Open a ``statechart.transition`` span for the event, linking any
+        incoming traceparent.
+        """
         machine = interpreter.machine
         links = []
         ctx = _parse_traceparent(_incoming_traceparent(event))
@@ -186,6 +189,7 @@ class OpenTelemetryPlugin(PluginBase[Any]):
             )
 
     def on_action_execute(self, interpreter: Any, action: Any) -> None:
+        """Record the executed action's type on the current event's span entry."""
         cur = self._current(interpreter)
         if cur is not None:
             cur[2].append(str(getattr(action, "type", action)))
@@ -193,6 +197,7 @@ class OpenTelemetryPlugin(PluginBase[Any]):
     def on_guard_evaluated(
         self, interpreter: Any, guard_name: str, event: Any, result: bool
     ) -> None:
+        """Add a ``guard_evaluated`` span event with the guard name and result."""
         cur = self._current(interpreter)
         if cur is not None:
             cur[1].add_event(
@@ -207,6 +212,9 @@ class OpenTelemetryPlugin(PluginBase[Any]):
         to_states: Any,
         transition: Any,
     ) -> None:
+        """Emit a ``statechart.microstep`` span per transition when
+        ``span_per`` is ``transition``.
+        """
         if self.span_per != "transition":
             return
         cur = self._current(interpreter)
@@ -230,6 +238,7 @@ class OpenTelemetryPlugin(PluginBase[Any]):
     def on_event_processed(
         self, interpreter: Any, event: Any, receipt: Any
     ) -> None:
+        """Close the event's span (and cancelled service spans) once processed."""
         self._end_cancelled_services(interpreter)
         with self._lock:
             stack = self._events.get(id(interpreter))
@@ -308,6 +317,9 @@ class OpenTelemetryPlugin(PluginBase[Any]):
 
     # -- services ---------------------------------------------------------
     def on_service_start(self, interpreter: Any, invocation: Any) -> None:
+        """Start a ``statechart.service`` span, ending any prior one with the
+        same id as cancelled.
+        """
         key = (id(interpreter), str(invocation.id))
         # battle #273: a re-entered state restarts its invoke under the
         # SAME id; the previous span was overwritten and never ended

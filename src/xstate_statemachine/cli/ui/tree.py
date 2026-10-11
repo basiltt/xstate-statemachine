@@ -42,6 +42,14 @@ def render(
         tee, last, pipe, blank = "|-- ", "`-- ", "|   ", "    "
 
     def line_for(node: Node) -> str:
+        """Format one node label with decoration and note.
+
+        Args:
+            node: Node to format.
+
+        Returns:
+            The styled label text.
+        """
         label = paint(node.label, node.role, caps) if node.role else node.label
         extra = decorate(node) if decorate else ""
         note = paint(f"  {node.note}", "muted", caps) if node.note else ""
@@ -50,6 +58,14 @@ def render(
     lines: List[str] = []
 
     def walk(node: Node, prefix: str, is_last: bool, depth: int) -> None:
+        """Append *node* and its descendants to ``lines``.
+
+        Args:
+            node: Node to draw.
+            prefix: Indentation inherited from ancestors.
+            is_last: Whether this is its parent last child.
+            depth: Depth below the root.
+        """
         if depth > 0:
             connector = last if is_last else tee
             lines.append(

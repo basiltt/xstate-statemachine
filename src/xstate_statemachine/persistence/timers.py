@@ -59,6 +59,17 @@ class _Held:
         self._seen = int(seen_version)
 
     def fence(self, version: int) -> Optional[int]:
+        """Fence a save against a stale scan.
+
+        Args:
+            version: The version the persist cycle loaded.
+
+        Returns:
+            The inner strategy's fence for *version*.
+
+        Raises:
+            ConflictError: If *version* differs from the one the scanner saw.
+        """
         # 🐛 #264 battle: under `OptimisticLock` the record could move
         #    between the scanner's deadline re-check and `persisted()`'s
         #    own load (another scanner fired it). The woken machine then
@@ -211,6 +222,14 @@ class DueTimerScanner:
         return self.scan(now).woken
 
     def scan(self, now: Optional[float] = None) -> ScanResult:
+        """Wake every machine with a matured deadline.
+
+        Args:
+            now: Wall-clock time to scan at; defaults to the scanner's clock.
+
+        Returns:
+            A `ScanResult` counting scanned, due, skipped and woken keys.
+        """
         from .locking import _DEFAULT_LOCK as _DEFAULT, persisted
 
         at = self.now() if now is None else now

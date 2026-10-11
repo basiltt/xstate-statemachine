@@ -64,6 +64,18 @@ def allow_all(
 
 @dataclass
 class Registration:
+    """One declared machine and how to serve it.
+
+    Attributes:
+        name: Unique machine name.
+        machine: The parsed machine.
+        key: Callable giving the default instance key, or ``None``.
+        authorize: Authorizer called for every request.
+        context_serializer: Optional serializer for response contexts.
+        strict: Optional strict-mode override.
+        source: JSON path or config dict for the CLI, or ``None``.
+    """
+
     name: str
     machine: MachineNode[Any]
     key: Optional[Callable[[], Any]]
@@ -102,6 +114,24 @@ def make_registration(
     strict: Optional[bool],
     source: Any,
 ) -> Registration:
+    """Validate the arguments and build a `Registration`.
+
+    Args:
+        name: Unique machine name.
+        machine: A `MachineNode`, JSON path or config dict.
+        key: Callable returning the default instance key.
+        authorize: Required callable authorizer.
+        context_serializer: Optional serializer for response contexts.
+        strict: Optional strict-mode override.
+        source: Optional JSON source for the CLI commands.
+
+    Returns:
+        The new `Registration`.
+
+    Raises:
+        TypeError: If *authorize* is missing or not callable.
+        ValueError: If *name* is not a valid machine name.
+    """
     if authorize is REQUIRED or not callable(authorize):
         raise TypeError(
             "register(authorize=) is required and must be callable; "
@@ -161,6 +191,13 @@ class Fanout:
     def publish(
         self, name: str, key: str, bodies: Iterable[Dict[str, Any]]
     ) -> None:
+        """Stamp *bodies* with sequence numbers and queue them for subscribers.
+
+        Args:
+            name: Machine name.
+            key: Instance key.
+            bodies: Transition bodies to deliver, in order.
+        """
         with self._lock:
             counter = self._seq.setdefault(
                 (name, key),
@@ -234,6 +271,11 @@ class AppRegistry:
 
     # -- registrations ------------------------------------------------------------
     def add(self, reg: Registration) -> None:
+        """Register *reg* on this app.
+
+        Raises:
+            ValueError: If a different registration holds the same name.
+        """
         if reg.name in self.regs and self.regs[reg.name] is not reg:
             raise ValueError(
                 f"Machine name {reg.name!r} is already registered."
@@ -256,6 +298,18 @@ class AppRegistry:
         return validate_key(f"{name}{KEY_SEP}{key}")
 
     def key_for(self, name: str, key: Any) -> str:
+        """Resolve the instance key for *name*.
+
+        Args:
+            name: Registered machine name.
+            key: Explicit key; used as given when not ``None``.
+
+        Returns:
+            The key as a string.
+
+        Raises:
+            TypeError: If no key was given and none was registered.
+        """
         if key is not None:
             return str(key)
         fn = self.reg(name).key
@@ -269,6 +323,18 @@ class AppRegistry:
     def authorize(
         self, request: Any, name: str, key: Optional[str], event: Optional[str]
     ) -> None:
+        """Run the machine's synchronous authorizer.
+
+        Args:
+            request: The framework request.
+            name: Machine name.
+            key: Instance key, or ``None``.
+            event: Event type being sent, or ``None`` for reads.
+
+        Raises:
+            TypeError: If the authorizer is async.
+            ForbiddenError: If the authorizer returns a falsy value.
+        """
         verdict = self.reg(name).authorize(
             request, name=name, key=key, event=event
         )
@@ -283,6 +349,17 @@ class AppRegistry:
     async def aauthorize(
         self, request: Any, name: str, key: Optional[str], event: Optional[str]
     ) -> None:
+        """Run the machine's authorizer, awaiting it if it is async.
+
+        Args:
+            request: The framework request.
+            name: Machine name.
+            key: Instance key, or ``None``.
+            event: Event type being sent, or ``None`` for reads.
+
+        Raises:
+            ForbiddenError: If the authorizer returns a falsy value.
+        """
         verdict = self.reg(name).authorize(
             request, name=name, key=key, event=event
         )
@@ -292,6 +369,19 @@ class AppRegistry:
             raise ForbiddenError()
 
     def plugins_for(self, principal: Optional[Any]) -> List[Any]:
+        """Build the plugin list for one `act()`.
+
+        Args:
+            principal: The caller identity; required with an idempotency
+                inbox.
+
+        Returns:
+            The app plugins, plus an `IdempotencyPlugin` when an inbox is set.
+
+        Raises:
+            ValueError: If an inbox is set and *principal* is missing or
+                invalid.
+        """
         plugins = list(self.plugins)
         if self.inbox is not None:
             if principal is None:

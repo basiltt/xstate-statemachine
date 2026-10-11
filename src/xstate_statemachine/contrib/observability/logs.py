@@ -105,6 +105,9 @@ class _ContextPlugin(PluginBase[Any]):
     def on_event_processed(
         self, interpreter: Any, event: Any, receipt: Any
     ) -> None:
+        """Unwind the log context bound for this event (and any nested above
+        it).
+        """
         stack = self._var.get()
         for idx in range(len(stack) - 1, -1, -1):
             if stack[idx][0] is event:

@@ -88,12 +88,30 @@ class Session:
         session = self
 
         def mk_action(name: str) -> Callable[[Any, Any, Any, Any], None]:
+            """Return an action stub that records *name* in ``actions_ran``.
+
+            Args:
+                name: Action name to record when the stub runs.
+
+            Returns:
+                A four-argument action callable.
+            """
+
             def _a(i: Any, c: Any, e: Any, ad: Any) -> None:
                 session.actions_ran.append(name)
 
             return _a
 
         def mk_guard(name: str) -> Callable[[Any, Any], bool]:
+            """Return a guard stub answering from the session guard values.
+
+            Args:
+                name: Guard name looked up in ``guard_values``.
+
+            Returns:
+                A guard callable yielding the configured value (default True).
+            """
+
             def _g(c: Any, e: Any) -> bool:
                 return session.guard_values.get(name, True)
 
@@ -157,6 +175,15 @@ class Session:
         return rec
 
     def send(self, event: str, **payload: Any) -> StepRecord:
+        """Send *event* to the machine and record the step.
+
+        Args:
+            event: Event type to send.
+            **payload: Extra event fields.
+
+        Returns:
+            The recorded step, with an undo snapshot saved beforehand.
+        """
         self._undo.append(self.interp.get_snapshot())
         before = self.active
         self.actions_ran.clear()
@@ -164,6 +191,14 @@ class Session:
         return self._record("event", event, before, receipt)
 
     def advance(self, ms: float) -> StepRecord:
+        """Advance the simulated clock by *ms* and record the step.
+
+        Args:
+            ms: Milliseconds to advance, which may fire due timers.
+
+        Returns:
+            The recorded clock step.
+        """
         self._undo.append(self.interp.get_snapshot())
         before = self.active
         self.actions_ran.clear()
@@ -171,6 +206,11 @@ class Session:
         return self._record("clock", f"+{ms:g} ms", before, None)
 
     def undo(self) -> Optional[StepRecord]:
+        """Restore the snapshot taken before the last step.
+
+        Returns:
+            The recorded undo step, or None if there is nothing to undo.
+        """
         if not self._undo:
             return None
         blob = self._undo.pop()
@@ -186,6 +226,11 @@ class Session:
         return self._record("undo", "undo", before, None)
 
     def reset(self) -> StepRecord:
+        """Restart the machine from its initial state with a fresh clock.
+
+        Returns:
+            The recorded reset step; undo history is cleared.
+        """
         before = self.active
         self.interp.stop()
         self.clock = SimulatedClock()
@@ -368,6 +413,12 @@ def _status_panel(session: Session) -> List[str]:
 
 
 def render_state(session: Session, *, title: str = "simulate") -> None:
+    """Print the status panel and state tree for the session.
+
+    Args:
+        session: Simulation session to display.
+        title: Panel title.
+    """
     c = get_console()
     c.panel(_status_panel(session), title=title, subtitle=session.machine.id)
     c.tree(
@@ -378,6 +429,12 @@ def render_state(session: Session, *, title: str = "simulate") -> None:
 
 
 def render_step(rec: StepRecord) -> None:
+    """Print one history step as a single line.
+
+    Args:
+        rec: Step record; shows its outcome (error, denied, deferred,
+            new states or no change) and any actions that ran.
+    """
     c = get_console()
     icon = {"event": "→", "clock": "⏱", "undo": "↶", "reset": "⟲"}.get(
         rec.kind, "•"
@@ -408,6 +465,11 @@ def render_step(rec: StepRecord) -> None:
 
 
 def render_history_table(session: Session) -> None:
+    """Print the full step history of *session* as a table.
+
+    Args:
+        session: Session whose ``history`` is rendered.
+    """
     c = get_console()
     t = Table(
         [
@@ -443,6 +505,12 @@ def render_history_table(session: Session) -> None:
 def interactive(
     session: Session, *, source: Optional[K.KeySource] = None
 ) -> None:
+    """Run the keyboard-driven simulator loop until the user quits.
+
+    Args:
+        session: Simulation session to drive.
+        source: Key source; defaults to the real terminal keys.
+    """
     c = get_console()
     src = source or K.default_source()
     c.blank()

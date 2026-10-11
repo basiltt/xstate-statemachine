@@ -94,6 +94,11 @@ def _payload() -> Dict[str, Any]:
 
 
 def run_info(as_json: bool = False) -> None:
+    """Implement ``xsm info``: print version and environment details.
+
+    Args:
+        as_json: Print JSON instead of the banner.
+    """
     c = get_console()
     data = _payload()
     if as_json:

@@ -84,6 +84,8 @@ class ReceiptBody(StateBody):
 
 
 class DeclaredEvent(msgspec.Struct):
+    """One declared event type with its optional JSON schema."""
+
     type: str
     schema: Optional[Dict[str, Any]] = None
 
@@ -252,6 +254,12 @@ def _http_problem(request: Any, exc: Exception) -> Any:
 
 def _json_guard(limit: int) -> Callable[..., Any]:
     async def before(request: Request) -> None:  # type: ignore[type-arg]
+        """Refuse an oversized or non-JSON body before the handler runs.
+
+        Raises:
+            PayloadTooLargeError: If the body exceeds the size limit.
+            UnsupportedMediaTypeError: If a non-empty body is not JSON.
+        """
         declared = request.headers.get("content-length")
         if declared and declared.isdigit() and int(declared) > limit:
             raise PayloadTooLargeError()
@@ -337,6 +345,10 @@ def create_statechart_controller(
             raise KeyNotFoundError(key)
 
     async def do_send(request: Any, etype: str, payload: Any) -> Any:
+        """Send *etype* with *payload* to the request's instance.
+
+        Returns a 404 problem for an unknown key when creation is disabled.
+        """
         conn = to_starlette(request)
         key = key_of(request)
         if not create_if_missing and not await registry.exists(name, key):
@@ -347,6 +359,7 @@ def create_statechart_controller(
         return to_litestar(resp)
 
     async def get_state(self: Any, request: Request) -> Response:  # type: ignore[type-arg]
+        """``GET /{id}`` -- the instance's state."""
         conn = to_starlette(request)
         key = key_of(request)
         try:
@@ -358,6 +371,7 @@ def create_statechart_controller(
         return Response(body)
 
     async def send(self: Any, request: Request, data: Any) -> Response:  # type: ignore[type-arg]
+        """``POST /{id}/send`` -- send the body's event; returns the receipt."""
         etype, payload = _split(data)
         if etype in excluded:
             return cast(
@@ -369,6 +383,7 @@ def create_statechart_controller(
     send.__annotations__["data"] = body_t
 
     async def list_events(self: Any, request: Request) -> Response:  # type: ignore[type-arg]
+        """``GET /{id}/events`` -- available and declared events."""
         conn = to_starlette(request)
         key = key_of(request)
         try:
@@ -388,6 +403,7 @@ def create_statechart_controller(
         return Response({"available": available, "declared": declared})
 
     async def diagram(self: Any, request: Request) -> Response:  # type: ignore[type-arg]
+        """``GET /{id}/diagram.mmd`` -- the machine as a Mermaid diagram."""
         try:
             await registry.authorize(
                 to_starlette(request), name, key_of(request), None
@@ -400,6 +416,7 @@ def create_statechart_controller(
         # 🔥 battle #278-a: with create_if_missing=False `/stream` opened
         #    an endless SSE for a key that does not exist (every other
         #    route answered 404).
+        """``GET /{id}/stream`` -- SSE: snapshot, then each transition."""
         try:
             await guard_read(to_starlette(request), key_of(request))
         except Exception as exc:  # noqa: BLE001
@@ -410,6 +427,7 @@ def create_statechart_controller(
         return to_litestar(resp)
 
     async def ws(self: Any, socket: WebSocket) -> None:  # type: ignore[type-arg]
+        """WebSocket for the instance; refuses (1008) a key with no instance."""
         scope: Any = socket.scope
         # 🔥 battle #278-a: with create_if_missing=False the socket opened
         #    (and a send CREATED the instance). Refused like a denied one.
@@ -503,6 +521,7 @@ def _event_handler(
     """``POST /{id}/events/<etype>`` with an optional body."""
 
     async def handler(self: Any, request: Request, data: Any = None) -> Response:  # type: ignore[type-arg]
+        """``POST /{id}/events/<event>`` -- send this event; body optional."""
         if data is None:
             payload: Dict[str, Any] = {}
         elif model is not None:

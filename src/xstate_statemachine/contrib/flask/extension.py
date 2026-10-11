@@ -122,6 +122,7 @@ class _Recorder(PluginBase):  # type: ignore[type-arg]
     def on_event_processed(
         self, interpreter: Any, event: Any, receipt: Receipt
     ) -> None:
+        """Record the receipt of a changed, non-internal user event."""
         etype = str(getattr(event, "type", ""))
         if receipt.changed and not etype.startswith(_INTERNAL_PREFIXES):
             self.changed.append(receipt)

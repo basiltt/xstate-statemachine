@@ -34,6 +34,7 @@ class _Recorder(PluginBase):  # type: ignore[type-arg]
     def on_event_processed(
         self, interpreter: Any, event: Any, receipt: Receipt
     ) -> None:
+        """Record the receipt of a changed, non-internal event."""
         etype = str(getattr(event, "type", ""))
         if receipt.changed and not etype.startswith(_INTERNAL_PREFIXES):
             self.changed.append(receipt)
@@ -74,6 +75,7 @@ class _StampIdempotencyKey(PluginBase):  # type: ignore[type-arg]
         self._done = False
 
     def on_before_send(self, interpreter: Any, event: Any) -> Any:
+        """Stamp the idempotency key on the first user event's payload."""
         if self._done:
             return None
         payload = getattr(event, "payload", None)

@@ -349,6 +349,9 @@ class BaseStore:
 
     # -- public surface -----------------------------------------------------
     def load(self, key: str) -> Optional[StoredSnapshot]:
+        """`StateStore.load` template: validate key, read raw, size-check,
+        decode.
+        """
         validate_key(key)
         raw = self._load_raw(key)
         if raw is None:
@@ -375,6 +378,9 @@ class BaseStore:
         machine_version: str = "",
         deadlines: Sequence[Deadline] = (),
     ) -> int:
+        """`StateStore.save` template: validate args, encode, size-check, save
+        raw.
+        """
         validate_key(key)
         if not isinstance(snapshot, str):
             raise TypeError(
@@ -405,6 +411,9 @@ class BaseStore:
         return self._forget_raw(key)
 
     def list_keys(self, *, prefix: str = "", limit: int = 1000) -> List[str]:
+        """`StateStore.list_keys` template: raw keys minus any `load()`
+        rejects.
+        """
         if limit < 0:
             raise ValueError("limit must be >= 0")
         # 🛡️ #259 battle: a row/file another writer planted under a key
@@ -455,6 +464,9 @@ class BaseStore:
         return out
 
     def lock(self, key: str, *, timeout: float = 10.0) -> ContextManager[None]:
+        """`StateStore.lock` template: validate key and timeout, take the raw
+        lock.
+        """
         validate_key(key)
         if timeout < 0:
             raise ValueError("timeout must be >= 0")

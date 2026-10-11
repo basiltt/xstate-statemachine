@@ -80,6 +80,7 @@ class SentryPlugin(PluginBase[Any]):
         to_states: Any,
         transition: Any,
     ) -> None:
+        """Add a ``statechart`` breadcrumb with the source, target and event."""
         target = getattr(transition, "resolved_target", None)
         src = transition.source.id
         ev = event_label(interpreter.machine, transition.event)

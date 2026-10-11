@@ -85,6 +85,15 @@ def build_tables(
     """Define (or reuse) the extra's tables on *metadata*."""
 
     def table(name: str, *cols: Any) -> Table:
+        """Return the table named *name*, reusing one already on the metadata.
+
+        Args:
+            name: Table name.
+            *cols: Columns, used only when the table is created.
+
+        Returns:
+            The existing or newly created `Table`.
+        """
         existing = metadata.tables.get(name)
         if existing is not None:
             return existing

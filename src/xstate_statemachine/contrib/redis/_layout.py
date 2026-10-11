@@ -312,6 +312,14 @@ class _Layout:
         self.ttl_s = ttl_s
 
     def save_keys(self, key: str) -> List[str]:
+        """Return the KEYS for the save/delete scripts.
+
+        Args:
+            key: The snapshot key.
+
+        Returns:
+            The snapshot, key-set, deadline and global-deadline key names.
+        """
         k = self.k
         return [k.snap(key), k.keys, k.dl(key), k.deadlines]
 
@@ -326,6 +334,19 @@ class _Layout:
         machine_version: str,
         deadlines: Sequence[Deadline],
     ) -> List[str]:
+        """Build the save script's ARGV.
+
+        Args:
+            key: The snapshot key.
+            data: The encoded snapshot.
+            expected_version: Version fence, or None for unconditional.
+            machine_version: Machine version string.
+            deadlines: Deadlines to index.
+
+        Returns:
+            String args: expected version, data, machine version, wall time,
+            key, TTL in ms (or empty), then the deadline args.
+        """
         ttl = "" if self.ttl_s is None else str(int(self.ttl_s * 1000))
         return [
             "" if expected_version is None else str(expected_version),
@@ -338,6 +359,14 @@ class _Layout:
         ]
 
     def prune_args(self, members: Sequence[Any]) -> List[str]:
+        """Build the prune script's ARGV.
+
+        Args:
+            members: Index members to check.
+
+        Returns:
+            For each member, its string form followed by its snapshot key name.
+        """
         out: List[str] = []
         for m in members:
             out.extend([_s(m), self.k.snap(_member_key(m))])

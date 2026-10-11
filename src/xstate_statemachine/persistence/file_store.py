@@ -824,6 +824,12 @@ class FileStore(BaseStore):
         return not _pid_alive(pid) and pid != os.getpid()
 
     def health(self) -> Dict[str, Any]:
+        """Report store health.
+
+        Returns:
+            A dict with ``ok`` (directory exists and is writable), ``backend``
+            and ``directory``.
+        """
         ok = self.directory.is_dir() and os.access(self.directory, os.W_OK)
         return {
             "ok": ok,

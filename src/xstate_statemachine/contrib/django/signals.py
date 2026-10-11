@@ -103,6 +103,7 @@ class PostTransitionSignal(Signal):  # type: ignore[misc]  # Signal is untyped (
         dispatch_uid: Any = None,
         on_commit: bool = False,
     ) -> None:
+        """Connect a receiver, optionally deferred to transaction commit."""
         if not on_commit:
             super().connect(receiver, sender, weak, dispatch_uid)
             return
@@ -117,6 +118,7 @@ class PostTransitionSignal(Signal):  # type: ignore[misc]  # Signal is untyped (
         dispatch_uid: Any = None,
         on_commit: bool = False,
     ) -> bool:
+        """Disconnect a receiver, including one connected with ``on_commit``."""
         # 📝 #281 battle: `disconnect(fn)` after `connect(fn, on_commit=
         #    True)` silently did nothing (the wrapper, not `fn`, was the
         #    receiver) -- the receiver kept firing for the rest of the

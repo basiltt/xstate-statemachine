@@ -113,6 +113,7 @@ class PydanticModelsStrategy(BaseStrategy):
         return ""
 
     def generate_logic(self, ctx: GenerationContext) -> str:
+        """Emit Pydantic models for the machine context and events."""
         config = ctx.configs[0]
         events = collect_events(config)
         raw_ctx = config.get("context")

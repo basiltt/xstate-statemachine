@@ -143,6 +143,9 @@ class SQLiteDeadLetterStore:
         self.put(record)
 
     def put(self, record: DeadLetter) -> None:
+        """`DeadLetterStore.put` on SQLite: INSERT OR REPLACE the redacted
+        record.
+        """
         rec = redact_record(record)
         conn = self._conn()
         with self._store._tx(conn, immediate=True):
@@ -162,6 +165,9 @@ class SQLiteDeadLetterStore:
             )
 
     def get(self, record_id: str) -> Optional[DeadLetter]:
+        """`DeadLetterStore.get` on SQLite: the record with resolved_at, or
+        None.
+        """
         row = (
             self._conn()
             .execute(
@@ -180,6 +186,9 @@ class SQLiteDeadLetterStore:
     def list(
         self, *, include_resolved: bool = False, limit: int = 1000
     ) -> List[DeadLetter]:
+        """`DeadLetterStore.list` on SQLite: oldest first; unresolved unless
+        asked.
+        """
         sql = "SELECT record, resolved_at FROM xsm_dead_letters"
         if not include_resolved:
             sql += " WHERE resolved_at IS NULL"
@@ -190,6 +199,9 @@ class SQLiteDeadLetterStore:
         ]
 
     def mark_resolved(self, record_id: str, when: float) -> bool:
+        """`DeadLetterStore.mark_resolved` on SQLite: set resolved_at; True if
+        changed.
+        """
         conn = self._conn()
         with self._store._tx(conn, immediate=True):
             cur = conn.execute(
@@ -199,6 +211,9 @@ class SQLiteDeadLetterStore:
             return cur.rowcount > 0
 
     def delete(self, record_id: str) -> bool:
+        """`DeadLetterStore.delete` on SQLite: DELETE by id; True if a row
+        went.
+        """
         conn = self._conn()
         with self._store._tx(conn, immediate=True):
             cur = conn.execute(
@@ -207,6 +222,9 @@ class SQLiteDeadLetterStore:
             return cur.rowcount > 0
 
     def purge_older_than(self, cutoff_wall: float) -> int:
+        """`DeadLetterStore.purge_older_than` on SQLite: DELETE rows before
+        cutoff.
+        """
         conn = self._conn()
         with self._store._tx(conn, immediate=True):
             return conn.execute(
@@ -250,6 +268,13 @@ class SQLiteDeadLetterStore:
             )
 
     def audit_log(self) -> List[Dict[str, Any]]:
+        """Return the audit trail.
+
+        Returns:
+            One dict per row of ``xsm_dlq_audit`` in sequence order, with keys
+            ``at``, ``action``, ``record_id``, ``actor``, ``reason`` and
+            ``detail`` (decoded from JSON).
+        """
         rows = (
             self._conn()
             .execute(
@@ -306,6 +331,15 @@ class BrokerDeadLetterSink:
         self.put(record)
 
     def envelope_for(self, record: DeadLetter) -> Envelope:
+        """Wrap a dead letter in an `Envelope`.
+
+        Args:
+            record: The dead letter to publish; redacted first.
+
+        Returns:
+            A new ``xsm.deadletter`` envelope carrying the record's dict as
+            data, with the original subject (or machine id) as its subject.
+        """
         rec = redact_record(record)
         subject = (rec.envelope or {}).get("subject") or rec.machine_id
         return Envelope.new(

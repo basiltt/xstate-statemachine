@@ -292,6 +292,17 @@ class BudgetPlugin(PluginBase[Any]):
         self._lock = threading.Lock()
 
     def exceeded(self, totals: Mapping[str, Any]) -> bool:
+        """Return whether the rolled-up totals reach a global budget.
+
+        Args:
+            totals: Usage totals with ``input_tokens``, ``output_tokens``
+            and
+                ``cost_usd``.
+
+        Returns:
+            ``True`` if tokens reach ``max_total_tokens`` or cost reaches
+            ``max_total_usd``.
+        """
         tokens = _num(totals.get("input_tokens", 0)) + _num(
             totals.get("output_tokens", 0)
         )
@@ -304,6 +315,10 @@ class BudgetPlugin(PluginBase[Any]):
         )
 
     def guards(self) -> MachineLogic[Any]:
+        """Return a ``MachineLogic`` with the ``underGlobalBudget`` guard
+        (false once ``budget_exceeded`` is set).
+        """
+
         def under(ctx: Dict[str, Any], e: Any) -> bool:
             return not ctx.get("budget_exceeded", False)
 
@@ -323,6 +338,9 @@ class BudgetPlugin(PluginBase[Any]):
             raise
 
     def on_before_send(self, interpreter: Any, event: Any) -> Optional[Any]:
+        """Roll a child's report into the global totals when it is sent; never
+        blocks the event.
+        """
         # 🔥 #290 battle: the rollup ran in `on_event_received`, i.e. when
         #    the parent DEQUEUED the child's report. A planner that hands
         #    off a batch (`handOffTasks` sends N HANDOFFs in one action)
@@ -343,6 +361,9 @@ class BudgetPlugin(PluginBase[Any]):
         return None
 
     def on_event_received(self, interpreter: Any, event: Any) -> None:
+        """Count reports that bypassed ``send`` once, release de-dup entries
+        and raise ``BUDGET_EXCEEDED`` if tripped.
+        """
         # 📝 Reports that bypassed `send()` (a restored queue, a direct
         #    `_process_event`) are still counted exactly once: `_rollup`
         #    remembers the events it has already seen.

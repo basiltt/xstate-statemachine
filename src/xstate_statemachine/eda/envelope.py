@@ -345,6 +345,14 @@ class Envelope:
         return int(self.extensions.get(ATTEMPT_EXTENSION, 0))
 
     def with_attempt(self, n: int) -> "Envelope":
+        """Return a copy with the attempt extension set.
+
+        Args:
+            n: The delivery attempt number.
+
+        Returns:
+            A new `Envelope` whose extensions carry ``int(n)`` as the attempt.
+        """
         ext = dict(self.extensions)
         ext[ATTEMPT_EXTENSION] = int(n)
         return replace(self, extensions=ext)
@@ -381,6 +389,18 @@ class Envelope:
         return out
 
     def to_json(self, *, max_bytes: int = DEFAULT_MAX_SNAPSHOT_BYTES) -> str:
+        """Serialise the envelope to compact JSON.
+
+        Args:
+            max_bytes: Maximum encoded size in bytes.
+
+        Returns:
+            The JSON text.
+
+        Raises:
+            EnvelopeCorruptError: If the data cannot be encoded as JSON.
+            EnvelopeTooLargeError: If the encoded text exceeds *max_bytes*.
+        """
         try:
             text = json.dumps(
                 self.to_dict(),
@@ -401,6 +421,19 @@ class Envelope:
 
     @classmethod
     def from_dict(cls, raw: Any) -> "Envelope":
+        """Build an envelope from a decoded JSON object.
+
+        Args:
+            raw: The decoded object; keys beyond the known attributes become
+                extensions.
+
+        Returns:
+            The new `Envelope`.
+
+        Raises:
+            EnvelopeCorruptError: If *raw* is not a dict or lacks ``id``,
+                ``type``, ``source`` or ``specversion``.
+        """
         if not isinstance(raw, dict):
             raise EnvelopeCorruptError("an envelope must be a JSON object")
         attrs = {k: raw[k] for k in _CORE + _KNOWN_EXT if k in raw}

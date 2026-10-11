@@ -146,6 +146,9 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):  # type: ignore[misc]  # A
 
     # -- lifecycle ---------------------------------------------------------------
     async def connect(self) -> None:
+        """Authenticate, authorise and join the instance's group, then send the
+        initial snapshot; closes with 1008 otherwise.
+        """
         self.instance: Any = None
         self.group: Optional[str] = None
         self._beat: Optional[asyncio.Task] = None  # type: ignore[type-arg]
@@ -177,6 +180,7 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):  # type: ignore[misc]  # A
             self._beat = asyncio.ensure_future(self._heartbeat())
 
     async def disconnect(self, code: Any) -> None:
+        """Stop the heartbeat task and leave the instance's channel group."""
         if self._beat is not None:
             self._beat.cancel()
             try:
@@ -235,6 +239,9 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):  # type: ignore[misc]  # A
         bytes_data: Optional[bytes] = None,
         **kwargs: Any,
     ) -> None:
+        """Decode a text frame as JSON and dispatch it; malformed or binary
+        frames get a 422 error frame.
+        """
         # 🔥 #283 battle B: a malformed JSON frame (or any binary frame)
         #    raised inside Channels' `receive` -- the consumer task died,
         #    the socket dropped with 1011 and `disconnect` never ran, so
@@ -253,6 +260,9 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):  # type: ignore[misc]  # A
         await self.receive_json(content, **kwargs)
 
     async def receive_json(self, content: Any, **kwargs: Any) -> None:
+        """Validate a client message and send its event; ``xsm.ping`` gets a
+        pong, bad input a 422 error.
+        """
         if self.instance is None:
             return
         if not isinstance(content, dict) or not isinstance(
@@ -342,6 +352,9 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):  # type: ignore[misc]  # A
             return
 
         def fresh() -> Optional[Dict[str, Any]]:
+            """Re-authorise, reload the row and return its state body, or
+            ``None`` if access was lost.
+            """
             # 🔐 M2: re-authorise before every push.
             if not self._still_allowed():
                 return None

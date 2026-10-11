@@ -11,9 +11,14 @@ from ._cli_command import CLICommand
 
 
 class Command(CLICommand):
+    """Management command simulating a model's chart without a database."""
+
     help = "Simulate a statechart model's chart (stub logic, no database)."
 
     def add_cli_arguments(self, parser: Any) -> None:
+        """Add the ``--events``, ``--clock``, ``--guards-false``, ``--json``
+        flags.
+        """
         parser.add_argument("-e", "--events", default=None)
         parser.add_argument("--clock", default=None)
         parser.add_argument("--guards-false", default=None)

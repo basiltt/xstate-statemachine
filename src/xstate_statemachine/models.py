@@ -2075,6 +2075,12 @@ class MachineNode(StateNode[TContext]):
         content = ["@startuml", "hide empty description"]
 
         def build_puml_states(node: StateNode[Any], level: int) -> None:
+            """Emit PlantUML state declarations for *node* and its descendants.
+
+            Args:
+                node: The state to render.
+                level: Nesting depth used for indentation.
+            """
             indent = "  " * level
             safe_id = node.id.replace(".", "_")
             if node.states:
@@ -2093,6 +2099,13 @@ class MachineNode(StateNode[TContext]):
         build_puml_states(self, 0)
 
         def build_puml_transitions(node: StateNode[Any]) -> None:
+            """Emit PlantUML transition lines for *node* and its descendants.
+
+            Transitions whose target cannot be resolved are skipped.
+
+            Args:
+                node: The state whose ``on`` and ``onDone`` edges are rendered.
+            """
             source_id = node.id.replace(".", "_")
             for event, transitions in node.on.items():
                 for t in transitions:
@@ -2139,6 +2152,12 @@ class MachineNode(StateNode[TContext]):
         content = ["stateDiagram-v2"]
 
         def build_mmd_states(node: StateNode[Any], level: int) -> None:
+            """Emit Mermaid composite-state blocks for *node* and children.
+
+            Args:
+                node: The state to render.
+                level: Nesting depth used for indentation.
+            """
             indent = "    " * level
             if node.states:
                 content.append(f'{indent}state "{node.key}" as {node.key} {{')
@@ -2150,6 +2169,13 @@ class MachineNode(StateNode[TContext]):
                 content.append(f"{indent}}}")
 
         def build_mmd_transitions(node: StateNode[Any]) -> None:
+            """Emit Mermaid transition lines for *node* and its descendants.
+
+            Transitions whose target cannot be resolved are skipped.
+
+            Args:
+                node: The state whose ``on`` and ``onDone`` edges are rendered.
+            """
             for event, transitions in node.on.items():
                 for t in transitions:
                     if t.target_str:

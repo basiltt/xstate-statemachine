@@ -47,6 +47,9 @@ class DjangoInbox:
         return None if ttl_s is None else now + float(ttl_s)
 
     def get(self, scope: str, key: str) -> Optional[InboxEntry]:
+        """Return the live entry for (scope, key), or ``None`` if absent or
+        expired.
+        """
         row = self._qs.filter(scope=scope, key=key).first()
         if row is None or not self._live(row, time.time()):
             return None
@@ -55,6 +58,9 @@ class DjangoInbox:
     def claim(
         self, scope: str, key: str, fp: str, *, ttl_s: Optional[float]
     ) -> bool:
+        """Insert a claim row after clearing expired ones; ``False`` if the key
+        exists.
+        """
         now = time.time()
         self._qs.filter(scope=scope, key=key, expires_at__lte=now).delete()
         try:
@@ -78,6 +84,9 @@ class DjangoInbox:
         *,
         ttl_s: Optional[float],
     ) -> None:
+        """Store the receipt JSON on the claim, creating the row if it
+        vanished.
+        """
         now = time.time()
         n = self._qs.filter(scope=scope, key=key).update(
             receipt_json=receipt_json, expires_at=self._exp(ttl_s, now)
@@ -97,10 +106,12 @@ class DjangoInbox:
         ).delete()
 
     def purge_expired(self, *, now: Optional[float] = None) -> int:
+        """Delete rows expired as of *now* and return the count."""
         now = time.time() if now is None else now
         n, _ = self._qs.filter(expires_at__lte=now).delete()
         return int(n)
 
     def forget(self, scope: str) -> int:
+        """Delete every row in *scope* and return the count."""
         n, _ = self._qs.filter(scope=scope).delete()
         return int(n)

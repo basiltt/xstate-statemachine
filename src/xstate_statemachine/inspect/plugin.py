@@ -229,6 +229,7 @@ class InspectorPlugin(PluginBase[Any]):
 
     # -- hooks ------------------------------------------------------------
     def on_interpreter_start(self, interpreter: Any) -> None:
+        """Emit the actor registration message with definition and snapshot."""
         sid, root = self._ids(interpreter)
         parent = getattr(interpreter, "parent", None)
         machine = interpreter.machine
@@ -316,6 +317,7 @@ class InspectorPlugin(PluginBase[Any]):
         to_states: Any,
         transition: Any,
     ) -> None:
+        """Report ``xstate.init`` and a snapshot for the initial step."""
         # 🚀 The init step has no received/processed pair; report it the
         #    way XState does: an `xstate.init` event, then a snapshot.
         if getattr(transition, "event", None) != _INIT:

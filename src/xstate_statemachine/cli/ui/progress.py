@@ -69,6 +69,11 @@ class Spinner:
         self.message = message
 
     def succeed(self, message: Optional[str] = None) -> None:
+        """Mark the spinner as succeeded.
+
+        Args:
+            message: Optional replacement final message.
+        """
         self._final = paint(
             "✓" if self.caps.unicode else "OK", "ok", self.caps
         )
@@ -76,6 +81,11 @@ class Spinner:
             self.message = message
 
     def fail(self, message: Optional[str] = None) -> None:
+        """Mark the spinner as failed.
+
+        Args:
+            message: Optional replacement final message.
+        """
         self._final = paint(
             "✗" if self.caps.unicode else "X", "err", self.caps
         )
@@ -169,6 +179,12 @@ class ProgressBar:
         )
 
     def advance(self, n: int = 1, label: Optional[str] = None) -> None:
+        """Move the bar forward and redraw or log it.
+
+        Args:
+            n: Amount to add; the total is never exceeded.
+            label: Optional new label.
+        """
         self.current = min(self.total, self.current + n)
         if label is not None:
             self.label = label
@@ -233,12 +249,25 @@ class StepList:
         self.out.flush()
 
     def start(self, i: int, detail: str = "") -> None:
+        """Mark step *i* as running.
+
+        Args:
+            i: Step index.
+            detail: Optional detail text.
+        """
         self.state[i] = "running"
         self.detail[i] = detail
         if self.caps.animate:
             self._redraw()
 
     def finish(self, i: int, detail: str = "", *, state: str = "done") -> None:
+        """Mark step *i* as finished.
+
+        Args:
+            i: Step index.
+            detail: Optional detail text.
+            state: Final state key, ``done`` by default.
+        """
         self.state[i] = state
         if detail:
             self.detail[i] = detail

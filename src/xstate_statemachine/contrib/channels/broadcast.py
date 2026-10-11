@@ -75,6 +75,9 @@ def group_names_for(instance: Any) -> List[str]:
 
 
 def transition_message(instance: Any, event: Any) -> Dict[str, Any]:
+    """Build the ``xsm.transition`` group message with the event type and
+    current version.
+    """
     vcol = f"{instance.statechart_field_obj().name}_version"
     return {
         "type": "xsm.transition",

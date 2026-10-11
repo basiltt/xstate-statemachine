@@ -221,6 +221,12 @@ class _LogicTarget:
         return "stopped" if self._handle.finished else "running"
 
     def send(self, event: Any, **payload: Any) -> None:
+        """Forward the event to the running logic, dropping it if finished.
+
+        Args:
+            event: An event object or a type string.
+            **payload: Payload used when *event* is a string.
+        """
         if isinstance(event, str):
             event = Event(type=event, payload=payload)
         handle = self._handle
@@ -1683,6 +1689,7 @@ class BaseInterpreter(Generic[TContext]):
             return False
 
         def legal(node: StateNode[Any]) -> bool:
+            """Return whether *node* is validly configured in the active set."""
             if node.type == "parallel":
                 regions = [
                     c for c in node.states.values() if c.type != "history"

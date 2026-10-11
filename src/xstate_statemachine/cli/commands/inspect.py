@@ -43,6 +43,15 @@ def state_tree(
     glyphs = KIND_GLYPH if unicode else KIND_ASCII
 
     def build(node: StateNode[Any], is_root: bool = False) -> Node:
+        """Convert *node* and its children into a display `Node`.
+
+        Args:
+            node: State to convert.
+            is_root: Label with the full id instead of the last segment.
+
+        Returns:
+            The tree node.
+        """
         label = node.id.rsplit(".", 1)[-1] if not is_root else node.id
         kind = node.type
         role = "kind.active" if node.id in active else f"kind.{kind}"
@@ -85,6 +94,15 @@ def _policies(m: MachineNode[Any]) -> List[List[str]]:
 
 
 def render_inspect(facts: Facts, *, show_events: bool = True) -> None:
+    """Print a structured summary of the analysed machine.
+
+    Args:
+        facts: Analysis result.
+        show_events: Include the event table.
+
+    Raises:
+        SystemExit: If the machine failed to load.
+    """
     c = get_console()
     m = facts.machine
     if m is None:
@@ -197,6 +215,13 @@ def render_inspect(facts: Facts, *, show_events: bool = True) -> None:
 def run_inspect(
     path: str, *, as_json: bool = False, no_events: bool = False
 ) -> None:
+    """Implement ``xsm inspect`` for one machine file.
+
+    Args:
+        path: Machine JSON file.
+        as_json: Emit JSON instead of the formatted report.
+        no_events: Omit the event table.
+    """
     facts = analyse(Path(path), strict_config=False, engine_reachability=True)
     if as_json:
         data: Dict[str, Any] = facts.to_json()

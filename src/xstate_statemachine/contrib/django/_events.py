@@ -35,6 +35,7 @@ def value_from_ids(machine: Any, state_ids: Any) -> Any:
         return node.id in ids or any(active(c) for c in node.states.values())
 
     def value_of(node: Any) -> Any:
+        """Return the state value for *node* from the active ids, recursively."""
         if getattr(node, "type", "") == "parallel":
             return {
                 key: value_of(child)

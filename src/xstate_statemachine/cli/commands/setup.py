@@ -200,6 +200,14 @@ def run_setup(
     as_json: bool = False,
     scripts_dir: Optional[Path] = None,
 ) -> None:
+    """Implement ``xsm setup``: put the ``xsm`` script directory on PATH.
+
+    Args:
+        undo: Reverse a previous setup.
+        check: Report status without changing anything.
+        as_json: Print JSON output.
+        scripts_dir: Scripts directory override.
+    """
     c = get_console()
     if check:
         st = inspect_shim(scripts_dir)

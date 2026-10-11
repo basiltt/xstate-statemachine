@@ -1,3 +1,14 @@
+"""⛓️ The synchronous state-machine engine.
+
+`SyncInterpreter` runs a `MachineNode` on the caller's thread: `send()`
+processes the event to completion -- transitions, actions, invoked services,
+spawned children -- before it returns, so there is no event loop to own and
+no awaiting. `after` timers are a thread-free deadline list drained by
+`tick()` / `send()` (or a `SimulatedClock`), and `send_threadsafe()` is the
+one cross-thread entry point. Every statechart semantic lives in
+`BaseInterpreter`; this module supplies the blocking delivery mechanics.
+"""
+
 # /src/xstate_statemachine/sync_interpreter.py
 # -----------------------------------------------------------------------------
 # ⛓️ Synchronous State Machine Interpreter

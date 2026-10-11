@@ -367,6 +367,14 @@ def render_invoke(state: StateIR, machine: MachineIR) -> Optional[str]:
         return None
 
     def one(inv: InvokeIR) -> str:
+        """Render one invoke as a dict literal.
+
+        Args:
+            inv: Invoke definition.
+
+        Returns:
+            The dict source text.
+        """
         parts = [f"'src': {literal(inv.src)}"]
         if inv.id:
             parts.append(f"'id': {literal(inv.id)}")

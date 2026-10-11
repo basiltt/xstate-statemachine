@@ -150,6 +150,17 @@ class StatechartQuerySet(models.QuerySet):  # type: ignore[misc]  # QuerySet is 
     ``order.review.legal.pending``)."""
 
     def in_state(self, *state_ids: str) -> "StatechartQuerySet":
+        """Filter to rows whose active states include any of *state_ids*.
+
+        Args:
+            *state_ids: Full state ids; an ancestor id matches its descendants.
+
+        Returns:
+            The filtered queryset.
+
+        Raises:
+            ValueError: If no id is given or an id is not a non-empty string.
+        """
         if not state_ids:
             raise ValueError("in_state() needs at least one state id")
         col = f"{statechart_field(self.model).name}_state"
@@ -214,6 +225,8 @@ class StatechartModelMixin(models.Model):  # type: ignore[misc]  # Model is unty
     objects = StatechartManager()
 
     class Meta:
+        """Mark the mixin abstract so it creates no table."""
+
         abstract = True
 
     # -- machine ----------------------------------------------------------------

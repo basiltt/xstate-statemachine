@@ -39,6 +39,15 @@ class Column:
 
 @dataclass
 class Table:
+    """A text table with styled columns, optional borders and zebra rows.
+
+    Attributes:
+        columns: Column definitions.
+        rows: Row cells, stored as strings.
+        zebra: Mute alternate rows.
+        border: Draw box borders.
+    """
+
     columns: List[Column]
     rows: List[List[str]] = field(default_factory=list)
     zebra: bool = False
@@ -80,12 +89,30 @@ class Table:
 
     # ---------------------------------------------------------------- render
     def render(self, caps: Capabilities) -> List[str]:
+        """Render the table to lines fitted to the terminal width.
+
+        Args:
+            caps: Terminal capabilities (width, unicode, colour).
+
+        Returns:
+            The rendered lines.
+        """
         g = glyphs_for(caps)
         widths = self._widths(caps)
         sep_mid = paint(f" {g.v} ", "muted", caps)
         v = paint(g.v, "muted", caps)
 
         def row_line(cells: Sequence[str], header: bool, idx: int) -> str:
+            """Format one row (or the header) as a line.
+
+            Args:
+                cells: Cell text for the row.
+                header: Whether this is the header row.
+                idx: Row index, used for zebra striping.
+
+            Returns:
+                The styled, padded line.
+            """
             parts = []
             for i, col in enumerate(self.columns):
                 raw = cells[i] if i < len(cells) else ""
@@ -101,6 +128,16 @@ class Table:
             return f"{v} {line} {v}" if self.border else line
 
         def hline(left: str, mid: str, right: str) -> str:
+            """Build a horizontal rule across all columns.
+
+            Args:
+                left: Left edge glyph.
+                mid: Column junction glyph.
+                right: Right edge glyph.
+
+            Returns:
+                The styled rule line.
+            """
             segs = [g.h * (w + 2) for w in widths]
             return paint(left + mid.join(segs) + right, "muted", caps)
 

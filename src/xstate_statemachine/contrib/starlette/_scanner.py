@@ -62,6 +62,7 @@ class _ScannerMixin:
             def body_of(
                 interp: Any, receipt: Any, name: str
             ) -> Dict[str, Any]:
+                """Build the response body for a timer-fired receipt of machine *name*."""
                 reg = self._reg(name)
                 return receipt_body(
                     interp, receipt, context_serializer=reg.context_serializer

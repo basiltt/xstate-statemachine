@@ -15,6 +15,10 @@
 # -----------------------------------------------------------------------------
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
+"""Extracts declared actions, guards, services and events from machine
+JSON, including parent-child relationship inference.
+"""
+
 import json
 import logging
 from typing import Any, Dict, List, Set, Tuple
