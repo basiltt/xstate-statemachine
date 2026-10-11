@@ -2660,6 +2660,8 @@ wire = json.dumps(receipt_to_json(receipt))
 assert receipt_from_json(json.loads(wire)) == receipt
 ```
 
+<div class="stately" data-machine="207017cf4f" data-height="320" data-title="m"></div>
+
 ### `interpreter.wall_now() -> float` **[0.11.0]**
 
 Both engines. Seconds since the Unix epoch, delegated to `clock.wall_now()` when the clock provides one (`RealClock` → `time.time()`, `SimulatedClock` → `wall_start + virtual elapsed`) and falling back to `time.time()` for a custom clock that lacks it. Use it for anything that must survive the process — durable deadlines, audit timestamps — instead of `clock.now()`, whose origin is process-specific (#305).

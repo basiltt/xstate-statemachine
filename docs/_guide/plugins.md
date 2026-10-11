@@ -282,6 +282,8 @@ gate.enabled = False
 assert interp.send("GO", wait=True).changed                      # normal path
 ```
 
+<div class="stately" data-machine="207017cf4f" data-height="320" data-title="m"></div>
+
 > **Fail-open.** Plugin hooks are error-contained: if your interceptor *raises*, the failure is reported through `on_plugin_error` and the event is **admitted**. A blocker must return a receipt, not raise. The same rule applies to a wrong return type: anything other than a `Receipt` or `None` is reported as a `TypeError` through `on_plugin_error` and the event is admitted. Hooks contain `Exception` and `asyncio.CancelledError`; `KeyboardInterrupt` and `SystemExit` raised from a hook reach the caller of `send()`. Engine-minted events (`after`, `done.invoke`, `error.platform`) never pass through this hook — nobody "sends" them.
 
 **Interceptor rules under load** (battle-tested on both engines with 8 producer threads, 1 000 concurrent `gather(send())` calls and a seeded 2 000-operation stress run — `tests/test_battle_304_concurrency.py`):
@@ -324,6 +326,8 @@ interp.send("NOPE")     # nothing handles it
 interp.send("GO")       # transitions
 assert out.seen == [("LOCKED", "denied"), ("NOPE", "no-op"), ("GO", "changed")]
 ```
+
+<div class="stately" data-machine="b1da45d378" data-height="320" data-title="o"></div>
 
 Both engines build the receipt from a per-event before-image, so a `send()` on the sync engine that also drains a due timer reports two outcomes — the user's event and the `after` event — each with its own flags (the timer's outcome is reported *first*, since it was due before the user event ran). The per-event bookkeeping only runs when some attached plugin overrides this hook.
 
@@ -562,6 +566,8 @@ SyncInterpreter(create_machine(cfg)).start().stop()
 assert counter.count == 2                # not attached to the later one
 ```
 
+<div class="stately" data-machine="5d970f17c3" data-height="320" data-title="m"></div>
+
 Rules of the registry:
 
 - **Opt-in only.** The library never registers anything on import; the default process has an empty registry and a constructor pays one list read.
@@ -597,6 +603,8 @@ attached = attach_discovered(interp, allow=["acme-audit"])  # opt in by name
 interp.start().stop()
 ```
 
+<div class="stately" data-machine="5d970f17c3" data-height="320" data-title="m"></div>
+
 - **`allow=`** takes entry-point names **or** distribution names. An entry point that is not allowed is never imported.
 - **A broken plugin does not take you down.** A loader that raises is logged at `WARNING` with its traceback and skipped; it is recorded in `xstate_statemachine.plugin_discovery.last_skipped` (a list of `SkippedPlugin(name, distribution, version, group, error)`, reset by every `discover()` call). In `attach_discovered`, a constructor that raises, or an entry point whose object is **not a `PluginBase`**, is skipped the same way and never `.use()`d. Pass `strict=True` to re-raise instead (a `TypeError` for a non-`PluginBase`), which is what a CI check that "every plugin loads" wants.
 - **`XSM_DISABLE_PLUGIN_DISCOVERY=1`** turns discovery off for the whole process: `discover()` returns `[]` and logs that once. Use it in locked-down deployments where the environment may contain packages you did not vet.
@@ -614,6 +622,8 @@ interp = SyncInterpreter(machine)
 attached = instrument_all(interp, discovered=True, allow=["acme-audit"])
 interp.start().stop()
 ```
+
+<div class="stately" data-machine="5d970f17c3" data-height="320" data-title="m"></div>
 
 ### `xsm plugins`
 
@@ -1019,6 +1029,8 @@ async def main():
 
 asyncio.run(main())
 ```
+
+<div class="stately" data-machine="ec6399af08" data-height="320" data-title="asyncDemo"></div>
 
 > **Tip:** Use `PluginBase[Interpreter]` or `PluginBase[SyncInterpreter]` as the generic type when you want IDE autocompletion for a specific interpreter type:
 > ```python

@@ -159,6 +159,8 @@ interp = SyncInterpreter(machine).start()
 interp.stop()
 ```
 
+<div class="stately" data-machine="2d54eee384" data-height="320" data-title="timedAction"></div>
+
 ## 🛡️ After with Guards
 
 You can conditionally block a delayed transition using a guard:
@@ -223,6 +225,8 @@ print(interp.active_state_ids)
 
 interp.stop()
 ```
+
+<div class="stately" data-machine="1480d93e94" data-height="320" data-title="guardedTimer"></div>
 
 > **Note:** Guard functions receive `(context, event)` and must return a `bool`. They must be synchronous.
 
@@ -419,6 +423,8 @@ async def main():
 asyncio.run(main())
 ```
 
+<div class="stately" data-machine="8fb51e4ff8" data-height="320" data-title="watchdog"></div>
+
 If `lateness_ms` trends upward over time, the event loop (or, for the `SyncInterpreter`, the calling thread) isn't being given enough opportunities to `pump()` due timers — see [Production Characteristics § 2](../production-characteristics/#2-after-timers-are-best-effort-and-starve-under-load) for the underlying guarantee.
 
 ## 🕹️ Controlling Time
@@ -528,6 +534,8 @@ async def main():
     print(set(kid.current_state_ids), set(i.current_state_ids))  # {'kid.d'} {'p.b'}
     await i.stop()
 ```
+
+<div class="stately" data-machine="aa9de412aa" data-height="320" data-title="kid"></div>
 
 One `increment()` call fires timers for **every** interpreter attached to the clock, in due order, regardless of which engine owns each one.
 

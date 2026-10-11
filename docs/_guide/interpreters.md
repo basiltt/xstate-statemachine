@@ -174,6 +174,8 @@ print(interp.context)
 interp.stop()
 ```
 
+<div class="stately" data-machine="94b36856ec" data-height="320" data-title="toggleMachine"></div>
+
 > 📝 **Note:** `active_state_ids` reflects the *settled* configuration. Reading
 > it from inside an action (e.g. `logToggle` above) will not yet show the
 > target state — the active-state set only updates once the transition's
@@ -282,6 +284,8 @@ interp.send("OPEN")
 unsubscribe()
 interp.stop()
 ```
+
+<div class="stately" data-machine="17f7689175" data-height="320" data-title="door"></div>
 
 See also [Plugins](../plugins/) for heavier-weight introspection (logging,
 persistence hooks) and [Snapshots](../snapshots/) for `pending_invocations()`
@@ -401,6 +405,8 @@ print(interp.current_state_ids)  # {'order.a'}
 await asyncio.sleep(0.05)  # let the run loop drain the raised "GO"
 print(interp.current_state_ids)  # {'order.b'}
 ```
+
+<div class="stately" data-machine="bc81406870" data-height="320" data-title="order"></div>
 
 The same ordering applies mid-run: everything `START` transitively raised on itself is processed before the next external event is taken. Each raised event is nonetheless its *own* macrostep with its own `Receipt` (see below) — `await interp.send("START", wait=True)` resolves when `START`'s step ends, and the raised events follow immediately in the internal queue. To wait for the whole chain, use `await_settled()`.
 
@@ -625,6 +631,8 @@ print(interp.context["user"])
 
 interp.stop()
 ```
+
+<div class="stately" data-machine="112333260e" data-height="320" data-title="userMachine"></div>
 
 > **Note:** For service `onDone` events, the service's return value is available as `event.data`. For `onError` events, the raised exception is in `event.data`.
 
@@ -1042,6 +1050,8 @@ Per XState, an event that selects no transition in any active state is silently 
   "states": { "a": {} }
 }
 ```
+
+<div class="stately" data-machine="80b7bbff60" data-height="320" data-title="m"></div>
 
 `"defer"` is library-owned: a still-unhandled event is re-deferred, the buffer survives `get_snapshot()` / `from_snapshot()`, and it is bounded by `Interpreter.DEFER_MAX` — once full, the oldest entry is evicted. `interpreter.deferred_count` reports how many events are currently buffered.
 

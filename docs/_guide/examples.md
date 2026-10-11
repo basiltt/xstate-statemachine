@@ -875,6 +875,8 @@ class TestToggleMachine:
         interp.stop()
 ```
 
+<div class="stately" data-machine="ad6709a0f1" data-height="320" data-title="toggle"></div>
+
 ### Testing Guards
 
 ```python
@@ -945,6 +947,8 @@ class TestGuards:
         interp.stop()
 ```
 
+<div class="stately" data-machine="2e9496df56" data-height="320" data-title="guarded"></div>
+
 ### Testing Actions
 
 ```python
@@ -1010,6 +1014,8 @@ def test_action_modifies_context():
 
     interp.stop()
 ```
+
+<div class="stately" data-machine="a3e48edbe7" data-height="320" data-title="cart"></div>
 
 ### Testing Transitions with `get_next_state`
 
@@ -1125,6 +1131,8 @@ assert interp.current_state_ids == {"trafficTimer.green"}
 interp.stop()
 ```
 
+<div class="stately" data-machine="1c079b41c2" data-height="320" data-title="trafficTimer"></div>
+
 `increment(ms)` advances by a relative amount and fires every timer that becomes due, in order; `set(ms)` jumps to an absolute virtual time and raises if that would move backwards. Inside a running asyncio loop both return an awaitable, so `await clock.increment(...)` is required there — in sync code (as above) they run to completion immediately.
 
 ### Asserting Delivery with `send(wait=True)`
@@ -1156,6 +1164,8 @@ assert receipt.changed is False
 
 interp.stop()
 ```
+
+<div class="stately" data-machine="1477e29fb6" data-height="320" data-title="toggle"></div>
 
 `Receipt` is a `NamedTuple` with five fields: `state_ids` (the active leaf ids once processing finished), `changed` (whether this event actually caused a transition), `error` (the exception raised while processing this event, or `None`), `deferred` (parked under `onUnhandled: "defer"`) and `denied` (a handler existed but every guard refused). Read them by attribute — a three- or four-way positional destructure raises `ValueError`. This is the async `Interpreter`'s `send(..., wait=True)` API too — see [Testing & the Pure API](../testing-and-pure-api/) for the fully synchronous, no-interpreter-needed alternative (`pure_transition`, `get_next_snapshot`, etc.).
 

@@ -240,6 +240,8 @@ machine = (
 )
 ```
 
+<div class="stately" data-machine="78303f149b" data-height="320" data-title="78303f149b"></div>
+
 ---
 
 ## 🐍 Style 3: Functional (`build_machine`)

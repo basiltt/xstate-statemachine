@@ -135,6 +135,8 @@ interp.send("DISPATCH", type="sms")    # Creates worker-sms
 interp.stop()
 ```
 
+<div class="stately" data-machine="41bd4e6657" data-height="320" data-title="dispatcher"></div>
+
 ## ⏸️ Blocking Actors with `spawn_blocking_`
 
 The `SyncInterpreter` supports **blocking actors** using the `spawn_blocking_` prefix. A blocking actor starts immediately and the parent interpreter waits for it to reach a final state before continuing.
@@ -181,6 +183,8 @@ interp.send("VALIDATE")
 interp.stop()
 ```
 
+<div class="stately" data-machine="8e021dd4a2" data-height="320" data-title="validator"></div>
+
 > **Tip:** Use `spawn_blocking_` when you need the child to complete before the parent processes the next event. Use `spawn_` (non-blocking) when the child should run concurrently in a background thread.
 
 As of 0.8.0, **both** the async `Interpreter` and `SyncInterpreter` honour `spawn_blocking_` the same way: the child actor runs to a terminal status (`"done"` or `"error"`) before the parent's *next* action executes. (Previously the async engine silently ran it non-blocking.)
@@ -195,6 +199,8 @@ A machine-level `spawnBlockingTimeout` config key (milliseconds) bounds how long
   "states": { "editing": {} }
 }
 ```
+
+<div class="stately" data-machine="176adc9528" data-height="320" data-title="form"></div>
 
 When unset, a **30-second default** applies (`DEFAULT_SPAWN_BLOCKING_TIMEOUT_MS`). The wait is never unbounded: an unbounded wait inside a transition would wedge the parent forever if the child never reaches a final state, while the machine still reported `"running"`. If the timeout lapses, the parent logs a warning and continues — it does **not** raise.
 
@@ -288,6 +294,8 @@ sup.send("DISPATCH")
 print(sup.system.get("pool").context["jobs"])  # 2
 sup.stop()
 ```
+
+<div class="stately" data-machine="ef7dcd69e4" data-height="320" data-title="worker"></div>
 
 The `system` registry is reachable from any interpreter in the tree:
 
@@ -499,6 +507,8 @@ async def main():
 asyncio.run(main())
 ```
 
+<div class="stately" data-machine="40504d2d34" data-height="320" data-title="asyncWorker"></div>
+
 ## 🧵 Complete Example: Task Manager with Worker Actors
 
 This example demonstrates a task manager that spawns worker actors to process tasks concurrently:
@@ -591,6 +601,8 @@ interp.send("SHUTDOWN")
 interp.stop()
 ```
 
+<div class="stately" data-machine="8c808d1b84" data-height="320" data-title="worker"></div>
+
 ## ✅ Best Practices for Actor Design
 
 1. **Keep actors self-contained** — Each actor should have its own complete logic. Avoid tight coupling between parent and child.
@@ -663,5 +675,7 @@ except RuntimeError:
 print(interp.current_state_ids)  # still {'parent.idle'} -- the transition rolled back
 print(interp._actors)             # {} -- the spawned child was stopped, not orphaned
 ```
+
+<div class="stately" data-machine="42ed0d0231" data-height="320" data-title="child"></div>
 
 See also [Interpreters — Lifecycle: completion and teardown](../interpreters/#lifecycle-completion-and-teardown).

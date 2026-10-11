@@ -113,6 +113,8 @@ print(interp.active_state_ids)
 interp.stop()
 ```
 
+<div class="stately" data-machine="0b307f97b0" data-height="320" data-title="toggle"></div>
+
 ### Using Pure Python (Pythonic API):
 
 ```python
@@ -225,6 +227,8 @@ print(interp.context["count"])
 
 interp.stop()
 ```
+
+<div class="stately" data-machine="761cf96343" data-height="320" data-title="counter"></div>
 
 ## 📦 What's Included
 
@@ -446,6 +450,8 @@ async def main():
 
 asyncio.run(main())
 ```
+
+<div class="stately" data-machine="343ece08c1" data-height="320" data-title="asyncToggle"></div>
 
 > **Note:** Plain `await interp.send(...)` only awaits the event being
 > *enqueued* — it does not wait for the macrostep to run. Pass

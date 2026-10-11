@@ -131,6 +131,8 @@ This machine has:
 }
 ```
 
+<div class="stately" data-machine="1477e29fb6" data-height="320" data-title="toggle"></div>
+
 **Example — with context:**
 
 ```json
@@ -153,6 +155,8 @@ This machine has:
   }
 }
 ```
+
+<div class="stately" data-machine="58ffc54dc7" data-height="320" data-title="counter"></div>
 
 ---
 
@@ -225,6 +229,8 @@ print(interp.has_tag("billable"))  # True
 print(interp.tags)                 # {'active', 'billable'}
 print(interp.get_meta())           # {'order.pending': {'ui': {'color': 'blue'}}}
 ```
+
+<div class="stately" data-machine="6a28cbe7f8" data-height="320" data-title="order"></div>
 
 
 ---

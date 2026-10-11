@@ -139,6 +139,8 @@ eu = DurableTimerScheduler(app, MemoryStore(), m,
 assert eu.task.name == "eu.deadlines.scan"
 ```
 
+<div class="stately" data-machine="32950f227a" data-height="320" data-title="t"></div>
+
 ### `assert_json_serializer(app)`
 
 Raises `InvalidConfigError` unless `task_serializer` and `result_serializer` are `"json"` and neither `accept_content` nor `result_accept_content` admits pickle or YAML, by name or by MIME type (`application/x-python-serialize`, `application/x-yaml`; see `UNSAFE_CONTENT`). `result.get()` deserialises with the *result* settings, so both matter. `celery_service`, `@statechart_task`, `connect_signals`, `poll_results`, `DurableTimerScheduler` and `outbox_relay_task` all call it. See [Event-driven architecture](../integration-eda/).

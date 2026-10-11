@@ -221,6 +221,8 @@ interp.send("OPEN")
 assert interp.matches("door.open")
 ```
 
+<div class="stately" data-machine="286d43f7a3" data-height="320" data-title="door"></div>
+
 ## 📍 Built-in `stateIn` Guard
 
 `stateIn` is a built-in guard, satisfied when a given state is part of the machine's active configuration — either as an active leaf or as an ancestor of one. No implementation is required:
@@ -269,6 +271,8 @@ interp.send("BACK_TO_ONE")
 print(interp.current_state_ids)  # {"wizard.step1"}
 interp.stop()
 ```
+
+<div class="stately" data-machine="0bb758473f" data-height="320" data-title="wizard"></div>
 
 The state id accepts both the `#machine.a.b` and bare `machine.a.b` spellings.
 
@@ -611,6 +615,8 @@ If a guard raises an exception, the interpreter treats *that candidate* as decid
   "states": { "a": {} }
 }
 ```
+
+<div class="stately" data-machine="c8f5dbe5a7" data-height="320" data-title="m"></div>
 
 Whatever the policy, the raise is observable via the `on_guard_error(interpreter, guard_name, event, error)` plugin hook, fired *before* the substituted result is reported — previously a raising guard was indistinguishable from one that legitimately returned `False`. See [Plugins](../plugins/#plugin-hooks-reference).
 

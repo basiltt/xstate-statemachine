@@ -232,6 +232,8 @@ The `onDone` transition can include actions, just like any other transition:
 }
 ```
 
+<div class="stately" data-machine="27760a64ca" data-height="320" data-title="27760a64ca"></div>
+
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 
@@ -886,5 +888,7 @@ async def main():
 
 asyncio.run(main())
 ```
+
+<div class="stately" data-machine="87dfa2bf33" data-height="320" data-title="payment"></div>
 
 See also: [Interpreters](/guide/interpreters/), [Services & Invoke](/guide/services/).

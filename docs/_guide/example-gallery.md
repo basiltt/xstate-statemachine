@@ -420,6 +420,18 @@ Source: [`examples/sync/features/history_shallow_deep/history_shallow_deep_runne
 
 <div class="stately" data-machine="bd67490322" data-height="520" data-title="editor"></div>
 
+### toggle
+
+Source: [`examples/sync/features/pure_api/pure_api_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/pure_api/pure_api_runner.py)
+
+<div class="stately" data-machine="1477e29fb6" data-height="320" data-title="toggle"></div>
+
+### m
+
+Source: [`examples/sync/features/snapshot_drift/snapshot_drift_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/snapshot_drift/snapshot_drift_runner.py)
+
+<div class="stately" data-machine="5d970f17c3" data-height="320" data-title="m"></div>
+
 ### light
 
 Source: [`examples/sync/features/subscribe/subscribe_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/subscribe/subscribe_runner.py)

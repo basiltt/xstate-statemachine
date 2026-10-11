@@ -890,6 +890,8 @@ gateway.send("SHUTDOWN")                                    # state exit -> clea
 assert client.published[-1] == ("__disconnected__", None)
 ```
 
+<div class="stately" data-machine="af38054b9e" data-height="320" data-title="gateway"></div>
+
 `setup(send_back, receive, ctx, event)` returns a cleanup callable (or `None`). Cleanup runs **exactly once** on state exit, on `stop()`, or when `setup` raised; an exception inside `setup` is `onError`. An `async def` cleanup is awaited by the async engine's `stop()`.
 
 ### `from_async_iterator` — a token stream
@@ -920,6 +922,8 @@ async def main():
 
 asyncio.run(main())
 ```
+
+<div class="stately" data-machine="f4b4626ff0" data-height="320" data-title="chat"></div>
 
 Each yielded item is sent as a `StreamEvent("STREAM", {"data": item})` (`event_type=` to rename it): **`e.data` is the item itself**, as it is for `DoneEvent`, and `e.payload["data"]` is the same value for code that works with plain dicts. The machine applies it before the next item is pulled, so stream order and completion order agree. Exhaustion is `onDone` with the last item; an exception is `onError`; leaving the state cancels the task and `aclose()`s the generator, so a `finally:` in it runs. `from_iterator` is the sync twin — the iterator is consumed on a daemon thread and items arrive through the mailbox.
 

@@ -52,6 +52,8 @@ assert interp.context["items"] == 2 and version == 2
 interp.stop()
 ```
 
+<div class="stately" data-machine="4f57366be5" data-height="320" data-title="order"></div>
+
 `load_interpreter` returns a **started** `SyncInterpreter` and the record's version — `0` when the key did not exist yet, so the first `save_interpreter(expected_version=0)` succeeds only if nobody else created the record in between. For the async engine use `await aload_interpreter(...)`.
 
 ## Choosing a backend
@@ -81,6 +83,8 @@ assert (record.key, record.version, record.machine_version) == ("m-1", 1, "3")
 assert record.deadlines == ()          # durable timers land here (#264)
 interp.stop()
 ```
+
+<div class="stately" data-machine="c84e05cf80" data-height="320" data-title="m"></div>
 
 | Field | Meaning |
 |:--|:--|
@@ -172,6 +176,8 @@ with persisted(store, "k", machine) as i:
     assert i.context["n"] == 2
 ```
 
+<div class="stately" data-machine="6c9e519757" data-height="320" data-title="c"></div>
+
 For the async engine use `async with apersisted(store, key, machine) as interp:` — *store* may be a sync store (calls go through the executor) or an `as_async()` adapter.
 
 **The async block settles before it saves (#263 battle).** `await interp.send("PAY", wait=True)` resolves at the end of *that event's* macrostep. When the step entered a state with a plain `def` service, the service's completion is the *next* macrostep — per SCXML — and the run loop starts it at once; if that step enters a second `def` invoke (authorise → capture), the machine is mid-step exactly when your block exits. The sync engine's `send()` drains the whole chain before returning, so `persisted()` never had this problem; `apersisted()` now closes the gap by `await`ing `interp.await_settled(settle_timeout)` before the snapshot (default `DEFAULT_SETTLE_TIMEOUT`, 30 s — it only ever waits while a service is genuinely running). The same settle runs inside the Starlette / FastAPI / Litestar / Quart registries before the receipt body is built, so the `200` a caller reads is what the store holds. `settle_timeout=0` opts out: a mid-step machine is then refused with `SnapshotMidStepError`, as before — loud, never torn. A fired or armed `after` is *not* owed work (a machine sitting on a live SLA timer is settled), so a block on a timer-heavy chart does not wait out the timer.
@@ -257,6 +263,8 @@ for lock in (OptimisticLock(retries=100), PessimisticLock(timeout=30)):
         assert i.context["n"] == 200, type(lock).__name__     # no lost updates
 ```
 
+<div class="stately" data-machine="6c9e519757" data-height="320" data-title="c"></div>
+
 ## Safety rails every store enforces
 
 - **Size cap.** `max_snapshot_bytes` (default 1 MiB) is checked on save *and* load — `SnapshotTooLargeError`. A record another writer poisoned cannot make a reader allocate unboundedly.
@@ -336,6 +344,8 @@ async def main():
 asyncio.run(main())
 ```
 
+<div class="stately" data-machine="207017cf4f" data-height="320" data-title="m"></div>
+
 ## Idempotency: the inbox
 
 Every broker, webhook provider (Stripe, GitHub, Twilio) and retrying HTTP client delivers **at least once**. Duplicate deliveries double-credit wallets and double-ship orders. The fix is deduplication at the consumer keyed by a stable event id — the *inbox* pattern — and `IdempotencyPlugin` makes it an attachable plugin: duplicates are answered from the inbox **before the machine sees them**, with the *same* receipt the first delivery got.
@@ -370,6 +380,8 @@ assert webhook({**first, "amount": 999}) == 422                        # same id
 assert webhook({**first, "account": "acct_B"}) == 200                  # another tenant's evt_1 is a new event
 assert wallet.context["balance"] == 1000
 ```
+
+<div class="stately" data-machine="f89a3342a7" data-height="320" data-title="wallet"></div>
 
 What the plugin does, on both engines:
 
@@ -451,6 +463,8 @@ with persisted(store, "wallet:acct_A", machine, plugins=[dedupe]) as w:
     assert w.context["balance"] == 500           # credited exactly once
 store.close()
 ```
+
+<div class="stately" data-machine="7b7c00c023" data-height="320" data-title="wallet"></div>
 
 ## Audit log & replay
 
@@ -582,6 +596,8 @@ order = SyncInterpreter.from_snapshot(blob, create_machine(v2), migrator=migrato
 assert order.current_state_ids == {"order.payment.card"}
 ```
 
+<div class="stately" data-machine="121b20b3b5" data-height="320" data-title="order"></div>
+
 What happens on restore, in order: the **label** is compared (`on_version_mismatch`: `"error"` default · `"warn"` restores as-is · `"migrate"`, the default when a `migrator=` is given); a migration applies the shortest chain of registered steps (`1.0 → 2.0 → 3.0`) to a *copy* of the blob, rewrites `machine_version` and drops `machine_hash` — the structure changed by definition; then the **structural hash** is checked (unless migrated), the layout is upcast, and the blob is validated against *this* machine exactly like any other: every state id must exist (`StateNotFoundError`, never a silent skip), the configuration must be legal, `strict` and event schemas still apply to restored events. A missing hop is `NoMigrationPathError`. Child actors are restored with the same migrator and policy — steps can be scoped with `machine_id="kid"`.
 
 **What a step may and may not do — as battle-tested (#263).** Every row is asserted by `tests/persistence/test_battle_263_migration_semantics.py` and `_runtime.py`:
@@ -642,6 +658,8 @@ assert scanner.run_once(now=now + 3601) == 0             # idempotent
 with persisted(store, "user:42", machine) as trial:
     assert trial.matches("trial.reminded")
 ```
+
+<div class="stately" data-machine="20cb6e58d8" data-height="320" data-title="trial"></div>
 
 Each persisted `Deadline` carries `state_id`, `entry_seq` (the state-entry generation, so a deadline armed by an earlier visit to the same state is recognisably stale), `due_at_wall` (epoch seconds from `interpreter.wall_now()`), the **resolved** `delay_ms` (a named or dynamic delay is a number by then) and `event_type`. `interpreter.pending_deadlines()` lists them, soonest first, on both engines.
 

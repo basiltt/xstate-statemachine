@@ -180,6 +180,8 @@ Children can transition between each other freely:
 }
 ```
 
+<div class="stately" data-machine="85bc7ac76a" data-height="320" data-title="85bc7ac76a"></div>
+
 ### Relative and Absolute Targets
 
 A target beginning with a dot, such as `".child"`, resolves into the **source** state's own children — matching XState v5. So `{target: ".profile"}` on `dashboard` means "my own child `profile`", not a sibling of `dashboard`.
@@ -194,6 +196,8 @@ The 0.7.x reading — resolving `.child` as a sibling of the source, i.e. a chil
   "states": { "loggedIn": {} }
 }
 ```
+
+<div class="stately" data-machine="18f6e6f442" data-height="320" data-title="m"></div>
 
 An absolute target such as `"#machineId.path.to.state"` resolves from the machine root regardless of where the transition is defined, and is unaffected by `strictTargets`.
 
@@ -644,6 +648,8 @@ Guards work normally inside nested states:
 }
 ```
 
+<div class="stately" data-machine="884f9e017b" data-height="320" data-title="884f9e017b"></div>
+
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 
@@ -715,6 +721,8 @@ Entry and exit actions fire in the correct order when entering/exiting nested st
   }
 }
 ```
+
+<div class="stately" data-machine="fbeedc34be" data-height="320" data-title="fbeedc34be"></div>
 
 When transitioning from `loggedOut` to `loggedIn`:
 

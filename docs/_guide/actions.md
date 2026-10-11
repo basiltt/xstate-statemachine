@@ -118,6 +118,8 @@ This order is guaranteed and consistent across all interpreter types.
 }
 ```
 
+<div class="stately" data-machine="7f622fde3d" data-height="320" data-title="7f622fde3d"></div>
+
 ### Multiple Entry/Exit Actions
 
 Entry and exit support arrays too:
@@ -132,6 +134,8 @@ Entry and exit support arrays too:
   }
 }
 ```
+
+<div class="stately" data-machine="eb8aa34500" data-height="320" data-title="eb8aa34500"></div>
 
 ## 🧠 Action Implementation with MachineLogic
 
@@ -349,6 +353,8 @@ print(interp.context["todos"])
 print(interp.context["completedCount"])  # 1
 interp.stop()
 ```
+
+<div class="stately" data-machine="9d7d80df57" data-height="320" data-title="todoApp"></div>
 
 ## 📨 Accessing Event Data in Actions
 
@@ -628,6 +634,8 @@ The behavior above is one of three policies, controlled by the machine-config ke
   "states": { "a": {} }
 }
 ```
+
+<div class="stately" data-machine="1a58abf6dd" data-height="320" data-title="m"></div>
 
 Guards have an analogous `guardErrorPolicy` (`"false"`/`"true"`/`"raise"`, see
 [Guards](../guards/)) and unhandled events have their own `onUnhandled`
@@ -986,6 +994,8 @@ print(interp.context["total"])
 
 interp.stop()
 ```
+
+<div class="stately" data-machine="055d558d66" data-height="320" data-title="order"></div>
 
 ### Global Registration
 

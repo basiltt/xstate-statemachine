@@ -285,6 +285,8 @@ winners = [r for r in results if r.status_code == 200 and r.json()["changed"]]
 assert len(winners) == 1                         # the rest: 409 or unchanged
 ```
 
+<div class="stately" data-machine="8c1fd940a8" data-height="320" data-title="t"></div>
+
 Drive timers with `DueTimerScanner(store, ...).scan(now=time.time() + 901)`, which passes an explicit `now`, instead of sleeping. The `[testing]` extra's pytest plugin ([#268](https://github.com/basiltt/xstate-statemachine/issues/268)) provides machine-level fixtures (`xsm_machine`, `xsm_interp`, `xsm_store`, `xsm_clock`, …). It has no `TestClient` fixture, so build the client yourself as above; the example's `tests/test_orders_app.py` wraps one in a fixture over a per-test SQLite file.
 
 ### Generate a router you own

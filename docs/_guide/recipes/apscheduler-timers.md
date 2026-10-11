@@ -84,6 +84,8 @@ sched.start()
 sched.shutdown()
 ```
 
+<div class="stately" data-machine="9d4d847125" data-height="320" data-title="trial"></div>
+
 `max_instances=1` means a slow scan is never overlapped by the next one. `coalesce=True` collapses runs missed during a pause into one run. `run_once` catches and logs a failure per key, and `last_result.errors` lists them, so one broken record cannot stall the job.
 
 The example's `apscheduler_timers.py` runs this as `python apscheduler_timers.py --role scheduler`. That is the same shape as the FastAPI example's `python app.py --role scheduler` ([FastAPI orders](../integration-fastapi/)). Run **exactly one** scheduler role per store.

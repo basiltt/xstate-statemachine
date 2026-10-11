@@ -213,6 +213,8 @@ assert (report.states_visited, report.transitions_hit) == (2, 1)
 print(report.to_text())      # also .to_json(), .to_html()
 ```
 
+<div class="stately" data-machine="c6c85df5ca" data-height="320" data-title="t"></div>
+
 **JSON schema (`version: 1`, stable).** A reader must reject any other `version`.
 
 ```text

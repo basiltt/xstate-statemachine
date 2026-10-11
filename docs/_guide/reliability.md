@@ -75,6 +75,8 @@ assert interp.context["charged"] is False          # context restored too
 interp.stop()
 ```
 
+<div class="stately" data-machine="0fcda93efd" data-height="320" data-title="payment"></div>
+
 Rollback also **stops any actors the failed transition spawned**, so a retried transition does not leak a child from the attempt before it.
 
 ---
@@ -115,6 +117,8 @@ assert interp.deferred_count == 0
 interp.stop()
 ```
 
+<div class="stately" data-machine="72bf3d3f09" data-height="320" data-title="door"></div>
+
 ### An event the machine has never heard of — `strict`
 
 `strict=True` raises `UnknownEventError` **at the call site**, with a did-you-mean suggestion, instead of enqueueing a typo that silently drops.
@@ -132,6 +136,8 @@ except UnknownEventError as e:
     assert "OPEN" in str(e)     # did you mean OPEN?
 interp.stop()
 ```
+
+<div class="stately" data-machine="60dbcd6a6d" data-height="320" data-title="d"></div>
 
 ### A well-known event with a malformed payload — `event_schemas`
 
@@ -154,6 +160,8 @@ except InvalidEventPayloadError:
     pass
 interp.stop()
 ```
+
+<div class="stately" data-machine="e9d35997de" data-height="320" data-title="cart"></div>
 
 ---
 
@@ -213,6 +221,8 @@ except InvalidConfigError as e:
     assert "b.a: on 'GO' -> target 'nowhere' does not resolve" in str(e)
 ```
 
+<div class="stately" data-machine="8bff32c3ca" data-height="320" data-title="b"></div>
+
 ---
 
 ## 5. Unbounded inbox — `max_queue_size` + `OverflowPolicy`
@@ -245,6 +255,8 @@ async def main():
 asyncio.run(main())
 ```
 
+<div class="stately" data-machine="03f09ce6eb" data-height="320" data-title="q"></div>
+
 `BLOCK` applies backpressure to the producer; `DROP_NEWEST` discards and fires `on_event_dropped`. `queue_depth` is observable either way.
 
 ---
@@ -269,6 +281,8 @@ r = interp.send("NOPE", wait=True)          # unhandled, non-strict
 assert r.changed is False                   # nothing moved, and you know it
 interp.stop()
 ```
+
+<div class="stately" data-machine="593932e1a2" data-height="320" data-title="t"></div>
 
 `send_priority()` puts an event ahead of the backlog for decisions that cannot wait behind routine traffic. `send_threadsafe()` delivers from a plain thread into an asyncio interpreter.
 
@@ -297,6 +311,8 @@ except SnapshotDriftError:
     pass                                   # refused, loudly
 ```
 
+<div class="stately" data-machine="3ee86fdb10" data-height="320" data-title="wf"></div>
+
 Pending inbox and deferred events survive a snapshot; `from_snapshot(restart_services=True)` re-invokes services that were mid-flight, and `pending_invocations()` lists them.
 
 ---
@@ -320,6 +336,8 @@ clock.increment(1)
 assert interp.active_state_ids == {"sess.expired"}
 interp.stop()
 ```
+
+<div class="stately" data-machine="367fddc33e" data-height="320" data-title="sess"></div>
 
 In production, `RealClock` gives due timers a **priority lane** so a busy inbox cannot starve them (500 busy machines: ~46 ms late, was ~180 ms).
 
@@ -351,6 +369,8 @@ interp = Interpreter(
     overflow_policy=OverflowPolicy.BLOCK,
 )
 ```
+
+<div class="stately" data-machine="ad5b3bb3c5" data-height="320" data-title="orders"></div>
 
 Then in every test: inject a `SimulatedClock`, assert on `Receipt`s, and register a `PluginBase` that fails the test on any `on_*_error` hook.
 

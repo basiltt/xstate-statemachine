@@ -257,6 +257,8 @@ print(interp.active_state_ids)
 interp.stop()
 ```
 
+<div class="stately" data-machine="c917fa8b48" data-height="320" data-title="c917fa8b48"></div>
+
 ### Functional API
 
 ```python
