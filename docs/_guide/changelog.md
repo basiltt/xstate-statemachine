@@ -3,8 +3,6 @@ title: "Changelog"
 description: "Release history and what changed in each version."
 ---
 
-# Changelog
-
 All notable changes to XState-StateMachine for Python are documented here.
 
 For the full changelog with commit history, see [CHANGELOG.md on GitHub](https://github.com/basiltt/xstate-statemachine/blob/main/CHANGELOG.md).

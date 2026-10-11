@@ -4,8 +4,6 @@ permalink: /guide/apscheduler-timers/
 description: "Seven-day and fourteen-day `after` follow-ups that survive restarts: persisted deadlines woken by DueTimerScanner.run_once running as an APScheduler job."
 ---
 
-# Recipe: APScheduler durable timers
-
 A trial reminder after 7 days and expiry after 14 is two `after` transitions. The problem is the process: it will be redeployed long before day 7, and an in-memory timer dies with it. The library already persists every armed `after` as a **deadline** next to the snapshot. `DueTimerScanner.run_once()` finds matured deadlines and fires them. APScheduler only provides "call this every minute".
 
 Files: [`examples/recipes/apscheduler_timers/`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/recipes/apscheduler_timers).
@@ -39,12 +37,31 @@ from xstate_statemachine import MachineLogic, SimulatedClock, create_machine
 from xstate_statemachine.persistence import DueTimerScanner, MemoryStore, persisted
 
 DAY = 86_400
-chart = {"id": "trial", "initial": "trialing", "context": {"reminders": 0}, "states": {
-    "trialing": {"initial": "fresh", "on": {"SUBSCRIBE": "#trial.subscribed"},
-                 "after": {"1209600000": "#trial.expired"},
-                 "states": {"fresh": {"after": {"604800000": {"target": "reminded", "actions": "remind"}}},
-                            "reminded": {}}},
-    "subscribed": {"type": "final"}, "expired": {"type": "final", "entry": "expire"}}}
+chart = {
+    "id": "trial",
+    "initial": "trialing",
+    "context": {"reminders": 0},
+    "states": {
+        "trialing": {
+            "initial": "fresh",
+            "on": {"SUBSCRIBE": "#trial.subscribed"},
+            "after": {"1209600000": "#trial.expired"},
+            "states": {
+                "fresh": {
+                    "after": {
+                        "604800000": {
+                            "target": "reminded",
+                            "actions": "remind",
+                        },
+                    },
+                },
+                "reminded": {},
+            },
+        },
+        "subscribed": {"type": "final"},
+        "expired": {"type": "final", "entry": "expire"},
+    },
+}
 sent = []
 def remind(i, ctx, e, a): ctx["reminders"] += 1; sent.append("reminder")
 def expire(i, ctx, e, a): sent.append("expired")

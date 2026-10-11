@@ -3,8 +3,6 @@ title: "FAQ"
 description: "Frequently asked questions about XState-StateMachine for Python."
 ---
 
-# Frequently Asked Questions
-
 Short answers with links to the deep dive. If your question isn't here, [open a discussion](https://github.com/basiltt/xstate-statemachine/discussions) — the good ones end up on this page.
 
 ```mermaid

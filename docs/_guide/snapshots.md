@@ -3,8 +3,6 @@ title: "Snapshots & State Restoration"
 description: "Save and restore machine state — persistence, crash recovery, and testing."
 ---
 
-# Snapshots & State Restoration
-
 Snapshots let you **capture** and **restore** a machine's state at any point in time. This implements the **Memento pattern**, enabling persistence, crash recovery, workflow checkpointing, and targeted testing.
 
 ## 📸 What are Snapshots?

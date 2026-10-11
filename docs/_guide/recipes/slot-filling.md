@@ -4,8 +4,6 @@ permalink: /guide/slot-filling/
 description: "Collect N slots in any order with a self-transition. Move on when an allSlotsFilled guard passes, and nudge on silence with an after timer. The engine is pure and tested on both interpreters."
 ---
 
-# Recipe: Chatbot slot filling
-
 A booking bot needs a date, a party size and a name, and users give them in any order, several at once, or not at all. The conversation logic is small, and a chart can own all of it. Your NLU, whether an LLM, a regex or Rasa, only **extracts** `{"slot": value}` pairs from a turn and sends them as `USER_SAID`.
 
 Files: [`examples/recipes/slot_filling/`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/recipes/slot_filling).

@@ -3,8 +3,6 @@ title: "Persistence Stores"
 description: "StateStore protocol with Memory, File and SQLite backends — the create → act → persist → discard model for web workers, Celery and multi-process apps."
 ---
 
-# Persistence Stores
-
 An interpreter is process memory. Under gunicorn or uvicorn workers, in a Celery task, or when two requests arrive for the same order, "keep it in RAM" is wrong. Every durable system converges on the same four-step loop:
 
 ```mermaid

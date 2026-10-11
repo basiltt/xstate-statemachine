@@ -3,8 +3,6 @@ title: "Security"
 description: "The trust model behind every integration and the programme-wide baseline (#303) mapped item by item to the test or CI check that enforces it."
 ---
 
-# Security
-
 The short version is in [`SECURITY.md`](https://github.com/basiltt/xstate-statemachine/blob/main/SECURITY.md) at the repository root: how to report, what is supported, and the **trust model** — installed packages are trusted, your machine definition is trusted, **events and snapshots are not**. This page is the longer companion: the numbered baseline every integration is built against, with the evidence for each item. Its twin, [Guarantees](../guarantees/), covers crash consistency.
 
 ## Trust boundaries in one picture

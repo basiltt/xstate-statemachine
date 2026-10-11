@@ -39,8 +39,11 @@ PLATFORM_STDLIB = {
 def _is_stdlib(root: str) -> bool:
     """Match the 3.9-compatible origin check in test_zero_dependency.py."""
     names = getattr(sys, "stdlib_module_names", None)
-    if names is not None:
-        return root in names
+    if names is not None and root in names:
+        return True
+    # 🐍 3.15 ships private helper modules (e.g. ``_missing_stdlib_info``)
+    #    that are NOT in ``stdlib_module_names``; fall through to the origin
+    #    probe for anything the frozen set does not vouch for.
     if root in sys.builtin_module_names or root in PLATFORM_STDLIB:
         return True
     spec = importlib.machinery.PathFinder.find_spec(root, None)

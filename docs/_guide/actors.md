@@ -3,8 +3,6 @@ title: "Actor Model"
 description: "Spawn independent child machines from parent machines — isolated state, context, and lifecycle."
 ---
 
-# Actor Model
-
 The **Actor Model** lets you spawn independent child state machines from a parent machine. Each actor runs in isolation with its own state, context, and lifecycle. This is essential for modeling concurrent workflows, delegation patterns, and task distribution.
 
 ## 🎭 What is the Actor Model?

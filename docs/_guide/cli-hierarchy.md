@@ -3,8 +3,6 @@ title: "Hierarchical Machine Generation"
 description: "Generate parent-child machine code with the CLI — actor model code generation."
 ---
 
-# Hierarchical Machine Generation
-
 When your system involves a **parent machine** that orchestrates one or more **child machines** (the actor model), the CLI can generate wiring code that creates and manages all interpreters together. This page explains when and how to use hierarchical generation.
 
 ## 🌳 When to Use Hierarchical Generation

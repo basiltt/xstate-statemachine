@@ -243,7 +243,7 @@ class TestPromiseConsistency(unittest.TestCase):
         text = _read(ROOT / "README.md")
         self.assertIn("Semantic Versioning", text)
         self.assertIn("**provisional**", text)
-        self.assertIn("Supported Python: 3.9 – 3.14", text)
+        self.assertIn("Supported Python: 3.9 – 3.15", text)
         self.assertIn("xstate-statemachine[all]", text)
         py = re.search(
             r'requires-python = ">=(3\.\d+)"', _read(ROOT / "pyproject.toml")

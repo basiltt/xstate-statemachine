@@ -79,7 +79,7 @@ class TestOnePointOhChecklist(unittest.TestCase):
     def test_readme_states_semver_and_python_range(self) -> None:
         readme = (ROOT / "README.md").read_text(encoding="utf-8")
         self.assertIn("Semantic Versioning", readme)
-        self.assertIn("Supported Python: 3.9 – 3.14", readme)
+        self.assertIn("Supported Python: 3.9 – 3.15", readme)
         pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
         self.assertIn('requires-python = ">=3.9"', pyproject)
 

@@ -3,8 +3,6 @@ title: "CLI Tool"
 description: "Generate, inspect, simulate, diagram and document XState machines from the terminal with the xsm command."
 ---
 
-# CLI Tool
-
 `xsm` is the command-line companion to the library. It reads XState-compatible JSON machine definitions — exported from [Stately.ai](https://stately.ai) or written by hand — and does five things with them:
 
 | You want to… | Command |

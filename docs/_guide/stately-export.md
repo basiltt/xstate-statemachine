@@ -3,8 +3,6 @@ title: "Stately editor → Python"
 description: "Export a machine from the Stately visual editor and run it with xstate-statemachine: export steps, the version key, meta conventions, xsm validate, the editor JSON Schema for VS Code, and the round trip."
 ---
 
-# Stately editor → Python
-
 Design the chart visually in the [Stately editor](https://stately.ai/editor), export it as JSON, and run that JSON with this library unchanged. Your Python code supplies only the actions, guards and services the chart names.
 
 ## Export

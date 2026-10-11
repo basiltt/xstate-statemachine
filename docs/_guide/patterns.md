@@ -3,8 +3,6 @@ title: "Resilience Patterns"
 description: "Retry with backoff and jitter, dead-lettering, and a circuit breaker — each a small statechart, zero dependencies, in xstate_statemachine.patterns."
 ---
 
-# Resilience Patterns
-
 Three things every service team re-implements by hand, and gets subtly wrong: **retry with backoff** (no jitter → a thundering herd when the dependency comes back), **dead-lettering** (a poison message with no error context), and the **circuit breaker** (a half-open probe race). Each is a small statechart plus a delay function, so they ship as first-class building blocks in `xstate_statemachine.patterns` — zero dependencies, both engines, and `xsm inspect` renders them.
 
 ```mermaid

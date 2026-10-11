@@ -3,8 +3,6 @@ title: "Django integration"
 description: "A real statechart on a Django model: StatechartField, transaction + row-lock sends, signals, an audit log in the same transaction, permission guards, admin buttons, management commands and a django-fsm migration."
 ---
 
-# Django
-
 Django is where most Python state machines live, and they are usually flat: one status column, a handful of `@transition` methods, no nesting, no timers. This extra puts a **real statechart on a model**, with hierarchy, parallel regions, `after`, `invoke` and actors. `order.send("PAY")` runs in `transaction.atomic()` with a row lock. The audit row commits in the same transaction as the state change. Permissions are guards in the chart, so the admin, DRF and Channels all ask the same question: "may *this* user do it?". There is also a mechanical migration from `django-fsm-2`.
 
 REST (`[drf]`) and WebSocket (`[channels]`) surfaces are on the [DRF & Channels](../integration-drf/) page.

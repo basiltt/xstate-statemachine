@@ -3,8 +3,6 @@ title: "SQLAlchemy integration"
 description: "StatechartType and StatechartMixin put a statechart on your mapped rows with optimistic locking; SQLAlchemyStore runs the StateStore contract on Postgres, MySQL or SQLite."
 ---
 
-# SQLAlchemy
-
 SQLAlchemy sits under Flask, FastAPI and most Python services, so the question "where does the statechart live?" usually has the answer "in the database I already have". This extra gives you two answers. You can put the statechart **on your business row**: a snapshot column, queryable state columns, and SQLAlchemy's `version_id_col` as declarative optimistic locking (the Python answer to django-fsm's `ConcurrentTransition`). Or you can use a **key-value store** (`SQLAlchemyStore`) that passes the same contract suite as `SQLiteStore`, so `persisted()`, the idempotency inbox, the audit log and `DueTimerScanner` work unchanged on any database SQLAlchemy supports.
 
 ## Install

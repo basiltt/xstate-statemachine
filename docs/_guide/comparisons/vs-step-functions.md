@@ -4,8 +4,6 @@ description: "ASL next to XState JSON for the same order workflow; event-driven 
 permalink: /guide/vs-step-functions/
 ---
 
-# xstate-statemachine vs AWS Step Functions
-
 AWS Step Functions is a managed workflow service. You describe a state machine in the Amazon States Language (ASL), and AWS runs it, persists it, retries it and draws it. xstate-statemachine is a library. You describe a statechart in XState JSON and run it in your own Python process, with state in your own store. They overlap on "a JSON state machine that survives failures", and they differ on almost everything else.
 
 {% assign c = site.data.comparisons.workflow_competitors.step_functions %}

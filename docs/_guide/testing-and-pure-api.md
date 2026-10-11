@@ -3,8 +3,6 @@ title: "Testing & The Pure API"
 description: "Test machines without an interpreter, and wait on real conditions instead of sleeping."
 ---
 
-# Testing & The Pure API
-
 Two toolkits make state machines pleasant to test: a **pure, side-effect-free
 API** for asking "what would happen if…", and **waiting helpers** that replace
 arbitrary `sleep()` calls with real conditions.

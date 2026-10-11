@@ -906,13 +906,30 @@ async def llm_stream(interp, ctx, event):
         await asyncio.sleep(0)
         yield token
 
-cfg = {"id": "chat", "initial": "streaming", "context": {"text": ""},
-       "states": {"streaming": {"invoke": {"src": "llm", "onDone": {"target": "done", "actions": "finish"}},
-                                "on": {"STREAM": {"actions": "append"}}},
-                  "done": {"type": "final"}}}
-logic = MachineLogic(actions={"append": lambda i, ctx, e, a: ctx.__setitem__("text", ctx["text"] + e.data),
-                              "finish": lambda i, ctx, e, a: ctx.__setitem__("last", e.data)},
-                     services={"llm": from_async_iterator(llm_stream)})
+cfg = {
+    "id": "chat",
+    "initial": "streaming",
+    "context": {"text": ""},
+    "states": {
+        "streaming": {
+            "invoke": {
+                "src": "llm",
+                "onDone": {"target": "done", "actions": "finish"},
+            },
+            "on": {"STREAM": {"actions": "append"}},
+        },
+        "done": {"type": "final"},
+    },
+}
+logic = MachineLogic(
+    actions={
+        "append": lambda i, ctx, e, a: ctx.__setitem__(
+            "text", ctx["text"] + e.data
+        ),
+        "finish": lambda i, ctx, e, a: ctx.__setitem__("last", e.data),
+    },
+    services={"llm": from_async_iterator(llm_stream)},
+)
 
 async def main():
     chat = await Interpreter(create_machine(cfg, logic=logic)).start()

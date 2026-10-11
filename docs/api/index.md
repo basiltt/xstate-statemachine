@@ -3,8 +3,6 @@ title: "API Reference"
 description: "Complete class, function, and decorator reference for XState-StateMachine."
 ---
 
-# API Reference
-
 Complete reference for every public class, function, decorator, and exception
 exported by `xstate_statemachine`. All items listed here are available as
 top-level imports:

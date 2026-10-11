@@ -4,8 +4,6 @@ permalink: /guide/feature-flag-rollout/
 description: "Staged rollout (disabled → internal → canary_1 → canary_25 → ga → rolled_back) with after bake times, a metrics guard reading a live callable, and rollback from any exposed stage, all tested on a SimulatedClock."
 ---
 
-# Recipe: Feature-flag rollout
-
 A progressive rollout is a statechart everyone draws on a whiteboard and then implements as a cron job and a spreadsheet. Here the chart **is** the rollout. It lists the stages, how long each bakes, what "healthy" gates, and what an alert does. Your flag system (LaunchDarkly, Unleash, a database row) receives exposure percentages and nothing else.
 
 Files: [`examples/recipes/feature_flag_rollout/`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/recipes/feature_flag_rollout).

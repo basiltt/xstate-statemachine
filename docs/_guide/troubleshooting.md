@@ -3,8 +3,6 @@ title: "Troubleshooting"
 description: "Common errors, their causes, and how to fix them."
 ---
 
-# Troubleshooting
-
 This page covers common errors you may encounter when using XState-StateMachine, their causes, and how to fix them. It also includes CLI troubleshooting, debugging tips, and common pitfalls.
 
 ## 🧨 Exception Hierarchy

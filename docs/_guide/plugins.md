@@ -3,8 +3,6 @@ title: "Plugins & Observability"
 description: "Observe every event, transition, action, guard, and service with pluggable hooks."
 ---
 
-# Plugins & Observability
-
 Plugins are **observers** that watch machine execution without modifying behavior. They hook into the interpreter's lifecycle to add cross-cutting concerns like logging, metrics, debugging, auditing, and performance monitoring.
 
 ## 🔌 What are Plugins?

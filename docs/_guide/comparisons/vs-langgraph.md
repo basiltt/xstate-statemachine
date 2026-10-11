@@ -4,8 +4,6 @@ description: "An honest comparison of xstate-statemachine's [agents] extra and L
 permalink: /guide/vs-langgraph/
 ---
 
-# xstate-statemachine vs LangGraph
-
 LangGraph is the most widely used agent-orchestration library in Python: a graph of nodes over typed state, with checkpointers, `interrupt()` for human input, streaming, LangSmith (tracing, and Studio for debugging). It is excellent at what it does, and the two are not either/or.
 
 {% assign c = site.data.comparisons.competitors.langgraph %}

@@ -3,8 +3,6 @@ title: "Redis integration"
 description: "RedisStore, RedisInbox and RedisLog — shared state for statecharts across workers and hosts, with fencing locks and atomic Lua operations."
 ---
 
-# Redis
-
 `SQLiteStore` is single-host. The first real deployment question every web developer asks is *"I have four uvicorn workers on two machines — where does the snapshot live?"* Redis is the lowest-friction shared answer. This extra ships the **store**, the **idempotency inbox**, the **transition log** and a **fencing lock** on Redis — the same protocols as the stdlib backends, so `persisted()`, `IdempotencyPlugin`, `AuditPlugin` and `DueTimerScanner` work unchanged. (Redis Streams as an event *broker* is a separate, later integration.)
 
 ## Install
@@ -31,8 +29,15 @@ store = RedisStore(r, prefix="shop")               # prefix is mandatory: one na
 inbox = RedisInbox(r, prefix="shop")
 log = RedisLog(r, prefix="shop")
 
-cfg = {"id": "order", "initial": "cart", "context": {"items": 0},
-       "states": {"cart": {"on": {"ADD": {"actions": "add"}, "PAY": "paid"}}, "paid": {"type": "final"}}}
+cfg = {
+    "id": "order",
+    "initial": "cart",
+    "context": {"items": 0},
+    "states": {
+        "cart": {"on": {"ADD": {"actions": "add"}, "PAY": "paid"}},
+        "paid": {"type": "final"},
+    },
+}
 def add(i, ctx, e, a):
     ctx["items"] += 1
 machine = create_machine(cfg, logic=MachineLogic(actions={"add": add}))

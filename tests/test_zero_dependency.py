@@ -49,9 +49,9 @@ def is_stdlib(root):
     # 3.10+: the frozen name set. 3.9: resolve with the DEFAULT path finder
     # and accept built-ins, frozen modules and anything living under the
     # stdlib directory (but not its site-packages).
-    if STDLIB:
-        return root in STDLIB
-    if root in sys.builtin_module_names:
+    # 3.15 ships private stdlib helpers (``_missing_stdlib_info``) that the
+    # frozen set does not list, so it is an accept-list, not a reject-list.
+    if root in STDLIB or root in sys.builtin_module_names:
         return True
     spec = importlib.machinery.PathFinder.find_spec(root, None)
     if spec is None:

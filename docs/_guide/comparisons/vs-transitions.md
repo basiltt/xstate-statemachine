@@ -4,8 +4,6 @@ description: "An honest comparison with pytransitions: the HierarchicalMachine e
 permalink: /guide/vs-transitions/
 ---
 
-# xstate-statemachine vs transitions
-
 [transitions](https://github.com/pytransitions/transitions) is the most widely used state machine library in Python. You attach a `Machine` to any object, and it adds trigger methods and a `state` attribute. Extensions add nesting (`HierarchicalMachine`), async, locking, diagrams and timeouts. It is mature and flexible, and this page tries to be fair about that.
 
 {% assign c = site.data.comparisons.transitions %}

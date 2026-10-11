@@ -4,8 +4,6 @@ permalink: /guide/task-queue-workers/
 description: "Drive a persisted statechart from background jobs: load, send one event, save under an optimistic version check, retry on ConflictError. Written by hand for RQ, arq and Dramatiq."
 ---
 
-# Recipe: RQ, arq and Dramatiq workers
-
 A background job that advances a statechart has one shape, whatever the queue: **load the snapshot, send one event, save it**. The job carries only `(key, event, payload)`. It never carries a pickled interpreter. When two jobs for the same key race, one save raises `ConflictError`. The loser reloads and re-applies its event, so no update is lost. This page writes that loop once and hands it to three queues.
 
 Files: [`examples/recipes/task_queue_workers/`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/recipes/task_queue_workers).

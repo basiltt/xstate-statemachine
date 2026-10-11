@@ -3,8 +3,6 @@ title: Example gallery
 description: Every statechart shipped under examples/, drawn live by the Stately editor.
 ---
 
-# Example gallery
-
 Every machine under [`examples/`](https://github.com/basiltt/xstate-statemachine/tree/main/examples)
 as the Stately editor draws it. The diagrams follow the site theme; each one links to the
 public editor page where you can simulate it. The JSON next to each diagram is what the

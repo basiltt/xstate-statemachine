@@ -3,8 +3,6 @@ title: "Litestar integration"
 description: "XStatePlugin, a Provide() interpreter dependency and a generated statechart Controller for Litestar, reusing the Starlette registry, Receipt → HTTP mapping, Idempotency-Key and SSE/WebSocket streams."
 ---
 
-# Litestar
-
 Litestar apps get the same statechart REST surface as [FastAPI](../integration-fastapi/) — same routes, statuses, problem bodies and operationIds; the one difference is `exclude_events=` instead of shadowing a route: a generated `Controller` with a typed `/send` body documented as a discriminated union, one route per declared event, RFC 9457 problems, SSE and WebSocket. It is built on the `[starlette]` [`StatechartRegistry`](../integration-starlette/) — Litestar speaks ASGI, so the registry, the `Receipt → HTTP` mapping, `Idempotency-Key` handling and the streams are reused unchanged. Only the edges are adapted: a Litestar request is read through a Starlette view of the same ASGI scope, and a Starlette response is converted to a Litestar `Response` / `Stream`.
 
 ## Install

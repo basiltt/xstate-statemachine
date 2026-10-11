@@ -3,8 +3,6 @@ title: "LLM agents integration"
 description: "LLM agents as statecharts: the model proposes, the machine decides — tool allow-lists per state, budgets, timeouts, durable human approval, multi-agent recipes."
 ---
 
-# LLM agents
-
 Agent frameworks let the model decide what happens next and hope the prompt keeps it in bounds. Budgets are global counters, "which tools may run now" is prompt text, and a human-approval step is a `while` loop that dies with the process. This extra turns an agent into a **statechart**: the model is one invoked service that *proposes* — text or tool calls — and the chart *decides*. Which tools exist in which state, how many turns and dollars the run may spend, how long each step may take and which calls need a human are chart structure and guards: you can read them in `xsm inspect`, edit them in Stately, persist them in any store and test them offline. **The model proposes, the machine decides.**
 
 What this does *not* buy you: a better model. The chart cannot make an answer truer, and for a one-shot "summarise this" call a plain function is simpler. Reach for it when a run has *consequences* — tools with side effects, money per ticket, an approval that may arrive tomorrow on another worker — because those are exactly the rules a prompt cannot enforce and a statechart can.
@@ -408,10 +406,30 @@ from xstate_statemachine.contrib.agents import budget_guards
 from xstate_statemachine.contrib.agents.pydantic_ai import pydantic_ai_service, usage_logic
 
 agent = Agent(TestModel(custom_output_text="Kochi is sunny"))
-chart = {"id": "ask", "initial": "gate", "context": {"tokens_in": 0, "tokens_out": 0, "turns": 0},
-         "states": {"gate": {"always": [{"guard": "!underTokenBudget", "target": "over"}, {"target": "asking"}]},
-                    "asking": {"invoke": {"src": "ask", "onDone": {"target": "answered", "actions": "recordAgentUsage"}}},
-                    "answered": {"on": {"AGAIN": "gate"}}, "over": {"type": "final"}}}
+chart = {
+    "id": "ask",
+    "initial": "gate",
+    "context": {"tokens_in": 0, "tokens_out": 0, "turns": 0},
+    "states": {
+        "gate": {
+            "always": [
+                {"guard": "!underTokenBudget", "target": "over"},
+                {"target": "asking"},
+            ],
+        },
+        "asking": {
+            "invoke": {
+                "src": "ask",
+                "onDone": {
+                    "target": "answered",
+                    "actions": "recordAgentUsage",
+                },
+            },
+        },
+        "answered": {"on": {"AGAIN": "gate"}},
+        "over": {"type": "final"},
+    },
+}
 logic = MachineLogic(services={"ask": pydantic_ai_service(agent, prompt_from=lambda ctx, e: "Weather?")})
 m = create_machine(chart, logic=logic.merge(usage_logic(), budget_guards(max_tokens=10)))
 
@@ -459,20 +477,54 @@ class Confirm(BaseModel):
 sys.modules["forms"] = sys.modules[__name__]           # docs only: make "forms:Name" importable
 
 def ask(state, schema, nxt):
-    return {"meta": {"output_model": f"forms:{schema}"},
-            "invoke": {"src": "callModel", "onDone": [
-                {"guard": "outputValid", "target": nxt, "actions": ["recordModelResponse", "storeResult", "keep"]},
-                {"guard": "canRetryOutput", "target": state, "reenter": True,
-                 "actions": ["recordModelResponse", "retryOutput"]},
-                {"target": "error", "actions": ["recordModelResponse", "failOutput"]}]}}
+    return {
+        "meta": {"output_model": f"forms:{schema}"},
+        "invoke": {
+            "src": "callModel",
+            "onDone": [
+                {
+                    "guard": "outputValid",
+                    "target": nxt,
+                    "actions": [
+                        "recordModelResponse",
+                        "storeResult",
+                        "keep",
+                    ],
+                },
+                {
+                    "guard": "canRetryOutput",
+                    "target": state,
+                    "reenter": True,
+                    "actions": ["recordModelResponse", "retryOutput"],
+                },
+                {
+                    "target": "error",
+                    "actions": ["recordModelResponse", "failOutput"],
+                },
+            ],
+        },
+    }
 
-chart = {"id": "intake", "initial": "collect_name",
-         "context": {"messages": [], "form": {}, "output_retries": 0,
-                     "tokens_in": 0, "tokens_out": 0, "turns": 0, "task": "Sign me up"},
-         "states": {"collect_name": ask("collect_name", "Name", "collect_address"),
-                    "collect_address": ask("collect_address", "Address", "confirm"),
-                    "confirm": ask("confirm", "Confirm", "done"),
-                    "done": {"type": "final"}, "error": {"type": "final"}}}
+chart = {
+    "id": "intake",
+    "initial": "collect_name",
+    "context": {
+        "messages": [],
+        "form": {},
+        "output_retries": 0,
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "turns": 0,
+        "task": "Sign me up",
+    },
+    "states": {
+        "collect_name": ask("collect_name", "Name", "collect_address"),
+        "collect_address": ask("collect_address", "Address", "confirm"),
+        "confirm": ask("confirm", "Confirm", "done"),
+        "done": {"type": "final"},
+        "error": {"type": "final"},
+    },
+}
 
 def keep(i, ctx, e, a):
     ctx["form"] = {**ctx["form"], **ctx["result"]}

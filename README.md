@@ -2581,7 +2581,7 @@ Invoked **services** are different — their failures *are* routed back into the
 
 <br>
 
-8,596 tests (93% coverage, 90% is the CI gate), run on Python 3.9–3.15 across Linux, macOS and
+8,601 tests (93% coverage, 90% is the CI gate), run on Python 3.9–3.15 across Linux, macOS and
 Windows on every PR, plus an `[all]`-extras wheel smoke on all three OSes and a compatibility
 matrix that installs each framework version the docs claim. Every integration and recipe has
 been through an adversarial "battle" pass — a scenario test written from the user's point of

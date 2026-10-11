@@ -7,10 +7,14 @@
       "on": {
         "PACK": {
           "target": "packed",
-          "meta": {"publish": "OrderPacked"}
+          "meta": {
+            "publish": "OrderPacked"
+          }
         }
       }
     },
-    "packed": {"type": "final"}
+    "packed": {
+      "type": "final"
+    }
   }
 }

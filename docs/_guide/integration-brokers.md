@@ -3,8 +3,6 @@ title: "Broker adapters"
 description: "Redis Streams, Kafka, RabbitMQ, NATS JetStream and Amazon SQS adapters for the EDA core: at-least-once delivery, per-subject order, poison to the dead-letter queue."
 ---
 
-# Brokers
-
 The [EDA core](../integration-eda/) defines one small `BrokerAdapter` contract (`publish`, `subscribe`, `ack`, `nack`) and an in-memory fake. The adapters on this page put it on a real broker. Each adapter stays **thin over its own client**: no new consistency model, no lowest common denominator. What they add is the part the research found missing from broker clients (*reconnect-but-never-resume*, *silent stall/duplicate*): redelivery counts become envelope attempts, so poison is dead-lettered even across restarts (except on Kafka, which keeps no delivery count -- there the dispatcher's in-process counter is the bound); health callbacks; and a size cap enforced before parsing. The same `InboundDispatcher`, inbox and outbox work unchanged on every broker.
 
 ## Choosing a broker

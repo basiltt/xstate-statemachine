@@ -3,8 +3,6 @@ title: "Advanced Patterns"
 description: "Real-world architecture patterns — retry, wizard, e-commerce, and more."
 ---
 
-# Advanced Patterns
-
 This guide presents production-ready state machine patterns that solve common architectural challenges. Each pattern includes complete, runnable code.
 
 ---

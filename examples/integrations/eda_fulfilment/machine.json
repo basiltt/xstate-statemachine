@@ -17,7 +17,13 @@
           "guard": "hasTotal",
           "actions": "recordPayment",
           "meta": {
-            "publish": {"type": "OrderPaid", "data": ["orderId", "total"]}
+            "publish": {
+              "type": "OrderPaid",
+              "data": [
+                "orderId",
+                "total"
+              ]
+            }
           }
         },
         "PAYMENT_FAILED": {
@@ -31,7 +37,14 @@
       "after": {
         "60000": {
           "target": "packingLate",
-          "meta": {"publish": {"type": "PackingLate", "data": ["orderId"]}}
+          "meta": {
+            "publish": {
+              "type": "PackingLate",
+              "data": [
+                "orderId"
+              ]
+            }
+          }
         }
       },
       "on": {
@@ -55,7 +68,10 @@
           "meta": {
             "publish": {
               "type": "OrderShipped",
-              "data": ["orderId", "trackingId"]
+              "data": [
+                "orderId",
+                "trackingId"
+              ]
             }
           }
         },
@@ -63,9 +79,15 @@
       }
     },
     "shippingFailed": {
-      "on": {"CANCEL": "cancelled"}
+      "on": {
+        "CANCEL": "cancelled"
+      }
     },
-    "shipped": {"type": "final"},
-    "cancelled": {"type": "final"}
+    "shipped": {
+      "type": "final"
+    },
+    "cancelled": {
+      "type": "final"
+    }
   }
 }

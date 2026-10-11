@@ -3,8 +3,6 @@ title: "Integrations"
 description: "Start here: pick your path through the optional integrations (framework × store × worker model × events-in), then a 15-minute executable tutorial from a Stately export to a multi-worker FastAPI service on SQLite and Redis."
 ---
 
-# Integrations
-
 The core library has **zero runtime dependencies**, and that never changes. Everything that talks to a framework lives in optional packages under `xstate_statemachine.contrib`, installed one **pip extra** at a time (the full list, with status, is on [Integration extras](../integrations-extras/)). Importing an integration without its extra raises `MissingExtraError` (an `ImportError`) naming the exact `pip install` command.
 
 This page is the entry point: pick your path, then do the fifteen-minute tutorial.

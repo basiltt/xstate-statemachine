@@ -4,8 +4,6 @@ permalink: /guide/websocket-reconnect/
 description: "disconnected ↔ reconnecting → connected with RetryPolicy jittered exponential backoff, and the live socket as a from_callback actor whose cleanup closes it. Both engines, fake client, simulated clock."
 ---
 
-# Recipe: WebSocket reconnect
-
 Reconnect logic is where hand-written socket clients rot. There is the backoff counter, the retry that fires after the user already clicked *Disconnect*, and the socket that is never closed because the state changed while it was opening. As a chart, each of those is a transition, and the library supplies both hard parts:
 
 - **`RetryPolicy(...).logic()`** provides a *named delay* `retryDelay` (exponential backoff with jitter, computed from `ctx["attempt"]`) and `retryCanRetry` / `retryBump` / `retryReset`.

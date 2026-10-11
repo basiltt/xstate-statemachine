@@ -4,8 +4,6 @@ description: "An honest comparison with django-fsm-2: hierarchy, parallel region
 permalink: /guide/vs-django-fsm/
 ---
 
-# xstate-statemachine vs django-fsm
-
 [django-fsm](https://github.com/viewflow/django-fsm), maintained today as **django-fsm-2**, is the state machine most Django projects already use. It puts a state column on your model and turns model methods into transitions with a `@transition` decorator. It is small, well understood, and has admin buttons and signals. This page compares it with xstate-statemachine and is explicit about where django-fsm is the better choice.
 
 {% assign c = site.data.comparisons.django_fsm %}
