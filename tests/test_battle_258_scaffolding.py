@@ -328,7 +328,7 @@ for s in ("persistence", "patterns", "eda", "graph", "receipts",
         subs[s] = repr(e)
 import xstate_statemachine.exceptions as ex
 after = sorted({m.split(".")[0] for m in sys.modules})
-third_after = [t for t in after if std and t not in std
+third_after = [t for t in after if std and t not in std and not _under_stdlib(t)
                and t not in ("xstate_statemachine", "__main__")
                and t not in PTH]
 print(json.dumps({"ms": ms, "third": third, "third_after": third_after,

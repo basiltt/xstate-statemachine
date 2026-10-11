@@ -43,10 +43,7 @@ import threading
 import time
 from typing import Any, Awaitable, Callable, List, Optional, Union
 
-try:  # pragma: no cover - Python 3.8+ has Protocol; kept defensive
-    from typing import Protocol, runtime_checkable
-except ImportError:  # pragma: no cover
-    from typing_extensions import Protocol, runtime_checkable  # type: ignore
+from typing import Protocol, runtime_checkable
 
 
 @runtime_checkable

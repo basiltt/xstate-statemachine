@@ -58,10 +58,7 @@ from typing import (
     Tuple,
 )
 
-try:  # pragma: no cover
-    from typing import Protocol, runtime_checkable
-except ImportError:  # pragma: no cover
-    from typing_extensions import Protocol, runtime_checkable  # type: ignore
+from typing import Protocol, runtime_checkable
 
 from ..events import AfterEvent, DoneEvent, ErrorEvent, event_kind
 from ..exceptions import StoreError, XStateMachineError
