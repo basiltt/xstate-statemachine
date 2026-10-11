@@ -230,7 +230,7 @@ class PluginBase(Generic[TInterpreter]):
     def on_event_sent(
         self, interpreter: TInterpreter, target_id: str, event: "AnyEvent"
     ) -> None:
-        """**[0.12.0]** This actor addressed an event to ANOTHER actor (#274).
+        """**[0.11.0]** This actor addressed an event to ANOTHER actor (#274).
 
         Fires on the SENDER when a ``sendTo``, ``sendParent`` or
         ``forwardTo`` built-in resolves its target, just before the event
@@ -252,8 +252,8 @@ class PluginBase(Generic[TInterpreter]):
     def on_transition(
         self,
         interpreter: TInterpreter,
-        from_states: Set["StateNode"],
-        to_states: Set["StateNode"],
+        from_states: Set["StateNode[Any]"],
+        to_states: Set["StateNode[Any]"],
         transition: "TransitionDefinition",
     ) -> None:
         """Called after a successful state transition has completed.
@@ -922,8 +922,8 @@ class LoggingInspector(PluginBase[Any]):
     def on_transition(
         self,
         interpreter: "BaseInterpreter[Any]",
-        from_states: Set["StateNode"],
-        to_states: Set["StateNode"],
+        from_states: Set["StateNode[Any]"],
+        to_states: Set["StateNode[Any]"],
         transition: "TransitionDefinition",
     ) -> None:
         """Logs the state change and the new context after a transition.

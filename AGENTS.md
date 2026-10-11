@@ -888,7 +888,7 @@ xstate-statemachine/
 │   ├── sync/                  # Sync interpreter examples
 │   ├── async/                 # Async interpreter examples
 │   └── hybrid/                # Mixed async/sync examples
-├── pyproject.toml            # Poetry configuration
+├── pyproject.toml            # Project metadata, extras, tool config (uv / PEP 621)
 ├── .pre-commit-config.yaml   # Pre-commit hooks
 ├── CHANGELOG.md              # Version history
 ├── CONTRIBUTING.md           # Full contribution guide

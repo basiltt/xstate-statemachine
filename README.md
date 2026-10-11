@@ -1405,6 +1405,7 @@ hook is optional:
 |:--|:--|
 | `on_interpreter_start` / `on_interpreter_stop` | Lifecycle boundaries (`restored_from_snapshot` tells a resume from a bring-up) |
 | `on_before_send` / `on_event_received` / `on_event_processed` | An event is offered (and may be refused), arrives, and has run its macrostep |
+| `on_event_refused` / `on_event_sent` / `on_resolve_error` | A later plugin refused an event you had already approved (release your claim); this actor addressed an event to another actor (`sendTo` / `sendParent` / `forwardTo`); a transition target failed to resolve |
 | `on_transition` | A transition settles |
 | `on_guard_evaluated` / `on_guard_error` | A guard returns — "why didn't it fire?" — or raised |
 | `on_action_execute` / `on_action_error` | Before each action runs; an action raised. **Failures are contained**, so without this hook they are invisible |
@@ -1926,7 +1927,7 @@ xsm asyncapi checkout.json -o asyncapi.json
 | Command | Alias | Does |
 |:--|:--|:--|
 | `generate-template` | `gt` | Generate Python from a machine JSON — plus `--with-tests`, `--with-types`, `--with-plugin` companions; `--check` for CI drift |
-| `list-templates` | `lt` | The 8 templates, grouped |
+| `list-templates` | `lt` | The 10 templates, grouped |
 | `validate` | `val` | Build each file with the real library; list every finding (`--lenient`, `--json`) |
 | `inspect` | `ins` | State tree, transitions table, logic to implement, failure policies; `--live` streams to the Stately Inspector |
 | `simulate` | `sim` | Run a machine on a simulated clock — interactively or from `--events` / `--script`; `--record` writes a JSONL session |

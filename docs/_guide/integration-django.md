@@ -136,6 +136,19 @@ Every armed `after` timer is a row in `xsm_django_statechartdeadline` (`source` 
 
 `DjangoStore(namespace="default", *, using="default", lock_ttl_s=60, codec=None, max_snapshot_bytes=1 MiB)` is the A2 `StateStore` on the ORM. It passes the same contract suite as `SQLiteStore`. `lock()` is a lease row that is portable across databases. Calls inside a `transaction.atomic()` (or `store.transaction()`) join it. `due_keys()` feeds `DueTimerScanner` from the index.
 
+### The app's own tables
+
+Installing `xstate_statemachine.contrib.django` adds six models, all in `xstate_statemachine.contrib.django.models` (default table prefix `xsm_django_`). You never write their rows by hand, but you will meet them in migrations, the admin and your database:
+
+| Model | Written by | What a row is |
+|:--|:--|:--|
+| `StatechartSnapshot` | `DjangoStore` | One persisted instance: `source` (the owning table / namespace), `key`, the `snapshot` blob, its optimistic `version`, the chart's `machine_version` label and `updated_at` |
+| `StatechartDeadline` | `DjangoStore` | One durable `after` timer of a key (`state_id`, `entry_seq`, `due_at_wall`, `delay_ms`, `event_type`); the index `DueTimerScanner` / `xsm_deadlines` read |
+| `StatechartLock` | `DjangoStore.lock()` | A pessimistic-lock lease (`owner`, `expires_at`); reclaimed once it passes, so a crashed holder never wedges a key |
+| `TransitionLog` | the mixin's audit step | One processed event, written in the same transaction as the transition (see [Audit](#audit)) |
+| `OutboxMessage` | `DjangoOutboxStore` | A transactional-outbox envelope committed with the transition that produced it; the relay marks it sent |
+| `IdempotencyRecord` | `DjangoInbox` | One `(scope, key)` of the idempotency inbox with the stored receipt, so a replayed `Idempotency-Key` is answered without touching the machine |
+
 ### Migrations
 
 The app ships its migrations (`migrate xsm_django zero` reverses them). Your own model's sibling columns are ordinary fields in **your** migrations; a field named `workflow` gets `workflow_state`, `workflow_state_ids`, ... and the index on `workflow_state`.
