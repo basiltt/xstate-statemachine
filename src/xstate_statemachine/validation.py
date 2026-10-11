@@ -75,6 +75,36 @@ def transitions_of(
             yield f"invoke '{inv.src}' onError", t
 
 
+def _targeted_transitions(
+    node: "StateNode",
+) -> Iterator[Tuple[str, "TransitionDefinition"]]:
+    """`transitions_of`, restricted to transitions that HAVE a target.
+
+    ⚡ Build-time hot path (#307 benchmark): `transitions_of` formats a
+    label string for every transition, but the validator only reads the
+    label when a target fails to resolve. Targetless transitions (pure
+    action handlers) are skipped before any string is built, and the
+    common ``on`` case avoids the generic dispatch.
+    """
+    for event, group in node.on.items():
+        for t in group:
+            if t.target_str:
+                yield ("always" if event == "" else f"on '{event}'"), t
+    if node.on_done is not None and node.on_done.target_str:
+        yield "onDone", node.on_done
+    for delay, group in node.after.items():
+        for t in group:
+            if t.target_str:
+                yield f"after {delay!r}", t
+    for inv in node.invoke:
+        for t in inv.on_done:
+            if t.target_str:
+                yield f"invoke '{inv.src}' onDone", t
+        for t in inv.on_error:
+            if t.target_str:
+                yield f"invoke '{inv.src}' onError", t
+
+
 def resolve_strict(
     target_str: str, source: "StateNode", machine: "MachineNode"
 ) -> "Optional[StateNode]":
@@ -172,20 +202,20 @@ def _collect_findings(
     root_targets: List[str] = []
 
     for node in walk(machine):
-        for label, t in transitions_of(node):
-            if not t.target_str:
-                continue
+        for label, t in _targeted_transitions(node):
+            target_str = t.target_str
+            assert target_str is not None  # narrowed by _targeted_transitions
             # 🎯 #30: every target must resolve at build time. Uses the
             #    resolver's standard strategies only -- NOT the interpreter's
             #    last-segment fallbacks, which are what let a typo bind to an
             #    unrelated state (#34).
-            target = resolve_strict(t.target_str, t.source, machine)
+            target = resolve_strict(target_str, t.source, machine)
             # ⚡ Memoise for the runtime (see TransitionDefinition.resolved_target).
             t.resolved_target = target
             if target is None:
                 unresolved.append(
-                    f"  {node.id}: {label} -> target {t.target_str!r} "
-                    f"does not resolve{_suggest(t.target_str, machine)}"
+                    f"  {node.id}: {label} -> target {target_str!r} "
+                    f"does not resolve{_suggest(target_str, machine)}"
                 )
             elif target is machine:
                 # 🛑 #108: entering the ROOT enters nothing below it; the
@@ -337,6 +367,13 @@ KNOWN_INVOKE_KEYS: frozenset = (
 
 def _unknown_keys(config: Dict[str, Any], known: frozenset) -> List[str]:
     """Human-readable hints for the keys of *config* not in *known*."""
+    # ⚡ Hot path (#307 benchmark): every state and transition of every
+    #    build passes through here, and almost all of them have only known
+    #    keys. One set subtraction answers that case; the sort, the
+    #    ``x-`` filter, the difflib import and the hint strings are paid
+    #    only by a config that actually has an offending key.
+    if config.keys() <= known:
+        return []
     import difflib
 
     unknown = sorted(
@@ -374,6 +411,9 @@ def _collect_unknown_keys(
     on = config.get("on")
     if isinstance(on, dict):
         for event, raw in on.items():
+            # ⚡ String shorthand ("EVENT": "target") carries no keys.
+            if isinstance(raw, str):
+                continue
             for t in _transition_dicts(raw):
                 h = _unknown_keys(t, KNOWN_TRANSITION_KEYS)
                 if h:

@@ -15,6 +15,11 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ## [Unreleased]
 
+### Changed
+
+- Performance: build-time and per-event fast paths (#307 follow-up). `create_machine()` no longer sorts keys, filters `x-` and imports `difflib` for every state and transition whose keys are all known (one set comparison decides), skips label formatting for targetless transitions in the target validator, and does one thread-local lookup per node (not three per child) for the aliased-cycle guard; tag/meta validation runs only when declared. On the event path `_collect_eligible_transitions` decides the event's kind once per call instead of once per ancestor and inlines the exact-key `on` lookup for nodes without partial descriptors or a wildcard; `_select_transitions` has a single-active-leaf fast path and takes the first (deepest) eligible transition instead of `max()`; `_execute_transition` no longer sorts a single exiting state or snapshots actor ids when there are no actors. Construction is ~20 % cheaper and a flat `send()` ~15 %; semantics are unchanged (same resolver, same descriptor matching, same ordering). The competitor table in `benchmarks/competitors/README.md`, the README and the docs home page is re-measured (2026-10-11, sismic 1.6.14): construction and 1,000 instances, previously a tie with `transitions`, are now 5-14 % ahead.
+
+
 ### Fixed
 
 - Plugin discovery (#296 battle A): `attach_discovered()` no longer calls arbitrary loaded callables: only `PluginBase` subclasses/instances, or a factory explicitly marked with the new `plugin_discovery.plugin_factory` decorator (**behaviour change** for undecorated factory entry points, which are now skipped/refused); `allow=` matching is PEP 503 normalised; `XSM_DISABLE_PLUGIN_DISCOVERY` accepts `TRUE`/`on` in any case; `last_skipped`/`last_failed` are published atomically per call (thread/re-entrancy safe); the Python 3.9 distribution lookup is built once per `discover()` instead of per entry point.

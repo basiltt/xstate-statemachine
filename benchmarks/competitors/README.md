@@ -112,7 +112,43 @@ authoritative numbers reported elsewhere (README, docs). This directory's
 end-to-end; its numbers should not be treated as representative performance
 figures.
 
-## Results (2026-10-02, 0.11.0, re-run in the #307 battle test)
+## Results (2026-10-11, 0.11.0 + the construction / send fast paths)
+
+Python 3.14.6, Windows 11, Intel Core i7-11850H (laptop, on mains, freshly rebooted and
+otherwise idle), `xstate-statemachine` 0.11.0 (editable install of this checkout) in a clean
+venv next to the other libraries. Median of 7 repetitions, GC disabled, setup excluded. All
+six columns come from the **same session**; compare across a row, not against an older
+table. Higher is better. **Bold** = fastest in the row (two bold cells = a tie within the
+run-to-run noise). Reproduce with `python run.py`; raw numbers in `results.json`.
+
+| Scenario | xsm (sync) | xsm (pure) | xsm (async) | transitions 0.9.3 | python-statemachine 3.2.1 | sismic 1.6.14 |
+|:--|--:|--:|--:|--:|--:|--:|
+| Flat toggle (ev/s) | 71,210 | 39,038 | — | **124,773** | 7,365 | 12,153 |
+| Guard + action (ev/s) | 61,777 | 35,518 | — | **105,978** | 6,410 | 10,935 |
+| 3-level nested (ev/s) | **28,502** | 18,774 | — | 7,806 | 2,901 | 4,669 |
+| Parallel regions (ev/s) | **25,349** | — | — | 5,654 | 2,537 | 4,333 |
+| Construction (machines/s) | **8,684** | — | — | 7,649 | 854 | 220 |
+| 1,000 instances (inst/s) | **33,213** | — | — | 30,215 | 2,221 | 7,109 |
+| Delayed transition (timers/s) | **7,706** | — | — | 79 | 2,077 | 5,037 |
+| Native asyncio (ev/s) | — | — | 23,609 | **30,926** | 5,355 | — |
+
+A second full run immediately after agreed on every ratio (xsm / transitions: construction
+1.14 then 1.05, 1,000 instances 1.10 then 1.06, nested 3.6x, parallel 4.4x).
+
+### What changed since the 2026-10-02 table
+
+`create_machine()` and a flat `send()` were profiled after construction slipped from a tie
+to 6-9 % behind `transitions` on a loaded machine. The 0.8-0.11 validators had added
+per-node work that the common case never needed: the unknown-key check sorted keys and
+imported `difflib` for every state and transition even when every key was known; the
+target validator formatted a label string for every transition and only read it on a
+failure; the aliased-cycle guard did three thread-local lookups per child; tag/meta
+validation ran for nodes declaring neither. On the event path the ancestor walk re-derived
+the event's kind at every level, and a single-leaf machine paid for the parallel-region
+selection (leaf filter, two sorts, de-dup, `max`). All of that is now behind a cheap check,
+with semantics unchanged. Construction is ~20 % cheaper and a flat event ~15 %.
+
+### Previous table (2026-10-02, 0.11.0, re-run in the #307 battle test)
 
 Python 3.14.6, Windows 11, Intel Core i7-11850H (laptop, on mains, otherwise idle),
 `xstate-statemachine` 0.11.0 (editable install of this checkout) in a clean venv next to the

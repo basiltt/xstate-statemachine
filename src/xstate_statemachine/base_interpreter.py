@@ -45,6 +45,7 @@ from typing import (
     Generic,
     List,
     Optional,
+    Sequence,
     Set,
     Tuple,
     Type,
@@ -468,6 +469,9 @@ def _accepts_kwarg(fn: Callable[..., Any], name: str) -> bool:
 
 
 _ACCEPTS_KWARG_KEEPALIVE: List[Any] = []
+
+#: ⚡ Shared empty actor-id set for `_execute_transition` (never mutated).
+_NO_IDS: frozenset = frozenset()
 
 #: ⚡ The init / exit trigger events are constant, payload-less sentinels;
 #: `Event` is an immutable NamedTuple, so one instance each is safe to share
@@ -3995,7 +3999,8 @@ class BaseInterpreter(Generic[TContext]):
         #    child running and registered even after the whole transition was
         #    undone -- orphaned from any active state and reachable only
         #    until the parent itself eventually stopped.
-        actor_ids_before = set(self._actors.keys())
+        # ⚡ Most machines spawn nothing; share one empty set then.
+        actor_ids_before = set(self._actors) if self._actors else _NO_IDS
         domain, path_to_enter = self._transition_geometry(
             transition, target_state
         )
@@ -4059,16 +4064,23 @@ class BaseInterpreter(Generic[TContext]):
         self._lifecycle_failures.append((transition, []))
         try:
             await self._exit_states(
-                sorted(
-                    list(states_to_exit),
-                    # 🔀 Depth alone leaves ties between sibling parallel
-                    #    regions, so set iteration order decided which exited
-                    #    first — the same machine and event could emit exit
-                    #    actions in a different order between runs, which is
-                    #    untestable and makes cleanup logic subtly unreliable.
-                    #    `id` is a stable secondary key.
-                    key=lambda s: (s.depth, s.id),
-                    reverse=True,
+                # ⚡ A single state to exit (every flat transition and most
+                #    nested ones) needs no sort.
+                #
+                # 🔀 Depth alone leaves ties between sibling parallel
+                #    regions, so set iteration order decided which exited
+                #    first -- the same machine and event could emit exit
+                #    actions in a different order between runs, which is
+                #    untestable and makes cleanup logic subtly unreliable.
+                #    `id` is a stable secondary key.
+                (
+                    list(states_to_exit)
+                    if len(states_to_exit) <= 1
+                    else sorted(
+                        states_to_exit,
+                        key=lambda s: (s.depth, s.id),
+                        reverse=True,
+                    )
                 ),
                 event,
             )
@@ -4146,7 +4158,7 @@ class BaseInterpreter(Generic[TContext]):
             #    `self._actors`/the system registry even though the
             #    transition that spawned it was fully undone -- an orphaned,
             #    leaked actor unreachable from any active state.
-            spawned_ids = set(self._actors.keys()) - actor_ids_before
+            spawned_ids = set(self._actors) - actor_ids_before
             if spawned_ids:
                 registry = self._system_registry()
                 for actor_id in spawned_ids:
@@ -5589,6 +5601,11 @@ class BaseInterpreter(Generic[TContext]):
 
         # 🧭 Determine which transition flavours are in play for this event.
         is_explicit_transient_event = event.type == ""
+        # ⚡ Hot path: the event's kind does not change while walking the
+        #    ancestor chain; decide it once per call, not once per level.
+        event_type = event.type
+        system = is_system_event(event)
+        is_after = system and isinstance(event, AfterEvent)
 
         current: Optional[StateNode] = state
         while current:
@@ -5596,10 +5613,25 @@ class BaseInterpreter(Generic[TContext]):
             #    partial descriptors, most specific first.
             if not is_explicit_transient_event:
                 blocked = False
-                for key in self._matching_descriptors(
-                    current, event.type, system=is_system_event(event)
-                ):
-                    for t in current.on[key]:
+                on_map = current.on
+                # ⚡ Inline the exact-key case (no partial descriptors, no
+                #    wildcard -- the overwhelming majority of nodes) so a
+                #    flat machine skips a method call and a list allocation
+                #    per ancestor level. `_matching_descriptors` stays the
+                #    authority for every other shape.
+                keys: Sequence[str]
+                if not current._on_partials and not current._on_has_wildcard:
+                    keys = (
+                        (event_type,)
+                        if event_type and event_type in on_map
+                        else ()
+                    )
+                else:
+                    keys = self._matching_descriptors(
+                        current, event_type, system=system
+                    )
+                for key in keys:
+                    for t in on_map[key]:
                         # 🚫 A forbidden transition consumes the event here so
                         #    no ancestor handler can see it.
                         if t.forbidden:
@@ -5648,7 +5680,7 @@ class BaseInterpreter(Generic[TContext]):
                         eligible.append(t)
 
             # 🏁 `onDone` transitions for compound/parallel states.
-            if current.on_done and current.on_done.event == event.type:
+            if current.on_done and current.on_done.event == event_type:
                 if _passes(current.on_done):
                     eligible.append(current.on_done)
 
@@ -5659,16 +5691,16 @@ class BaseInterpreter(Generic[TContext]):
             #    traffic and must not fire a timer whose deadline has not
             #    elapsed; only the engine's own `_fire` (which mints via
             #    `_engine_after`) may drive an `after` transition.
-            if isinstance(event, AfterEvent) and is_system_event(event):
+            if is_after and current.after:
                 for transitions in current.after.values():
                     for t in transitions:
-                        if t.event == event.type and _passes(t):
+                        if t.event == event_type and _passes(t):
                             eligible.append(t)
 
             # 🤖 `onDone`/`onError` for invoked services. `ErrorEvent`
             #    (#80) is a distinct type so consumers can branch on it,
             #    but it routes through `inv.on_error` the same way.
-            if isinstance(event, (DoneEvent, ErrorEvent)):
+            if isinstance(event, (DoneEvent, ErrorEvent)) and current.invoke:
                 for inv in current.invoke:
                     if event.src != inv.id:
                         continue
@@ -5729,15 +5761,24 @@ class BaseInterpreter(Generic[TContext]):
         """
         # 🍃 Only atomic/final leaves seed selection; ancestors are reached by
         #    the upward walk inside `_collect_eligible_transitions`.
+        active = self._active_state_nodes
+        # ⚡ Hot path (#307 benchmark): a non-parallel machine has exactly
+        #    ONE active leaf. Skip the leaf filter, both sorts and the
+        #    de-dup set. `_collect_eligible_transitions` walks UP from the
+        #    leaf, so its list is already deepest-source first and the
+        #    winner is its first entry -- the same element `max` by depth
+        #    returns (`max` keeps the first of equal keys).
+        if len(active) == 1:
+            (leaf,) = active
+            return self._collect_eligible_transitions(leaf, event, {})[:1]
+
         leaves = [
-            s
-            for s in self._active_state_nodes
-            if s.is_atomic or s.is_final or not s.states
+            s for s in active if s.is_atomic or s.is_final or not s.states
         ]
         # 🛟 Fallback: if the configuration has no leaf (defensive), consider
         #    every active node so behaviour degrades gracefully.
         if not leaves:
-            leaves = list(self._active_state_nodes)
+            leaves = list(active)
 
         selected: List[TransitionDefinition] = []
         seen: Set[int] = set()
@@ -5746,7 +5787,6 @@ class BaseInterpreter(Generic[TContext]):
         guard_cache: Dict[int, bool] = {}
 
         # 🔽 Deterministic ordering: deepest leaves first, then by id.
-        #    ⚡ A non-parallel machine has exactly one leaf; skip the sort.
         if len(leaves) > 1:
             leaves.sort(key=lambda s: (-s.depth, s.id))
         for leaf in leaves:
@@ -5756,8 +5796,9 @@ class BaseInterpreter(Generic[TContext]):
             if not eligible:
                 continue
 
-            # 🏆 This leaf's winner is the transition on its deepest ancestor.
-            winner = max(eligible, key=lambda t: t.source.depth)
+            # 🏆 This leaf's winner is the transition on its deepest ancestor:
+            #    the first entry of the upward walk (see the fast path above).
+            winner = eligible[0]
 
             # 🧹 De-duplicate by identity so an ancestor transition shared by
             #    several regions fires exactly once.
@@ -5766,7 +5807,8 @@ class BaseInterpreter(Generic[TContext]):
                 selected.append(winner)
 
         # 🔽 Execute deepest-source-first for predictable action ordering.
-        selected.sort(key=lambda t: -t.source.depth)
+        if len(selected) > 1:
+            selected.sort(key=lambda t: -t.source.depth)
         return selected
 
     def _compute_states_to_exit(

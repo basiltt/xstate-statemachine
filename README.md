@@ -1482,22 +1482,22 @@ instead of patterns you assemble yourself.
 ### Speed
 
 Same machine shape, each library through its own idiomatic API, all measured in one session
-on 0.11.0 (2026-10-02, Python 3.14, median of 7 runs, GC disabled, setup excluded). Events per second;
+on 0.11.0 (2026-10-11, Python 3.14, median of 7 runs, GC disabled, setup excluded). Events per second;
 **bold** is fastest in the row.
 
-| Scenario | **xstate-statemachine** (sync) | transitions 0.9.3 | python-statemachine 3.2.1 | sismic 1.6.11 |
+| Scenario | **xstate-statemachine** (sync) | transitions 0.9.3 | python-statemachine 3.2.1 | sismic 1.6.14 |
 |:--|--:|--:|--:|--:|
-| Flat toggle | 77,354 | **165,649** | 11,413 | 15,630 |
-| 3-level nested | **31,762** | 10,107 | 4,554 | 6,048 |
-| Parallel regions | **26,960** | 7,166 | 4,602 | 5,692 |
-| Delayed transitions (timers/s) | **9,151** | 71 | 4,735 | 6,654 |
-| Construction (machines/s) | **9,600** | **9,850** | 1,802 | 349 |
-| 1,000 instances (inst/s) | **43,836** | **44,658** | 4,730 | 9,096 |
+| Flat toggle | 71,210 | **124,773** | 7,365 | 12,153 |
+| 3-level nested | **28,502** | 7,806 | 2,901 | 4,669 |
+| Parallel regions | **25,349** | 5,654 | 2,537 | 4,333 |
+| Delayed transitions (timers/s) | **7,706** | 79 | 2,077 | 5,037 |
+| Construction (machines/s) | **8,684** | 7,649 | 854 | 220 |
+| 1,000 instances (inst/s) | **33,213** | 30,215 | 2,221 | 7,109 |
 
 `transitions` is a transition table, not a statechart engine, and wins the *flat* scenario
-by ~2.1×. The moment states nest or run in parallel it has to emulate the SCXML algorithm and
-this library is 3.1–3.8× faster than the next library. Construction and fanning out to
-1,000 instances are a **tie** with `transitions` (within ±3 % across six interleaved runs) —
+by ~1.8×. The moment states nest or run in parallel it has to emulate the SCXML algorithm and
+this library is 3.7–4.5× faster than the next library. Construction and fanning out to
+1,000 instances are **14 % and 10 % ahead** of `transitions` (stable across two full runs) —
 while still running the full build-time validator on every `create_machine()`. Full table, method and caveats:
 [`benchmarks/competitors/`](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/competitors/README.md). The production numbers (throughput budget, `after` lateness under load) come from [`benchmarks/production_characteristics.py`](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/production_characteristics.py); run it with `--json` on your own hardware to gate CI on your figures.
 

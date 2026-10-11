@@ -998,38 +998,42 @@ class StateNode(Generic[TContext]):
         #    so `tags` (UI-state modelling) and `meta` (arbitrary annotation)
         #    were silently unavailable to users who had declared them.
         if raw_tags is None:
-            raw_tags = []
-        if isinstance(raw_tags, str):
-            raw_tags = [raw_tags]
-        # ⚠️ Validate rather than let `set()` decide. A bare `set(raw_tags)`
-        #    turned `tags: 123` into an opaque "'int' object is not iterable"
-        #    with no hint as to WHICH state was malformed, and silently
-        #    accepted `tags: {"a": 1}` as the tag set {"a"} by iterating the
-        #    mapping's keys — a config typo that produced working-looking
-        #    nonsense.
-        if isinstance(raw_tags, (dict, bytes)) or not isinstance(
-            raw_tags, (list, tuple, set, frozenset)
-        ):
-            raise InvalidConfigError(
-                f"State '{self.id}' has an invalid 'tags' value of type "
-                f"'{type(raw_tags).__name__}'. Expected a string or a list "
-                f"of strings."
-            )
-        non_strings = [tag for tag in raw_tags if not isinstance(tag, str)]
-        if non_strings:
-            raise InvalidConfigError(
-                f"State '{self.id}' has non-string tag(s): {non_strings!r}. "
-                f"Every tag must be a string."
-            )
-        self.tags: Set[str] = set(raw_tags)
+            # ⚡ The overwhelmingly common case: no tags declared.
+            self.tags: Set[str] = set()
+        else:
+            if isinstance(raw_tags, str):
+                raw_tags = [raw_tags]
+            # ⚠️ Validate rather than let `set()` decide. A bare
+            #    `set(raw_tags)` turned `tags: 123` into an opaque "'int'
+            #    object is not iterable" with no hint as to WHICH state was
+            #    malformed, and silently accepted `tags: {"a": 1}` as the
+            #    tag set {"a"} by iterating the mapping's keys — a config
+            #    typo that produced working-looking nonsense.
+            if isinstance(raw_tags, (dict, bytes)) or not isinstance(
+                raw_tags, (list, tuple, set, frozenset)
+            ):
+                raise InvalidConfigError(
+                    f"State '{self.id}' has an invalid 'tags' value of type "
+                    f"'{type(raw_tags).__name__}'. Expected a string or a "
+                    f"list of strings."
+                )
+            non_strings = [tag for tag in raw_tags if not isinstance(tag, str)]
+            if non_strings:
+                raise InvalidConfigError(
+                    f"State '{self.id}' has non-string tag(s): "
+                    f"{non_strings!r}. Every tag must be a string."
+                )
+            self.tags = set(raw_tags)
 
-        raw_meta = raw_meta or {}
-        if not isinstance(raw_meta, dict):
-            raise InvalidConfigError(
-                f"State '{self.id}' has an invalid 'meta' value of type "
-                f"'{type(raw_meta).__name__}'. Expected an object/dict."
-            )
-        self.meta: Dict[str, Any] = raw_meta
+        if raw_meta is None:
+            self.meta: Dict[str, Any] = {}
+        else:
+            if not isinstance(raw_meta, dict):
+                raise InvalidConfigError(
+                    f"State '{self.id}' has an invalid 'meta' value of type "
+                    f"'{type(raw_meta).__name__}'. Expected an object/dict."
+                )
+            self.meta = raw_meta
         self.description: Optional[str] = cfg_get("description")
 
         # 🏁 Final states may declare `output` (a.k.a. "done data"), which is
@@ -1159,21 +1163,24 @@ class StateNode(Generic[TContext]):
         has_history = self.type == "history"
         has_always = "" in self.on
         self.states = {}
+        # ⚡ One thread-local lookup per node, not three per child.
+        descent: Set[int] = _config_stack._set()
         for state_key, state_config in raw_states.items():
-            if id(state_config) in _config_stack:
+            cfg_id = id(state_config)
+            if cfg_id in descent:
                 raise InvalidConfigError(
                     f"State '{self.id}.{state_key}' is defined by a config "
                     f"dict that is already one of its own ancestors (an "
                     f"aliased cycle). Each state must have its own config "
                     f"object; copy the template instead of reusing it."
                 )
-            _config_stack.add(id(state_config))
+            descent.add(cfg_id)
             try:
                 child = self.states[state_key] = StateNode(
                     machine, state_config, state_key, self
                 )
             finally:
-                _config_stack.discard(id(state_config))
+                descent.discard(cfg_id)
             has_actions = has_actions or child.subtree_has_actions
             has_history = has_history or child._subtree_has_history
             has_always = has_always or child._subtree_has_always
