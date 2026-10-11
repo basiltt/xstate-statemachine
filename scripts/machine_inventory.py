@@ -1,6 +1,6 @@
 """Inventory every machine config used across docs/ and examples/.
 
-Writes docs/_data/machine_inventory.json: one entry per distinct machine
+Writes scripts/stately/machine_inventory.json: one entry per distinct machine
 (by normalised config hash) with the pages/files it appears on.
 """
 
@@ -106,7 +106,7 @@ def scan():
 
 if __name__ == "__main__":
     inv = scan()
-    out = ROOT / "docs" / "_data" / "machine_inventory.json"
+    out = ROOT / "scripts" / "stately" / "machine_inventory.json"
     out.write_text(json.dumps(inv, indent=1), encoding="utf-8")
     print(
         len(inv),

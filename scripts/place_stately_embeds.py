@@ -1,7 +1,7 @@
 """Place Stately embeds in the docs.
 
-Reads docs/_data/machine_inventory.json (what is where) and
-docs/_data/stately_ids.json (inventory key -> Stately machineId), then:
+Reads scripts/stately/machine_inventory.json (what is where) and
+scripts/stately/stately_ids.json (inventory key -> Stately machineId), then:
 
 * writes docs/assets/data/stately.json  (the map stately.js fetches),
 * inserts  <div class="stately" data-machine="KEY" …></div>  after the
@@ -17,8 +17,12 @@ import re
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
-INV = json.loads((DOCS / "_data" / "machine_inventory.json").read_text())
-IDS = json.loads((DOCS / "_data" / "stately_ids.json").read_text())
+INV = json.loads(
+    (ROOT / "scripts" / "stately" / "machine_inventory.json").read_text()
+)
+IDS = json.loads(
+    (ROOT / "scripts" / "stately" / "stately_ids.json").read_text()
+)
 PROJECT = "4dbe1227-e533-4104-9772-dd7c7b3a86df"
 FENCE = re.compile(r"```(\w*)[^\n]*\n(.*?)```\n", re.S)
 

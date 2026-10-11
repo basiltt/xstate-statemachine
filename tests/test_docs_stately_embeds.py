@@ -55,7 +55,9 @@ class TestStatelyEmbeds(unittest.TestCase):
     def test_gallery_covers_every_shipped_example_machine(self) -> None:
         gallery = (DOCS / "_guide" / "example-gallery.md").read_text("utf-8")
         inv = json.loads(
-            (DOCS / "_data" / "machine_inventory.json").read_text("utf-8")
+            (
+                ROOT / "scripts" / "stately" / "machine_inventory.json"
+            ).read_text("utf-8")
         )
         for key, e in inv.items():
             if key not in self.map["machines"]:
