@@ -252,6 +252,19 @@ files = ["src/xstate_statemachine"]
 strict = true
 ignore_missing_imports = true
 
+# 🧩 The extras wrap third-party frameworks. Whether `BaseModel`, `@app.route`
+#    or `declarative_base()` is a typed symbol or `Any` depends on which
+#    extra happens to be installed where mypy runs (the lint job installs
+#    none; the dev environment installs all), so the verdicts that hinge on
+#    that -- "subclassing Any", "untyped decorator", "returning Any from a
+#    framework call", and the ignores that silence them in one environment
+#    but are unused in the other -- cannot be stable. They are the ONLY
+#    strict checks relaxed, and only for contrib; the core is fully strict.
+[[tool.mypy.overrides]]
+module = "xstate_statemachine.contrib.*"
+disable_error_code = ["misc", "untyped-decorator", "no-any-return", "unused-ignore"]
+warn_unused_ignores = false
+
 [tool.black]
 line-length = 79
 target-version = ['py39', 'py310', 'py311', 'py312', 'py313', 'py314']

@@ -1135,12 +1135,15 @@ class LoggingInspector(PluginBase[Any]):
 #    `xstate_statemachine.plugins.discover`. Defining a function loads nothing;
 #    discovery only happens when the application calls it (X0.14).
 # -----------------------------------------------------------------------------
+# 📝 `X as X` is the explicit re-export form: these names are part of this
+#    module's public surface (callers monkeypatch `plugins.attach_discovered`),
+#    not an implementation import.
 from .plugin_discovery import (  # noqa: E402
-    BROKERS_GROUP,
-    PLUGINS_GROUP,
-    STORES_GROUP,
-    DiscoveredPlugin,
-    attach_discovered,
-    discover,
-    plugin_factory,
+    BROKERS_GROUP as BROKERS_GROUP,
+    PLUGINS_GROUP as PLUGINS_GROUP,
+    STORES_GROUP as STORES_GROUP,
+    DiscoveredPlugin as DiscoveredPlugin,
+    attach_discovered as attach_discovered,
+    discover as discover,
+    plugin_factory as plugin_factory,
 )

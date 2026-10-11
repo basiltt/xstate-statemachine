@@ -20,7 +20,6 @@ from __future__ import annotations
 from typing import Any, Iterable, List, Optional
 
 from ... import plugins as _plugins
-from ...plugin_discovery import attach_discovered as _attach_discovered
 
 __all__ = ["instrument_all", "uninstrument_all"]
 
@@ -123,12 +122,12 @@ def instrument_all(
     )
     if discovered:
         if interp_or_app is not None and hasattr(interp_or_app, "use"):
-            found = _attach_discovered(interp_or_app, allow=allow)
+            found = _plugins.attach_discovered(interp_or_app, allow=allow)
             for p in attached:
                 _use(interp_or_app, p)
             return attached + found
         collector = _Collector()
-        _attach_discovered(collector, allow=allow)
+        _plugins.attach_discovered(collector, allow=allow)
         attached += collector.collected
     if interp_or_app is None:
         for p in attached:

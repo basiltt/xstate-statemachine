@@ -224,7 +224,9 @@ def sort_imports(code: str, *, line_length: int = _LINE_LENGTH) -> str:
         return code
 
     try:
-        return isort.code(code, profile="black", line_length=line_length)
+        # 📝 `isort` is an optional dependency with no bundled stubs; its
+        #    return is `Any` to the checker but is always `str`.
+        return str(isort.code(code, profile="black", line_length=line_length))
     except Exception as exc:  # noqa: BLE001 — cosmetic step, never fatal
         logger.debug("isort declined (%s); leaving import order", exc)
         return code

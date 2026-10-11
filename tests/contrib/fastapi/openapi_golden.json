@@ -2,6 +2,7 @@
   "components": {
     "schemas": {
       "DeclaredEvent": {
+        "description": "One declared event type with its optional JSON schema.",
         "properties": {
           "schema": {
             "anyOf": [
@@ -268,6 +269,7 @@
   "paths": {
     "/payment/{id}": {
       "get": {
+        "description": "``GET /{id}`` -- the instance's state.",
         "operationId": "payment_get",
         "parameters": [
           {
@@ -362,6 +364,7 @@
     },
     "/payment/{id}/diagram.mmd": {
       "get": {
+        "description": "``GET /{id}/diagram.mmd`` -- the machine as a Mermaid diagram.",
         "operationId": "payment_diagram",
         "parameters": [
           {
@@ -420,6 +423,7 @@
     },
     "/payment/{id}/events": {
       "get": {
+        "description": "``GET /{id}/events`` -- available and declared events.",
         "operationId": "payment_events",
         "parameters": [
           {
@@ -1138,6 +1142,7 @@
     },
     "/payment/{id}/send": {
       "post": {
+        "description": "``POST /{id}/send`` -- send the body's event; returns the receipt.",
         "operationId": "payment_send",
         "parameters": [
           {
@@ -1287,6 +1292,7 @@
     },
     "/payment/{id}/stream": {
       "get": {
+        "description": "``GET /{id}/stream`` -- SSE: snapshot, then each transition.",
         "operationId": "payment_stream",
         "parameters": [
           {
