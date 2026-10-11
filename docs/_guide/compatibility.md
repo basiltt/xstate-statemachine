@@ -67,7 +67,7 @@ matrix or the matrix from `pyproject.toml`, and the compat
 workflow installs exactly these pins. Matrix verified: 2026-09-30, commit 45ca4e6 (last edit of the version pins).
 
 The core library has **no runtime dependencies** and supports **Python 3.9 to
-3.14**. Extras not listed here are placeholders that install nothing yet. See
+3.15**. Extras not listed here are placeholders that install nothing yet. See
 [Integrations & extras](../integrations-extras/). How versions and
 deprecations are managed is on the [Deprecation Policy](../deprecation-policy/)
 page. `contrib` APIs are provisional.
