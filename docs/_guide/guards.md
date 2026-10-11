@@ -616,8 +616,6 @@ If a guard raises an exception, the interpreter treats *that candidate* as decid
 }
 ```
 
-<div class="stately" data-machine="c8f5dbe5a7" data-height="320" data-title="m"></div>
-
 Whatever the policy, the raise is observable via the `on_guard_error(interpreter, guard_name, event, error)` plugin hook, fired *before* the substituted result is reported — previously a raising guard was indistinguishable from one that legitimately returned `False`. See [Plugins](../plugins/#plugin-hooks-reference).
 
 ```python

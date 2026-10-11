@@ -22,8 +22,6 @@ Add a root `"version"` whenever the chart changes shape:
 { "id": "order", "version": "3", "initial": "cart", "states": { "cart": {} } }
 ```
 
-<div class="stately" data-machine="9ad06e765a" data-height="320" data-title="order"></div>
-
 The engine never interprets it, but it travels with every snapshot as `machine_version`, and loading a snapshot written by a different `version` is detected so an in-flight instance can be migrated instead of resumed against the wrong chart (see [Versioning in-flight instances](../persistence/#versioning-in-flight-instances)). The HTTP integrations also return it in every response body.
 
 ```python
@@ -33,8 +31,6 @@ machine = create_machine({"id": "order", "version": 3, "initial": "cart",
                           "states": {"cart": {}}})
 assert machine.version == "3"          # coerced to str; None when absent
 ```
-
-<div class="stately" data-machine="72fd49542c" data-height="320" data-title="order"></div>
 
 ## `meta`, `description` and `x-` keys
 

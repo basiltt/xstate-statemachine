@@ -27,6 +27,35 @@ PROJECT = "4dbe1227-e533-4104-9772-dd7c7b3a86df"
 FENCE = re.compile(r"```(\w*)[^\n]*\n(.*?)```\n", re.S)
 
 
+def ntransitions(c) -> int:
+    """Count edges a diagram would draw (``on``/``after``/``always``/``invoke``)."""
+    n = 0
+    for k in ("on", "after", "always"):
+        v = c.get(k)
+        n += len(v) if isinstance(v, (dict, list)) else (1 if v else 0)
+    if c.get("invoke"):
+        n += 1
+    return n + sum(
+        ntransitions(s)
+        for s in (c.get("states") or {}).values()
+        if isinstance(s, dict)
+    )
+
+
+def worth_drawing(c) -> bool:
+    """A whole machine with something to show.
+
+    📝 Rejects (a) fragments -- no root ``id`` / ``initial`` -- which Stately
+    renders as a cloud of unconnected boxes because their transitions
+    point outside the fragment, and (b) one-state charts with no
+    transitions, which draw as a single lonely box.
+    """
+    whole = isinstance(c.get("id"), str) and (
+        "initial" in c or c.get("type") == "parallel"
+    )
+    return whole and (nstates(c) >= 2 or ntransitions(c) >= 1)
+
+
 def nstates(c) -> int:
     n = 0
     for s in (c.get("states") or {}).values():
@@ -55,7 +84,7 @@ def place_in_pages() -> int:
     placed = 0
     by_page = {}
     for key, e in INV.items():
-        if key not in IDS:
+        if key not in IDS or not worth_drawing(e["config"]):
             continue
         for w in e["where"]:
             if w.startswith("docs/") and w.endswith(".md"):
@@ -100,7 +129,7 @@ def write_map() -> None:
 def write_gallery() -> None:
     groups = {}
     for key, e in INV.items():
-        if key not in IDS:
+        if key not in IDS or not worth_drawing(e["config"]):
             continue
         src = next((w for w in e["where"] if w.startswith("examples/")), None)
         if not src:

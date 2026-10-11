@@ -185,8 +185,6 @@ When the machine enters a parallel state:
 }
 ```
 
-<div class="stately" data-machine="a332b2becf" data-height="420" data-title="a332b2becf"></div>
-
 ### Pythonic: `parallel=True` Parameter
 
 ```python
@@ -256,8 +254,6 @@ print(interp.active_state_ids)
 
 interp.stop()
 ```
-
-<div class="stately" data-machine="c917fa8b48" data-height="320" data-title="c917fa8b48"></div>
 
 ### Functional API
 
@@ -465,8 +461,6 @@ Guards work within parallel regions just like in any other state:
   }
 }
 ```
-
-<div class="stately" data-machine="5993c63d33" data-height="420" data-title="5993c63d33"></div>
 
 ## Parallel Containing Nested States
 

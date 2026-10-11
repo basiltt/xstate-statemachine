@@ -3,6 +3,8 @@ title: Example gallery
 description: Every statechart shipped under examples/, drawn live by the Stately editor.
 ---
 
+# Example gallery
+
 Every machine under [`examples/`](https://github.com/basiltt/xstate-statemachine/tree/main/examples)
 as the Stately editor draws it. The diagrams follow the site theme; each one links to the
 public editor page where you can simulate it. The JSON next to each diagram is what the
@@ -151,12 +153,6 @@ Source: [`examples/async/super_complex/class_approach/without_logic_loader/wareh
 Source: [`examples/async/super_complex/functional_approach/with_logic_loader/collaborative_editor.json`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/super_complex/functional_approach/with_logic_loader/collaborative_editor.json)
 
 <div class="stately" data-machine="cf5d577650" data-height="520" data-title="collaborativeEditor"></div>
-
-### collaboratorCursor
-
-Source: [`examples/async/super_complex/functional_approach/with_logic_loader/collaborator_cursor_actor.json`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/super_complex/functional_approach/with_logic_loader/collaborator_cursor_actor.json)
-
-<div class="stately" data-machine="994d9caa00" data-height="320" data-title="collaboratorCursor"></div>
 
 ### ancillaryServiceActor
 
@@ -423,12 +419,6 @@ Source: [`examples/sync/features/history_shallow_deep/history_shallow_deep_runne
 Source: [`examples/sync/features/pure_api/pure_api_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/pure_api/pure_api_runner.py)
 
 <div class="stately" data-machine="1477e29fb6" data-height="320" data-title="toggle"></div>
-
-### m
-
-Source: [`examples/sync/features/snapshot_drift/snapshot_drift_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/snapshot_drift/snapshot_drift_runner.py)
-
-<div class="stately" data-machine="5d970f17c3" data-height="320" data-title="m"></div>
 
 ### light
 

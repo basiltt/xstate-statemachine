@@ -82,8 +82,6 @@ assert record.deadlines == ()          # durable timers land here (#264)
 interp.stop()
 ```
 
-<div class="stately" data-machine="c84e05cf80" data-height="320" data-title="m"></div>
-
 | Field | Meaning |
 |:--|:--|
 | `snapshot` | The JSON string exactly as `get_snapshot()` produced it. |

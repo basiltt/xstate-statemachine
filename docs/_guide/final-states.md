@@ -232,8 +232,6 @@ The `onDone` transition can include actions, just like any other transition:
 }
 ```
 
-<div class="stately" data-machine="27760a64ca" data-height="320" data-title="27760a64ca"></div>
-
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 
@@ -463,8 +461,6 @@ This pattern is useful when a parent needs to distinguish between different comp
   }
 }
 ```
-
-<div class="stately" data-machine="d6842e9ef2" data-height="420" data-title="d6842e9ef2"></div>
 
 ## 🐍 Pythonic Final States
 

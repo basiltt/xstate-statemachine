@@ -590,8 +590,6 @@ print(interp.context)  # {"count": 0, "input": {"userId": 42}}
 interp.stop()
 ```
 
-<div class="stately" data-machine="2875adad75" data-height="320" data-title="m"></div>
-
 ## See Also
 
 - **[Actions](../actions/)** — how to mutate context in entry, exit, and transition actions
