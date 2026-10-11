@@ -50,6 +50,7 @@ from typing import (
     List,
     Optional,
     TypeVar,
+    cast,
 )
 
 try:  # pragma: no cover
@@ -922,4 +923,5 @@ def persisted_retry(
     invoked up to ``retries + 1`` times under `OptimisticLock`.
     """
     strategy = _strategy(lock)
-    return strategy.run(store, key, machine, fn, **kw)
+    # 📝 `_strategy` yields a LockStrategy whose `run` returns fn's result.
+    return cast(T, strategy.run(store, key, machine, fn, **kw))

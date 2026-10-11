@@ -30,7 +30,7 @@ from __future__ import annotations
 import logging
 import sys
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from django.contrib import admin, messages
 from django.contrib.contenttypes.admin import GenericTabularInline
@@ -97,7 +97,7 @@ def _state_label(machine: Any, state_id: str) -> str:
     )
 
 
-class TransitionLogInline(GenericTabularInline):
+class TransitionLogInline(GenericTabularInline):  # type: ignore[misc]  # GenericTabularInline is untyped (Any base)
     """Read-only audit history (newest first) on the change form."""
 
     ct_field = "content_type"
@@ -169,7 +169,7 @@ class TransitionLogInline(GenericTabularInline):
         return False
 
 
-class TransitionLogAdmin(admin.ModelAdmin):
+class TransitionLogAdmin(admin.ModelAdmin):  # type: ignore[misc]  # ModelAdmin is untyped (Any base)
     """Append-only audit changelist: filter by event / disposition /
     actor, search by object id or reason. Nobody -- superusers included
     -- can add, edit or delete a row here; erasure is `forget_statechart`
@@ -193,7 +193,7 @@ class TransitionLogAdmin(admin.ModelAdmin):
     #: The changelist cuts ``payload`` to this many characters.
     payload_preview = 120
 
-    @admin.display(description=_("payload"))
+    @admin.display(description=_("payload"))  # type: ignore[untyped-decorator]  # admin.display stub is untyped
     def short_payload(self, obj: Any) -> str:
         import json
 
@@ -232,7 +232,7 @@ def _register_log_admin() -> None:
         admin.site.register(model, TransitionLogAdmin)
 
 
-class StateListFilter(admin.SimpleListFilter):
+class StateListFilter(admin.SimpleListFilter):  # type: ignore[misc]  # SimpleListFilter is untyped (Any base)
     """Filter the changelist by active state (any leaf, or an ancestor)."""
 
     title = _("state")
@@ -298,7 +298,7 @@ class StatechartAdminMixin:
         base = tuple(super().get_list_filter(request))  # type: ignore[misc]
         return base + (StateListFilter,)
 
-    @admin.display(description=_("state"))
+    @admin.display(description=_("state"))  # type: ignore[untyped-decorator]  # admin.display stub is untyped
     def statechart_state_display(self, obj: Any) -> Any:
         if obj is None or obj.pk is None:
             return "-"
@@ -350,7 +350,7 @@ class StatechartAdminMixin:
 
     # -- urls / views -----------------------------------------------------------------
     def get_urls(self) -> List[Any]:
-        info = self.model._meta.app_label, self.model._meta.model_name  # type: ignore[attr-defined]
+        info = self.model._meta.app_label, self.model._meta.model_name
         wrap = self.admin_site.admin_view  # type: ignore[attr-defined]
         return [
             path(
@@ -363,7 +363,9 @@ class StatechartAdminMixin:
                 wrap(self.xsm_diagram_view),
                 name="%s_%s_xsm_diagram" % info,
             ),
-        ] + super().get_urls()  # type: ignore[misc]
+        ] + cast(
+            "List[Any]", super().get_urls()  # type: ignore[misc]
+        )  # 📝 Django admin base is untyped
 
     def _xsm_object(self, request: Any, object_id: str) -> Any:
         """The row, or 404 -- but only to a user who may see the model at
@@ -377,10 +379,10 @@ class StatechartAdminMixin:
         return obj
 
     def _change_url(self, obj: Any) -> str:
-        info = self.model._meta.app_label, self.model._meta.model_name  # type: ignore[attr-defined]
-        return reverse("admin:%s_%s_change" % info, args=[obj.pk])
+        info = self.model._meta.app_label, self.model._meta.model_name
+        return cast("str", reverse("admin:%s_%s_change" % info, args=[obj.pk]))
 
-    @csrf_protect_m
+    @csrf_protect_m  # type: ignore[untyped-decorator]  # csrf_protect_m wraps an untyped Django decorator
     def xsm_transition_view(self, request: Any, object_id: str) -> Any:
         """GET: the confirm form (no state change). POST: re-check the
         permission, then send with ``actor=request.user``."""
@@ -402,7 +404,7 @@ class StatechartAdminMixin:
     def _confirm_page(
         self, request: Any, obj: Any, event: str, machine: Any
     ) -> Any:
-        opts = self.model._meta  # type: ignore[attr-defined]
+        opts = self.model._meta
         ctx = {
             **self.admin_site.each_context(request),  # type: ignore[attr-defined]
             "opts": opts,
@@ -483,7 +485,7 @@ class StatechartAdminMixin:
         machine = obj.statechart_machine_node()
         ctx = {
             **self.admin_site.each_context(request),  # type: ignore[attr-defined]
-            "opts": self.model._meta,  # type: ignore[attr-defined]
+            "opts": self.model._meta,
             "object": obj,
             "title": _("Statechart"),
             "mermaid": highlighted_mermaid(machine, obj.state_ids),
@@ -504,18 +506,18 @@ class StatechartAdminMixin:
                 request, action_location=action_location
             )
         if not self.xsm_bulk_actions:
-            return actions
+            return cast("dict[str, Any]", actions)
         # 🔐 #282 battle: these are added AFTER Django's own
         #    ``allowed_permissions`` filter, so a view-only user was
         #    offered every transition in the dropdown. Gate them here.
         if not self.has_change_permission(request):  # type: ignore[attr-defined]
-            return actions
-        machine = self.model().statechart_machine_node()  # type: ignore[attr-defined]
+            return cast("dict[str, Any]", actions)
+        machine = self.model().statechart_machine_node()
         for event in declared_events(machine):
             name = f"xsm_{event}"
             fn = self._bulk_action(event, event_label(machine, event))
             actions[name] = (fn, name, fn.short_description)
-        return actions
+        return cast("dict[str, Any]", actions)
 
     def _bulk_action(self, event: str, label: str) -> Any:
         def action(modeladmin: Any, request: Any, queryset: Any) -> None:
@@ -595,7 +597,7 @@ def highlighted_mermaid(machine: Any, active: Optional[List[str]]) -> str:
         if k in known and _MERMAID_ID.match(k)
     ]
     if not ids:
-        return text
+        return cast("str", text)
     lines = [text, "    classDef xsmActive fill:#ffd54f,stroke:#e65100"]
     for sid in ids:
         lines.append(f"    class {sid} xsmActive")

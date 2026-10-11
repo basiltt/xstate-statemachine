@@ -31,7 +31,7 @@ import logging
 import threading
 import time
 import weakref
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union, cast
 
 # -----------------------------------------------------------------------------
 # 📥 Project-Specific Imports
@@ -291,14 +291,12 @@ def _make_probe_class() -> type:
     """
     from .sync_interpreter import SyncInterpreter
 
-    class _Probe(SyncInterpreter):  # type: ignore[misc,valid-type]
+    class _Probe(SyncInterpreter[Any]):
         """A SyncInterpreter that records actions rather than executing them."""
 
         _recorded: List[ActionDefinition]
 
-        def _execute_actions(  # type: ignore[override]
-            self, actions: Any, event: Any
-        ) -> Any:
+        def _execute_actions(self, actions: Any, event: Any) -> Any:
             """Records actions without running their side effects.
 
             `assign` is still applied, because context updates are part of
@@ -327,7 +325,8 @@ def _make_probe_class() -> type:
             """A probe owns nothing to reap; keep it reusable after `done`."""
             return None
 
-    return _Probe
+    # 📝 `_Probe` is a local class; mypy sees a variable, not a type.
+    return cast(type, _Probe)
 
 
 _Probe: Any = None  # populated on first use by `_probe_class()`
@@ -337,7 +336,8 @@ def _probe_class() -> type:
     global _Probe
     if _Probe is None:
         _Probe = _make_probe_class()
-    return _Probe
+    # 📝 `_Probe` is module-global Optional[Any]; it is a class once built.
+    return cast(type, _Probe)
 
 
 def _build_probe(

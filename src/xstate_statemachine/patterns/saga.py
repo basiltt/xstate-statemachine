@@ -402,7 +402,7 @@ class SagaBuilder:
         return out
 
     # -- logic ----------------------------------------------------------------------
-    def logic(self) -> MachineLogic:
+    def logic(self) -> MachineLogic[Any]:
         """The generic actions (and per-step retry logic) the JSON names.
 
         Merge your services into it: ``saga.logic().merge(MachineLogic(

@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, Iterable, List, Optional, Union
+from typing import Any, Dict, Iterable, List, Optional, Union, cast
 
 from ...clock import SimulatedClock
 from ...events import Event, Receipt
@@ -280,7 +280,7 @@ class Scenario:
             if n is not self.machine and n.id.rsplit(".", 1)[-1] == state
         ]
         if len(matches) == 1:
-            return matches[0]
+            return cast("str", matches[0])
         if not matches:
             raise ValueError(
                 f"given/then: no state named {state!r} in machine "

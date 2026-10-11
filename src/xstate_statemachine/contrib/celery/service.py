@@ -100,7 +100,9 @@ class CeleryInvocation:
     deadline: Optional[float]
 
 
-def _default_args(ctx: Any, event: Any) -> Tuple[tuple, dict]:
+def _default_args(
+    ctx: Any, event: Any
+) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
     return (), {}
 
 

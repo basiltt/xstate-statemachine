@@ -39,6 +39,7 @@ from typing import (
     List,
     Optional,
     Sequence,
+    Set,
     Tuple,
 )
 
@@ -251,7 +252,7 @@ class SQLAlchemyStore(BaseStore):
     def _lock_raw(self, key: str, timeout: float) -> ContextManager[None]:
         return self._lease(key, timeout)
 
-    def _held(self) -> set:
+    def _held(self) -> Set[str]:
         held = getattr(self._local, "held", None)
         if held is None:
             held = self._local.held = set()

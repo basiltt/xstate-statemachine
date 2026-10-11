@@ -27,7 +27,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from typing import Any, Callable, Dict, Iterator, List, Optional, Type
+from typing import Any, Callable, Dict, Iterator, List, Optional, Type, cast
 
 from django.core.exceptions import ImproperlyConfigured
 from django.http import StreamingHttpResponse
@@ -75,7 +75,7 @@ def problem_response(status: int, title: str, **ext: Any) -> Response:
 # -----------------------------------------------------------------------------
 # 📐 Response serializers (for the schema; the views build dicts)
 # -----------------------------------------------------------------------------
-class StateSerializer(serializers.Serializer):
+class StateSerializer(serializers.Serializer):  # type: ignore[misc]  # Serializer is untyped (Any base)
     state = serializers.JSONField()
     state_ids = serializers.ListField(child=serializers.CharField())
     available_events = serializers.ListField(child=serializers.CharField())
@@ -91,7 +91,7 @@ class ReceiptSerializer(StateSerializer):
     error = serializers.CharField(allow_null=True)
 
 
-class ProblemSerializer(serializers.Serializer):
+class ProblemSerializer(serializers.Serializer):  # type: ignore[misc]  # Serializer is untyped (Any base)
     type = serializers.CharField()
     title = serializers.CharField()
     status = serializers.IntegerField()
@@ -99,16 +99,16 @@ class ProblemSerializer(serializers.Serializer):
     error = serializers.CharField(required=False)
 
 
-class EventsSerializer(serializers.Serializer):
+class EventsSerializer(serializers.Serializer):  # type: ignore[misc]  # Serializer is untyped (Any base)
     available = serializers.ListField(child=serializers.CharField())
     declared = serializers.ListField(child=serializers.CharField())
 
 
-class SendSerializer(serializers.Serializer):
+class SendSerializer(serializers.Serializer):  # type: ignore[misc]  # Serializer is untyped (Any base)
     type = serializers.CharField()
 
 
-class HistorySerializer(serializers.Serializer):
+class HistorySerializer(serializers.Serializer):  # type: ignore[misc]  # Serializer is untyped (Any base)
     seq = serializers.IntegerField()
     event = serializers.CharField()
     disposition = serializers.CharField()
@@ -126,7 +126,7 @@ def _schema(**kw: Any) -> Callable[[Any], Any]:
         from drf_spectacular.utils import extend_schema
     except ImportError:  # pragma: no cover - [drf] without spectacular
         return lambda fn: fn
-    return extend_schema(**kw)
+    return cast("Callable[[Any], Any]", extend_schema(**kw))
 
 
 def _send_responses() -> Dict[int, Any]:
@@ -427,7 +427,7 @@ class StatechartViewSetMixin:
         responses=_send_responses(),
         parameters=_send_parameters(),
     )
-    @action(
+    @action(  # type: ignore[untyped-decorator]  # DRF @action is untyped
         detail=True, methods=["post"], url_path="send", url_name="xsm-send"
     )
     def xsm_send_any(
@@ -445,7 +445,7 @@ class StatechartViewSetMixin:
         return self.xsm_send(request, etype, data)
 
     @_schema(responses={200: EventsSerializer})
-    @action(
+    @action(  # type: ignore[untyped-decorator]  # DRF @action is untyped
         detail=True, methods=["get"], url_path="events", url_name="xsm-events"
     )
     def xsm_events(self, request: Any, *args: Any, **kwargs: Any) -> Response:
@@ -458,7 +458,7 @@ class StatechartViewSetMixin:
         )
 
     @_schema(responses={200: HistorySerializer(many=True)})
-    @action(
+    @action(  # type: ignore[untyped-decorator]  # DRF @action is untyped
         detail=True,
         methods=["get"],
         url_path="history",
@@ -487,7 +487,7 @@ class StatechartViewSetMixin:
         return Response(HistorySerializer(qs, many=True).data)
 
     @_schema(responses={(200, "text/event-stream"): str})
-    @action(
+    @action(  # type: ignore[untyped-decorator]  # DRF @action is untyped
         detail=True, methods=["get"], url_path="stream", url_name="xsm-stream"
     )
     def xsm_stream(self, request: Any, *args: Any, **kwargs: Any) -> Any:

@@ -29,6 +29,7 @@ import copy
 import json
 import time
 from typing import (
+    cast,
     Any,
     Callable,
     ClassVar,
@@ -251,7 +252,7 @@ class StatechartMixin:
                 logic = logic(self)
             m = copy.copy(m)
             m.logic = logic
-        return m
+        return cast("MachineNode[Any]", m)
 
     def _xsm_key(self) -> str:
         ident = _identity(self)
@@ -387,7 +388,7 @@ class StatechartMixin:
         event_type: str,
         payload: Dict[str, Any],
         plugins: Iterable[Any],
-    ) -> Tuple[Receipt, Dict[str, Any], Sequence[Deadline], list]:
+    ) -> Tuple[Receipt, Dict[str, Any], Sequence[Deadline], List[Any]]:
         from ...sync_interpreter import SyncInterpreter
 
         m = self._xsm_machine()
@@ -493,7 +494,10 @@ def send_with_retry(
     while True:
         attempt += 1
         try:
-            return row.send(event_type, session=session, lock=lock, **payload)
+            return cast(
+                "Receipt",
+                row.send(event_type, session=session, lock=lock, **payload),
+            )
         except (ConflictError, LockTimeoutError) as exc:
             if attempt > retries:
                 setattr(exc, "attempts", attempt)

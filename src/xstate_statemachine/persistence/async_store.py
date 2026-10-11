@@ -28,6 +28,7 @@ from typing import (
     List,
     Optional,
     Sequence,
+    cast,
 )
 
 try:  # pragma: no cover
@@ -152,7 +153,11 @@ class AsyncStoreAdapter:
         )
 
     async def load(self, key: str) -> Optional[StoredSnapshot]:
-        return await self._run(self.sync_store.load, key)
+        # 📝 `_run` is untyped plumbing; the sync store fixes the result type.
+        return cast(
+            Optional[StoredSnapshot],
+            await self._run(self.sync_store.load, key),
+        )
 
     async def save(
         self,
@@ -163,26 +168,34 @@ class AsyncStoreAdapter:
         machine_version: str = "",
         deadlines: Sequence[Deadline] = (),
     ) -> int:
-        return await self._run(
-            self.sync_store.save,
-            key,
-            snapshot,
-            expected_version=expected_version,
-            machine_version=machine_version,
-            deadlines=deadlines,
+        return cast(
+            int,
+            await self._run(
+                self.sync_store.save,
+                key,
+                snapshot,
+                expected_version=expected_version,
+                machine_version=machine_version,
+                deadlines=deadlines,
+            ),
         )
 
     async def delete(self, key: str) -> bool:
-        return await self._run(self.sync_store.delete, key)
+        return cast(bool, await self._run(self.sync_store.delete, key))
 
     async def forget(self, key: str) -> Dict[str, int]:
-        return await self._run(self.sync_store.forget, key)
+        return cast(
+            Dict[str, int], await self._run(self.sync_store.forget, key)
+        )
 
     async def list_keys(
         self, *, prefix: str = "", limit: int = 1000
     ) -> List[str]:
-        return await self._run(
-            self.sync_store.list_keys, prefix=prefix, limit=limit
+        return cast(
+            List[str],
+            await self._run(
+                self.sync_store.list_keys, prefix=prefix, limit=limit
+            ),
         )
 
     def lock(
@@ -247,7 +260,7 @@ class AsyncStoreAdapter:
         return gate
 
     async def health(self) -> Dict[str, Any]:
-        return await self._run(self.sync_store.health)
+        return cast(Dict[str, Any], await self._run(self.sync_store.health))
 
     def close(self) -> None:
         """Shut the worker thread down (idempotent).

@@ -74,7 +74,11 @@ class SentryPlugin(PluginBase[Any]):
             )
 
     def on_transition(
-        self, interpreter: Any, from_states: Any, to_states: Any, transition
+        self,
+        interpreter: Any,
+        from_states: Any,
+        to_states: Any,
+        transition: Any,
     ) -> None:
         target = getattr(transition, "resolved_target", None)
         src = transition.source.id
@@ -87,7 +91,9 @@ class SentryPlugin(PluginBase[Any]):
             data={"machine_id": str(interpreter.machine.id), "event": ev},
         )
 
-    def _capture(self, interpreter: Any, error: BaseException, **tags):
+    def _capture(
+        self, interpreter: Any, error: BaseException, **tags: Any
+    ) -> None:
         if not self.capture_errors or self._disabled:
             return
         all_tags: Dict[str, str] = {

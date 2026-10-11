@@ -22,14 +22,21 @@
     "profile": {
       "description": "Step 2: tell us about your work.",
       "on": {
-        "NEXT": { "target": "plan", "actions": "saveProfile" },
+        "NEXT": {
+          "target": "plan",
+          "actions": "saveProfile"
+        },
         "BACK": "account"
       }
     },
     "plan": {
       "description": "Step 3: pick a plan.",
       "on": {
-        "NEXT": { "target": "confirm", "guard": "validPlan", "actions": "savePlan" },
+        "NEXT": {
+          "target": "confirm",
+          "guard": "validPlan",
+          "actions": "savePlan"
+        },
         "BACK": "profile"
       }
     },
@@ -40,6 +47,8 @@
         "BACK": "plan"
       }
     },
-    "done": { "type": "final" }
+    "done": {
+      "type": "final"
+    }
   }
 }

@@ -38,4 +38,6 @@ Nothing is imported here on purpose -- see the module comment.
 
 from __future__ import annotations
 
-__all__: list = []
+from typing import List
+
+__all__: List[str] = []

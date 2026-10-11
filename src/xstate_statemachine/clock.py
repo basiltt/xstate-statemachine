@@ -403,7 +403,7 @@ class SimulatedClock:
         for settle in list(self._settlers):
             result = settle()
             if hasattr(result, "close"):  # an async settler in sync mode
-                result.close()  # type: ignore[union-attr]
+                result.close()
 
     async def _drain_async(self, target: float) -> None:
         while True:
@@ -483,7 +483,7 @@ class _MustAwait:
             )
             coro = self._coro
             if hasattr(coro, "close"):
-                coro.close()  # type: ignore[attr-defined]
+                coro.close()
 
 
 __all__ = ["Clock", "RealClock", "SimulatedClock"]

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import importlib
 import sys
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, TextIO
 
 KeySource = Callable[[], str]
 
@@ -119,7 +119,7 @@ def scripted(keys: str) -> KeySource:
     return source
 
 
-def interactive_available(stdin=None) -> bool:
+def interactive_available(stdin: Optional[TextIO] = None) -> bool:
     """``True`` when single-key reads are possible on this stdin."""
     s = stdin if stdin is not None else sys.stdin
     try:

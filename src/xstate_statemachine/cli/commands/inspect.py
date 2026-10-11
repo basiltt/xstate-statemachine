@@ -33,7 +33,7 @@ KIND_ASCII = {
 
 
 def state_tree(
-    machine: MachineNode,
+    machine: MachineNode[Any],
     *,
     active: Optional[Set[str]] = None,
     unicode: bool = True,
@@ -42,7 +42,7 @@ def state_tree(
     active = active or set()
     glyphs = KIND_GLYPH if unicode else KIND_ASCII
 
-    def build(node: StateNode, is_root: bool = False) -> Node:
+    def build(node: StateNode[Any], is_root: bool = False) -> Node:
         label = node.id.rsplit(".", 1)[-1] if not is_root else node.id
         kind = node.type
         role = "kind.active" if node.id in active else f"kind.{kind}"
@@ -69,7 +69,7 @@ def state_tree(
     return build(machine, is_root=True)
 
 
-def _policies(m: MachineNode) -> List[List[str]]:
+def _policies(m: MachineNode[Any]) -> List[List[str]]:
     return [
         ["actionErrorPolicy", m.action_error_policy],
         ["guardErrorPolicy", m.guard_error_policy],

@@ -75,7 +75,7 @@ def sibling_values(
     }
 
 
-class _SiblingTransform(Transform):
+class _SiblingTransform(Transform):  # type: ignore[misc]  # Transform is untyped (Any base)
     """``statechart__state`` → the ``statechart_state`` column itself."""
 
     sibling: str = ""
@@ -88,7 +88,7 @@ class _SiblingTransform(Transform):
         return compiler.compile(col)
 
     @property
-    def output_field(self) -> Any:  # type: ignore[override]
+    def output_field(self) -> Any:
         field = self.lhs.output_field
         return field.model._meta.get_field(f"{field.name}_{self.sibling}")
 
@@ -104,7 +104,7 @@ def _transform(suffix: str) -> Any:
 _TRANSFORMS = {s: _transform(s) for s in SIBLINGS}
 
 
-class StatechartField(models.JSONField):
+class StatechartField(models.JSONField):  # type: ignore[misc]  # JSONField is untyped (Any base)
     """The statechart snapshot of a row (see module notes).
 
     Args:
@@ -160,7 +160,7 @@ class StatechartField(models.JSONField):
             kwargs["denormalize"] = False
         return name, path, args, kwargs
 
-    def sibling_fields(self) -> Dict[str, models.Field]:  # type: ignore[type-arg]
+    def sibling_fields(self) -> Dict[str, models.Field]:
         """Fresh instances of the sibling fields, keyed by column name."""
         n = self.name
         return {
@@ -184,7 +184,7 @@ class StatechartField(models.JSONField):
 
     def sibling_fields_named(
         self, name: str
-    ) -> List[Tuple[str, models.Field]]:  # type: ignore[type-arg]
+    ) -> List[Tuple[str, models.Field]]:
         """`sibling_fields` for a field that will be called *name* --
         for hand-written migrations adding the field to an existing
         model: ``[("statechart", StatechartField()),

@@ -3,7 +3,7 @@
 from django.db import migrations, models
 
 
-class Migration(migrations.Migration):
+class Migration(migrations.Migration):  # type: ignore[misc]  # Migration is untyped (Any base)
 
     dependencies = [
         ("xsm_django", "0002_outboxmessage_transitionlog"),

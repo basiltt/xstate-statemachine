@@ -24,7 +24,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 import redis
 
@@ -180,7 +180,7 @@ class RedisInbox:
         self._purge = self.r.register_script(_PURGE)
         self._forget = self.r.register_script(_FORGET)
 
-    def _keys(self, scope: str) -> list:
+    def _keys(self, scope: str) -> List[str]:
         return [self.k.inbox(scope), self.k.inbox_exp]
 
     @redis_errors_typed

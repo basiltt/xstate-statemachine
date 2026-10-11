@@ -67,7 +67,7 @@ def budget_guards(
     max_tokens: Optional[int] = None,
     max_usd: Optional[float] = None,
     max_turns: Optional[int] = None,
-) -> MachineLogic:
+) -> MachineLogic[Any]:
     """``underTokenBudget`` / ``underCostBudget`` / ``underTurnLimit``.
 
     Each is ``True`` while the SPENT amount is strictly below the limit, so

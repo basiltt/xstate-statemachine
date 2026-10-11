@@ -17,7 +17,7 @@
 """`create_statechart_controller()`."""
 
 import re
-from typing import Any, Callable, Dict, List, Literal, Optional, Sequence
+from typing import Any, Callable, Dict, List, Literal, Optional, Sequence, cast
 
 import msgspec
 from litestar import Controller, Request, Response, get, post, websocket
@@ -158,7 +158,9 @@ _SEND_STATUSES = (400, 401, 403, 404, 409, 413, 415, 422, 501, 503)
 _READ_STATUSES = (400, 401, 403, 404, 503)
 
 
-def _models_for(machine: Any, event_models: Optional[Sequence[Any]]) -> List:
+def _models_for(
+    machine: Any, event_models: Optional[Sequence[Any]]
+) -> List[Any]:
     if event_models:
         return list(event_models)
     try:
@@ -188,7 +190,7 @@ def _body_type(name: str, machine: Any, models: List[Any]) -> Any:
             models[0]
             if len(models) == 1
             else Annotated[
-                Union[tuple(models)],  # type: ignore[valid-type]
+                Union[tuple(models)],
                 Field(discriminator="type"),
             ]
         )
@@ -198,7 +200,7 @@ def _body_type(name: str, machine: Any, models: List[Any]) -> Any:
         body.__xsm_union__ = tuple(models)  # type: ignore[attr-defined]
         return body
     events = declared_events(machine)
-    etype: Any = Literal[tuple(events)] if events else str  # type: ignore
+    etype: Any = Literal[tuple(events)] if events else str
     return msgspec.defstruct(
         f"{title}Event",
         [("type", etype), ("payload", Dict[str, Any], {})],
@@ -358,8 +360,9 @@ def create_statechart_controller(
     async def send(self: Any, request: Request, data: Any) -> Response:  # type: ignore[type-arg]
         etype, payload = _split(data)
         if etype in excluded:
-            return to_litestar(  # type: ignore[return-value]
-                problem(403, "Use this event's dedicated route")
+            return cast(
+                "Response[Any]",  # 📝 to_litestar returns Any
+                to_litestar(problem(403, "Use this event's dedicated route")),
             )
         return await do_send(request, etype, payload)  # type: ignore
 

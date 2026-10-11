@@ -99,7 +99,7 @@ def _transition_shape(t: "TransitionDefinition") -> Tuple[Any, ...]:
     )
 
 
-def _node_shape(node: "StateNode") -> Dict[str, Any]:
+def _node_shape(node: "StateNode[Any]") -> Dict[str, Any]:
     """The behavioural shape of one state node, ordering-insensitive.
 
     🏛️ Included: id, type, initial, entry/exit action NAMES, every
@@ -127,7 +127,7 @@ def _node_shape(node: "StateNode") -> Dict[str, Any]:
     }
 
 
-def structure_hash(machine: "MachineNode") -> str:
+def structure_hash(machine: "MachineNode[Any]") -> str:
     """A 16-hex-char fingerprint of a machine's behavioural structure.
 
     Two machines hash equal iff they have the same states, transitions,
@@ -413,7 +413,7 @@ def _check_v4_fields(snapshot: Dict[str, Any], fail: Any) -> None:
 
 def check_identity(
     snapshot: Dict[str, Any],
-    machine: "MachineNode",
+    machine: "MachineNode[Any]",
     *,
     verify_hash: bool,
     version: Optional[int] = None,

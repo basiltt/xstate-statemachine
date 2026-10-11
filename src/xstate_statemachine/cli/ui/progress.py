@@ -16,7 +16,7 @@ from __future__ import annotations
 import sys
 import threading
 import time
-from typing import List, Optional, Sequence, TextIO
+from typing import Any, List, Optional, Sequence, TextIO
 
 from .style import paint
 from .term import Capabilities
@@ -93,7 +93,7 @@ class Spinner:
             self.out.flush()
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> None:
+    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
         if self._final is None:
             if exc_type is None:
                 self.succeed()

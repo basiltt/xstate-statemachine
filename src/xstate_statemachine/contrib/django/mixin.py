@@ -39,6 +39,7 @@ import contextvars
 import json
 import time
 from typing import (
+    cast,
     Any,
     ClassVar,
     Dict,
@@ -143,7 +144,7 @@ def statechart_field(model: Any) -> StatechartField:
 # -----------------------------------------------------------------------------
 # 🔎 QuerySet
 # -----------------------------------------------------------------------------
-class StatechartQuerySet(models.QuerySet):  # type: ignore[type-arg]
+class StatechartQuerySet(models.QuerySet):  # type: ignore[misc]  # QuerySet is untyped (Any base)
     """``in_state(*ids)`` -- rows where ANY id is active: a leaf, or an
     ancestor of one (``in_state("order.review")`` matches
     ``order.review.legal.pending``)."""
@@ -171,7 +172,7 @@ class StatechartQuerySet(models.QuerySet):  # type: ignore[type-arg]
                     **{pos: StrIndex("_xsm_state", Value(needle))}
                 )
                 q |= Q(**{f"{pos}__gt": 0})
-        return qs.filter(q)
+        return cast("StatechartQuerySet", qs.filter(q))
 
 
 StatechartManager = models.Manager.from_queryset(StatechartQuerySet)
@@ -180,7 +181,7 @@ StatechartManager = models.Manager.from_queryset(StatechartQuerySet)
 # -----------------------------------------------------------------------------
 # 🧬 Mixin
 # -----------------------------------------------------------------------------
-class StatechartModelMixin(models.Model):
+class StatechartModelMixin(models.Model):  # type: ignore[misc]  # Model is untyped (Any base)
     """Mix into a model that declares one `StatechartField`.
 
     Class attributes:
@@ -248,7 +249,9 @@ class StatechartModelMixin(models.Model):
         return name, f"{name}_version"
 
     def _xsm_snapshot(self) -> Optional[Dict[str, Any]]:
-        return getattr(self, self._xsm_names()[0])
+        return cast(
+            "dict[str, Any] | None", getattr(self, self._xsm_names()[0])
+        )
 
     def _xsm_key(self) -> str:
         if self.pk is None:
@@ -290,7 +293,9 @@ class StatechartModelMixin(models.Model):
     def state(self) -> Optional[str]:
         """``<field>_state``: the sorted, comma-joined leaf ids (one id
         unless a parallel state is active)."""
-        return getattr(self, f"{self._xsm_names()[0]}_state")
+        return cast(
+            "str | None", getattr(self, f"{self._xsm_names()[0]}_state")
+        )
 
     @property
     def state_ids(self) -> List[str]:
@@ -631,7 +636,7 @@ class StatechartModelMixin(models.Model):
     # -- deadlines -------------------------------------------------------------------
     @classmethod
     def _xsm_has_tables(cls) -> bool:
-        return apps.is_installed(APP)
+        return cast("bool", apps.is_installed(APP))
 
     def _xsm_write_deadlines(self, using: str, deadlines: Any) -> None:
         if not type(self)._xsm_has_tables():
@@ -787,7 +792,7 @@ def send_with_retry(
     while True:
         attempt += 1
         try:
-            return row.send(event_type, lock=lock, **kw)
+            return cast("Receipt", row.send(event_type, lock=lock, **kw))
         except (ConflictError, LockTimeoutError) as exc:
             if attempt > retries:
                 setattr(exc, "attempts", attempt)

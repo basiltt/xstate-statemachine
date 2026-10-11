@@ -28,7 +28,7 @@ from __future__ import annotations
 import logging
 import threading
 from collections import deque
-from typing import Any, Callable, Deque, Dict, Iterable, Optional, Tuple
+from typing import Any, Callable, Deque, Dict, Iterable, Optional, Tuple, cast
 
 from .. import plugins as _plugins
 from ..plugins import DEFAULT_REDACT_KEYS, PluginBase, redact
@@ -174,7 +174,8 @@ class InspectorPlugin(PluginBase[Any]):
             return {}
         ctx = getattr(interp, "context", None) or {}
         picked = {k: v for k, v in ctx.items() if k in self.context_allowlist}
-        return redact(picked, self.redact_keys)
+        # 📝 `redact` returns a scrubbed copy of the same mapping shape.
+        return cast(Dict[str, Any], redact(picked, self.redact_keys))
 
     def _event(self, event: Any) -> Dict[str, Any]:
         etype = getattr(event, "type", None) or ""
@@ -271,17 +272,20 @@ class InspectorPlugin(PluginBase[Any]):
             if not q:
                 return None
             etype = getattr(event, "type", "")
-            for match in (
-                lambda item: item[1] == id(event),
-                lambda item: item[0] == etype,
-            ):
+            matchers: Tuple[Callable[[Any], bool], ...] = (
+                lambda item: bool(item[1] == id(event)),
+                lambda item: bool(item[0] == etype),
+            )
+            for match in matchers:
                 for item in list(q):
                     if match(item):
                         q.remove(item)
                         return item[2]
         return None
 
-    def _event_msg(self, interp: Any, event: Any, source: Optional[str]):
+    def _event_msg(
+        self, interp: Any, event: Any, source: Optional[str]
+    ) -> None:
         sid, root = self._ids(interp)
         self._emit(
             event_message(
@@ -306,7 +310,11 @@ class InspectorPlugin(PluginBase[Any]):
         )
 
     def on_transition(
-        self, interpreter: Any, from_states: Any, to_states: Any, transition
+        self,
+        interpreter: Any,
+        from_states: Any,
+        to_states: Any,
+        transition: Any,
     ) -> None:
         # 🚀 The init step has no received/processed pair; report it the
         #    way XState does: an `xstate.init` event, then a snapshot.

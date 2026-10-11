@@ -152,7 +152,7 @@ def _count_probe(i: Any, ctx: Dict[str, Any], e: Any, a: Any) -> None:
     ctx["half_open_calls"] = int(ctx["half_open_calls"]) + 1
 
 
-def circuit_breaker_logic(cooldown_ms: float) -> MachineLogic:
+def circuit_breaker_logic(cooldown_ms: float) -> MachineLogic[Any]:
     """The logic `CIRCUIT_BREAKER_CONFIG` needs, with the cooldown bound."""
     return MachineLogic(
         actions={
@@ -198,7 +198,7 @@ class CircuitBreaker:
         clock: Optional[Clock] = None,
         plugins: Iterable[Any] = (),
         name: Optional[str] = None,
-        exceptions: tuple = (Exception,),
+        exceptions: Tuple[Any, ...] = (Exception,),
     ) -> None:
         if failure_threshold < 1 or half_open_max_calls < 1:
             raise ValueError(

@@ -133,7 +133,9 @@ class JsonLinesSink:
         self.close()
 
 
-def read_jsonl(path: Union[str, "os.PathLike[str]"]) -> Iterator[Dict]:
+def read_jsonl(
+    path: Union[str, "os.PathLike[str]"],
+) -> Iterator[Dict[str, Any]]:
     """Yield the messages of a `JsonLinesSink` recording (blank lines and
     non-object lines are skipped)."""
     with open(path, encoding="utf-8") as fh:

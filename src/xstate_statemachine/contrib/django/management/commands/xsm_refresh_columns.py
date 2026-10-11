@@ -20,7 +20,7 @@ from ._resolve import database, field_name, model_from_label
 __all__ = ["Command"]
 
 
-class Command(BaseCommand):
+class Command(BaseCommand):  # type: ignore[misc]  # BaseCommand is untyped (Any base)
     help = (
         "Recompute a statechart model's denormalised state columns from "
         "its snapshots (batched; --dry-run counts only)."

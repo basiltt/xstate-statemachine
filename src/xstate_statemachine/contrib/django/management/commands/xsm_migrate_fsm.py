@@ -42,7 +42,7 @@ Migrating {label}.{field} from django-fsm to a statechart:
 """
 
 
-class Command(BaseCommand):
+class Command(BaseCommand):  # type: ignore[misc]  # BaseCommand is untyped (Any base)
     help = "Migrate a django-fsm FSMField to a StatechartField."
 
     def add_arguments(self, parser: Any) -> None:

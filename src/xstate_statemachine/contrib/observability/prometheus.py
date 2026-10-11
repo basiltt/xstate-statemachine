@@ -297,7 +297,11 @@ class PrometheusPlugin(PluginBase[Any]):
         self.m["events"].labels(*self._base(interpreter), ev, "dropped").inc()
 
     def on_transition(
-        self, interpreter: Any, from_states: Any, to_states: Any, transition
+        self,
+        interpreter: Any,
+        from_states: Any,
+        to_states: Any,
+        transition: Any,
     ) -> None:
         target = getattr(transition, "resolved_target", None)
         src = transition.source.id

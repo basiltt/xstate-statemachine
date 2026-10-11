@@ -12,7 +12,7 @@ from ..django.permissions import has_event_permission
 __all__ = ["StatechartEventPermission", "StatechartHistoryPermission"]
 
 
-class StatechartEventPermission(BasePermission):
+class StatechartEventPermission(BasePermission):  # type: ignore[misc]  # BasePermission is untyped (Any base)
     """Object permission for a transition: the event the view is about to
     send (``view.xsm_event``) must pass `has_event_permission` for
     ``request.user``. Reads (no event) require an authenticated user."""
@@ -30,7 +30,7 @@ class StatechartEventPermission(BasePermission):
         return has_event_permission(request.user, obj, event)
 
 
-class StatechartHistoryPermission(BasePermission):
+class StatechartHistoryPermission(BasePermission):  # type: ignore[misc]  # BasePermission is untyped (Any base)
     """Who may read ``history/``: the model's ``view`` permission (history
     carries actors and reasons -- a separate grant from sending)."""
 

@@ -25,7 +25,7 @@ import os
 import shutil
 import sys
 from dataclasses import dataclass
-from typing import Optional, TextIO
+from typing import Optional, TextIO, Tuple
 
 #: Environment variables that force plain output. `NO_COLOR` is the
 #: cross-tool convention (https://no-color.org); `XSM_*` are ours.
@@ -62,7 +62,7 @@ class Capabilities:
         return not self.color and not self.animate
 
 
-def _env_set(names: tuple) -> bool:
+def _env_set(names: Tuple[str, ...]) -> bool:
     return any(os.environ.get(n, "") not in ("", "0", "false") for n in names)
 
 
@@ -79,7 +79,7 @@ def _enable_windows_vt(stream: TextIO) -> bool:
         import ctypes
         import msvcrt
 
-        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        kernel32 = ctypes.windll.kernel32
         handle = msvcrt.get_osfhandle(stream.fileno())
         mode = ctypes.c_uint32()
         if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):

@@ -270,7 +270,7 @@ class InboundDispatcher:
         dead-letter store itself is down the delivery is requeued (never
         acked without a record).
         """
-        from ..persistence.store import StoreError
+        from ..exceptions import StoreError
 
         if isinstance(exc, StoreError):
             # 📝 review M4: an inbox / state-store OUTAGE is not the

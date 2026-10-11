@@ -18,7 +18,7 @@ import asyncio
 import inspect
 import logging
 import weakref
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, cast
 
 from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncJsonWebsocketConsumer
@@ -65,7 +65,7 @@ def live_consumers() -> int:
     return len(_LIVE)
 
 
-class StatechartConsumer(AsyncJsonWebsocketConsumer):
+class StatechartConsumer(AsyncJsonWebsocketConsumer):  # type: ignore[misc]  # AsyncJsonWebsocketConsumer is untyped (Any base)
     """Subclass and set `model` (or override `get_instance`)::
 
         class OrderConsumer(StatechartConsumer):
@@ -113,7 +113,7 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):
 
             def namer(instance: Any, _fn: Any = fn, _cls: Any = cls) -> str:
                 try:
-                    return _fn(None, instance)
+                    return cast("str", _fn(None, instance))
                 except Exception:  # noqa: BLE001 -- needs a consumer
                     logger.warning(
                         "%s.group_name needs a consumer instance; make it a "

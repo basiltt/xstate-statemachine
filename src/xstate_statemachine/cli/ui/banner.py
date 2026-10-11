@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Tuple
 
 from .style import INDIGO, INDIGO_DEEP, AMBER, Style, sgr
 from .term import Capabilities
@@ -35,8 +35,14 @@ _ASCII = [
 TAGLINE = "statecharts for Python · XState-compatible · zero dependencies"
 
 
-def _lerp(a: tuple, b: tuple, t: float) -> tuple:
-    return tuple(round(a[i] + (b[i] - a[i]) * t) for i in range(3))
+def _lerp(
+    a: Tuple[int, int, int], b: Tuple[int, int, int], t: float
+) -> Tuple[int, int, int]:
+    return (
+        round(a[0] + (b[0] - a[0]) * t),
+        round(a[1] + (b[1] - a[1]) * t),
+        round(a[2] + (b[2] - a[2]) * t),
+    )
 
 
 def _gradient_line(line: str, caps: Capabilities, t_row: float) -> str:

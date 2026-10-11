@@ -28,7 +28,7 @@ from ._resolve import (
 __all__ = ["CLICommand"]
 
 
-class CLICommand(BaseCommand):
+class CLICommand(BaseCommand):  # type: ignore[misc]  # BaseCommand is untyped (Any base)
     """Subclasses implement `run(path, **options)`."""
 
     requires_system_checks: Any = []

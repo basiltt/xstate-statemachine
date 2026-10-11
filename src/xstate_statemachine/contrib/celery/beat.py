@@ -26,7 +26,7 @@ import inspect
 import logging
 import threading
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 from ...eda.outbox import OutboxRelay
 from ...persistence.timers import DueTimerScanner
@@ -207,7 +207,7 @@ def outbox_relay_task(
         loop = state["loop"]
         if loop is None or loop.is_closed():
             loop = state["loop"] = asyncio.new_event_loop()
-        return loop
+        return cast("asyncio.AbstractEventLoop", loop)
 
     def relay_once() -> int:
         if not inspect.iscoroutinefunction(getattr(broker, "publish", None)):

@@ -19,7 +19,7 @@
 """`StatechartRouter` and `get_interpreter`."""
 
 import inspect
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, cast
 
 from fastapi import APIRouter, Body, Depends, Path, Request
 from fastapi.exceptions import RequestValidationError
@@ -161,7 +161,7 @@ def _validation_problem(exc: RequestValidationError) -> Response:
 # -----------------------------------------------------------------------------
 def _default_actor(registry: Any) -> Callable[..., Any]:
     async def actor_from_request(request: Request) -> Optional[str]:
-        return registry._principal_of(request)
+        return cast("str | None", registry._principal_of(request))
 
     return actor_from_request
 
@@ -336,8 +336,11 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
                 raise KeyNotFoundError(key)
         except Exception as exc:  # noqa: BLE001 -- mapped, never leaked
             return problem_for_exception(exc)
-        return await registry.send_event(
-            request, name, key, etype, payload, principal=principal
+        return cast(
+            Response,  # 📝 registry.send_event is untyped (Any)
+            await registry.send_event(
+                request, name, key, etype, payload, principal=principal
+            ),
         )
 
     async def get_state(request: Request, key: str = KeyPath) -> Response:
@@ -510,7 +513,9 @@ def _event_handler(
                     mode="python", by_alias=True, exclude={"type"}
                 )
             )
-            return await send(request, key, etype, payload, principal)
+            return cast(
+                "Response", await send(request, key, etype, payload, principal)
+            )
 
     else:
 
@@ -520,7 +525,10 @@ def _event_handler(
             body: Optional[Dict[str, Any]] = Body(None),
             principal: Optional[str] = actor,
         ) -> Response:
-            return await send(request, key, etype, body or {}, principal)
+            return cast(
+                "Response",
+                await send(request, key, etype, body or {}, principal),
+            )
 
     handler.__name__ = f"send_{_ident(etype)}"
     return handler

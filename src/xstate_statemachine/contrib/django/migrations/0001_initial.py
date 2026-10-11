@@ -5,7 +5,7 @@ from typing import Any, List
 from django.db import migrations, models
 
 
-class Migration(migrations.Migration):
+class Migration(migrations.Migration):  # type: ignore[misc]  # Migration is untyped (Any base)
 
     initial = True
 

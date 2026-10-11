@@ -673,7 +673,7 @@ def agent_logic(
     tracer: Any = None,
     max_tool_calls: int = 8,
     output_parser: Optional[Callable[[str], Any]] = None,
-) -> MachineLogic:
+) -> MachineLogic[Any]:
     """The `MachineLogic` for `TOOL_LOOP` (and charts that reuse its names).
 
     Args:

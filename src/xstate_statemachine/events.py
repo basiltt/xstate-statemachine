@@ -154,7 +154,7 @@ class StreamEvent(Event):
     """
 
     @property
-    def data(self) -> Any:  # type: ignore[override]
+    def data(self) -> Any:
         return self.payload.get("data")
 
 

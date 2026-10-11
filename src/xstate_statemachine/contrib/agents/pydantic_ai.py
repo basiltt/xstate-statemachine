@@ -214,7 +214,7 @@ def pydantic_ai_service(
     return stream_pydantic_agent
 
 
-def usage_logic(name: str = "recordAgentUsage") -> MachineLogic:
+def usage_logic(name: str = "recordAgentUsage") -> MachineLogic[Any]:
     """An action that adds an ``onDone`` usage block to ``tokens_in`` /
     ``tokens_out`` and counts one ``turns`` -- the keys `budget_guards`
     read.

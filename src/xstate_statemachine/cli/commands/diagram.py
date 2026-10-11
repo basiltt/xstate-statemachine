@@ -9,7 +9,7 @@ inspect tree plus an arrow list, for a README or a terminal."""
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from ...models import MachineNode
 from . import get_console
@@ -19,7 +19,7 @@ from .inspect import state_tree
 FORMATS = ("mermaid", "plantuml", "ascii")
 
 
-def ascii_diagram(machine: MachineNode, *, unicode: bool) -> str:
+def ascii_diagram(machine: MachineNode[Any], *, unicode: bool) -> str:
     from ..ui.term import PLAIN, Capabilities
     from ..ui.tree import render as render_tree
 
@@ -39,7 +39,7 @@ def ascii_diagram(machine: MachineNode, *, unicode: bool) -> str:
 
 
 def render_diagram(
-    machine: MachineNode, fmt: str, *, unicode: bool = True
+    machine: MachineNode[Any], fmt: str, *, unicode: bool = True
 ) -> str:
     if fmt == "mermaid":
         return machine.to_mermaid()

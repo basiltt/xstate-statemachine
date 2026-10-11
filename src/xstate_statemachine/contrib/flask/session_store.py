@@ -93,7 +93,7 @@ class SessionStore(BaseStore):
             bucket = {}
             if create:
                 session[_SESSION_KEY] = bucket
-        return bucket  # type: ignore[no-any-return]
+        return bucket
 
     def _load_raw(
         self, key: str

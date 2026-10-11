@@ -202,7 +202,7 @@ class RetryPolicy:
 
     def logic(
         self, prefix: str = "retry", attempt_key: str = "attempt"
-    ) -> MachineLogic:
+    ) -> MachineLogic[Any]:
         """A `MachineLogic` with ``{prefix}Delay`` (named delay),
         ``{prefix}CanRetry`` (guard), ``{prefix}Bump`` / ``{prefix}Reset``
         (actions). Merge it into your own with `MachineLogic.merge` or

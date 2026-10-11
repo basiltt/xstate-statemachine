@@ -150,7 +150,9 @@ class OpenTelemetryPlugin(PluginBase[Any]):
         stack = self._events.get(id(interp))
         return stack[-1] if stack else None
 
-    def _record_error(self, interp: Any, error: BaseException, **attrs: Any):
+    def _record_error(
+        self, interp: Any, error: BaseException, **attrs: Any
+    ) -> None:
         cur = self._current(interp)
         if cur is None:
             return
@@ -199,7 +201,11 @@ class OpenTelemetryPlugin(PluginBase[Any]):
             )
 
     def on_transition(
-        self, interpreter: Any, from_states: Any, to_states: Any, transition
+        self,
+        interpreter: Any,
+        from_states: Any,
+        to_states: Any,
+        transition: Any,
     ) -> None:
         if self.span_per != "transition":
             return
@@ -285,7 +291,11 @@ class OpenTelemetryPlugin(PluginBase[Any]):
         )
 
     def on_guard_error(
-        self, interpreter: Any, guard_name: str, event: Any, error
+        self,
+        interpreter: Any,
+        guard_name: str,
+        event: Any,
+        error: BaseException,
     ) -> None:
         self._record_error(
             interpreter, error, **{"statechart.guard": str(guard_name)}

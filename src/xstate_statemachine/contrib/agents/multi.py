@@ -93,7 +93,7 @@ def _check_subset(child: Set[str], parent: Set[str], where: str) -> None:
 
 
 def spawn_agent(
-    child_chart: Union[Mapping[str, Any], MachineNode, None],
+    child_chart: Union[Mapping[str, Any], MachineNode[Any], None],
     model: Any,
     tools: Optional[ToolRegistry] = None,
     *,
@@ -103,7 +103,7 @@ def spawn_agent(
     task_key: str = "task",
     tracer: Any = None,
     **logic_kw: Any,
-) -> MachineLogic:
+) -> MachineLogic[Any]:
     """A `MachineLogic` providing the action ``spawn<Name>`` (and the
     service it spawns) -- merge it into the parent's logic.
 
@@ -303,7 +303,7 @@ class BudgetPlugin(PluginBase[Any]):
             _num(totals.get("cost_usd", 0.0)) >= self.max_total_usd
         )
 
-    def guards(self) -> MachineLogic:
+    def guards(self) -> MachineLogic[Any]:
         def under(ctx: Dict[str, Any], e: Any) -> bool:
             return not ctx.get("budget_exceeded", False)
 
@@ -434,7 +434,7 @@ def _check_limit(name: str, v: Any, int_only: bool) -> None:
         )
 
 
-def _require_reporting(machine: MachineNode) -> None:
+def _require_reporting(machine: MachineNode[Any]) -> None:
     """🔥 #290 battle (A): a child chart with no ``notifyParent`` entry
     never reports, so the parent waited for AGENT_DONE forever (and the
     BudgetPlugin never saw its spend). Refused at construction."""
@@ -497,7 +497,7 @@ def _num(value: Any) -> Any:
 # -----------------------------------------------------------------------------
 def handoff_guard(
     allowed: Mapping[str, Iterable[str]], *, name: str = "handoffAllowed"
-) -> MachineLogic:
+) -> MachineLogic[Any]:
     """Guard ``handoffAllowed``: ``event.to in allowed[event.from]``.
 
     Anything not listed is refused -- closed by default. Use it on the

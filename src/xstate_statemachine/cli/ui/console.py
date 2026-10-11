@@ -15,7 +15,15 @@ from __future__ import annotations
 
 import sys
 from contextlib import contextmanager
-from typing import Iterator, List, Optional, Sequence, TextIO
+from typing import (
+    Any,
+    Iterator,
+    List,
+    Optional,
+    Sequence,
+    TextIO,
+    Tuple,
+)
 
 from . import animate as _anim
 from . import banner as _banner
@@ -124,16 +132,16 @@ class Console:
     def rule(self, title: str = "", *, role: str = "muted") -> None:
         self.print(_box.rule(self.caps, title, role=role))
 
-    def panel(self, body: Sequence[str], **kw) -> None:
+    def panel(self, body: Sequence[str], **kw: Any) -> None:
         self.print(*_box.panel(self.caps, body, **kw))
 
-    def cards(self, items: Sequence[Sequence[str]], **kw) -> None:
+    def cards(self, items: Sequence[Sequence[str]], **kw: Any) -> None:
         self.print(*_box.cards(self.caps, items, **kw))
 
     def table(self, table: Table) -> None:
         self.print(*table.render(self.caps))
 
-    def tree(self, root: Node, **kw) -> None:
+    def tree(self, root: Node, **kw: Any) -> None:
         self.print(*_render_tree(self.caps, root, **kw))
 
     def kv(self, pairs: Sequence[Sequence[str]], *, indent: int = 2) -> None:
@@ -151,11 +159,11 @@ class Console:
 
     # ---------------------------------------------------------------- live
     @contextmanager
-    def status(self, message: str, **kw) -> Iterator[Spinner]:
+    def status(self, message: str, **kw: Any) -> Iterator[Spinner]:
         with Spinner(self.caps, message, stream=self.out, **kw) as sp:
             yield sp
 
-    def progress(self, total: int, **kw) -> ProgressBar:
+    def progress(self, total: int, **kw: Any) -> ProgressBar:
         return ProgressBar(self.caps, total, stream=self.out, **kw)
 
     def steps(self, names: Sequence[str]) -> StepList:
@@ -173,18 +181,28 @@ class Console:
         """Prompts are possible: styled tty out AND a tty stdin."""
         return self.caps.animate and _keys.interactive_available()
 
-    def select(self, title, options, **kw):
+    def select(
+        self,
+        title: str,
+        options: Sequence[Tuple[str, str]],
+        **kw: Any,
+    ) -> Optional[int]:
         return _prompt.select(self.caps, title, options, stream=self.out, **kw)
 
-    def multiselect(self, title, options, **kw):
+    def multiselect(
+        self,
+        title: str,
+        options: Sequence[Tuple[str, str]],
+        **kw: Any,
+    ) -> Optional[List[int]]:
         return _prompt.multiselect(
             self.caps, title, options, stream=self.out, **kw
         )
 
-    def confirm(self, question, **kw):
+    def confirm(self, question: str, **kw: Any) -> Optional[bool]:
         return _prompt.confirm(self.caps, question, stream=self.out, **kw)
 
-    def text(self, question, **kw):
+    def text(self, question: str, **kw: Any) -> Optional[str]:
         return _prompt.text(self.caps, question, stream=self.out, **kw)
 
 

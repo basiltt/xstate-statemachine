@@ -19,7 +19,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, List
+from typing import Any, List, cast
 
 from sqlalchemy import (
     Column,
@@ -53,7 +53,8 @@ def outbox_table(metadata: Any) -> Table:
     """Define (or reuse) ``xsm_outbox`` on *metadata*."""
     existing = metadata.tables.get(OUTBOX_TABLE)
     if existing is not None:
-        return existing
+        # 📝 MetaData.tables values are untyped here; this is the Table
+        return cast(Table, existing)
     return Table(
         OUTBOX_TABLE,
         metadata,
@@ -86,7 +87,7 @@ def _ensure_lease_columns(conn: Any, t: Table, *, create: bool) -> None:
     """
     from sqlalchemy import inspect as sa_inspect
 
-    from ...persistence.store import StoreError
+    from ...persistence import StoreError
 
     have = {c["name"] for c in sa_inspect(conn).get_columns(t.name)}
     missing = [c for c in LEASE_COLUMNS if c not in have]

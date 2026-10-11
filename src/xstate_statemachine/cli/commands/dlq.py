@@ -153,7 +153,9 @@ def _row(r: Any) -> List[str]:
     ]
 
 
-def _list(dlq: Any, *, include_resolved: bool, limit: int, as_json: bool):
+def _list(
+    dlq: Any, *, include_resolved: bool, limit: int, as_json: bool
+) -> None:
     c = get_console()
     rows = dlq.list(include_resolved=include_resolved, limit=limit)
     if as_json:

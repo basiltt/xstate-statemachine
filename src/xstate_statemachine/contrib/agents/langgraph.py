@@ -103,10 +103,10 @@ require_extra("agents", "langgraph", hint="or: pip install langgraph")
 check_langgraph_version(metadata.version("langgraph"))
 
 EventLike = Union[str, Mapping[str, Any], Event, None]
-MachineLike = Union[MachineNode, Mapping[str, Any]]
+MachineLike = Union[MachineNode[Any], Mapping[str, Any]]
 
 
-def _machine(machine: MachineLike, logic: Any) -> MachineNode:
+def _machine(machine: MachineLike, logic: Any) -> MachineNode[Any]:
     if isinstance(machine, MachineNode):
         if logic is not None:
             raise AgentConfigError(

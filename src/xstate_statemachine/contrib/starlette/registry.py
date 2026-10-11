@@ -32,6 +32,7 @@ import threading
 import time
 from collections import OrderedDict
 from typing import (
+    cast,
     Any,
     AsyncIterator,
     Awaitable,
@@ -343,7 +344,7 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
         *,
         principal: Optional[str] = None,
         idempotency_key: Optional[str] = None,
-    ) -> AsyncIterator[Interpreter]:
+    ) -> AsyncIterator[Interpreter[Any]]:
         """Yield a started async `Interpreter` for *key*; save on exit.
 
         Built by `persistence.apersisted` over `as_async(store)`: one
@@ -601,7 +602,7 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
     def residents(self) -> int:
         return len(self._residents)
 
-    async def resident(self, name: str, key: str) -> Interpreter:
+    async def resident(self, name: str, key: str) -> Interpreter[Any]:
         """A long-lived in-process actor for *key* (opt-in).
 
         Loaded from the store on first use, LRU/TTL-evicted, and saved
@@ -618,7 +619,7 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
             if res is not None:
                 res.last_used = now
                 self._residents.move_to_end(topic)
-                return res.interp
+                return cast("Interpreter[Any]", res.interp)
             if self.draining:
                 raise ShuttingDownError("registry is shutting down")
             skey = self.store_key(name, key)

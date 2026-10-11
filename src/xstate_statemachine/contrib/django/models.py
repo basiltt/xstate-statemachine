@@ -31,7 +31,7 @@ __all__ = [
 ]
 
 
-class StatechartSnapshot(models.Model):
+class StatechartSnapshot(models.Model):  # type: ignore[misc]  # Model is untyped (Any base)
     """One `DjangoStore` record."""
 
     source = models.CharField(max_length=128)
@@ -53,7 +53,7 @@ class StatechartSnapshot(models.Model):
         return f"{self.source}:{self.key}@{self.version}"
 
 
-class StatechartDeadline(models.Model):
+class StatechartDeadline(models.Model):  # type: ignore[misc]  # Model is untyped (Any base)
     """A persisted `after` deadline (#264) of one key."""
 
     source = models.CharField(max_length=128)
@@ -77,7 +77,7 @@ class StatechartDeadline(models.Model):
         return f"{self.source}:{self.key} {self.event_type}@{self.due_at_wall}"
 
 
-class StatechartLock(models.Model):
+class StatechartLock(models.Model):  # type: ignore[misc]  # Model is untyped (Any base)
     """A `DjangoStore.lock()` lease; reclaimed once ``expires_at`` passes."""
 
     source = models.CharField(max_length=128)
@@ -94,7 +94,7 @@ class StatechartLock(models.Model):
         ]
 
 
-class TransitionLog(models.Model):
+class TransitionLog(models.Model):  # type: ignore[misc]  # Model is untyped (Any base)
     """One processed event of one statechart row (#281).
 
     Written by `DjangoAuditPlugin` INSIDE ``send()``'s transaction, so an
@@ -146,7 +146,7 @@ class TransitionLog(models.Model):
         return f"#{self.seq} {self.event}"
 
 
-class OutboxMessage(models.Model):
+class OutboxMessage(models.Model):  # type: ignore[misc]  # Model is untyped (Any base)
     """A transactional-outbox row (`DjangoOutboxStore`, #281 / D5 parity)."""
 
     seq = models.BigAutoField(primary_key=True)
@@ -164,7 +164,7 @@ class OutboxMessage(models.Model):
         ]
 
 
-class IdempotencyRecord(models.Model):
+class IdempotencyRecord(models.Model):  # type: ignore[misc]  # Model is untyped (Any base)
     """One ``(scope, key)`` of `DjangoInbox` (#283, X0.2)."""
 
     scope = models.CharField(max_length=400)

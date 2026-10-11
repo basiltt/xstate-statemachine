@@ -38,7 +38,7 @@ def _models(labels: List[str]) -> List[Any]:
     ]
 
 
-class Command(BaseCommand):
+class Command(BaseCommand):  # type: ignore[misc]  # BaseCommand is untyped (Any base)
     help = "Fire matured `after` deadlines of statechart models."
 
     def add_arguments(self, parser: Any) -> None:

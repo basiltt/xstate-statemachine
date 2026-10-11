@@ -23,7 +23,17 @@ from __future__ import annotations
 
 import warnings
 import logging
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    cast,
+    Dict,
+    FrozenSet,
+    Iterator,
+    List,
+    Optional,
+    Tuple,
+)
 
 from .actions import RAISE, resolve_builtin
 from .exceptions import (
@@ -44,7 +54,7 @@ if TYPE_CHECKING:  # pragma: no cover
 logger = logging.getLogger(__name__)
 
 
-def walk(node: "StateNode") -> Iterator["StateNode"]:
+def walk(node: "StateNode[Any]") -> Iterator["StateNode[Any]"]:
     """Yield *node* and every descendant, depth-first."""
     yield node
     for child in node.states.values():
@@ -52,7 +62,7 @@ def walk(node: "StateNode") -> Iterator["StateNode"]:
 
 
 def transitions_of(
-    node: "StateNode",
+    node: "StateNode[Any]",
 ) -> Iterator[Tuple[str, "TransitionDefinition"]]:
     """Yield ``(label, transition)`` for every transition owned by *node*.
 
@@ -76,7 +86,7 @@ def transitions_of(
 
 
 def _targeted_transitions(
-    node: "StateNode",
+    node: "StateNode[Any]",
 ) -> Iterator[Tuple[str, "TransitionDefinition"]]:
     """`transitions_of`, restricted to transitions that HAVE a target.
 
@@ -106,8 +116,8 @@ def _targeted_transitions(
 
 
 def resolve_strict(
-    target_str: str, source: "StateNode", machine: "MachineNode"
-) -> "Optional[StateNode]":
+    target_str: str, source: "StateNode[Any]", machine: "MachineNode[Any]"
+) -> "Optional[StateNode[Any]]":
     """Resolve *target_str* using only UNAMBIGUOUS strategies.
 
     🏛️ Architecture decision: this is the resolution the runtime SHOULD do,
@@ -149,7 +159,7 @@ def resolve_strict(
     return machine.states.get(target_str)
 
 
-def _suggest(target_str: str, machine: "MachineNode") -> str:
+def _suggest(target_str: str, machine: "MachineNode[Any]") -> str:
     """Name the absolute form(s) of any NESTED state matching *target_str*.
 
     🏛️ Architecture decision: before 0.8.0 a bare ``"up"`` written from a
@@ -167,7 +177,7 @@ def _suggest(target_str: str, machine: "MachineNode") -> str:
 
 
 def _is_dead_always_loop(
-    label: str, t: "TransitionDefinition", target: "StateNode"
+    label: str, t: "TransitionDefinition", target: "StateNode[Any]"
 ) -> bool:
     """True when an ``always`` transition can never make progress (#29).
 
@@ -188,7 +198,7 @@ def _is_dead_always_loop(
 
 
 def _collect_findings(
-    machine: "MachineNode",
+    machine: "MachineNode[Any]",
 ) -> Tuple[List[str], List[str], List[str]]:
     """Walk the tree once; gather ``(unresolved, dead_loops, root_targets)``.
 
@@ -252,11 +262,12 @@ def _static_raise_event_type(action: "ActionDefinition") -> Optional[str]:
     if isinstance(event, str):
         return event
     if isinstance(event, dict) and isinstance(event.get("type"), str):
-        return event["type"]
+        # 📝 isinstance above proved `type` is a str.
+        return cast(str, event["type"])
     return None  # callable / dynamic -- checked at runtime by _check_strict
 
 
-def _collect_unknown_raises(machine: "MachineNode") -> List[str]:
+def _collect_unknown_raises(machine: "MachineNode[Any]") -> List[str]:
     """`strict` machines: every STATIC `raise` must name a declared event
     (#51 follow-up).
 
@@ -270,7 +281,7 @@ def _collect_unknown_raises(machine: "MachineNode") -> List[str]:
     """
     findings: List[str] = []
 
-    def check(actions, where: str) -> None:
+    def check(actions: Any, where: str) -> None:
         for action in actions:
             event_type = _static_raise_event_type(action)
             # #190: a `raise` is DISPATCHED, so a wildcard handler does
@@ -292,7 +303,7 @@ def _collect_unknown_raises(machine: "MachineNode") -> List[str]:
     return findings
 
 
-def _suggest_event(event_type: str, machine: "MachineNode") -> str:
+def _suggest_event(event_type: str, machine: "MachineNode[Any]") -> str:
     import difflib
 
     close = difflib.get_close_matches(
@@ -302,7 +313,7 @@ def _suggest_event(event_type: str, machine: "MachineNode") -> str:
 
 
 #: 🏷️ Metadata keys: never behavioural, accepted at every level.
-_METADATA_KEYS: frozenset = frozenset({"meta", "description", "tags"})
+_METADATA_KEYS: FrozenSet[str] = frozenset({"meta", "description", "tags"})
 
 #: 🗝️ #216 / #220: every key a STATE node reads (`StateNode.__init__`,
 #: `_prefetch_node_keys`). A key not in this set (and not `x-`-prefixed)
@@ -310,7 +321,7 @@ _METADATA_KEYS: frozenset = frozenset({"meta", "description", "tags"})
 #: that never runs, a misspelled `on` a transition that does not exist,
 #: a misspelled `after` a deadline that never fires. Kept next to the
 #: validator so adding a key to the parser means adding it here.
-KNOWN_STATE_KEYS: frozenset = frozenset(
+KNOWN_STATE_KEYS: FrozenSet[str] = frozenset(
     {
         "id",
         "initial",
@@ -333,7 +344,7 @@ KNOWN_STATE_KEYS: frozenset = frozenset(
 #: 🗝️ Every key the ROOT reads: the state keys plus `context`, the 0.8.0
 #: policies and `version`. Policies are read from the root only, so a
 #: policy key under a state is reported there too (it would be inert).
-KNOWN_ROOT_KEYS: frozenset = KNOWN_STATE_KEYS | frozenset(
+KNOWN_ROOT_KEYS: FrozenSet[str] = KNOWN_STATE_KEYS | frozenset(
     {
         "context",
         "version",
@@ -350,22 +361,22 @@ KNOWN_ROOT_KEYS: frozenset = KNOWN_STATE_KEYS | frozenset(
 )
 
 #: Back-compat alias for the 0.9.0 (#216) name.
-KNOWN_MACHINE_KEYS: frozenset = KNOWN_ROOT_KEYS
+KNOWN_MACHINE_KEYS: FrozenSet[str] = KNOWN_ROOT_KEYS
 
 #: 🗝️ #220: keys `TransitionDefinition` / `_create_transition` read.
-KNOWN_TRANSITION_KEYS: frozenset = (
+KNOWN_TRANSITION_KEYS: FrozenSet[str] = (
     frozenset({"target", "actions", "guard", "cond", "internal", "reenter"})
     | _METADATA_KEYS
 )
 
 #: 🗝️ #220: keys `InvokeDefinition` / `_parse_invoke` read.
-KNOWN_INVOKE_KEYS: frozenset = (
+KNOWN_INVOKE_KEYS: FrozenSet[str] = (
     frozenset({"id", "src", "input", "systemId", "onDone", "onError"})
     | _METADATA_KEYS
 )
 
 
-def _unknown_keys(config: Dict[str, Any], known: frozenset) -> List[str]:
+def _unknown_keys(config: Dict[str, Any], known: FrozenSet[str]) -> List[str]:
     """Human-readable hints for the keys of *config* not in *known*."""
     # ⚡ Hot path (#307 benchmark): every state and transition of every
     #    build passes through here, and almost all of them have only known
@@ -400,7 +411,7 @@ def _transition_dicts(raw: Any) -> Iterator[Dict[str, Any]]:
 
 
 def _collect_unknown_keys(
-    config: Dict[str, Any], path: str, known: frozenset, out: List[str]
+    config: Dict[str, Any], path: str, known: FrozenSet[str], out: List[str]
 ) -> None:
     """#220: walk one state node (root included) and its transitions and
     invokes, appending one line per offending config object to *out*."""
@@ -496,7 +507,9 @@ def validate_top_level_keys(
     logger.warning("⚠️ %s", msg)
 
 
-def validate_machine(machine: "MachineNode", *, strict_targets: bool) -> None:
+def validate_machine(
+    machine: "MachineNode[Any]", *, strict_targets: bool
+) -> None:
     """Run every build-time check and raise once with all findings.
 
     Args:

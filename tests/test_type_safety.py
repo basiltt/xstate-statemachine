@@ -125,7 +125,7 @@ PROGRAMS["logic_callable_signatures"] = """
 
     def good_action(interp: BaseInterpreter[Dict[str, Any]], ctx: Dict[str, Any], event: Event, a: ActionDefinition) -> None: ...
     def good_guard(ctx: Dict[str, Any], event: Event) -> bool: return True
-    def good_service(interp: BaseInterpreter[Dict[str, Any]], ctx: Dict[str, Any], event: Event) -> dict: return {}
+    def good_service(interp: BaseInterpreter[Dict[str, Any]], ctx: Dict[str, Any], event: Event) -> Dict[str, Any]: return {}
     async def good_async_action(interp: BaseInterpreter[Dict[str, Any]], ctx: Dict[str, Any], event: Event, a: ActionDefinition) -> None: ...
     async def good_async_service(interp: BaseInterpreter[Dict[str, Any]], ctx: Dict[str, Any], event: Event) -> int: return 1
 

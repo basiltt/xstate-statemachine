@@ -29,7 +29,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Set, Optional, Tuple
 
 from django.db import transaction
 
@@ -177,7 +177,7 @@ def _assign_keys(states: List[Any]) -> Dict[Any, str]:
     key win it, the rest get ``_2``, ``_3`` … on a clash (#310 battle:
     ``"in-progress"`` and ``"in_progress"`` used to merge into one)."""
     keys: Dict[Any, str] = {}
-    used: set = set()
+    used: Set[str] = set()
     for exact in (True, False):
         for v in states:
             k = state_key(v)

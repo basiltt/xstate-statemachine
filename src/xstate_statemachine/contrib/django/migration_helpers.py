@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from .fields import sibling_values
 
@@ -26,7 +26,7 @@ def refresh_statechart_columns(
     *,
     using: str = "default",
     batch: int = 1000,
-    migrate: Optional[Callable[[dict], dict]] = None,
+    migrate: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
     dry_run: bool = False,
 ) -> int:
     """Recompute ``<field>_state`` / ``_state_ids`` / ``_machine_version``
@@ -73,9 +73,9 @@ def _row_update(
     row: Any,
     field: str,
     vcol: str,
-    cols: list,
-    migrate: Optional[Callable[[dict], dict]],
-) -> dict:
+    cols: List[str],
+    migrate: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]],
+) -> Dict[str, Any]:
     """The column values to write for *row* (empty: already right)."""
     snap = getattr(row, field)
     # 🔥 #280 battle: a shallow ``dict(snap)`` let a migrate step that
@@ -96,7 +96,7 @@ def refresh_statechart_columns_op(
     field: str = "statechart",
     *,
     batch: int = 1000,
-    migrate: Optional[Callable[[dict], dict]] = None,
+    migrate: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
 ) -> Any:
     """A ``migrations.RunPython`` operation wrapping the helper::
 

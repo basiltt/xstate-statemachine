@@ -83,7 +83,9 @@ def panel(
     outer = min(width or caps.width, caps.width)
     inner = outer - 2 - 2 * padding
     pad_s = " " * padding
-    border = lambda s: paint(s, role, caps)  # noqa: E731
+
+    def border(s: str) -> str:
+        return paint(s, role, caps)
 
     top_label = f" {title} " if title else ""
     top = (

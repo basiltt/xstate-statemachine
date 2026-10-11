@@ -14,7 +14,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Optional, Tuple
+from typing import Any, Dict, List, Set, Mapping, Optional, Tuple
 
 from ..messages import ModelResponse, ToolCall, Usage
 from . import field, price, require_sdk
@@ -33,7 +33,7 @@ def to_anthropic_messages(
     """``(system, messages)`` for ``client.messages.create``."""
     system: List[str] = []
     out: List[Dict[str, Any]] = []
-    proposed: set = set()
+    proposed: Set[Any] = set()
     for m in messages:
         role = m.get("role")
         if role == "system":

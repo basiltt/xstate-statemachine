@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Set, Mapping, Optional
 
 from ..messages import ModelResponse, ToolCall, Usage
 from . import field, price, require_sdk
@@ -37,7 +37,7 @@ def to_openai_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         The list to pass as ``messages=``.
     """
     out: List[Dict[str, Any]] = []
-    proposed: set = set()
+    proposed: Set[Any] = set()
     for m in messages:
         role = m.get("role")
         if role == "tool" and m.get("tool_call_id") not in proposed:

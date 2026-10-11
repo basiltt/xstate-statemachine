@@ -6,7 +6,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, cast
 
 from litestar import Response
 from litestar.response import Stream
@@ -68,7 +68,7 @@ def ReceiptResponse(  # noqa: N802 -- reads as a response class
     *,
     context_serializer: Any = None,
     status: Any = None,
-) -> Response:
+) -> Response[Any]:
     """A Litestar `Response` for *receipt* (status from `receipt_to_status`).
 
     🔥 battle #278: `contrib.litestar` re-exported Starlette's
@@ -78,11 +78,15 @@ def ReceiptResponse(  # noqa: N802 -- reads as a response class
     """
     from ..starlette._http import ReceiptResponse as _starlette
 
-    return to_litestar(
-        _starlette(
-            interp,
-            receipt,
-            context_serializer=context_serializer,
-            status=status,
-        )
+    # 📝 to_litestar is deliberately Any-returning (Response or Stream)
+    return cast(
+        "Response[Any]",
+        to_litestar(
+            _starlette(
+                interp,
+                receipt,
+                context_serializer=context_serializer,
+                status=status,
+            )
+        ),
     )

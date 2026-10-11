@@ -14,7 +14,7 @@ from django.core.management.base import BaseCommand
 from ._resolve import database, field_name, model_from_label
 
 
-class Command(BaseCommand):
+class Command(BaseCommand):  # type: ignore[misc]  # BaseCommand is untyped (Any base)
     help = "List statechart rows and their machine versions (--stale)."
 
     def add_arguments(self, parser: Any) -> None:

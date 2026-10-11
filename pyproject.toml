@@ -239,20 +239,18 @@ exclude = [
 "src/xstate_statemachine/py.typed" = "xstate_statemachine/py.typed"
 
 [tool.mypy]
-# 🧷 The library ships `py.typed`; these are the settings under which its
-#    own source is kept at zero errors (enforced by tests/test_type_safety.py
-#    and the CI lint job). `strict` is the goal for 1.0; the incremental
-#    flags below are the ones already satisfied.
+# 🧷 The library ships `py.typed`; its own source is kept at ZERO errors
+#    under `strict` (enforced by tests/test_type_safety.py and the CI lint
+#    job). Reached in the 0.11.0 release audit: every generic is
+#    parametrised, every def annotated, every `# type: ignore` carries a
+#    code and a reason.
 # 🐍 No `python_version` pin: mypy 2.x refuses 3.9 (it is past EOL for the
 #    checker) while our runtime floor is still 3.9. The 3.9 CI test job
 #    IS the compatibility gate; here we check against the checker's own
 #    default, which is the interpreter running it.
 files = ["src/xstate_statemachine"]
+strict = true
 ignore_missing_imports = true
-warn_redundant_casts = true
-warn_unused_ignores = false
-no_implicit_optional = true
-check_untyped_defs = true
 
 [tool.black]
 line-length = 79

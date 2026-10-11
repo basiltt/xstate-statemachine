@@ -28,6 +28,8 @@ from typing import (
     Dict,
     List,
     Optional,
+    Set,
+    Tuple,
     TypeVar,
     Union,
     overload,
@@ -132,10 +134,10 @@ class State:
         #    Dict[int, Any] wrongly rejected named delays, which the
         #    engine has always supported.
         after: Optional[Dict[Union[int, str], Any]] = None,
-        invoke: Optional[Union[Dict, List]] = None,
-        on_done: Optional[Union[str, Dict]] = None,
-        always: Optional[Union[str, Dict, List]] = None,
-        context: Optional[Dict] = None,
+        invoke: Optional[Union[Dict[str, Any], List[Any]]] = None,
+        on_done: Optional[Union[str, Dict[str, Any]]] = None,
+        always: Optional[Union[str, Dict[str, Any], List[Any]]] = None,
+        context: Optional[Dict[str, Any]] = None,
         states: Optional[List["State"]] = None,
         tags: Optional[List[str]] = None,
         meta: Optional[Dict[str, Any]] = None,
@@ -161,8 +163,8 @@ class State:
         self.tags = list(tags) if tags else []
         self.meta = dict(meta) if meta else None
         # 📝 Internal: tracks functions registered via decorators
-        self._enter_decorators: List[Callable] = []
-        self._exit_decorators: List[Callable] = []
+        self._enter_decorators: List[Callable[..., Any]] = []
+        self._exit_decorators: List[Callable[..., Any]] = []
 
     @property
     def exit_actions(self) -> List[str]:
@@ -267,7 +269,7 @@ class State:
             internal=True,
         )
 
-    def enter(self, fn: Callable) -> Callable:
+    def enter(self, fn: Callable[..., Any]) -> Callable[..., Any]:
         """Decorator to register a function as an entry action.
 
         Only valid inside a ``StateMachine`` class definition.
@@ -288,7 +290,7 @@ class State:
             self.entry.append(name)
         return fn
 
-    def exit(self, fn: Callable) -> Callable:
+    def exit(self, fn: Callable[..., Any]) -> Callable[..., Any]:
         """Decorator to register a function as an exit action.
 
         Only valid inside a ``StateMachine`` class definition.
@@ -677,7 +679,7 @@ def _compile_state(
     if state.states:
         child_configs = {}
         initial_child = None
-        child_names: set = set()
+        child_names: Set[Any] = set()
         for child in state.states:
             if child.name in child_names:
                 raise InvalidConfigError(
@@ -722,7 +724,7 @@ def _compile_config(
     machine_id: str,
     states: List[State],
     transitions: List[Union[Transition, TransitionGroup]],
-    context: Optional[Dict] = None,
+    context: Optional[Dict[str, Any]] = None,
     root: Optional[State] = None,
 ) -> Dict[str, Any]:
     """Compile State and Transition objects into a config dict.
@@ -770,7 +772,7 @@ def _compile_config(
     _register_states(states)
 
     # 🔍 Validate top-level: duplicates, initial
-    top_names: set = set()
+    top_names: Set[Any] = set()
     initial_state = None
     has_parallel_root = len(states) == 1 and states[0].parallel
 
@@ -947,10 +949,10 @@ def _apply_root_properties(
 
 
 def _compile_logic_from_functions(
-    actions: List[Callable],
-    guards: List[Callable],
-    services: List[Callable],
-) -> MachineLogic:
+    actions: List[Callable[..., Any]],
+    guards: List[Callable[..., Any]],
+    services: List[Callable[..., Any]],
+) -> MachineLogic[Any]:
     """Compile decorated/raw callables into a MachineLogic.
 
     For each callable, uses the ``_xsm_name`` attribute if
@@ -1010,8 +1012,8 @@ def _compile_logic_from_functions(
 
 def _compile_logic_from_instance(
     instance: object,
-    decorated: List[Callable],
-) -> MachineLogic:
+    decorated: List[Callable[..., Any]],
+) -> MachineLogic[Any]:
     """Compile class instance methods into a MachineLogic.
 
     Uses ``functools.partial(method, instance)`` to bind
@@ -1059,12 +1061,12 @@ def build_machine(
     id: str,  # noqa: A002 — shadows builtin intentionally
     states: List[State],
     transitions: Optional[List[Union[Transition, TransitionGroup]]] = None,
-    actions: Optional[List[Callable]] = None,
-    guards: Optional[List[Callable]] = None,
-    services: Optional[List[Callable]] = None,
-    context: Optional[Dict] = None,
+    actions: Optional[List[Callable[..., Any]]] = None,
+    guards: Optional[List[Callable[..., Any]]] = None,
+    services: Optional[List[Callable[..., Any]]] = None,
+    context: Optional[Dict[str, Any]] = None,
     root: Optional[State] = None,
-) -> "MachineNode":
+) -> "MachineNode[Any]":
     """Build a state machine from Python objects (functional API).
 
     This is the simplest API style -- define ``State`` objects and
@@ -1127,7 +1129,7 @@ class MachineBuilder:
 
     def __init__(self, machine_id: str) -> None:
         self._machine_id = machine_id
-        self._context: Optional[Dict] = None
+        self._context: Optional[Dict[str, Any]] = None
         self._states: Dict[str, Dict[str, Any]] = {}
         self._initial_state: Optional[str] = None
         self._transitions: List[Dict[str, Any]] = []
@@ -1144,7 +1146,7 @@ class MachineBuilder:
             f"{len(self._transitions)} transitions)"
         )
 
-    def context(self, ctx: Dict) -> "MachineBuilder":
+    def context(self, ctx: Dict[str, Any]) -> "MachineBuilder":
         """Set the initial context."""
         self._context = ctx
         return self
@@ -1156,13 +1158,13 @@ class MachineBuilder:
         initial: bool = False,
         final: bool = False,
         parallel: bool = False,
-        on: Optional[Dict] = None,
-        entry: Optional[List] = None,
-        exit: Optional[List] = None,
-        after: Optional[Dict] = None,
-        invoke: Optional[Union[Dict, List]] = None,
-        on_done: Optional[Union[str, Dict]] = None,
-        always: Optional[Union[str, Dict, List]] = None,
+        on: Optional[Dict[str, Any]] = None,
+        entry: Optional[List[Any]] = None,
+        exit: Optional[List[Any]] = None,
+        after: Optional[Dict[Union[int, str], Any]] = None,
+        invoke: Optional[Union[Dict[str, Any], List[Any]]] = None,
+        on_done: Optional[Union[str, Dict[str, Any]]] = None,
+        always: Optional[Union[str, Dict[str, Any], List[Any]]] = None,
         history: Optional[str] = None,
         tags: Optional[List[str]] = None,
         meta: Optional[Dict[str, Any]] = None,
@@ -1245,7 +1247,7 @@ class MachineBuilder:
         parent: str,
         *,
         initial: Optional[str] = None,
-        states: Optional[Dict[str, Dict]] = None,
+        states: Optional[Dict[str, Dict[str, Any]]] = None,
         parallel: bool = False,
     ) -> "MachineBuilder":
         """Add child states to an existing state."""
@@ -1263,7 +1265,7 @@ class MachineBuilder:
             parent_config["initial"] = initial
         return self
 
-    def action(self, name: str, fn: Callable) -> "MachineBuilder":
+    def action(self, name: str, fn: Callable[..., Any]) -> "MachineBuilder":
         """Register an action function.
 
         The explicitly provided ``name`` is always used as the
@@ -1291,7 +1293,7 @@ class MachineBuilder:
         self._root.update(properties)
         return self
 
-    def guard(self, name: str, fn: Callable) -> "MachineBuilder":
+    def guard(self, name: str, fn: Callable[..., Any]) -> "MachineBuilder":
         """Register a guard function.
 
         The explicitly provided ``name`` is always used as the
@@ -1300,7 +1302,7 @@ class MachineBuilder:
         self._guards[name] = fn
         return self
 
-    def service(self, name: str, fn: Callable) -> "MachineBuilder":
+    def service(self, name: str, fn: Callable[..., Any]) -> "MachineBuilder":
         """Register a service function.
 
         The explicitly provided ``name`` is always used as the
@@ -1309,7 +1311,9 @@ class MachineBuilder:
         self._services[name] = fn
         return self
 
-    def build(self, context: Optional[Dict] = None) -> MachineNode:
+    def build(
+        self, context: Optional[Dict[str, Any]] = None
+    ) -> MachineNode[Any]:
         """Build and return the MachineNode.
 
         This method is idempotent — it can be called multiple
@@ -1416,7 +1420,9 @@ class _StateMachineMeta(type):
     Transitions, and decorated methods at class-definition time.
     """
 
-    def __new__(mcs, name, bases, namespace):
+    def __new__(
+        mcs, name: str, bases: Tuple[type, ...], namespace: Dict[str, Any]
+    ) -> Any:
         # Skip processing for the base StateMachine class
         if name == "StateMachine" and not any(
             hasattr(b, "_xsm_is_base") for b in bases
@@ -1427,7 +1433,7 @@ class _StateMachineMeta(type):
 
         states: List[State] = []
         transitions: List[Union[Transition, TransitionGroup]] = []
-        decorated: List[Callable] = []
+        decorated: List[Callable[..., Any]] = []
 
         for attr_name, attr_value in list(namespace.items()):
             if attr_name.startswith("_"):
@@ -1536,16 +1542,18 @@ class StateMachine(metaclass=_StateMachineMeta):
     """
 
     machine_id: Optional[str] = None
-    initial_context: Optional[Dict] = None
+    initial_context: Optional[Dict[str, Any]] = None
     machine_root: Optional[State] = None
 
     # 🧷 Collected by `_StateMachineMeta` when the subclass body runs.
     _xsm_states: List[State]
     _xsm_transitions: List[Union[Transition, TransitionGroup]]
-    _xsm_decorated: List[Callable]
+    _xsm_decorated: List[Callable[..., Any]]
 
     @classmethod
-    def create_machine(cls, context=None):
+    def create_machine(
+        cls, context: Optional[Dict[str, Any]] = None
+    ) -> MachineNode[Any]:
         """Create a ``MachineNode`` from this class.
 
         Args:

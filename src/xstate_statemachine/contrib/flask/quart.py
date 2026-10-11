@@ -160,7 +160,7 @@ class QuartXState:
             register_problem_handlers(app, _aproblem)
 
     def registry(self, app: Optional[Quart] = None) -> AppRegistry:
-        app = app or current_app._get_current_object()  # type: ignore
+        app = app or current_app._get_current_object()
         try:
             reg: AppRegistry = app.extensions[EXTENSION_KEY]
         except KeyError:

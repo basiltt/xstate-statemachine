@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, AsyncGenerator, Callable, Optional
+from typing import Any, AsyncGenerator, Callable, Optional, cast
 
 from litestar import Request, Response, get
 from litestar.config.app import AppConfig
@@ -284,7 +284,10 @@ class XStatePlugin(InitPluginProtocol, OpenAPISchemaPluginProtocol):
 
             @get(self.health_path, include_in_schema=False)
             async def xsm_health(request: Request) -> Response:  # type: ignore[type-arg]
-                return to_litestar(await health(to_starlette(request)))
+                return cast(
+                    "Response[Any]",
+                    to_litestar(await health(to_starlette(request))),
+                )
 
             app_config.route_handlers.append(xsm_health)
         if self.ready_path:
@@ -292,7 +295,10 @@ class XStatePlugin(InitPluginProtocol, OpenAPISchemaPluginProtocol):
 
             @get(self.ready_path, include_in_schema=False)
             async def xsm_ready(request: Request) -> Response:  # type: ignore[type-arg]
-                return to_litestar(await ready(to_starlette(request)))
+                return cast(
+                    "Response[Any]",
+                    to_litestar(await ready(to_starlette(request))),
+                )
 
             app_config.route_handlers.append(xsm_ready)
         return app_config

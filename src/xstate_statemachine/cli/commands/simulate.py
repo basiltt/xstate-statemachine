@@ -20,7 +20,7 @@ import logging
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from ...clock import SimulatedClock
 from ...events import Receipt
@@ -73,7 +73,7 @@ class Session:
             sorted(g),
             sorted(s),
         )
-        self.machine: MachineNode = create_machine(
+        self.machine: MachineNode[Any] = create_machine(
             json.loads(json.dumps(config)), logic=self._logic(a, g, s)
         )
         self.clock = SimulatedClock()
@@ -84,16 +84,16 @@ class Session:
     # ---------------------------------------------------------------- logic
     def _logic(
         self, actions: Set[str], guards: Set[str], services: Set[str]
-    ) -> MachineLogic:
+    ) -> MachineLogic[Any]:
         session = self
 
-        def mk_action(name: str):
+        def mk_action(name: str) -> Callable[[Any, Any, Any, Any], None]:
             def _a(i: Any, c: Any, e: Any, ad: Any) -> None:
                 session.actions_ran.append(name)
 
             return _a
 
-        def mk_guard(name: str):
+        def mk_guard(name: str) -> Callable[[Any, Any], bool]:
             def _g(c: Any, e: Any) -> bool:
                 return session.guard_values.get(name, True)
 

@@ -44,7 +44,7 @@ class Facts:
 
     path: Path
     config: Dict[str, Any] = field(default_factory=dict)
-    machine: Optional[MachineNode] = None
+    machine: Optional[MachineNode[Any]] = None
     findings: List[Finding] = field(default_factory=list)
     actions: Set[str] = field(default_factory=set)
     guards: Set[str] = field(default_factory=set)
@@ -108,7 +108,7 @@ class _CaptureWarnings(logging.Handler):
 
 def _stub_logic(
     actions: Set[str], guards: Set[str], services: Set[str]
-) -> MachineLogic:
+) -> MachineLogic[Any]:
     """Placeholder logic so `create_machine` does not fail on missing impls."""
     return MachineLogic(
         actions={a: (lambda i, c, e, ad: None) for a in actions},
@@ -117,11 +117,11 @@ def _stub_logic(
     )
 
 
-def _unreachable(machine: MachineNode) -> List[str]:
+def _unreachable(machine: MachineNode[Any]) -> List[str]:
     """State ids no transition, initial or history target can reach."""
     reachable: Set[str] = set()
 
-    def enter(node: StateNode) -> None:
+    def enter(node: StateNode[Any]) -> None:
         if node.id in reachable:
             return
         reachable.add(node.id)
@@ -133,7 +133,7 @@ def _unreachable(machine: MachineNode) -> List[str]:
         elif node.type == "compound" and node.states and not node.initial:
             enter(next(iter(node.states.values())))
 
-    def enter_target(node: StateNode) -> None:
+    def enter_target(node: StateNode[Any]) -> None:
         # 🔥 #269 battle: a target deep in the tree (`#m.a.b.leaf`, a
         #    history node) enters every ancestor on the way down -- and
         #    every sibling region of a parallel ancestor. Only the target
@@ -288,7 +288,10 @@ def analyse(
 
 
 def _engine_unreachable(
-    machine: MachineNode, static_unreachable: List[str], *, max_depth: int = 8
+    machine: MachineNode[Any],
+    static_unreachable: List[str],
+    *,
+    max_depth: int = 8,
 ) -> List[str]:
     """Settled states the engine never reaches that the static pass missed.
 
@@ -317,11 +320,13 @@ def _engine_unreachable(
     return sorted(out)
 
 
-def kind_of(node: StateNode) -> str:
+def kind_of(node: StateNode[Any]) -> str:
     return node.type
 
 
-def event_table(machine: MachineNode) -> List[Tuple[str, str, str, str, str]]:
+def event_table(
+    machine: MachineNode[Any],
+) -> List[Tuple[str, str, str, str, str]]:
     """(event, from state, target, guard, actions) for every transition."""
     rows = []
     for node in walk(machine):

@@ -551,18 +551,18 @@ def _reorder_lists_by_parent_index(
 
 
 def _handle_interactive_hierarchy(
-    data_tuple: Tuple[List, ...],
-) -> Tuple[bool, Tuple[List, ...]]:
+    data_tuple: Tuple[List[Any], ...],
+) -> Tuple[bool, Tuple[List[Any], ...]]:
     """Manages the interactive prompt for heuristic parent detection.
 
     Args:
-        data_tuple (Tuple[List, ...]): A tuple containing lists to be managed:
+        data_tuple (Tuple[List[Any], ...]): A tuple containing lists to be managed:
             (configs, machine_ids, machine_names, json_paths, json_filenames)
 
     Returns:
         A tuple containing:
         - bool: The final hierarchy flag.
-        - Tuple[List, ...]: The input lists, potentially reordered.
+        - Tuple[List[Any], ...]: The input lists, potentially reordered.
     """
     configs, machine_ids, machine_names, json_paths, json_filenames = (
         data_tuple

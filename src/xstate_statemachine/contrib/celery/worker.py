@@ -22,7 +22,7 @@
 from __future__ import annotations
 
 import functools
-from typing import Any, Callable, Iterable, Optional
+from typing import Any, Callable, Iterable, List, Optional, Set, cast
 
 from ...exceptions import (
     ConflictError,
@@ -49,7 +49,7 @@ UNSAFE_CONTENT = (
 )
 
 
-def _unsafe(values: Optional[Iterable[Any]]) -> list:
+def _unsafe(values: Optional[Iterable[Any]]) -> List[str]:
     return [
         str(v)
         for v in (values or ())
@@ -61,12 +61,13 @@ def _unsafe(values: Optional[Iterable[Any]]) -> list:
 _CLAIMED_ATTR = "_xsm_claimed_task_names"
 
 
-def _claimed_names(app: Any) -> set:
+def _claimed_names(app: Any) -> Set[str]:
     names = app.__dict__.get(_CLAIMED_ATTR)
     if names is None:
         names = set()
         app.__dict__[_CLAIMED_ATTR] = names
-    return names
+    # 📝 app.__dict__ is untyped; this module only ever stores a set here
+    return cast(Set[str], names)
 
 
 def _name_taken(app: Any, name: str) -> bool:
@@ -92,14 +93,14 @@ def _name_taken(app: Any, name: str) -> bool:
     return name in _shared_task_names()
 
 
-def _shared_task_names() -> set:
+def _shared_task_names() -> Set[str]:
     """Names of every `@shared_task` declared so far (they are kept as
     finalize callbacks closing over ``(fun, options)``)."""
     try:
         from celery._state import _on_app_finalizers as finalizers
     except Exception:  # noqa: BLE001 - a Celery without the private set
         return set()
-    names = set()
+    names: Set[str] = set()
     for cb in list(finalizers):
         fun = opts = None
         for cell in getattr(cb, "__closure__", None) or ():

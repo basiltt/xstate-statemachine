@@ -92,7 +92,8 @@ def generate_path_tests(metafunc: Any) -> None:
     if PATH_FIXTURE not in metafunc.fixturenames:
         return
     # 📝 Late import: `pytest_plugin` imports this module.
-    from .pytest_plugin import _build, parse_marker
+    from ._marker import _build
+    from .pytest_plugin import parse_marker
 
     item = metafunc.definition
     spec = parse_marker(item)

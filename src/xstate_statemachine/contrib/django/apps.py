@@ -6,7 +6,7 @@ from __future__ import annotations
 from django.apps import AppConfig
 
 
-class XsmDjangoConfig(AppConfig):
+class XsmDjangoConfig(AppConfig):  # type: ignore[misc]  # AppConfig is untyped (Any base)
     """``xstate_statemachine.contrib.django`` as an installed app.
 
     The label is ``xsm_django`` so its tables (``xsm_django_*``) cannot

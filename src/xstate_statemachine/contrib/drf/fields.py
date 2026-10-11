@@ -77,7 +77,7 @@ def _state_schema(cls: Any) -> Any:
 
 
 @_state_schema
-class StatechartSerializerField(serializers.Field):
+class StatechartSerializerField(serializers.Field):  # type: ignore[misc]  # Field is untyped (Any base)
     """Read-only: the statechart of the instance as the FastAPI state body.
 
     Args:
