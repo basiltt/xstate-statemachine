@@ -13,7 +13,9 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ## [Unreleased]
 
-### Changed
+## [0.11.0] - 2026-10-12
+
+### Release polish (Changed)
 
 - Python 3.15 is supported and tested (classifier, the full Linux matrix cell and the Windows / macOS spot-checks). The only API the interpreter still used that 3.14+ turns into an error without a set loop -- `asyncio.get_event_loop()` inside `wait_for` -- is `get_running_loop()`.
 - Type safety: the library is `mypy --strict` clean (496 findings across 104 files resolved: every generic parametrised, every def annotated, 34 stale `# type: ignore` removed; the ones that remain all carry a code and a reason for a framework base with no stubs). `[tool.mypy] strict = true` is now the configured gate, enforced by the CI lint job and `tests/test_type_safety.py`. `pythonic.State(after=...)` accepts `int` delay keys, as the generated builder template always has.
@@ -21,11 +23,9 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 - Performance: build-time and per-event fast paths (#307 follow-up). `create_machine()` no longer sorts keys, filters `x-` and imports `difflib` for every state and transition whose keys are all known (one set comparison decides), skips label formatting for targetless transitions in the target validator, and does one thread-local lookup per node (not three per child) for the aliased-cycle guard; tag/meta validation runs only when declared. On the event path `_collect_eligible_transitions` decides the event's kind once per call instead of once per ancestor and inlines the exact-key `on` lookup for nodes without partial descriptors or a wildcard; `_select_transitions` has a single-active-leaf fast path and takes the first (deepest) eligible transition instead of `max()`; `_execute_transition` no longer sorts a single exiting state or snapshots actor ids when there are no actors. Construction is ~20 % cheaper and a flat `send()` ~15 %; semantics are unchanged (same resolver, same descriptor matching, same ordering). The competitor table in `benchmarks/competitors/README.md`, the README and the docs home page is re-measured (2026-10-11, sismic 1.6.14): construction and 1,000 instances, previously a tie with `transitions`, are now 5-14 % ahead.
 
 
-### Fixed
+### Release polish (Fixed)
 
 - Plugin discovery (#296 battle A): `attach_discovered()` no longer calls arbitrary loaded callables: only `PluginBase` subclasses/instances, or a factory explicitly marked with the new `plugin_discovery.plugin_factory` decorator (**behaviour change** for undecorated factory entry points, which are now skipped/refused); `allow=` matching is PEP 503 normalised; `XSM_DISABLE_PLUGIN_DISCOVERY` accepts `TRUE`/`on` in any case; `last_skipped`/`last_failed` are published atomically per call (thread/re-entrancy safe); the Python 3.9 distribution lookup is built once per `discover()` instead of per entry point.
-
-## [0.11.0] - 2026-10-01
 
 ### Brokers & Celery (Phase F) -- #294, #292
 
