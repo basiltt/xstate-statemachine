@@ -35,6 +35,12 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
 
 ### Fixed
 
+- Made the 100,000-record deadline-scanner regression independent of CI
+  runner speed by checking bounded metadata/SQL work instead of a fixed
+  half-second duration. Preserved exact due-key ordering and zero snapshot
+  loads, with regressions for excessive work and probe cleanup. Runtime
+  behavior, CI workflows and the 90% coverage minimum remain unchanged.
+
 - Stabilized the Litestar streaming regression under coverage by allowing
   valid SSE heartbeat comments before transitions. Deterministic tests keep
   strict event ordering, bounded waits, slow-subscriber cutoff and connection

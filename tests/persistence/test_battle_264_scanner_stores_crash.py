@@ -5,7 +5,7 @@ consistency, Django ``xsm_deadlines`` and the Starlette scanner thread.
 * every store round-trips ``deadlines`` exactly and clears them;
 * SQLite leaves no orphan ``deadlines`` rows after ``delete``/``forget``;
 * every indexed ``due_keys`` agrees with the stdlib fallback;
-* ``due_keys`` scale on 100 000 records (indexed SQLite / Memory);
+* ``due_keys`` scale on 100 000 records without loading snapshots;
 * kill -9 of a scanning process before / after the fire-save;
 * the inbox and a timer event (what it can and cannot do);
 * Django: command, 4 threads exactly-once, v1 rows under a v2 model;
@@ -39,6 +39,8 @@ from src.xstate_statemachine.persistence import (
     SQLiteStore,
     persisted,
 )
+
+from .test_scanner_work_budget import deadline_scan_budget
 
 pytestmark = pytest.mark.timeout(300)
 
@@ -184,7 +186,7 @@ class TestIndexParity:
 class TestScale:
     @pytest.mark.parametrize("kind", ["sqlite", "memory"])
     def test_100k_records_100_due_without_loading_any(
-        self, tmp_path: Path, kind: str
+        self, tmp_path: Path, kind: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         st = (
             SQLiteStore(tmp_path / "s.db")
@@ -193,9 +195,10 @@ class TestScale:
         )
         blob, dl = _blob()
         late = _dl(1e12)
+        records = 100_000
         if kind == "sqlite":
             st._conn().execute("BEGIN")
-        for i in range(100_000):
+        for i in range(records):
             st.save(
                 f"t{i:06d}", blob, deadlines=(dl if i % 1000 == 0 else late,)
             )
@@ -210,11 +213,15 @@ class TestScale:
 
         st.load = load  # type: ignore[method-assign]
         sc = DueTimerScanner(st, lambda k: None)
-        t0 = time.perf_counter()
-        due = sc.due_keys(10.0)
-        took = time.perf_counter() - t0
-        assert len(due) == 100 and loads["n"] == 0
-        assert took < 0.5, took
+        expected = [
+            (f"t{i:06d}", dl.due_at_wall) for i in range(0, records, 1000)
+        ]
+        # 📝 Bound metadata/SQL work, not shared-runner scheduling time.
+        # MemoryStore scans metadata; neither backend may load snapshots.
+        with deadline_scan_budget(st, monkeypatch, records=records):
+            due = sc.due_keys(10.0)
+        assert due == expected
+        assert loads["n"] == 0
 
     def test_file_store_fallback_is_linear_and_documented(
         self, tmp_path: Path
