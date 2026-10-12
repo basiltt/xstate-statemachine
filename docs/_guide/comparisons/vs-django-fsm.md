@@ -65,16 +65,41 @@ The chart is data, so the timeout lives in it. Here it runs with `stub_logic`, w
 from xstate_statemachine import SyncInterpreter, create_machine, stub_logic
 
 chart = {
-    "id": "order", "initial": "cart",
+    "id": "order",
+    "initial": "cart",
     "states": {
-        "cart": {"on": {"CHECKOUT": {"target": "awaitingPayment", "guard": "hasItems"},
-                        "CANCEL": "cancelled"}},
-        "awaitingPayment": {"after": {"900000": "expired"},           # 15 minutes
-                            "on": {"PAY": "paid", "CANCEL": "cancelled"}},
-        "paid": {"on": {"SHIP": "shipped"}},
-        "shipped": {"type": "final"},
-        "expired": {"type": "final"},
-        "cancelled": {"type": "final"},
+        "cart": {
+            "on": {
+                "CHECKOUT": {
+                    "target": "awaitingPayment",
+                    "guard": "hasItems",
+                },
+                "CANCEL": "cancelled",
+            },
+        },
+        "awaitingPayment": {
+            "after": {
+                "900000": "expired",
+            },  # 15 minutes
+            "on": {
+                "PAY": "paid",
+                "CANCEL": "cancelled",
+            },
+        },
+        "paid": {
+            "on": {
+                "SHIP": "shipped",
+            },
+        },
+        "shipped": {
+            "type": "final",
+        },
+        "expired": {
+            "type": "final",
+        },
+        "cancelled": {
+            "type": "final",
+        },
     },
 }
 order = SyncInterpreter(create_machine(chart, logic=stub_logic(chart))).start()

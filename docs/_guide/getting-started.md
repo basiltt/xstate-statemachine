@@ -91,9 +91,17 @@ config = {
     "id": "toggle",
     "initial": "off",
     "states": {
-        "off": {"on": {"TOGGLE": "on"}},
-        "on":  {"on": {"TOGGLE": "off"}}
-    }
+        "off": {
+            "on": {
+                "TOGGLE": "on",
+            },
+        },
+        "on": {
+            "on": {
+                "TOGGLE": "off",
+            },
+        },
+    },
 }
 
 machine = create_machine(config)
@@ -120,8 +128,19 @@ interp.stop()
 ```python
 from xstate_statemachine import State, build_machine, SyncInterpreter
 
-off = State("off", initial=True, on={"TOGGLE": "on"})
-on  = State("on",  on={"TOGGLE": "off"})
+off = State(
+    "off",
+    initial=True,
+    on={
+        "TOGGLE": "on",
+    },
+)
+on = State(
+    "on",
+    on={
+        "TOGGLE": "off",
+    },
+)
 
 machine = build_machine(id="toggle", states=[off, on])
 interp = SyncInterpreter(machine).start()
@@ -138,11 +157,24 @@ interp.stop()
 ```python
 from xstate_statemachine import State, StateMachine, SyncInterpreter
 
+
 class ToggleMachine(StateMachine):
     machine_id = "toggle"
 
-    off = State("off", initial=True, on={"TOGGLE": "on"})
-    on  = State("on",  on={"TOGGLE": "off"})
+    off = State(
+        "off",
+        initial=True,
+        on={
+            "TOGGLE": "on",
+        },
+    )
+    on = State(
+        "on",
+        on={
+            "TOGGLE": "off",
+        },
+    )
+
 
 machine = ToggleMachine.create_machine()
 interp = SyncInterpreter(machine).start()
@@ -161,8 +193,19 @@ from xstate_statemachine import MachineBuilder, SyncInterpreter
 
 machine = (
     MachineBuilder("toggle")
-    .state("off", initial=True, on={"TOGGLE": "on"})
-    .state("on", on={"TOGGLE": "off"})
+    .state(
+        "off",
+        initial=True,
+        on={
+            "TOGGLE": "on",
+        },
+    )
+    .state(
+        "on",
+        on={
+            "TOGGLE": "off",
+        },
+    )
     .build()
 )
 
@@ -186,17 +229,26 @@ from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 config = {
     "id": "counter",
     "initial": "active",
-    "context": {"count": 0},
+    "context": {
+        "count": 0,
+    },
     "states": {
         "active": {
             "on": {
-                "INCREMENT": {"actions": "increment"},
-                "DECREMENT": {"actions": "decrement"},
-                "RESET": {"actions": "reset"}
-            }
-        }
-    }
+                "INCREMENT": {
+                    "actions": "increment",
+                },
+                "DECREMENT": {
+                    "actions": "decrement",
+                },
+                "RESET": {
+                    "actions": "reset",
+                },
+            },
+        },
+    },
 }
+
 
 class CounterLogic(MachineLogic):
     def increment(self, interpreter, context, event, action_def):
@@ -207,6 +259,7 @@ class CounterLogic(MachineLogic):
 
     def reset(self, interpreter, context, event, action_def):
         context["count"] = 0
+
 
 machine = create_machine(config, logic=CounterLogic())
 interp = SyncInterpreter(machine).start()
@@ -433,10 +486,19 @@ config = {
     "id": "asyncToggle",
     "initial": "off",
     "states": {
-        "off": {"on": {"TOGGLE": "on"}},
-        "on":  {"on": {"TOGGLE": "off"}}
-    }
+        "off": {
+            "on": {
+                "TOGGLE": "on",
+            },
+        },
+        "on": {
+            "on": {
+                "TOGGLE": "off",
+            },
+        },
+    },
 }
+
 
 async def main():
     machine = create_machine(config)
@@ -447,6 +509,7 @@ async def main():
     # {'asyncToggle.on'}
 
     await interp.stop()
+
 
 asyncio.run(main())
 ```

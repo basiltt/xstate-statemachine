@@ -75,8 +75,16 @@ config = {
     "id": "toggle",
     "initial": "inactive",
     "states": {
-        "inactive": {"on": {"TOGGLE": "active"}},
-        "active":   {"on": {"TOGGLE": "inactive"}},
+        "inactive": {
+            "on": {
+                "TOGGLE": "active",
+            },
+        },
+        "active": {
+            "on": {
+                "TOGGLE": "inactive",
+            },
+        },
     },
 }
 machine = create_machine(config)
@@ -89,17 +97,37 @@ machine = create_machine(config)
 ```python
 from xstate_statemachine import create_machine, MachineLogic
 
+
 def log_toggle(interpreter, context, event, action_def):
     print(f"Toggled! Count: {context['count']}")
 
-logic = MachineLogic(actions={"logToggle": log_toggle})
+
+logic = MachineLogic(
+    actions={
+        "logToggle": log_toggle,
+    }
+)
 
 config = {
     "id": "toggle",
     "initial": "off",
     "states": {
-        "off": {"on": {"FLIP": {"target": "on", "actions": "logToggle"}}},
-        "on":  {"on": {"FLIP": {"target": "off", "actions": "logToggle"}}},
+        "off": {
+            "on": {
+                "FLIP": {
+                    "target": "on",
+                    "actions": "logToggle",
+                },
+            },
+        },
+        "on": {
+            "on": {
+                "FLIP": {
+                    "target": "off",
+                    "actions": "logToggle",
+                },
+            },
+        },
     },
 }
 machine = create_machine(config, logic=logic)
@@ -164,13 +192,15 @@ state, or invalid transition sources.
 ```python
 from xstate_statemachine import State, build_machine, action
 
-idle    = State("idle", initial=True)
+idle = State("idle", initial=True)
 running = State("running")
-done    = State("done", final=True)
+done = State("done", final=True)
+
 
 @action
 def log_start(interpreter, context, event, action_def):
     print("Machine started!")
+
 
 machine = build_machine(
     id="workflow",
@@ -180,7 +210,9 @@ machine = build_machine(
         running.to(done, event="FINISH"),
     ],
     actions=[log_start],
-    context={"step": 0},
+    context={
+        "step": 0,
+    },
 )
 ```
 
@@ -395,13 +427,16 @@ delegates to `create_machine()`.
 ```python
 from xstate_statemachine import StateMachine, State, action
 
+
 class TrafficLight(StateMachine):
     machine_id = "trafficLight"
-    initial_context = {"cycle_count": 0}
+    initial_context = {
+        "cycle_count": 0,
+    }
 
-    red    = State(initial=True)
+    red = State(initial=True)
     yellow = State()
-    green  = State()
+    green = State()
 
     cycle = (
         red.to(green, event="NEXT")
@@ -413,10 +448,15 @@ class TrafficLight(StateMachine):
     def count_cycle(self, interpreter, context, event, action_def):
         context["cycle_count"] += 1
 
+
 machine = TrafficLight.create_machine()
 
 # With a context override:
-machine = TrafficLight.create_machine(context={"cycle_count": 10})
+machine = TrafficLight.create_machine(
+    context={
+        "cycle_count": 10,
+    }
+)
 ```
 
 ---
@@ -520,19 +560,26 @@ non-parallel, multi-state machines) or if a transition source is invalid.
 ```python
 from xstate_statemachine import MachineBuilder
 
+
 def log_it(interpreter, context, event, action_def):
     context["count"] += 1
     print(f"Count: {context['count']}")
 
+
 machine = (
     MachineBuilder("counter")
-    .context({"count": 0})
+    .context(
+        {
+            "count": 0,
+        }
+    )
     .state("idle", initial=True)
     .state("counting")
     .state("done", final=True)
     .transition("idle", "START", "counting")
-    .transition("counting", "INCREMENT", "counting",
-                actions=["logIt"], reenter=True)
+    .transition(
+        "counting", "INCREMENT", "counting", actions=["logIt"], reenter=True
+    )
     .transition("counting", "FINISH", "done")
     .action("logIt", log_it)
     .build()
@@ -767,32 +814,56 @@ from xstate_statemachine import create_machine, Interpreter, MachineLogic
 config = {
     "id": "lightSwitch",
     "initial": "off",
-    "context": {"flips": 0},
+    "context": {
+        "flips": 0,
+    },
     "states": {
-        "off": {"on": {"TOGGLE": {"target": "on", "actions": "countFlip"}}},
-        "on":  {"on": {"TOGGLE": {"target": "off", "actions": "countFlip"}}},
+        "off": {
+            "on": {
+                "TOGGLE": {
+                    "target": "on",
+                    "actions": "countFlip",
+                },
+            },
+        },
+        "on": {
+            "on": {
+                "TOGGLE": {
+                    "target": "off",
+                    "actions": "countFlip",
+                },
+            },
+        },
     },
 }
+
 
 def count_flip(interpreter, context, event, action_def):
     context["flips"] += 1
 
-logic = MachineLogic(actions={"countFlip": count_flip})
+
+logic = MachineLogic(
+    actions={
+        "countFlip": count_flip,
+    }
+)
 machine = create_machine(config, logic=logic)
+
 
 async def main():
     service = await Interpreter(machine).start()
 
-    await service.send("TOGGLE")          # off -> on
-    await asyncio.sleep(0.05)             # let event loop process
-    print(service.current_state_ids)      # {"lightSwitch.on"}
-    print(service.context)                # {"flips": 1}
+    await service.send("TOGGLE")  # off -> on
+    await asyncio.sleep(0.05)  # let event loop process
+    print(service.current_state_ids)  # {"lightSwitch.on"}
+    print(service.context)  # {"flips": 1}
 
-    await service.send("TOGGLE")          # on -> off
+    await service.send("TOGGLE")  # on -> off
     await asyncio.sleep(0.05)
-    print(service.context)                # {"flips": 2}
+    print(service.context)  # {"flips": 2}
 
     await service.stop()
+
 
 asyncio.run(main())
 ```
@@ -897,24 +968,32 @@ config = {
     "id": "door",
     "initial": "closed",
     "states": {
-        "closed": {"on": {"OPEN": "opened"}},
-        "opened": {"on": {"CLOSE": "closed"}},
+        "closed": {
+            "on": {
+                "OPEN": "opened",
+            },
+        },
+        "opened": {
+            "on": {
+                "CLOSE": "closed",
+            },
+        },
     },
 }
 
 machine = create_machine(config)
 interpreter = SyncInterpreter(machine).start()
 
-print(interpreter.current_state_ids)   # {"door.closed"}
+print(interpreter.current_state_ids)  # {"door.closed"}
 interpreter.send("OPEN")
-print(interpreter.current_state_ids)   # {"door.opened"}
+print(interpreter.current_state_ids)  # {"door.opened"}
 interpreter.send("CLOSE")
-print(interpreter.current_state_ids)   # {"door.closed"}
+print(interpreter.current_state_ids)  # {"door.closed"}
 
 # Snapshot round-trip
 snapshot = interpreter.get_snapshot()
 restored = SyncInterpreter.from_snapshot(snapshot, machine)
-print(restored.current_state_ids)      # {"door.closed"}
+print(restored.current_state_ids)  # {"door.closed"}
 
 interpreter.stop()
 ```
@@ -1038,7 +1117,12 @@ Because `Event` is frozen, attempts to mutate fields after creation raise
 `FrozenInstanceError`:
 
 ```python
-e = Event(type="CLICK", payload={"x": 10})
+e = Event(
+    type="CLICK",
+    payload={
+        "x": 10,
+    },
+)
 e.type = "OTHER"  # Raises dataclasses.FrozenInstanceError
 ```
 
@@ -1057,7 +1141,13 @@ from xstate_statemachine import Event
 click = Event(type="CLICK")
 
 # Event with payload
-login = Event(type="LOGIN", payload={"username": "alice", "role": "admin"})
+login = Event(
+    type="LOGIN",
+    payload={
+        "username": "alice",
+        "role": "admin",
+    },
+)
 
 # Access payload via .data alias
 print(login.data["username"])  # "alice"
@@ -1067,9 +1157,16 @@ The `send()` method on interpreters also accepts strings and dicts, which are
 internally converted to `Event` objects:
 
 ```python
-interpreter.send("CLICK")                          # Event(type="CLICK")
-interpreter.send("LOGIN", username="alice")         # Event(type="LOGIN", payload={"username": "alice"})
-interpreter.send({"type": "CLICK", "x": 10})       # Event(type="CLICK", payload={"x": 10})
+interpreter.send("CLICK")  # Event(type="CLICK")
+interpreter.send(
+    "LOGIN", username="alice"
+)  # Event(type="LOGIN", payload={"username": "alice"})
+interpreter.send(
+    {
+        "type": "CLICK",
+        "x": 10,
+    }
+)  # Event(type="CLICK", payload={"x": 10})
 ```
 
 ---
@@ -1099,7 +1196,14 @@ ad = ActionDefinition("myAction")
 **Construction from dict:**
 
 ```python
-ad = ActionDefinition({"type": "myAction", "params": {"delay": 100}})
+ad = ActionDefinition(
+    {
+        "type": "myAction",
+        "params": {
+            "delay": 100,
+        },
+    }
+)
 # ad.type == "myAction", ad.params == {"delay": 100}
 ```
 
@@ -1114,20 +1218,51 @@ Any object can say how it becomes an event by implementing `__xstate_event__(sel
 ```python
 from xstate_statemachine import SyncInterpreter, create_machine, MachineLogic
 
+
 class OrderPlaced:
     def __init__(self, order_id: int) -> None:
         self.order_id = order_id
-    def __xstate_event__(self) -> dict:
-        return {"type": "PLACE", "order_id": self.order_id}
 
-cfg = {"id": "shop", "initial": "idle", "context": {},
-       "states": {"idle": {"on": {"PLACE": {"target": "placed", "actions": "remember"}}},
-                  "placed": {}}}
+    def __xstate_event__(self) -> dict:
+        return {
+            "type": "PLACE",
+            "order_id": self.order_id,
+        }
+
+
+cfg = {
+    "id": "shop",
+    "initial": "idle",
+    "context": {},
+    "states": {
+        "idle": {
+            "on": {
+                "PLACE": {
+                    "target": "placed",
+                    "actions": "remember",
+                },
+            },
+        },
+        "placed": {},
+    },
+}
+
+
 def remember(i, ctx, e, a):
     ctx["order_id"] = e.payload["order_id"]
 
-interp = SyncInterpreter(create_machine(cfg, logic=MachineLogic(actions={"remember": remember}))).start()
-interp.send(OrderPlaced(42))            # no translation at the call site
+
+interp = SyncInterpreter(
+    create_machine(
+        cfg,
+        logic=MachineLogic(
+            actions={
+                "remember": remember,
+            }
+        ),
+    )
+).start()
+interp.send(OrderPlaced(42))  # no translation at the call site
 assert interp.context["order_id"] == 42 and interp.matches("shop.placed")
 ```
 
@@ -1256,9 +1391,15 @@ The sanctioned way to change a field of an **engine-minted** event and keep its 
 ```python
 from xstate_statemachine import re_mint, is_system_event
 
+
 def on_event_received(self, interp, event):
     if event.type.startswith("done.invoke."):
-        safe = re_mint(event, data={"redacted": True})
+        safe = re_mint(
+            event,
+            data={
+                "redacted": True,
+            },
+        )
         assert is_system_event(safe)
 ```
 
@@ -1486,7 +1627,11 @@ can be synchronous or asynchronous.
 ```python
 @service
 def fetch_user(interpreter, context, event):
-    return {"name": "Alice", "id": 42}
+    return {
+        "name": "Alice",
+        "id": 42,
+    }
+
 
 @service("loadData")
 async def load(interpreter, context, event):
@@ -1519,17 +1664,23 @@ Same `snake_case` to `camelCase` conversion as `@action`.
 ```python
 from xstate_statemachine import service
 
+
 # Auto-named: registered as "fetchData"
 @service
 def fetch_data(interpreter, context, event):
     import requests
+
     return requests.get("https://api.example.com/data").json()
+
 
 # Explicitly named, async
 @service("processOrder")
 async def process(interpreter, context, event):
     await asyncio.sleep(1)  # simulate work
-    return {"status": "processed", "order_id": context["order_id"]}
+    return {
+        "status": "processed",
+        "order_id": context["order_id"],
+    }
 ```
 
 ---
@@ -1575,11 +1726,12 @@ implementation (Python functions).
 ```python
 from xstate_statemachine import MachineLogic
 
+
 class MyLogic(MachineLogic):
     def __init__(self):
         super().__init__(
             actions={
-                "logEvent":  self._log_event,
+                "logEvent": self._log_event,
                 "increment": self._increment,
             },
             guards={
@@ -1605,7 +1757,11 @@ from xstate_statemachine import MachineLogic
 
 logic = MachineLogic(
     actions={
-        "increment": lambda i, ctx, e, a: ctx.update({"count": ctx["count"] + 1}),
+        "increment": lambda i, ctx, e, a: ctx.update(
+            {
+                "count": ctx["count"] + 1,
+            }
+        ),
     },
     guards={
         "isPositive": lambda ctx, e: ctx["count"] > 0,
@@ -1749,7 +1905,16 @@ assert targets == {"myMachine.running"}
 `Optional[str]` — the chart's own `"version"` label from the root of the config, coerced to `str`; `None` when the chart declares none. Before 0.11.0 the key was accepted and silently ignored (#305). It is **not** part of `structure_hash` — re-labelling a chart does not invalidate stored snapshots — and is written to every snapshot as `machine_version`. `xsm inspect` shows it in the header.
 
 ```python
-machine = create_machine({"id": "m", "version": 7, "initial": "a", "states": {"a": {}}})
+machine = create_machine(
+    {
+        "id": "m",
+        "version": 7,
+        "initial": "a",
+        "states": {
+            "a": {},
+        },
+    }
+)
 assert machine.version == "7"
 ```
 
@@ -2413,12 +2578,24 @@ The object passed as `enqueue` to an `enqueue_actions` callback. Methods:
 ```python
 from xstate_statemachine import enqueue_actions
 
-def build(args):
-    enqueue = args["enqueue"]          # ActionEnqueuer
-    enqueue.assign({"n": lambda x: x["context"]["n"] + 1})
-    enqueue.raise_({"type": "NEXT"})
 
-{"actions": enqueue_actions(build)}
+def build(args):
+    enqueue = args["enqueue"]  # ActionEnqueuer
+    enqueue.assign(
+        {
+            "n": lambda x: x["context"]["n"] + 1,
+        }
+    )
+    enqueue.raise_(
+        {
+            "type": "NEXT",
+        }
+    )
+
+
+{
+    "actions": enqueue_actions(build),
+}
 ```
 
 > **Note:** the callback receives a **single mapping** containing `context`,
@@ -2490,13 +2667,31 @@ Drive any chart without owning its business logic. A machine that declares actio
 ```python
 from xstate_statemachine import SyncInterpreter, create_machine, stub_logic
 
-cfg = {"id": "m", "initial": "a", "states": {
-    "a": {"on": {"GO": {"target": "b", "guard": "ok", "actions": "log"}}}, "b": {}}}
+cfg = {
+    "id": "m",
+    "initial": "a",
+    "states": {
+        "a": {
+            "on": {
+                "GO": {
+                    "target": "b",
+                    "guard": "ok",
+                    "actions": "log",
+                },
+            },
+        },
+        "b": {},
+    },
+}
 ran: list = []
-guards = {"ok": False}
-interp = SyncInterpreter(create_machine(cfg, logic=stub_logic(cfg, ran=ran, guards=guards))).start()
+guards = {
+    "ok": False,
+}
+interp = SyncInterpreter(
+    create_machine(cfg, logic=stub_logic(cfg, ran=ran, guards=guards))
+).start()
 assert interp.send("GO", wait=True).denied
-guards["ok"] = True                      # live: no rebuild needed
+guards["ok"] = True  # live: no rebuild needed
 assert interp.send("GO", wait=True).changed and ran == ["log"]
 ```
 
@@ -2649,9 +2844,24 @@ Returns a **new** `MachineLogic` combining the receiver with `others` (later win
 ```python
 import json
 from xstate_statemachine import SyncInterpreter, create_machine
-from xstate_statemachine import receipt_to_json, receipt_from_json, receipt_to_status
+from xstate_statemachine import (
+    receipt_to_json,
+    receipt_from_json,
+    receipt_to_status,
+)
 
-cfg = {"id": "m", "initial": "a", "states": {"a": {"on": {"GO": "b"}}, "b": {}}}
+cfg = {
+    "id": "m",
+    "initial": "a",
+    "states": {
+        "a": {
+            "on": {
+                "GO": "b",
+            },
+        },
+        "b": {},
+    },
+}
 interp = SyncInterpreter(create_machine(cfg)).start()
 receipt = interp.send("GO", wait=True)
 

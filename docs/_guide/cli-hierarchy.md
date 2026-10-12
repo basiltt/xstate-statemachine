@@ -81,26 +81,41 @@ Is this correct? [Y/n]
 {
   "id": "orderOrchestrator",
   "initial": "pending",
-  "context": { "orderId": null },
+  "context": {
+    "orderId": null
+  },
   "states": {
     "pending": {
       "on": {
-        "START_ORDER": { "target": "processing", "actions": "assignOrderId" }
+        "START_ORDER": {
+          "target": "processing",
+          "actions": "assignOrderId"
+        }
       }
     },
     "processing": {
-      "invoke": { "src": "paymentActor" },
+      "invoke": {
+        "src": "paymentActor"
+      },
       "on": {
-        "PAYMENT_DONE": { "target": "shipping" }
+        "PAYMENT_DONE": {
+          "target": "shipping"
+        }
       }
     },
     "shipping": {
-      "invoke": { "src": "shippingActor" },
+      "invoke": {
+        "src": "shippingActor"
+      },
       "on": {
-        "SHIPPED": { "target": "complete" }
+        "SHIPPED": {
+          "target": "complete"
+        }
       }
     },
-    "complete": { "type": "final" }
+    "complete": {
+      "type": "final"
+    }
   }
 }
 ```
@@ -115,18 +130,31 @@ Is this correct? [Y/n]
   "initial": "idle",
   "states": {
     "idle": {
-      "on": { "CHARGE": { "target": "charging", "actions": "initiateCharge" } }
+      "on": {
+        "CHARGE": {
+          "target": "charging",
+          "actions": "initiateCharge"
+        }
+      }
     },
     "charging": {
       "invoke": {
         "src": "chargeCard",
-        "onDone": { "target": "charged" },
-        "onError": { "target": "failed" }
+        "onDone": {
+          "target": "charged"
+        },
+        "onError": {
+          "target": "failed"
+        }
       }
     },
-    "charged": { "type": "final" },
+    "charged": {
+      "type": "final"
+    },
     "failed": {
-      "on": { "RETRY": "idle" }
+      "on": {
+        "RETRY": "idle"
+      }
     }
   }
 }
@@ -142,12 +170,21 @@ Is this correct? [Y/n]
   "initial": "waiting",
   "states": {
     "waiting": {
-      "on": { "DISPATCH": { "target": "dispatched", "actions": "createLabel" } }
+      "on": {
+        "DISPATCH": {
+          "target": "dispatched",
+          "actions": "createLabel"
+        }
+      }
     },
     "dispatched": {
-      "on": { "DELIVER": "delivered" }
+      "on": {
+        "DELIVER": "delivered"
+      }
     },
-    "delivered": { "type": "final" }
+    "delivered": {
+      "type": "final"
+    }
   }
 }
 ```
@@ -179,82 +216,90 @@ import logging
 
 from order_orchestrator_logic import OrderOrchestratorLogic as LogicProvider
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+logging.basicConfig(
+    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
+)
 logger = logging.getLogger(__name__)
+
 
 def main() -> None:
     """Run the parent machine and spawn actor machines."""
     root_dir = Path(__file__).parent
-    parent_cfg = json.loads((root_dir / 'order_orchestrator.json').read_text())
+    parent_cfg = json.loads((root_dir / "order_orchestrator.json").read_text())
     actor_cfgs = {
-        'payment': json.loads((root_dir / 'payment.json').read_text()),
-        'shipping': json.loads((root_dir / 'shipping.json').read_text()),
+        "payment": json.loads((root_dir / "payment.json").read_text()),
+        "shipping": json.loads((root_dir / "shipping.json").read_text()),
     }
 
     # -----------------------------------------------------------------------
     # Parent machine + logic binding
     # -----------------------------------------------------------------------
     logic_provider = LogicProvider()
-    parent_machine = create_machine(parent_cfg, logic_providers=[logic_provider])
+    parent_machine = create_machine(
+        parent_cfg, logic_providers=[logic_provider]
+    )
     parent = SyncInterpreter(parent_machine)
     parent.use(LoggingInspector())
     parent.start()
-    logger.info('Parent started. Initial state(s): %s', parent.current_state_ids)
+    logger.info(
+        "Parent started. Initial state(s): %s", parent.current_state_ids
+    )
 
     # -------------------------------------------------------------------
     # Spawn & start every actor interpreter
     # -------------------------------------------------------------------
     actor_ctor = SyncInterpreter
     actors = {}
-    machine_payment = create_machine(actor_cfgs['payment'])
+    machine_payment = create_machine(actor_cfgs["payment"])
     ai_payment = actor_ctor(machine_payment)
     ai_payment.use(LoggingInspector())
     ai_payment.start()
-    actors['payment'] = ai_payment
-    machine_shipping = create_machine(actor_cfgs['shipping'])
+    actors["payment"] = ai_payment
+    machine_shipping = create_machine(actor_cfgs["shipping"])
     ai_shipping = actor_ctor(machine_shipping)
     ai_shipping.use(LoggingInspector())
     ai_shipping.start()
-    actors['shipping'] = ai_shipping
+    actors["shipping"] = ai_shipping
 
     # -------------------------------------------------------------------
     # Simulating Parent Machine
     # -------------------------------------------------------------------
-    logger.info('Parent sending %s', 'PAYMENT_DONE')
-    parent.send('PAYMENT_DONE')
+    logger.info("Parent sending %s", "PAYMENT_DONE")
+    parent.send("PAYMENT_DONE")
 
-    logger.info('Parent sending %s', 'SHIPPED')
-    parent.send('SHIPPED')
+    logger.info("Parent sending %s", "SHIPPED")
+    parent.send("SHIPPED")
 
-    logger.info('Parent sending %s', 'START_ORDER')
-    parent.send('START_ORDER')
+    logger.info("Parent sending %s", "START_ORDER")
+    parent.send("START_ORDER")
 
     # -------------------------------------------------------------------
     # Simulating Actor: payment
     # -------------------------------------------------------------------
-    logger.info('payment sending %s', 'CHARGE')
-    actors['payment'].send('CHARGE')
+    logger.info("payment sending %s", "CHARGE")
+    actors["payment"].send("CHARGE")
 
-    logger.info('payment sending %s', 'RETRY')
-    actors['payment'].send('RETRY')
+    logger.info("payment sending %s", "RETRY")
+    actors["payment"].send("RETRY")
 
     # -------------------------------------------------------------------
     # Simulating Actor: shipping
     # -------------------------------------------------------------------
-    logger.info('shipping sending %s', 'DELIVER')
-    actors['shipping'].send('DELIVER')
+    logger.info("shipping sending %s", "DELIVER")
+    actors["shipping"].send("DELIVER")
 
-    logger.info('shipping sending %s', 'DISPATCH')
-    actors['shipping'].send('DISPATCH')
+    logger.info("shipping sending %s", "DISPATCH")
+    actors["shipping"].send("DISPATCH")
 
     # -------------------------------------------------------------------
     # Graceful shutdown of actors then parent
     # -------------------------------------------------------------------
-    actors['payment'].stop()
-    actors['shipping'].stop()
+    actors["payment"].stop()
+    actors["shipping"].stop()
     parent.stop()
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     main()
 ```
 

@@ -49,29 +49,47 @@ When an action raises mid-transition, three things could happen. You choose.
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 
+
 def charge(interp, ctx, event, action_def):
     ctx["charged"] = True
     raise RuntimeError("gateway timeout")
+
 
 config = {
     "id": "payment",
     "initial": "idle",
     "actionErrorPolicy": "rollback",
-    "context": {"charged": False},
+    "context": {
+        "charged": False,
+    },
     "states": {
-        "idle": {"on": {"PAY": {"target": "paid", "actions": "charge"}}},
+        "idle": {
+            "on": {
+                "PAY": {
+                    "target": "paid",
+                    "actions": "charge",
+                },
+            },
+        },
         "paid": {},
     },
 }
-machine = create_machine(config, logic=MachineLogic(actions={"charge": charge}))
+machine = create_machine(
+    config,
+    logic=MachineLogic(
+        actions={
+            "charge": charge,
+        }
+    ),
+)
 interp = SyncInterpreter(machine).start()
 
 receipt = interp.send("PAY", wait=True)
 
-assert receipt.changed is False                   # nothing was committed
-assert isinstance(receipt.error, RuntimeError)     # but you are told why
-assert interp.active_state_ids == {"payment.idle"} # configuration restored
-assert interp.context["charged"] is False          # context restored too
+assert receipt.changed is False  # nothing was committed
+assert isinstance(receipt.error, RuntimeError)  # but you are told why
+assert interp.active_state_ids == {"payment.idle"}  # configuration restored
+assert interp.context["charged"] is False  # context restored too
 interp.stop()
 ```
 
@@ -92,26 +110,40 @@ Three different ways an event can go nowhere, three different signals.
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter, PluginBase
 
+
 class Audit(PluginBase):
     def __init__(self):
         self.seen = []
+
     def on_unhandled_event(self, interp, event, active_state_ids, disposition):
         self.seen.append((event.type, disposition))
+
 
 config = {
     "id": "door",
     "initial": "closed",
     "onUnhandled": "defer",
-    "states": {"closed": {"on": {"OPEN": "open"}}, "open": {"on": {"CLOSE": "closed"}}},
+    "states": {
+        "closed": {
+            "on": {
+                "OPEN": "open",
+            },
+        },
+        "open": {
+            "on": {
+                "CLOSE": "closed",
+            },
+        },
+    },
 }
 audit = Audit()
 interp = SyncInterpreter(create_machine(config)).use(audit).start()
 
-interp.send("CLOSE")                       # nothing handles it while closed
+interp.send("CLOSE")  # nothing handles it while closed
 assert audit.seen == [("CLOSE", "deferred")]
 assert interp.deferred_count == 1
 
-interp.send("OPEN")                        # now CLOSE has a handler: replayed first
+interp.send("OPEN")  # now CLOSE has a handler: replayed first
 assert interp.active_state_ids == {"door.closed"}
 assert interp.deferred_count == 0
 interp.stop()
@@ -124,16 +156,30 @@ interp.stop()
 `strict=True` raises `UnknownEventError` **at the call site**, with a did-you-mean suggestion, instead of enqueueing a typo that silently drops.
 
 ```python
-from xstate_statemachine import create_machine, SyncInterpreter, UnknownEventError
+from xstate_statemachine import (
+    create_machine,
+    SyncInterpreter,
+    UnknownEventError,
+)
 
-config = {"id": "d", "initial": "closed",
-          "states": {"closed": {"on": {"OPEN": "open"}}, "open": {}}}
+config = {
+    "id": "d",
+    "initial": "closed",
+    "states": {
+        "closed": {
+            "on": {
+                "OPEN": "open",
+            },
+        },
+        "open": {},
+    },
+}
 interp = SyncInterpreter(create_machine(config), strict=True).start()
 
 try:
     interp.send("OPNE")
 except UnknownEventError as e:
-    assert "OPEN" in str(e)     # did you mean OPEN?
+    assert "OPEN" in str(e)  # did you mean OPEN?
 interp.stop()
 ```
 
@@ -142,20 +188,41 @@ interp.stop()
 ### A well-known event with a malformed payload — `event_schemas`
 
 ```python
-from xstate_statemachine import create_machine, SyncInterpreter, InvalidEventPayloadError
+from xstate_statemachine import (
+    create_machine,
+    SyncInterpreter,
+    InvalidEventPayloadError,
+)
 
-config = {"id": "cart", "initial": "open",
-          "states": {"open": {"on": {"ADD": "open"}}}}
+config = {
+    "id": "cart",
+    "initial": "open",
+    "states": {
+        "open": {
+            "on": {
+                "ADD": "open",
+            },
+        },
+    },
+}
+
+
 def add_schema(payload):
     if "sku" not in payload or "qty" not in payload:
         raise ValueError("ADD needs sku and qty")
 
-machine = create_machine(config, event_schemas={"ADD": add_schema})
+
+machine = create_machine(
+    config,
+    event_schemas={
+        "ADD": add_schema,
+    },
+)
 interp = SyncInterpreter(machine).start()
 
-interp.send("ADD", sku="w1", qty=2)          # fine
+interp.send("ADD", sku="w1", qty=2)  # fine
 try:
-    interp.send("ADD", sku="w1")             # qty missing
+    interp.send("ADD", sku="w1")  # qty missing
 except InvalidEventPayloadError:
     pass
 interp.stop()
@@ -172,31 +239,57 @@ A guard that throws used to be treated as `False`, which quietly picked the *oth
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 
+
 def is_verified(ctx, event):
-    return ctx["user"]["verified"]      # KeyError if user is None
+    return ctx["user"]["verified"]  # KeyError if user is None
+
 
 config = {
-    "id": "gate", "initial": "waiting",
+    "id": "gate",
+    "initial": "waiting",
     "guardErrorPolicy": "raise",
-    "context": {"user": None},
+    "context": {
+        "user": None,
+    },
     "states": {
-        "waiting": {"on": {"ENTER": [
-            {"target": "inside", "guard": "isVerified"},
-            {"target": "denied"},
-        ]}},
-        "inside": {}, "denied": {},
+        "waiting": {
+            "on": {
+                "ENTER": [
+                    {
+                        "target": "inside",
+                        "guard": "isVerified",
+                    },
+                    {
+                        "target": "denied",
+                    },
+                ],
+            },
+        },
+        "inside": {},
+        "denied": {},
     },
 }
 interp = SyncInterpreter(
-    create_machine(config, logic=MachineLogic(guards={"is_verified": is_verified}))
+    create_machine(
+        config,
+        logic=MachineLogic(
+            guards={
+                "is_verified": is_verified,
+            }
+        ),
+    )
 ).start()
 
 try:
     interp.send("ENTER")
 except TypeError:
-    pass                                             # surfaced, not swallowed
-assert interp.active_state_ids == {"gate.denied"}   # the unguarded fallback was taken (#152)
-assert isinstance(interp.last_error, TypeError)      # ...and the failure is still on record
+    pass  # surfaced, not swallowed
+assert interp.active_state_ids == {
+    "gate.denied"
+}  # the unguarded fallback was taken (#152)
+assert isinstance(
+    interp.last_error, TypeError
+)  # ...and the failure is still on record
 interp.stop()
 ```
 
@@ -213,8 +306,17 @@ Unresolvable targets used to surface at runtime, if at all. `create_machine()` n
 ```python
 from xstate_statemachine import create_machine, InvalidConfigError
 
-bad = {"id": "b", "initial": "a",
-       "states": {"a": {"on": {"GO": "nowhere"}}}}
+bad = {
+    "id": "b",
+    "initial": "a",
+    "states": {
+        "a": {
+            "on": {
+                "GO": "nowhere",
+            },
+        },
+    },
+}
 try:
     create_machine(bad)
 except InvalidConfigError as e:
@@ -230,10 +332,24 @@ A producer that outruns the machine used to grow memory without bound and withou
 ```python
 import asyncio
 from xstate_statemachine import (
-    create_machine, Interpreter, OverflowPolicy, QueueOverflowError,
+    create_machine,
+    Interpreter,
+    OverflowPolicy,
+    QueueOverflowError,
 )
 
-config = {"id": "q", "initial": "idle", "states": {"idle": {"on": {"TICK": "idle"}}}}
+config = {
+    "id": "q",
+    "initial": "idle",
+    "states": {
+        "idle": {
+            "on": {
+                "TICK": "idle",
+            },
+        },
+    },
+}
+
 
 async def main():
     interp = await Interpreter(
@@ -244,11 +360,12 @@ async def main():
     await interp.send("TICK")
     await interp.send("TICK")
     try:
-        await interp.send("TICK")            # third one: RAISE
+        await interp.send("TICK")  # third one: RAISE
     except QueueOverflowError:
         pass
     assert interp.queue_depth <= 2
     await interp.stop()
+
 
 asyncio.run(main())
 ```
@@ -266,8 +383,22 @@ asyncio.run(main())
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter
 
-config = {"id": "t", "initial": "off",
-          "states": {"off": {"on": {"TOGGLE": "on"}}, "on": {"on": {"TOGGLE": "off"}}}}
+config = {
+    "id": "t",
+    "initial": "off",
+    "states": {
+        "off": {
+            "on": {
+                "TOGGLE": "on",
+            },
+        },
+        "on": {
+            "on": {
+                "TOGGLE": "off",
+            },
+        },
+    },
+}
 interp = SyncInterpreter(create_machine(config)).start()
 
 r = interp.send("TOGGLE", wait=True)
@@ -275,8 +406,8 @@ assert r.state_ids == frozenset({"t.on"})
 assert r.changed is True
 assert r.error is None
 
-r = interp.send("NOPE", wait=True)          # unhandled, non-strict
-assert r.changed is False                   # nothing moved, and you know it
+r = interp.send("NOPE", wait=True)  # unhandled, non-strict
+assert r.changed is False  # nothing moved, and you know it
 interp.stop()
 ```
 
@@ -291,12 +422,36 @@ interp.stop()
 Snapshots carry a `version`, the `machine_id`, and a `machine_hash`. Restoring into a structurally different machine is refused instead of producing an interpreter in a state that no longer exists.
 
 ```python
-from xstate_statemachine import create_machine, SyncInterpreter, SnapshotDriftError
+from xstate_statemachine import (
+    create_machine,
+    SyncInterpreter,
+    SnapshotDriftError,
+)
 
-v1 = {"id": "wf", "initial": "draft",
-      "states": {"draft": {"on": {"SUBMIT": "review"}}, "review": {}}}
-v2 = {"id": "wf", "initial": "draft",
-      "states": {"draft": {"on": {"SUBMIT": "approved"}}, "approved": {}}}   # 'review' is gone
+v1 = {
+    "id": "wf",
+    "initial": "draft",
+    "states": {
+        "draft": {
+            "on": {
+                "SUBMIT": "review",
+            },
+        },
+        "review": {},
+    },
+}
+v2 = {
+    "id": "wf",
+    "initial": "draft",
+    "states": {
+        "draft": {
+            "on": {
+                "SUBMIT": "approved",
+            },
+        },
+        "approved": {},
+    },
+}  # 'review' is gone
 
 interp = SyncInterpreter(create_machine(v1)).start()
 interp.send("SUBMIT")
@@ -306,7 +461,7 @@ interp.stop()
 try:
     SyncInterpreter.from_snapshot(snap, create_machine(v2))
 except SnapshotDriftError:
-    pass                                   # refused, loudly
+    pass  # refused, loudly
 ```
 
 <div class="stately" data-machine="3ee86fdb10" data-height="320" data-title="wf"></div>
@@ -322,8 +477,20 @@ Pending inbox and deferred events survive a snapshot; `from_snapshot(restart_ser
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter, SimulatedClock
 
-config = {"id": "sess", "initial": "active",
-          "states": {"active": {"after": {"30000": "expired"}}, "expired": {"type": "final"}}}
+config = {
+    "id": "sess",
+    "initial": "active",
+    "states": {
+        "active": {
+            "after": {
+                "30000": "expired",
+            },
+        },
+        "expired": {
+            "type": "final",
+        },
+    },
+}
 clock = SimulatedClock()
 interp = SyncInterpreter(create_machine(config), clock=clock).start()
 
@@ -349,15 +516,17 @@ from xstate_statemachine import create_machine, Interpreter, OverflowPolicy
 config = {
     "id": "orders",
     "initial": "idle",
-    "actionErrorPolicy": "rollback",     # explicit: the 1.0 default
+    "actionErrorPolicy": "rollback",  # explicit: the 1.0 default
     "guardErrorPolicy": "raise",
     "onUnhandled": "error",
-    "states": {"idle": {}},
+    "states": {
+        "idle": {},
+    },
 }
 
 machine = create_machine(
     config,
-    strict_targets=True,                  # explicit: the only 1.0 mode
+    strict_targets=True,  # explicit: the only 1.0 mode
 )
 
 interp = Interpreter(

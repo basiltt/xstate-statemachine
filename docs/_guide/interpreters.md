@@ -48,30 +48,49 @@ from xstate_statemachine import create_machine, Interpreter, MachineLogic
 config = {
     "id": "fetchMachine",
     "initial": "idle",
-    "context": {"data": None, "error": None},
+    "context": {
+        "data": None,
+        "error": None,
+    },
     "states": {
         "idle": {
-            "on": {"FETCH": "loading"}
+            "on": {
+                "FETCH": "loading",
+            },
         },
         "loading": {
             "invoke": {
                 "src": "fetchData",
-                "onDone":  {"target": "success", "actions": "storeData"},
-                "onError": {"target": "error",   "actions": "storeError"}
-            }
+                "onDone": {
+                    "target": "success",
+                    "actions": "storeData",
+                },
+                "onError": {
+                    "target": "error",
+                    "actions": "storeError",
+                },
+            },
         },
         "success": {
-            "on": {"REFRESH": "loading", "RESET": "idle"}
+            "on": {
+                "REFRESH": "loading",
+                "RESET": "idle",
+            },
         },
         "error": {
-            "on": {"RETRY": "loading", "RESET": "idle"}
-        }
-    }
+            "on": {
+                "RETRY": "loading",
+                "RESET": "idle",
+            },
+        },
+    },
 }
+
 
 class FetchLogic(MachineLogic):
     async def fetch_data(self, interpreter, context, event):
         import aiohttp
+
         async with aiohttp.ClientSession() as session:
             resp = await session.get("https://api.example.com/data")
             return await resp.json()
@@ -98,6 +117,7 @@ async def main():
     print(interpreter.context)
 
     await interpreter.stop()
+
 
 asyncio.run(main())
 ```
@@ -133,16 +153,29 @@ from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 config = {
     "id": "toggleMachine",
     "initial": "inactive",
-    "context": {"toggles": 0},
+    "context": {
+        "toggles": 0,
+    },
     "states": {
         "inactive": {
-            "on": {"ACTIVATE": {"target": "active", "actions": "logToggle"}}
+            "on": {
+                "ACTIVATE": {
+                    "target": "active",
+                    "actions": "logToggle",
+                },
+            },
         },
         "active": {
-            "on": {"DEACTIVATE": {"target": "inactive", "actions": "logToggle"}}
-        }
-    }
+            "on": {
+                "DEACTIVATE": {
+                    "target": "inactive",
+                    "actions": "logToggle",
+                },
+            },
+        },
+    },
 }
+
 
 class ToggleLogic(MachineLogic):
     def log_toggle(self, interpreter, context, event, action_def):
@@ -243,13 +276,21 @@ config = {
     "states": {
         "closed": {
             "tags": ["safe"],
-            "meta": {"description": "Door is closed"},
-            "on": {"OPEN": "open"},
+            "meta": {
+                "description": "Door is closed",
+            },
+            "on": {
+                "OPEN": "open",
+            },
         },
         "open": {
             "tags": ["unsafe"],
-            "meta": {"description": "Door is open"},
-            "on": {"CLOSE": "closed"},
+            "meta": {
+                "description": "Door is open",
+            },
+            "on": {
+                "CLOSE": "closed",
+            },
         },
     },
 }
@@ -325,7 +366,13 @@ Create an `Event` instance directly:
 ```python
 from xstate_statemachine import Event
 
-event = Event(type="LOGIN", payload={"username": "alice", "password": "secret"})
+event = Event(
+    type="LOGIN",
+    payload={
+        "username": "alice",
+        "password": "secret",
+    },
+)
 interp.send(event)
 ```
 
@@ -334,8 +381,20 @@ interp.send(event)
 Pass a dict with a `type` key:
 
 ```python
-interp.send({"type": "LOGIN", "username": "alice", "password": "secret"})
-interp.send({"type": "ADD_ITEM", "product_id": 42, "quantity": 3})
+interp.send(
+    {
+        "type": "LOGIN",
+        "username": "alice",
+        "password": "secret",
+    }
+)
+interp.send(
+    {
+        "type": "ADD_ITEM",
+        "product_id": 42,
+        "quantity": 3,
+    }
+)
 ```
 
 ### Multiple Events at Once
@@ -354,11 +413,16 @@ interp.send_events(["STEP_1", "STEP_2", "STEP_3"])
 You can mix formats in the list:
 
 ```python
-interp.send_events([
-    "START",
-    {"type": "CONFIG", "mode": "advanced"},
-    Event(type="READY", payload={}),
-])
+interp.send_events(
+    [
+        "START",
+        {
+            "type": "CONFIG",
+            "mode": "advanced",
+        },
+        Event(type="READY", payload={}),
+    ]
+)
 ```
 
 ---
@@ -388,8 +452,17 @@ config = {
     "initial": "a",
     "states": {
         "a": {
-            "entry": [{"type": "raise", "params": {"event": "GO"}}],
-            "on": {"GO": "b"},
+            "entry": [
+                {
+                    "type": "raise",
+                    "params": {
+                        "event": "GO",
+                    },
+                }
+            ],
+            "on": {
+                "GO": "b",
+            },
         },
         "b": {},
     },
@@ -590,23 +663,34 @@ print(receipt.state_ids, receipt.changed, receipt.error)
 When you send an event with payload data, actions and guards can access it through the `event` parameter:
 
 ```python
-from xstate_statemachine import (
-    create_machine, SyncInterpreter, MachineLogic
-)
+from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 
 config = {
     "id": "userMachine",
     "initial": "idle",
-    "context": {"user": None},
+    "context": {
+        "user": None,
+    },
     "states": {
         "idle": {
-            "on": {"LOGIN": {"target": "loggedIn", "actions": "storeUser"}}
+            "on": {
+                "LOGIN": {
+                    "target": "loggedIn",
+                    "actions": "storeUser",
+                },
+            },
         },
         "loggedIn": {
-            "on": {"LOGOUT": {"target": "idle", "actions": "clearUser"}}
-        }
-    }
+            "on": {
+                "LOGOUT": {
+                    "target": "idle",
+                    "actions": "clearUser",
+                },
+            },
+        },
+    },
 }
+
 
 class UserLogic(MachineLogic):
     def store_user(self, interpreter, context, event, action_def):
@@ -619,6 +703,7 @@ class UserLogic(MachineLogic):
 
     def clear_user(self, interpreter, context, event, action_def):
         context["user"] = None
+
 
 machine = create_machine(config, logic=UserLogic())
 interp = SyncInterpreter(machine).start()
@@ -663,30 +748,48 @@ config = {
     "initial": "idle",
     "context": {},
     "states": {
-        "idle":    {"on": {"GO": "running"}, "entry": "onEnterIdle"},
-        "running": {"on": {"STOP": "done"},  "entry": "onEnterRunning"},
-        "done":    {"type": "final",         "entry": "onEnterDone"}
-    }
+        "idle": {
+            "on": {
+                "GO": "running",
+            },
+            "entry": "onEnterIdle",
+        },
+        "running": {
+            "on": {
+                "STOP": "done",
+            },
+            "entry": "onEnterRunning",
+        },
+        "done": {
+            "type": "final",
+            "entry": "onEnterDone",
+        },
+    },
 }
+
 
 def log_entry(interpreter, context, event, action_def):
     print(f"entered via {action_def.type}")
 
+
 machine = create_machine(
     config,
     logic=MachineLogic(
-        actions={n: log_entry for n in ("onEnterIdle", "onEnterRunning", "onEnterDone")}
+        actions={
+            n: log_entry
+            for n in ("onEnterIdle", "onEnterRunning", "onEnterDone")
+        }
     ),
 )
 
 # 1. CREATE — machine is defined but not running
 interp = SyncInterpreter(machine)
-print(interp.is_running)        # False
+print(interp.is_running)  # False
 print(interp.active_state_ids)  # set()
 
 # 2. START — enters initial state, runs entry actions
 interp.start()
-print(interp.is_running)        # True
+print(interp.is_running)  # True
 print(interp.active_state_ids)  # {'lifecycle.idle'}
 
 # 3. SEND EVENTS — transitions occur
@@ -698,7 +801,7 @@ print(interp.active_state_ids)  # {'lifecycle.done'}
 
 # 4. STOP — exits all states, runs exit actions
 interp.stop()
-print(interp.is_running)        # False
+print(interp.is_running)  # False
 ```
 
 <div class="stately" data-machine="daf3941ff0" data-height="320" data-title="lifecycle"></div>
@@ -739,22 +842,31 @@ When a state has `always` transitions, the interpreter evaluates them immediatel
 config = {
     "id": "autoRouter",
     "initial": "checking",
-    "context": {"role": "admin"},
+    "context": {
+        "role": "admin",
+    },
     "states": {
         "checking": {
             "always": [
-                {"target": "adminPanel", "guard": "isAdmin"},
-                {"target": "userDashboard"}
-            ]
+                {
+                    "target": "adminPanel",
+                    "guard": "isAdmin",
+                },
+                {
+                    "target": "userDashboard",
+                },
+            ],
         },
         "adminPanel": {},
-        "userDashboard": {}
-    }
+        "userDashboard": {},
+    },
 }
+
 
 class Logic(MachineLogic):
     def is_admin(self, context, event):
         return context.get("role") == "admin"
+
 
 machine = create_machine(config, logic=Logic())
 interp = SyncInterpreter(machine).start()
@@ -790,24 +902,34 @@ config = {
     "id": "auth",
     "initial": "loggedOut",
     "states": {
-        "loggedOut": {"on": {"LOGIN": "loggedIn"}},
+        "loggedOut": {
+            "on": {
+                "LOGIN": "loggedIn",
+            },
+        },
         "loggedIn": {
             "initial": "idle",
             "states": {
-                "idle": {"on": {"FETCH": "pending"}},
+                "idle": {
+                    "on": {
+                        "FETCH": "pending",
+                    },
+                },
                 "pending": {},
             },
         },
     },
 }
 
+
 async def main():
     interp = await Interpreter(create_machine(config)).start()
-    print(interp.value)          # 'loggedOut'
+    print(interp.value)  # 'loggedOut'
 
     await interp.send("LOGIN")
     await asyncio.sleep(0.05)
-    print(interp.value)          # {'loggedIn': 'idle'}
+    print(interp.value)  # {'loggedIn': 'idle'}
+
 
 asyncio.run(main())
 ```
@@ -819,8 +941,14 @@ Because `value` is tree-walked rather than built from dotted ids, a state key th
 `matches()` accepts either the string form it always has (a fully-qualified id, optionally with a leading `#`, or a trailing partial path like `"loggedIn.idle"`) **or** a partial `value` dict:
 
 ```python
-print(interp.matches("loggedIn.idle"))          # True — string form
-print(interp.matches({"loggedIn": "idle"}))      # True — dict form
+print(interp.matches("loggedIn.idle"))  # True — string form
+print(
+    interp.matches(
+        {
+            "loggedIn": "idle",
+        }
+    )
+)  # True — dict form
 ```
 
 ## 🏁 Lifecycle: completion and teardown
@@ -849,17 +977,29 @@ Plugins observe machine execution without modifying behavior. Attach them before
 
 ```python
 from xstate_statemachine import (
-    create_machine, SyncInterpreter, LoggingInspector
+    create_machine,
+    SyncInterpreter,
+    LoggingInspector,
 )
 
 config = {
     "id": "demo",
     "initial": "a",
     "states": {
-        "a": {"on": {"GO": "b"}},
-        "b": {"on": {"GO": "c"}},
-        "c": {"type": "final"}
-    }
+        "a": {
+            "on": {
+                "GO": "b",
+            },
+        },
+        "b": {
+            "on": {
+                "GO": "c",
+            },
+        },
+        "c": {
+            "type": "final",
+        },
+    },
 }
 
 machine = create_machine(config)
@@ -869,8 +1009,8 @@ interp = SyncInterpreter(machine)
 interp.plugins = [LoggingInspector()]
 
 interp.start()
-interp.send("GO")    # a → b — logged by plugin
-interp.send("GO")    # b → c — logged by plugin
+interp.send("GO")  # a → b — logged by plugin
+interp.send("GO")  # b → c — logged by plugin
 interp.stop()
 ```
 
@@ -918,21 +1058,29 @@ The interpreters work identically with machines built using the Pythonic API:
 
 ```python
 from xstate_statemachine import (
-    State, StateMachine, SyncInterpreter,
-    action, guard, LoggingInspector
+    State,
+    StateMachine,
+    SyncInterpreter,
+    action,
+    guard,
+    LoggingInspector,
 )
+
 
 class OrderMachine(StateMachine):
     machine_id = "order"
-    initial_context = {"items": [], "total": 0}
+    initial_context = {
+        "items": [],
+        "total": 0,
+    }
 
-    cart      = State("cart", initial=True)
-    checkout  = State("checkout")
+    cart = State("cart", initial=True)
+    checkout = State("checkout")
     confirmed = State("confirmed", final=True)
 
     begin_checkout = cart.to(checkout, event="CHECKOUT", guard="hasItems")
-    confirm        = checkout.to(confirmed, event="CONFIRM")
-    back_to_cart   = checkout.to(cart, event="BACK")
+    confirm = checkout.to(confirmed, event="CONFIRM")
+    back_to_cart = checkout.to(cart, event="BACK")
 
     @guard
     def has_items(self, context, event):
@@ -986,11 +1134,19 @@ config = {
     "id": "risky",
     "initial": "idle",
     "states": {
-        "idle": {"on": {"GO": {"target": "processing", "actions": "riskyAction"}}},
+        "idle": {
+            "on": {
+                "GO": {
+                    "target": "processing",
+                    "actions": "riskyAction",
+                },
+            },
+        },
         "processing": {},
-        "error": {}
-    }
+        "error": {},
+    },
 }
+
 
 class RiskyLogic(MachineLogic):
     def risky_action(self, interpreter, context, event, action_def):
@@ -1004,7 +1160,7 @@ interp.send("GO")
 
 # The exception was logged and swallowed; the transition still completed.
 print(interp.current_state_ids)  # {"risky.processing"}
-print(interp.status)             # "running"
+print(interp.status)  # "running"
 
 interp.stop()
 ```
@@ -1047,7 +1203,9 @@ Per XState, an event that selects no transition in any active state is silently 
   "id": "m",
   "onUnhandled": "defer",
   "initial": "a",
-  "states": { "a": {} }
+  "states": {
+    "a": {}
+  }
 }
 ```
 
@@ -1108,24 +1266,33 @@ The event is normalised on the *calling* thread (so a malformed event or a raisi
 ```python
 import pytest
 from xstate_statemachine import (
-    State, StateMachine, SyncInterpreter, guard, action
+    State,
+    StateMachine,
+    SyncInterpreter,
+    guard,
+    action,
 )
 
 
 class LoginMachine(StateMachine):
     machine_id = "login"
-    initial_context = {"username": "", "authenticated": False}
+    initial_context = {
+        "username": "",
+        "authenticated": False,
+    }
 
-    idle         = State("idle", initial=True)
+    idle = State("idle", initial=True)
     authenticating = State("authenticating")
-    logged_in    = State("loggedIn")
-    error        = State("error")
+    logged_in = State("loggedIn")
+    error = State("error")
 
     attempt = idle.to(authenticating, event="LOGIN")
-    success = authenticating.to(logged_in, event="SUCCESS", actions=["setAuthenticated"])
+    success = authenticating.to(
+        logged_in, event="SUCCESS", actions=["setAuthenticated"]
+    )
     failure = authenticating.to(error, event="FAILURE")
-    retry   = error.to(idle, event="RETRY")
-    logout  = logged_in.to(idle, event="LOGOUT", actions=["clearAuth"])
+    retry = error.to(idle, event="RETRY")
+    logout = logged_in.to(idle, event="LOGOUT", actions=["clearAuth"])
 
     @action
     def set_authenticated(self, interpreter, context, event, action_def):

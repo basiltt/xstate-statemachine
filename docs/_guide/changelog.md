@@ -15,10 +15,24 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ### Changed
 
+- Made the GitHub Pages documentation responsive across phones, tablets and
+  desktops, with accessible mobile menus, persistent search/theme controls,
+  and contained code/table scrolling. Expanded statechart JSON and Python
+  dictionaries throughout the guides, API reference and homepage without
+  changing their behavior, and added formatting/layout regression checks.
+  Diagram fullscreen controls now fit small screens, preserve usable zoom
+  and keyboard focus, and follow the selected site theme.
+
 - Redesigned the README with responsive SVG branding, clearer onboarding and
   navigation, an expanded event-driven architecture introduction, and scoped
   competitor comparisons. Preserved the technical guide, examples, diagrams
   and API reference while clarifying operational guarantees and limitations.
+
+### Fixed
+
+- Eliminated a timing-dependent false positive in the EDA example telemetry
+  privacy checks by checking metric labels separately from numeric samples.
+  Python 3.9 adoption failures now include complete nested test diagnostics.
 
 ## [0.11.0] - 2026-10-12
 

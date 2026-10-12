@@ -44,9 +44,17 @@ Define context at the top level of your machine config:
   "states": {
     "active": {
       "on": {
-        "INCREMENT": { "target": "active", "actions": "addOne" },
-        "DECREMENT": { "target": "active", "actions": "subtractOne" },
-        "RESET":     { "actions": "resetCount" }
+        "INCREMENT": {
+          "target": "active",
+          "actions": "addOne"
+        },
+        "DECREMENT": {
+          "target": "active",
+          "actions": "subtractOne"
+        },
+        "RESET": {
+          "actions": "resetCount"
+        }
       }
     }
   }
@@ -67,16 +75,24 @@ from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 config = {
     "id": "counter",
     "initial": "counting",
-    "context": {"count": 0, "history": []},
+    "context": {
+        "count": 0,
+        "history": [],
+    },
     "states": {
         "counting": {
             "on": {
-                "INCREMENT": {"actions": "addOne"},
-                "DECREMENT": {"actions": "subtractOne"}
-            }
-        }
-    }
+                "INCREMENT": {
+                    "actions": "addOne",
+                },
+                "DECREMENT": {
+                    "actions": "subtractOne",
+                },
+            },
+        },
+    },
 }
+
 
 class CounterLogic(MachineLogic):
     def add_one(self, interpreter, context, event, action_def):
@@ -86,6 +102,7 @@ class CounterLogic(MachineLogic):
     def subtract_one(self, interpreter, context, event, action_def):
         context["count"] -= 1
         context["history"].append(f"-1 -> {context['count']}")
+
 
 machine = create_machine(config, logic=CounterLogic())
 interp = SyncInterpreter(machine).start()
@@ -113,9 +130,13 @@ All three Pythonic API styles support setting initial context.
 ```python
 from xstate_statemachine import State, StateMachine, SyncInterpreter, action
 
+
 class Counter(StateMachine):
     machine_id = "counter"
-    initial_context = {"count": 0, "lastUpdated": None}
+    initial_context = {
+        "count": 0,
+        "lastUpdated": None,
+    }
 
     counting = State("counting", initial=True)
 
@@ -124,6 +145,7 @@ class Counter(StateMachine):
     @action
     def add_one(self, interpreter, context, event, action_def):
         context["count"] += 1
+
 
 machine = Counter.create_machine()
 interp = SyncInterpreter(machine).start()
@@ -136,7 +158,12 @@ interp.stop()
 
 ```python
 # Override the class-level context at machine creation time
-machine = Counter.create_machine(context={"count": 100, "lastUpdated": None})
+machine = Counter.create_machine(
+    context={
+        "count": 100,
+        "lastUpdated": None,
+    }
+)
 interp = SyncInterpreter(machine).start()
 print(interp.context["count"])  # 100
 interp.stop()
@@ -149,15 +176,20 @@ from xstate_statemachine import State, build_machine, SyncInterpreter, action
 
 counting = State("counting", initial=True)
 
+
 @action
 def add_one(interpreter, context, event, action_def):
     context["count"] += 1
+
 
 machine = build_machine(
     id="counter",
     states=[counting],
     actions=[add_one],
-    context={"count": 0, "lastUpdated": None},
+    context={
+        "count": 0,
+        "lastUpdated": None,
+    },
 )
 
 interp = SyncInterpreter(machine).start()
@@ -172,7 +204,12 @@ from xstate_statemachine import MachineBuilder, SyncInterpreter
 
 machine = (
     MachineBuilder("counter")
-    .context({"count": 0, "lastUpdated": None})
+    .context(
+        {
+            "count": 0,
+            "lastUpdated": None,
+        }
+    )
     .state("counting", initial=True)
     .build()
 )
@@ -187,30 +224,45 @@ interp.stop()
 Guards receive `(context, event)` and can read context values to make routing decisions:
 
 ```python
-from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic, guard
+from xstate_statemachine import (
+    create_machine,
+    SyncInterpreter,
+    MachineLogic,
+    guard,
+)
 
 config = {
     "id": "purchaseGate",
     "initial": "checking",
-    "context": {"balance": 50.00, "itemPrice": 29.99},
+    "context": {
+        "balance": 50.00,
+        "itemPrice": 29.99,
+    },
     "states": {
         "checking": {
             "on": {
                 "BUY": [
-                    {"target": "approved", "guard": "hasEnoughBalance"},
-                    {"target": "declined"}
-                ]
-            }
+                    {
+                        "target": "approved",
+                        "guard": "hasEnoughBalance",
+                    },
+                    {
+                        "target": "declined",
+                    },
+                ],
+            },
         },
-        "approved":  {},
-        "declined":  {}
-    }
+        "approved": {},
+        "declined": {},
+    },
 }
+
 
 class PurchaseLogic(MachineLogic):
     @guard
     def has_enough_balance(self, context, event):
         return context["balance"] >= context["itemPrice"]
+
 
 machine = create_machine(config, logic=PurchaseLogic())
 interp = SyncInterpreter(machine).start()
@@ -233,23 +285,31 @@ config = {
         "user": {
             "name": "",
             "role": "guest",
-            "preferences": {"theme": "light", "language": "en"}
-        }
+            "preferences": {
+                "theme": "light",
+                "language": "en",
+            },
+        },
     },
     "states": {
         "idle": {
             "on": {
-                "LOGIN": {"actions": "setUser", "target": "authenticated"}
-            }
+                "LOGIN": {
+                    "actions": "setUser",
+                    "target": "authenticated",
+                },
+            },
         },
-        "authenticated": {}
-    }
+        "authenticated": {},
+    },
 }
+
 
 class UserLogic(MachineLogic):
     def set_user(self, interpreter, context, event, action_def):
         context["user"]["name"] = event.payload.get("name", "Unknown")
         context["user"]["role"] = event.payload.get("role", "member")
+
 
 machine = create_machine(config, logic=UserLogic())
 interp = SyncInterpreter(machine).start()
@@ -269,16 +329,24 @@ Lists in context are useful for tracking history, queued items, or collected dat
 config = {
     "id": "collector",
     "initial": "collecting",
-    "context": {"items": [], "history": []},
+    "context": {
+        "items": [],
+        "history": [],
+    },
     "states": {
         "collecting": {
             "on": {
-                "ADD_ITEM":    {"actions": "addItem"},
-                "REMOVE_ITEM": {"actions": "removeItem"}
-            }
-        }
-    }
+                "ADD_ITEM": {
+                    "actions": "addItem",
+                },
+                "REMOVE_ITEM": {
+                    "actions": "removeItem",
+                },
+            },
+        },
+    },
 }
+
 
 class CollectorLogic(MachineLogic):
     def add_item(self, interpreter, context, event, action_def):
@@ -293,6 +361,7 @@ class CollectorLogic(MachineLogic):
             context["items"].remove(item)
             context["history"].append(f"Removed: {item}")
 
+
 machine = create_machine(config, logic=CollectorLogic())
 interp = SyncInterpreter(machine).start()
 
@@ -300,8 +369,10 @@ interp.send("ADD_ITEM", item="apple")
 interp.send("ADD_ITEM", item="banana")
 interp.send("REMOVE_ITEM", item="apple")
 
-print(interp.context["items"])    # ["banana"]
-print(interp.context["history"])  # ["Added: apple", "Added: banana", "Removed: apple"]
+print(interp.context["items"])  # ["banana"]
+print(
+    interp.context["history"]
+)  # ["Added: apple", "Added: banana", "Removed: apple"]
 interp.stop()
 ```
 
@@ -313,16 +384,16 @@ Context supports all JSON-compatible Python types:
 
 ```python
 context = {
-    "name": "Alice",          # str
-    "age": 30,                # int
-    "balance": 99.95,         # float
-    "isActive": True,         # bool
-    "deletedAt": None,        # null
+    "name": "Alice",  # str
+    "age": 30,  # int
+    "balance": 99.95,  # float
+    "isActive": True,  # bool
+    "deletedAt": None,  # null
     "tags": ["vip", "beta"],  # list
-    "address": {              # dict
+    "address": {  # dict
         "city": "Portland",
-        "zip": "97201"
-    }
+        "zip": "97201",
+    },
 }
 ```
 
@@ -379,7 +450,12 @@ class SharedContextLogic(MachineLogic):
 A full shopping cart machine demonstrating context usage across multiple states and transitions:
 
 ```python
-from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic, guard
+from xstate_statemachine import (
+    create_machine,
+    SyncInterpreter,
+    MachineLogic,
+    guard,
+)
 
 config = {
     "id": "shoppingCart",
@@ -388,32 +464,49 @@ config = {
         "items": [],
         "total": 0.0,
         "discount": 0.0,
-        "appliedCoupon": None
+        "appliedCoupon": None,
     },
     "states": {
         "browsing": {
             "on": {
-                "ADD_ITEM":       {"actions": "addItem"},
-                "REMOVE_ITEM":    {"actions": "removeItem"},
-                "APPLY_COUPON":   {"actions": "applyCoupon"},
+                "ADD_ITEM": {
+                    "actions": "addItem",
+                },
+                "REMOVE_ITEM": {
+                    "actions": "removeItem",
+                },
+                "APPLY_COUPON": {
+                    "actions": "applyCoupon",
+                },
                 "CHECKOUT": [
-                    {"target": "checkout", "guard": "hasItems"},
-                    {"target": "browsing"}
-                ]
-            }
+                    {
+                        "target": "checkout",
+                        "guard": "hasItems",
+                    },
+                    {
+                        "target": "browsing",
+                    },
+                ],
+            },
         },
         "checkout": {
             "entry": "calculateTotal",
             "on": {
-                "BACK":    {"target": "browsing"},
-                "CONFIRM": {"target": "confirmed", "actions": "placeOrder"}
-            }
+                "BACK": {
+                    "target": "browsing",
+                },
+                "CONFIRM": {
+                    "target": "confirmed",
+                    "actions": "placeOrder",
+                },
+            },
         },
         "confirmed": {
-            "type": "final"
-        }
-    }
+            "type": "final",
+        },
+    },
 }
+
 
 class CartLogic(MachineLogic):
     # ---- Actions ----
@@ -431,19 +524,22 @@ class CartLogic(MachineLogic):
 
     def apply_coupon(self, interpreter, context, event, action_def):
         code = event.payload.get("code", "")
-        coupons = {"SAVE10": 0.10, "SAVE20": 0.20}
+        coupons = {
+            "SAVE10": 0.10,
+            "SAVE20": 0.20,
+        }
         if code in coupons:
             context["discount"] = coupons[code]
             context["appliedCoupon"] = code
 
     def calculate_total(self, interpreter, context, event, action_def):
-        subtotal = sum(
-            i["price"] * i["qty"] for i in context["items"]
-        )
+        subtotal = sum(i["price"] * i["qty"] for i in context["items"])
         context["total"] = round(subtotal * (1 - context["discount"]), 2)
 
     def place_order(self, interpreter, context, event, action_def):
-        print(f"Order placed! {len(context['items'])} items, total: ${context['total']:.2f}")
+        print(
+            f"Order placed! {len(context['items'])} items, total: ${context['total']:.2f}"
+        )
 
     # ---- Guards ----
     @guard
@@ -466,8 +562,8 @@ interp.send("CHECKOUT")
 interp.send("CONFIRM")
 # Output: Order placed! 2 items, total: $40.47
 
-print(interp.context["total"])         # 40.47
-print(interp.context["appliedCoupon"]) # SAVE10
+print(interp.context["total"])  # 40.47
+print(interp.context["appliedCoupon"])  # SAVE10
 interp.stop()
 ```
 
@@ -478,21 +574,32 @@ interp.stop()
 Every example above mutates context imperatively inside a `MachineLogic` action method. XState v5's idiomatic alternative is `assign`, a built-in action creator that declares context updates without a hand-written action method — each value can be a plain value or a callable of `{context, event}`:
 
 ```python
-from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic, assign
+from xstate_statemachine import (
+    create_machine,
+    SyncInterpreter,
+    MachineLogic,
+    assign,
+)
 
 config = {
     "id": "counter",
     "initial": "counting",
-    "context": {"count": 0},
+    "context": {
+        "count": 0,
+    },
     "states": {
         "counting": {
             "on": {
                 "INCREMENT": {
-                    "actions": assign({"count": lambda args: args["context"]["count"] + 1})
-                }
-            }
-        }
-    }
+                    "actions": assign(
+                        {
+                            "count": lambda args: args["context"]["count"] + 1,
+                        }
+                    ),
+                },
+            },
+        },
+    },
 }
 
 machine = create_machine(config, logic=MachineLogic())
@@ -527,7 +634,9 @@ class Cart(TypedDict):
     coupon: Optional[str]
 
 
-def add_item(interp: "SyncInterpreter[Cart]", ctx: Cart, event, action_def) -> None:
+def add_item(
+    interp: "SyncInterpreter[Cart]", ctx: Cart, event, action_def
+) -> None:
     ctx["items"].append(event.payload["sku"])
     ctx["total"] += event.payload["price"]
 
@@ -536,17 +645,33 @@ machine = create_machine(
     {
         "id": "shop",
         "initial": "browsing",
-        "context": {"items": [], "total": 0.0, "coupon": None},
-        "states": {"browsing": {"on": {"ADD": {"actions": ["addItem"]}}}},
+        "context": {
+            "items": [],
+            "total": 0.0,
+            "coupon": None,
+        },
+        "states": {
+            "browsing": {
+                "on": {
+                    "ADD": {
+                        "actions": ["addItem"],
+                    },
+                },
+            },
+        },
     },
-    logic=MachineLogic(actions={"add_item": add_item}),
+    logic=MachineLogic(
+        actions={
+            "add_item": add_item,
+        }
+    ),
     context_type=Cart,
 )
 
-interp = SyncInterpreter(machine).start()          # SyncInterpreter[Cart]
+interp = SyncInterpreter(machine).start()  # SyncInterpreter[Cart]
 interp.send("ADD", sku="A1", price=9.5)
 
-total: float = interp.context["total"]             # ✅ typed as float
+total: float = interp.context["total"]  # ✅ typed as float
 assert total == 9.5
 ```
 
@@ -579,12 +704,21 @@ from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 config = {
     "id": "m",
     "initial": "idle",
-    "context": {"count": 0},
-    "states": {"idle": {}},
+    "context": {
+        "count": 0,
+    },
+    "states": {
+        "idle": {},
+    },
 }
 
 machine = create_machine(config, logic=MachineLogic())
-interp = SyncInterpreter(machine, input={"userId": 42}).start()
+interp = SyncInterpreter(
+    machine,
+    input={
+        "userId": 42,
+    },
+).start()
 
 print(interp.context)  # {"count": 0, "input": {"userId": 42}}
 interp.stop()

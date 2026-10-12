@@ -18,16 +18,60 @@ xsm simulate examples/recipes/task_queue_workers/machine.json --events LABEL_PRI
 ```python
 import threading
 from xstate_statemachine import MachineLogic, create_machine
-from xstate_statemachine.persistence import ConflictError, MemoryStore, persisted
+from xstate_statemachine.persistence import (
+    ConflictError,
+    MemoryStore,
+    persisted,
+)
 
-chart = {"id": "shipment", "initial": "pending", "context": {"scans": 0}, "states": {
-    "pending": {"on": {"LABEL_PRINTED": "labelled"}},
-    "labelled": {"on": {"PICKED_UP": "in_transit"}},
-    "in_transit": {"on": {"SCANNED": {"actions": "countScan"}, "DELIVERED": "delivered"}},
-    "delivered": {"type": "final"}}}
-def count_scan(i, ctx, e, a): ctx["scans"] += 1
-MACHINE = create_machine(chart, logic=MachineLogic(actions={"countScan": count_scan}))
-STORE = MemoryStore()                      # SQLiteStore / RedisStore / SQLAlchemyStore in production
+chart = {
+    "id": "shipment",
+    "initial": "pending",
+    "context": {
+        "scans": 0,
+    },
+    "states": {
+        "pending": {
+            "on": {
+                "LABEL_PRINTED": "labelled",
+            },
+        },
+        "labelled": {
+            "on": {
+                "PICKED_UP": "in_transit",
+            },
+        },
+        "in_transit": {
+            "on": {
+                "SCANNED": {
+                    "actions": "countScan",
+                },
+                "DELIVERED": "delivered",
+            },
+        },
+        "delivered": {
+            "type": "final",
+        },
+    },
+}
+
+
+def count_scan(i, ctx, e, a):
+    ctx["scans"] += 1
+
+
+MACHINE = create_machine(
+    chart,
+    logic=MachineLogic(
+        actions={
+            "countScan": count_scan,
+        }
+    ),
+)
+STORE = (
+    MemoryStore()
+)  # SQLiteStore / RedisStore / SQLAlchemyStore in production
+
 
 def apply_event(key: str, event: str, retries: int = 50) -> str:
     """The job body: load -> send -> save; reload and re-apply on a conflict."""
@@ -38,14 +82,22 @@ def apply_event(key: str, event: str, retries: int = 50) -> str:
                 return inst.value
         except ConflictError:
             if attempt == retries:
-                raise                      # the queue's retry / dead-letter takes over
+                raise  # the queue's retry / dead-letter takes over
+
 
 apply_event("shipment.42", "LABEL_PRINTED")
 apply_event("shipment.42", "PICKED_UP")
-workers = [threading.Thread(target=apply_event, args=("shipment.42", "SCANNED")) for _ in range(8)]
-[w.start() for w in workers]; [w.join() for w in workers]
+workers = [
+    threading.Thread(target=apply_event, args=("shipment.42", "SCANNED"))
+    for _ in range(8)
+]
+[w.start() for w in workers]
+[w.join() for w in workers]
 import json
-assert json.loads(STORE.load("shipment.42").snapshot)["context"]["scans"] == 8   # no lost update
+
+assert (
+    json.loads(STORE.load("shipment.42").snapshot)["context"]["scans"] == 8
+)  # no lost update
 ```
 
 <div class="stately" data-machine="981313a915" data-height="420" data-title="shipment"></div>

@@ -79,15 +79,25 @@ config = {
     "initial": "active",
     "states": {
         "active": {
-            "after": {"300000": "warning"},
-            "on": {"ACTIVITY": "active"}
+            "after": {
+                "300000": "warning",
+            },
+            "on": {
+                "ACTIVITY": "active",
+            },
         },
         "warning": {
-            "after": {"30000": "expired"},
-            "on": {"EXTEND": "active"}
+            "after": {
+                "30000": "expired",
+            },
+            "on": {
+                "EXTEND": "active",
+            },
         },
-        "expired": {"type": "final"}
-    }
+        "expired": {
+            "type": "final",
+        },
+    },
 }
 
 machine = create_machine(config)
@@ -141,17 +151,21 @@ config = {
             "after": {
                 "5000": {
                     "target": "done",
-                    "actions": "logTimeout"
-                }
-            }
+                    "actions": "logTimeout",
+                },
+            },
         },
-        "done": {"type": "final"}
-    }
+        "done": {
+            "type": "final",
+        },
+    },
 }
+
 
 class TimedLogic(MachineLogic):
     def log_timeout(self, interpreter, context, event, action_def):
         print("Timer expired — transitioning to done")
+
 
 machine = create_machine(config, logic=TimedLogic())
 interp = SyncInterpreter(machine).start()
@@ -186,24 +200,31 @@ from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 config = {
     "id": "guardedTimer",
     "initial": "monitoring",
-    "context": {"lastPing": 0},
+    "context": {
+        "lastPing": 0,
+    },
     "states": {
         "monitoring": {
             "after": {
                 "60000": {
                     "target": "stale",
-                    "guard": "noRecentData"
-                }
+                    "guard": "noRecentData",
+                },
             },
             "on": {
-                "PING": {"actions": "recordPing"}
-            }
+                "PING": {
+                    "actions": "recordPing",
+                },
+            },
         },
         "stale": {
-            "on": {"RESET": "monitoring"}
-        }
-    }
+            "on": {
+                "RESET": "monitoring",
+            },
+        },
+    },
 }
+
 
 class MonitorLogic(MachineLogic):
     def no_recent_data(self, context, event):
@@ -212,7 +233,9 @@ class MonitorLogic(MachineLogic):
 
     def record_ping(self, interpreter, context, event, action_def):
         import time
+
         context["lastPing"] = time.time()
+
 
 machine = create_machine(config, logic=MonitorLogic())
 interp = SyncInterpreter(machine).start()
@@ -238,8 +261,14 @@ A single state can have **multiple** `after` timers running simultaneously:
 {
   "monitoring": {
     "after": {
-      "5000":   {"target": "monitoring", "actions": "heartbeat"},
-      "60000":  {"target": "stale",      "guard": "noRecentData"},
+      "5000": {
+        "target": "monitoring",
+        "actions": "heartbeat"
+      },
+      "60000": {
+        "target": "stale",
+        "guard": "noRecentData"
+      },
       "300000": "timeout"
     }
   }
@@ -291,14 +320,31 @@ The `State` class accepts an `after` parameter — a dict mapping millisecond de
 ```python
 from xstate_statemachine import State, StateMachine, SyncInterpreter, action
 
+
 class SessionMachine(StateMachine):
     machine_id = "session"
 
-    active  = State("active",  initial=True, after={300000: "warning"},
-                     on={"ACTIVITY": "active"})
-    warning = State("warning", after={30000: "expired"},
-                     on={"EXTEND": "active"})
+    active = State(
+        "active",
+        initial=True,
+        after={
+            300000: "warning",
+        },
+        on={
+            "ACTIVITY": "active",
+        },
+    )
+    warning = State(
+        "warning",
+        after={
+            30000: "expired",
+        },
+        on={
+            "EXTEND": "active",
+        },
+    )
     expired = State("expired", final=True)
+
 
 machine = SessionMachine.create_machine()
 interp = SyncInterpreter(machine).start()
@@ -318,10 +364,25 @@ Using the functional API:
 ```python
 from xstate_statemachine import State, build_machine, SyncInterpreter
 
-active  = State("active",  initial=True, after={300000: "warning"},
-                on={"ACTIVITY": "active"})
-warning = State("warning", after={30000: "expired"},
-                on={"EXTEND": "active"})
+active = State(
+    "active",
+    initial=True,
+    after={
+        300000: "warning",
+    },
+    on={
+        "ACTIVITY": "active",
+    },
+)
+warning = State(
+    "warning",
+    after={
+        30000: "expired",
+    },
+    on={
+        "EXTEND": "active",
+    },
+)
 expired = State("expired", final=True)
 
 machine = build_machine(id="session", states=[active, warning, expired])
@@ -336,10 +397,25 @@ from xstate_statemachine import MachineBuilder, SyncInterpreter
 
 machine = (
     MachineBuilder("session")
-    .state("active",  initial=True, after={300000: "warning"},
-           on={"ACTIVITY": "active"})
-    .state("warning", after={30000: "expired"},
-           on={"EXTEND": "active"})
+    .state(
+        "active",
+        initial=True,
+        after={
+            300000: "warning",
+        },
+        on={
+            "ACTIVITY": "active",
+        },
+    )
+    .state(
+        "warning",
+        after={
+            30000: "expired",
+        },
+        on={
+            "EXTEND": "active",
+        },
+    )
     .state("expired", final=True)
     .build()
 )
@@ -362,7 +438,10 @@ Delayed transitions work inside compound (hierarchical) states. Timers in a chil
       "states": {
         "dashboard": {
           "after": {
-            "60000": {"target": "dashboard", "actions": "refreshData"}
+            "60000": {
+              "target": "dashboard",
+              "actions": "refreshData"
+            }
           }
         },
         "settings": {}
@@ -404,21 +483,34 @@ config = {
     "initial": "waiting",
     "states": {
         "waiting": {
-            "after": {"50": {"target": "waiting", "actions": "checkLateness"}}
-        }
+            "after": {
+                "50": {
+                    "target": "waiting",
+                    "actions": "checkLateness",
+                },
+            },
+        },
     },
 }
+
 
 def check_lateness(interpreter, context, event, action_def):
     print(f"lateness_ms={event.lateness_ms:.2f}")
 
+
 async def main():
     machine = create_machine(
-        config, logic=MachineLogic(actions={"check_lateness": check_lateness})
+        config,
+        logic=MachineLogic(
+            actions={
+                "check_lateness": check_lateness,
+            }
+        ),
     )
     interp = await Interpreter(machine).start()
     await asyncio.sleep(0.2)
     await interp.stop()
+
 
 asyncio.run(main())
 ```
@@ -469,22 +561,38 @@ config = {
     "id": "sessionTimeout",
     "initial": "active",
     "states": {
-        "active": {"after": {"300000": "warning"}, "on": {"ACTIVITY": "active"}},
-        "warning": {"after": {"30000": "expired"}, "on": {"EXTEND": "active"}},
-        "expired": {"type": "final"},
+        "active": {
+            "after": {
+                "300000": "warning",
+            },
+            "on": {
+                "ACTIVITY": "active",
+            },
+        },
+        "warning": {
+            "after": {
+                "30000": "expired",
+            },
+            "on": {
+                "EXTEND": "active",
+            },
+        },
+        "expired": {
+            "type": "final",
+        },
     },
 }
 machine = create_machine(config)
 
 clock = SimulatedClock()
 interp = SyncInterpreter(machine, clock=clock).start()
-print(interp.active_state_ids)   # {'sessionTimeout.active'}
+print(interp.active_state_ids)  # {'sessionTimeout.active'}
 
-clock.increment(300_000)         # 5 minutes pass, instantly
-print(interp.active_state_ids)   # {'sessionTimeout.warning'}
+clock.increment(300_000)  # 5 minutes pass, instantly
+print(interp.active_state_ids)  # {'sessionTimeout.warning'}
 
-clock.increment(30_000)          # another 30 seconds pass
-print(interp.active_state_ids)   # {'sessionTimeout.expired'}
+clock.increment(30_000)  # another 30 seconds pass
+print(interp.active_state_ids)  # {'sessionTimeout.expired'}
 
 interp.stop()
 ```
@@ -510,28 +618,54 @@ Calling `increment()`/`set()` inside a running event loop **without** `await` ra
 A `Clock` is not tied to one engine. Pass the same instance to a parent and to the children it invokes — including a mix of async and sync interpreters — and they share a single timeline. A parent's invoked child inherits its clock automatically; if you construct a standalone `SyncInterpreter` you want on the same timeline, pass `clock=` explicitly:
 
 ```python
-from xstate_statemachine import create_machine, SyncInterpreter, Interpreter, SimulatedClock
+from xstate_statemachine import (
+    create_machine,
+    SyncInterpreter,
+    Interpreter,
+    SimulatedClock,
+)
 
 child = {
     "id": "kid",
     "initial": "w",
-    "states": {"w": {"after": {"100": "d"}}, "d": {"type": "final"}},
+    "states": {
+        "w": {
+            "after": {
+                "100": "d",
+            },
+        },
+        "d": {
+            "type": "final",
+        },
+    },
 }
 parent = {
     "id": "p",
     "initial": "a",
-    "states": {"a": {"after": {"500": "b"}}, "b": {}},
+    "states": {
+        "a": {
+            "after": {
+                "500": "b",
+            },
+        },
+        "b": {},
+    },
 }
 
 clock = SimulatedClock()
 kid = SyncInterpreter(create_machine(child), clock=clock).start()
 
+
 async def main():
     i = await Interpreter(create_machine(parent), clock=clock).start()
     await clock.increment(100)
-    print(set(kid.current_state_ids), set(i.current_state_ids))  # {'kid.d'} {'p.a'}
+    print(
+        set(kid.current_state_ids), set(i.current_state_ids)
+    )  # {'kid.d'} {'p.a'}
     await clock.increment(400)
-    print(set(kid.current_state_ids), set(i.current_state_ids))  # {'kid.d'} {'p.b'}
+    print(
+        set(kid.current_state_ids), set(i.current_state_ids)
+    )  # {'kid.d'} {'p.b'}
     await i.stop()
 ```
 
@@ -550,15 +684,31 @@ Before 0.8.0, a fired async timer's continuation had to queue behind every exter
 ```json
 "up": {
   "entry": [
-    { "type": "raise", "params": { "event": "BEAT", "delay": 1000 } }
+    {
+      "type": "raise",
+      "params": {
+        "event": "BEAT",
+        "delay": 1000
+      }
+    }
   ],
-  "on": { "BEAT": "down" }
+  "on": {
+    "BEAT": "down"
+  }
 },
 "down": {
   "entry": [
-    { "type": "raise", "params": { "event": "BEAT", "delay": 1000 } }
+    {
+      "type": "raise",
+      "params": {
+        "event": "BEAT",
+        "delay": 1000
+      }
+    }
   ],
-  "on": { "BEAT": "up" }
+  "on": {
+    "BEAT": "up"
+  }
 }
 ```
 
@@ -578,51 +728,65 @@ from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 config = {
     "id": "poller",
     "initial": "idle",
-    "context": {"data": None, "errors": 0, "maxErrors": 3},
+    "context": {
+        "data": None,
+        "errors": 0,
+        "maxErrors": 3,
+    },
     "states": {
         "idle": {
-            "on": {"START": "polling"}
+            "on": {
+                "START": "polling",
+            },
         },
         "polling": {
             "invoke": {
                 "src": "fetchData",
                 "onDone": {
                     "target": "waiting",
-                    "actions": "storeData"
+                    "actions": "storeData",
                 },
                 "onError": {
                     "target": "retrying",
-                    "actions": "incrementErrors"
-                }
-            }
+                    "actions": "incrementErrors",
+                },
+            },
         },
         "waiting": {
             "after": {
-                "10000": "polling"
+                "10000": "polling",
             },
-            "on": {"STOP": "idle"}
+            "on": {
+                "STOP": "idle",
+            },
         },
         "retrying": {
             "after": {
                 "30000": {
                     "target": "polling",
-                    "guard": "belowMaxErrors"
+                    "guard": "belowMaxErrors",
                 },
                 "30001": {
                     "target": "failed",
-                    "guard": "atMaxErrors"
-                }
-            }
+                    "guard": "atMaxErrors",
+                },
+            },
         },
         "failed": {
-            "on": {"RESET": "idle"}
-        }
-    }
+            "on": {
+                "RESET": "idle",
+            },
+        },
+    },
 }
+
 
 class PollerLogic(MachineLogic):
     def fetch_data(self, interpreter, context, event):
-        return {"status": "ok", "value": 42}
+        return {
+            "status": "ok",
+            "value": 42,
+        }
 
     def store_data(self, interpreter, context, event, action_def):
         context["data"] = event.data
@@ -636,6 +800,7 @@ class PollerLogic(MachineLogic):
 
     def at_max_errors(self, context, event):
         return context["errors"] >= context["maxErrors"]
+
 
 machine = create_machine(config, logic=PollerLogic())
 interp = SyncInterpreter(machine).start()
@@ -666,41 +831,45 @@ from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 config = {
     "id": "autoSave",
     "initial": "clean",
-    "context": {"content": "", "lastSaved": None},
+    "context": {
+        "content": "",
+        "lastSaved": None,
+    },
     "states": {
         "clean": {
             "on": {
                 "EDIT": {
                     "target": "dirty",
-                    "actions": "updateContent"
-                }
-            }
+                    "actions": "updateContent",
+                },
+            },
         },
         "dirty": {
             "after": {
-                "2000": "saving"
+                "2000": "saving",
             },
             "on": {
                 "EDIT": {
                     "target": "dirty",
-                    "actions": "updateContent"
-                }
-            }
+                    "actions": "updateContent",
+                },
+            },
         },
         "saving": {
             "invoke": {
                 "src": "saveDocument",
                 "onDone": {
                     "target": "clean",
-                    "actions": "markSaved"
+                    "actions": "markSaved",
                 },
                 "onError": {
-                    "target": "dirty"
-                }
-            }
-        }
-    }
+                    "target": "dirty",
+                },
+            },
+        },
+    },
 }
+
 
 class AutoSaveLogic(MachineLogic):
     def update_content(self, interpreter, context, event, action_def):
@@ -709,23 +878,37 @@ class AutoSaveLogic(MachineLogic):
 
     def save_document(self, interpreter, context, event):
         print(f"Saving: {context['content']!r}")
-        return {"saved": True}
+        return {
+            "saved": True,
+        }
 
     def mark_saved(self, interpreter, context, event, action_def):
         import time
+
         context["lastSaved"] = time.time()
         print("Document saved!")
+
 
 machine = create_machine(config, logic=AutoSaveLogic())
 interp = SyncInterpreter(machine).start()
 
 # Type something
-interp.send({"type": "EDIT", "text": "Hello"})
+interp.send(
+    {
+        "type": "EDIT",
+        "text": "Hello",
+    }
+)
 print(interp.active_state_ids)
 # {'autoSave.dirty'}
 
 # Type more — this resets the 2-second debounce timer
-interp.send({"type": "EDIT", "text": "Hello, world!"})
+interp.send(
+    {
+        "type": "EDIT",
+        "text": "Hello, world!",
+    }
+)
 print(interp.active_state_ids)
 # {'autoSave.dirty'}  (timer restarted)
 

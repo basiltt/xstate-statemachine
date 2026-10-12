@@ -41,7 +41,7 @@ import gc
 import threading
 import tracemalloc
 from collections import Counter
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterable, List
 
 import pytest
 
@@ -51,6 +51,9 @@ prometheus_client = pytest.importorskip("prometheus_client")
 pytest.importorskip("opentelemetry.sdk")
 
 from prometheus_client import CollectorRegistry, generate_latest  # noqa: E402
+from prometheus_client.parser import (  # noqa: E402
+    text_string_to_metric_families,
+)
 
 from xstate_statemachine.contrib.observability import (  # noqa: E402
     OpenTelemetryPlugin,
@@ -77,6 +80,45 @@ def _total(text: str, name: str, **where: str) -> float:
         for labels, v in _series(text, name).items()
         if all(f'{k}="{val}"' in labels for k, val in where.items())
     )
+
+
+def _assert_no_metric_label_leaks(text: str, forbidden: Iterable[str]) -> None:
+    """Check labels, not unrelated numeric samples or creation timestamps."""
+    labels = "\n".join(
+        f"{key}={value}"
+        for family in text_string_to_metric_families(text)
+        for sample in family.samples
+        for key, value in sample.labels.items()
+    )
+    for leak in forbidden:
+        assert leak not in labels, leak
+
+
+def test_numeric_metric_samples_are_not_sensitive_labels() -> None:
+    """A legitimate clock/count/duration can contain the digits of a card."""
+    text = (
+        'events_total{machine="order"} 4111.0\n'
+        'events_created{machine="order"} 1.700004111e+09\n'
+        'duration_sum{machine="order"} 0.00004111\n'
+        'queue_depth{machine="order"} 0 1700004111000\n'
+    )
+    assert "4111" in text
+    _assert_no_metric_label_leaks(text, ("4111", "card", "victim-"))
+
+
+@pytest.mark.parametrize(
+    ("label", "leak"),
+    [
+        ('card="redacted"', "card"),
+        ('event="4111-1111"', "4111"),
+        ('machine="victim-123"', "victim-"),
+    ],
+)
+def test_metric_label_privacy_still_rejects_keys_and_values(
+    label: str, leak: str
+) -> None:
+    with pytest.raises(AssertionError, match=leak):
+        _assert_no_metric_label_leaks(f"events_total{{{label}}} 1\n", (leak,))
 
 
 def _plugin(fulfilment: Any, cls: type) -> Any:
@@ -187,10 +229,12 @@ def test_thousand_undeclared_events_and_subjects_mint_one_series(
     assert not any("FUZZ_" in k for k in events)
     # a scrape is bounded: no per-subject or per-envelope series
     assert len(text.encode()) < 64 * 1024, len(text)
-    for leak in ("victim-", "4111", "card"):
-        assert leak not in text, leak
-    for env in fulfilment.commands[:50]:
-        assert env.id not in text
+    # 🔒 Inspect labels only: legitimate durations and *_created timestamps
+    #    can contain "4111", making a raw scrape substring check flaky.
+    _assert_no_metric_label_leaks(text, ("victim-", "4111", "card"))
+    _assert_no_metric_label_leaks(
+        text, (env.id for env in fulfilment.commands[:50])
+    )
     spans = fulfilment.instruments.spans.get_finished_spans()
     assert len(spans) > 1000
     blob = "\n".join(

@@ -60,8 +60,13 @@ For example, to pass a per-spawn value to a service:
 {
   "invoke": {
     "src": "fetchUser",
-    "input": {"userId": 42},
-    "onDone": {"target": "loaded", "actions": "storeUser"}
+    "input": {
+      "userId": 42
+    },
+    "onDone": {
+      "target": "loaded",
+      "actions": "storeUser"
+    }
   }
 }
 ```
@@ -69,7 +74,10 @@ For example, to pass a per-spawn value to a service:
 ```python
 def fetch_user(interpreter, context, event):
     user_id = event.payload["input"]["userId"]
-    return {"id": user_id, "name": "Ada"}
+    return {
+        "id": user_id,
+        "name": "Ada",
+    }
 ```
 
 ## 🚀 Basic Invoke Example
@@ -82,39 +90,56 @@ from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 config = {
     "id": "userLoader",
     "initial": "idle",
-    "context": {"user": None, "error": None},
+    "context": {
+        "user": None,
+        "error": None,
+    },
     "states": {
         "idle": {
-            "on": {"LOAD": "loading"}
+            "on": {
+                "LOAD": "loading",
+            },
         },
         "loading": {
             "invoke": {
                 "src": "fetchUser",
                 "onDone": {
                     "target": "loaded",
-                    "actions": "storeUser"
+                    "actions": "storeUser",
                 },
                 "onError": {
                     "target": "error",
-                    "actions": "storeError"
-                }
-            }
+                    "actions": "storeError",
+                },
+            },
         },
-        "loaded": {"type": "final"},
-        "error":  {"on": {"RETRY": "loading"}}
-    }
+        "loaded": {
+            "type": "final",
+        },
+        "error": {
+            "on": {
+                "RETRY": "loading",
+            },
+        },
+    },
 }
+
 
 class UserLogic(MachineLogic):
     def fetch_user(self, interpreter, context, event):
         # Simulate an API call (sync version)
-        return {"id": 1, "name": "Alice", "email": "alice@example.com"}
+        return {
+            "id": 1,
+            "name": "Alice",
+            "email": "alice@example.com",
+        }
 
     def store_user(self, interpreter, context, event, action_def):
         context["user"] = event.data
 
     def store_error(self, interpreter, context, event, action_def):
         context["error"] = str(event.data)
+
 
 machine = create_machine(config, logic=UserLogic())
 interp = SyncInterpreter(machine).start()
@@ -190,8 +215,8 @@ When a service completes successfully, the interpreter:
 
 ```json
 "onDone": {
-    "target": "loaded",
-    "actions": "storeUser"
+  "target": "loaded",
+  "actions": "storeUser"
 }
 ```
 
@@ -199,8 +224,8 @@ The `onDone` transition can include both a target state and actions — just lik
 
 ```json
 "onDone": {
-    "target": "loaded",
-    "actions": ["storeUser", "logSuccess", "clearLoading"]
+  "target": "loaded",
+  "actions": ["storeUser", "logSuccess", "clearLoading"]
 }
 ```
 
@@ -219,8 +244,8 @@ If **no** `onError` (and no matching `on`) handles it, the failure is not swallo
 
 ```json
 "onError": {
-    "target": "error",
-    "actions": "storeError"
+  "target": "error",
+  "actions": "storeError"
 }
 ```
 
@@ -231,7 +256,11 @@ In `onDone` actions, the service's return value is available on `event.data`:
 ```python
 class Logic(MachineLogic):
     def fetch_user(self, interpreter, context, event):
-        return {"id": 1, "name": "Alice", "role": "admin"}
+        return {
+            "id": 1,
+            "name": "Alice",
+            "role": "admin",
+        }
 
     def store_user(self, interpreter, context, event, action_def):
         # event.data is the return value from fetch_user
@@ -276,14 +305,22 @@ A state can invoke multiple services simultaneously by using an array:
       {
         "src": "fetchUser",
         "id": "userService",
-        "onDone": { "actions": "storeUser" },
-        "onError": { "actions": "storeUserError" }
+        "onDone": {
+          "actions": "storeUser"
+        },
+        "onError": {
+          "actions": "storeUserError"
+        }
       },
       {
         "src": "fetchOrders",
         "id": "ordersService",
-        "onDone": { "actions": "storeOrders" },
-        "onError": { "actions": "storeOrdersError" }
+        "onDone": {
+          "actions": "storeOrders"
+        },
+        "onError": {
+          "actions": "storeOrdersError"
+        }
       }
     ]
   }
@@ -295,10 +332,17 @@ A state can invoke multiple services simultaneously by using an array:
 ```python
 class DataLogic(MachineLogic):
     def fetch_user(self, interpreter, context, event):
-        return {"name": "Alice"}
+        return {
+            "name": "Alice",
+        }
 
     def fetch_orders(self, interpreter, context, event):
-        return [{"id": 1, "total": 29.99}]
+        return [
+            {
+                "id": 1,
+                "total": 29.99,
+            }
+        ]
 
     def store_user(self, interpreter, context, event, action_def):
         context["user"] = event.data
@@ -323,8 +367,15 @@ You can add guards to `onDone` transitions to route based on the service result:
     "invoke": {
       "src": "fetchUser",
       "onDone": [
-        { "target": "adminDashboard", "guard": "isAdmin", "actions": "storeUser" },
-        { "target": "userDashboard", "actions": "storeUser" }
+        {
+          "target": "adminDashboard",
+          "guard": "isAdmin",
+          "actions": "storeUser"
+        },
+        {
+          "target": "userDashboard",
+          "actions": "storeUser"
+        }
       ],
       "onError": {
         "target": "error"
@@ -337,7 +388,10 @@ You can add guards to `onDone` transitions to route based on the service result:
 ```python
 class Logic(MachineLogic):
     def fetch_user(self, interpreter, context, event):
-        return {"name": "Alice", "role": "admin"}
+        return {
+            "name": "Alice",
+            "role": "admin",
+        }
 
     def store_user(self, interpreter, context, event, action_def):
         context["user"] = event.data
@@ -357,11 +411,18 @@ Combine `invoke` with `after` to implement service timeouts. If the service does
   "loading": {
     "invoke": {
       "src": "fetchUser",
-      "onDone": { "target": "loaded", "actions": "storeUser" },
-      "onError": { "target": "error" }
+      "onDone": {
+        "target": "loaded",
+        "actions": "storeUser"
+      },
+      "onError": {
+        "target": "error"
+      }
     },
     "after": {
-      "5000": { "target": "timeout" }
+      "5000": {
+        "target": "timeout"
+      }
     }
   }
 }
@@ -378,9 +439,15 @@ The `@service` decorator marks a function as a service:
 ```python
 from xstate_statemachine import service
 
+
 @service
 def fetch_user(interpreter, context, event):
-    return {"id": 1, "name": "Alice"}
+    return {
+        "id": 1,
+        "name": "Alice",
+    }
+
+
 # Registered as "fetchUser" (auto snake_case → camelCase)
 ```
 
@@ -389,31 +456,69 @@ def fetch_user(interpreter, context, event):
 ```python
 @service("loadUserProfile")
 def get_user(interpreter, context, event):
-    return {"id": 1, "name": "Alice"}
+    return {
+        "id": 1,
+        "name": "Alice",
+    }
+
+
 # Registered as "loadUserProfile"
 ```
 
 ### Service in StateMachine Class
 
 ```python
-from xstate_statemachine import State, StateMachine, SyncInterpreter, service, action
+from xstate_statemachine import (
+    State,
+    StateMachine,
+    SyncInterpreter,
+    service,
+    action,
+)
+
 
 class UserLoader(StateMachine):
     machine_id = "userLoader"
-    initial_context = {"user": None, "error": None}
+    initial_context = {
+        "user": None,
+        "error": None,
+    }
 
-    idle    = State("idle", initial=True, on={"LOAD": "loading"})
-    loading = State("loading", invoke={
-        "src": "fetchUser",
-        "onDone": {"target": "loaded", "actions": "storeUser"},
-        "onError": {"target": "error", "actions": "storeError"}
-    })
-    loaded  = State("loaded", final=True)
-    error   = State("error", on={"RETRY": "loading"})
+    idle = State(
+        "idle",
+        initial=True,
+        on={
+            "LOAD": "loading",
+        },
+    )
+    loading = State(
+        "loading",
+        invoke={
+            "src": "fetchUser",
+            "onDone": {
+                "target": "loaded",
+                "actions": "storeUser",
+            },
+            "onError": {
+                "target": "error",
+                "actions": "storeError",
+            },
+        },
+    )
+    loaded = State("loaded", final=True)
+    error = State(
+        "error",
+        on={
+            "RETRY": "loading",
+        },
+    )
 
     @service
     def fetch_user(self, interpreter, context, event):
-        return {"id": 1, "name": "Alice"}
+        return {
+            "id": 1,
+            "name": "Alice",
+        }
 
     @action
     def store_user(self, interpreter, context, event, action_def):
@@ -422,6 +527,7 @@ class UserLoader(StateMachine):
     @action
     def store_error(self, interpreter, context, event, action_def):
         context["error"] = str(event.data)
+
 
 machine = UserLoader.create_machine()
 interp = SyncInterpreter(machine).start()
@@ -435,23 +541,53 @@ interp.stop()
 ```python
 from xstate_statemachine import MachineBuilder, SyncInterpreter
 
+
 def fetch_user_fn(interpreter, context, event):
-    return {"id": 1, "name": "Alice"}
+    return {
+        "id": 1,
+        "name": "Alice",
+    }
+
 
 def store_user_fn(interpreter, context, event, action_def):
     context["user"] = event.data
 
+
 machine = (
     MachineBuilder("userLoader")
-    .context({"user": None, "error": None})
-    .state("idle", initial=True, on={"LOAD": "loading"})
-    .state("loading", invoke={
-        "src": "fetchUser",
-        "onDone": {"target": "loaded", "actions": "storeUser"},
-        "onError": {"target": "error"}
-    })
+    .context(
+        {
+            "user": None,
+            "error": None,
+        }
+    )
+    .state(
+        "idle",
+        initial=True,
+        on={
+            "LOAD": "loading",
+        },
+    )
+    .state(
+        "loading",
+        invoke={
+            "src": "fetchUser",
+            "onDone": {
+                "target": "loaded",
+                "actions": "storeUser",
+            },
+            "onError": {
+                "target": "error",
+            },
+        },
+    )
     .state("loaded", final=True)
-    .state("error", on={"RETRY": "loading"})
+    .state(
+        "error",
+        on={
+            "RETRY": "loading",
+        },
+    )
     .service("fetchUser", fetch_user_fn)
     .action("storeUser", store_user_fn)
     .build()
@@ -503,13 +639,19 @@ This means you can safely combine `invoke` with `after` timeouts: if the service
 "loading": {
     "invoke": {
         "src": "fetchUser",
-        "onDone": {"target": "loaded"},
-        "onError": {"target": "error"}
+        "onDone": {
+            "target": "loaded",
+        },
+        "onError": {
+            "target": "error",
+        },
     },
     "after": {
-        "5000": {"target": "timeout"}
-    }
-}
+        "5000": {
+            "target": "timeout",
+        },
+    },
+},
 # Whichever completes first wins — the loser is automatically cancelled
 ```
 
@@ -528,8 +670,16 @@ The `<id>` defaults to the state's name if no explicit `id` is provided in the i
 
 ```json
 "invoke": [
-  { "src": "fetchA", "id": "serviceA", "onDone": ... },
-  { "src": "fetchB", "id": "serviceB", "onDone": ... }
+  {
+    "src": "fetchA",
+    "id": "serviceA",
+    "onDone": ...
+  },
+  {
+    "src": "fetchB",
+    "id": "serviceB",
+    "onDone": ...
+  }
 ]
 ```
 
@@ -564,11 +714,13 @@ config = {
         "user": None,
         "error": None,
         "retryCount": 0,
-        "maxRetries": 3
+        "maxRetries": 3,
     },
     "states": {
         "idle": {
-            "on": {"FETCH": "loading"}
+            "on": {
+                "FETCH": "loading",
+            },
         },
         "loading": {
             "entry": "incrementRetry",
@@ -576,25 +728,36 @@ config = {
                 "src": "fetchUserData",
                 "onDone": {
                     "target": "success",
-                    "actions": "storeUser"
+                    "actions": "storeUser",
                 },
                 "onError": [
-                    {"target": "loading", "guard": "canRetry", "actions": "logRetry"},
-                    {"target": "failed",  "actions": "storeFinalError"}
-                ]
-            }
+                    {
+                        "target": "loading",
+                        "guard": "canRetry",
+                        "actions": "logRetry",
+                    },
+                    {
+                        "target": "failed",
+                        "actions": "storeFinalError",
+                    },
+                ],
+            },
         },
         "success": {
             "entry": "resetRetryCount",
-            "type": "final"
+            "type": "final",
         },
         "failed": {
             "on": {
-                "RESET": {"target": "idle", "actions": "resetAll"}
-            }
-        }
-    }
+                "RESET": {
+                    "target": "idle",
+                    "actions": "resetAll",
+                },
+            },
+        },
+    },
 }
+
 
 class UserDataLogic(MachineLogic):
     def __init__(self):
@@ -611,7 +774,11 @@ class UserDataLogic(MachineLogic):
             raise ConnectionError(
                 f"Attempt {self._call_count}: Connection refused"
             )
-        return {"id": user_id, "name": "Alice", "email": "alice@example.com"}
+        return {
+            "id": user_id,
+            "name": "Alice",
+            "email": "alice@example.com",
+        }
 
     # ---- Actions ----
     def store_user(self, interpreter, context, event, action_def):
@@ -678,65 +845,80 @@ config = {
         "paymentMethod": None,
         "transactionId": None,
         "error": None,
-        "receipt": None
+        "receipt": None,
     },
     "states": {
         "idle": {
             "on": {
                 "START_PAYMENT": {
                     "target": "validating",
-                    "actions": "storePaymentDetails"
-                }
-            }
+                    "actions": "storePaymentDetails",
+                },
+            },
         },
         "validating": {
             "invoke": {
                 "src": "validatePayment",
-                "onDone": {"target": "charging"},
-                "onError": {"target": "validationFailed", "actions": "storeError"}
-            }
+                "onDone": {
+                    "target": "charging",
+                },
+                "onError": {
+                    "target": "validationFailed",
+                    "actions": "storeError",
+                },
+            },
         },
         "charging": {
             "invoke": {
                 "src": "chargePayment",
                 "onDone": {
                     "target": "confirming",
-                    "actions": "storeTransactionId"
+                    "actions": "storeTransactionId",
                 },
-                "onError": {"target": "chargeFailed", "actions": "storeError"}
-            }
+                "onError": {
+                    "target": "chargeFailed",
+                    "actions": "storeError",
+                },
+            },
         },
         "confirming": {
             "invoke": {
                 "src": "generateReceipt",
                 "onDone": {
                     "target": "completed",
-                    "actions": "storeReceipt"
+                    "actions": "storeReceipt",
                 },
                 "onError": {
                     "target": "completed",
-                    "actions": "logReceiptError"
-                }
-            }
+                    "actions": "logReceiptError",
+                },
+            },
         },
         "completed": {
             "entry": "notifySuccess",
-            "type": "final"
+            "type": "final",
         },
         "validationFailed": {
             "entry": "notifyValidationError",
             "on": {
-                "RETRY": {"target": "idle", "actions": "clearError"}
-            }
+                "RETRY": {
+                    "target": "idle",
+                    "actions": "clearError",
+                },
+            },
         },
         "chargeFailed": {
             "entry": "notifyChargeError",
             "on": {
-                "RETRY": {"target": "idle", "actions": "clearError"}
-            }
-        }
-    }
+                "RETRY": {
+                    "target": "idle",
+                    "actions": "clearError",
+                },
+            },
+        },
+    },
 }
+
 
 class PaymentLogic(MachineLogic):
     # ---- Services ----
@@ -747,13 +929,19 @@ class PaymentLogic(MachineLogic):
             raise ValueError("Amount must be positive")
         if not method:
             raise ValueError("Payment method is required")
-        return {"valid": True, "method": method}
+        return {
+            "valid": True,
+            "method": method,
+        }
 
     def charge_payment(self, interpreter, context, event):
         amount = context["amount"]
         print(f"Charging ${amount:.2f}...")
         # Simulate a charge — returns a transaction ID
-        return {"transactionId": "TXN-20260323-001", "charged": amount}
+        return {
+            "transactionId": "TXN-20260323-001",
+            "charged": amount,
+        }
 
     def generate_receipt(self, interpreter, context, event):
         txn_id = context.get("transactionId", "UNKNOWN")
@@ -761,7 +949,7 @@ class PaymentLogic(MachineLogic):
             "receiptId": f"RCP-{txn_id}",
             "amount": context["amount"],
             "currency": context["currency"],
-            "status": "paid"
+            "status": "paid",
         }
 
     # ---- Actions ----
@@ -801,7 +989,9 @@ class PaymentLogic(MachineLogic):
 machine = create_machine(config, logic=PaymentLogic())
 interp = SyncInterpreter(machine).start()
 
-interp.send("START_PAYMENT", amount=49.99, method="credit_card", currency="USD")
+interp.send(
+    "START_PAYMENT", amount=49.99, method="credit_card", currency="USD"
+)
 # Output:
 # Charging $49.99...
 # Payment complete! Transaction: TXN-20260323-001, Amount: $49.99
@@ -845,48 +1035,105 @@ They are ordinary services: `xsm inspect` lists them under *services*, `sendTo(<
 
 ```python
 import threading
-from xstate_statemachine import MachineLogic, SyncInterpreter, create_machine, from_callback
+from xstate_statemachine import (
+    MachineLogic,
+    SyncInterpreter,
+    create_machine,
+    from_callback,
+)
 
-class FakeMqttClient:                         # stands in for paho.mqtt.client.Client
+
+class FakeMqttClient:  # stands in for paho.mqtt.client.Client
     def __init__(self):
         self.on_message = None
         self.published = []
+
     def connect(self):
         # the broker "delivers" two messages on its own thread
         def deliver():
             for topic in ("sensors/temp", "sensors/humidity"):
                 self.on_message(topic)
-        t = threading.Thread(target=deliver); t.start(); t.join()
+
+        t = threading.Thread(target=deliver)
+        t.start()
+        t.join()
+
     def publish(self, topic, body):
         self.published.append((topic, body))
+
     def disconnect(self):
         self.published.append(("__disconnected__", None))
 
+
 client = FakeMqttClient()
+
 
 def mqtt_logic(send_back, receive, ctx, event):
     """Runs once when the invoking state is entered."""
-    client.on_message = lambda topic: send_back("MESSAGE", topic=topic)   # broker -> machine, any thread
-    receive(lambda ev: client.publish(ev.payload["topic"], ev.payload["body"]))  # machine -> broker
+    client.on_message = lambda topic: send_back(
+        "MESSAGE", topic=topic
+    )  # broker -> machine, any thread
+    receive(
+        lambda ev: client.publish(ev.payload["topic"], ev.payload["body"])
+    )  # machine -> broker
     client.connect()
-    return client.disconnect                                             # cleanup on state exit
+    return client.disconnect  # cleanup on state exit
 
-cfg = {"id": "gateway", "initial": "connected", "context": {"topics": []},
-       "states": {"connected": {"invoke": {"src": "mqtt", "id": "broker"},
-                                "on": {"MESSAGE": {"actions": "record"},
-                                       "ANNOUNCE": {"actions": {"type": "sendTo", "params": {
-                                           "to": "broker", "event": {"type": "PUBLISH", "topic": "status", "body": "up"}}}},
-                                       "SHUTDOWN": "offline"}},
-                  "offline": {"type": "final"}}}
-logic = MachineLogic(actions={"record": lambda i, ctx, e, a: ctx["topics"].append(e.payload["topic"])},
-                     services={"mqtt": from_callback(mqtt_logic)})
+
+cfg = {
+    "id": "gateway",
+    "initial": "connected",
+    "context": {
+        "topics": [],
+    },
+    "states": {
+        "connected": {
+            "invoke": {
+                "src": "mqtt",
+                "id": "broker",
+            },
+            "on": {
+                "MESSAGE": {
+                    "actions": "record",
+                },
+                "ANNOUNCE": {
+                    "actions": {
+                        "type": "sendTo",
+                        "params": {
+                            "to": "broker",
+                            "event": {
+                                "type": "PUBLISH",
+                                "topic": "status",
+                                "body": "up",
+                            },
+                        },
+                    },
+                },
+                "SHUTDOWN": "offline",
+            },
+        },
+        "offline": {
+            "type": "final",
+        },
+    },
+}
+logic = MachineLogic(
+    actions={
+        "record": lambda i, ctx, e, a: ctx["topics"].append(
+            e.payload["topic"]
+        ),
+    },
+    services={
+        "mqtt": from_callback(mqtt_logic),
+    },
+)
 
 gateway = SyncInterpreter(create_machine(cfg, logic=logic)).start()
-gateway.tick()                                              # drains the broker's messages (sync mailbox rule)
+gateway.tick()  # drains the broker's messages (sync mailbox rule)
 assert gateway.context["topics"] == ["sensors/temp", "sensors/humidity"]
-gateway.send("ANNOUNCE")                                    # sendTo("broker") reaches receive()
+gateway.send("ANNOUNCE")  # sendTo("broker") reaches receive()
 assert client.published == [("status", "up")]
-gateway.send("SHUTDOWN")                                    # state exit -> cleanup exactly once
+gateway.send("SHUTDOWN")  # state exit -> cleanup exactly once
 assert client.published[-1] == ("__disconnected__", None)
 ```
 
@@ -898,7 +1145,14 @@ assert client.published[-1] == ("__disconnected__", None)
 
 ```python
 import asyncio
-from xstate_statemachine import Interpreter, MachineLogic, create_machine, from_async_iterator, to_promise
+from xstate_statemachine import (
+    Interpreter,
+    MachineLogic,
+    create_machine,
+    from_async_iterator,
+    to_promise,
+)
+
 
 async def llm_stream(interp, ctx, event):
     """Stands in for an SDK's streaming completion."""
@@ -906,19 +1160,31 @@ async def llm_stream(interp, ctx, event):
         await asyncio.sleep(0)
         yield token
 
+
 cfg = {
     "id": "chat",
     "initial": "streaming",
-    "context": {"text": ""},
+    "context": {
+        "text": "",
+    },
     "states": {
         "streaming": {
             "invoke": {
                 "src": "llm",
-                "onDone": {"target": "done", "actions": "finish"},
+                "onDone": {
+                    "target": "done",
+                    "actions": "finish",
+                },
             },
-            "on": {"STREAM": {"actions": "append"}},
+            "on": {
+                "STREAM": {
+                    "actions": "append",
+                },
+            },
         },
-        "done": {"type": "final"},
+        "done": {
+            "type": "final",
+        },
     },
 }
 logic = MachineLogic(
@@ -928,14 +1194,18 @@ logic = MachineLogic(
         ),
         "finish": lambda i, ctx, e, a: ctx.__setitem__("last", e.data),
     },
-    services={"llm": from_async_iterator(llm_stream)},
+    services={
+        "llm": from_async_iterator(llm_stream),
+    },
 )
+
 
 async def main():
     chat = await Interpreter(create_machine(cfg, logic=logic)).start()
     await to_promise(chat)
     assert chat.context["text"] == "The answer is 42."
-    assert chat.context["last"] == "42."          # onDone carries the last item
+    assert chat.context["last"] == "42."  # onDone carries the last item
+
 
 asyncio.run(main())
 ```

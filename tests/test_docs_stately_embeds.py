@@ -8,8 +8,10 @@ iframes.
 
 import json
 import re
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
@@ -102,6 +104,33 @@ class TestStatelyEmbeds(unittest.TestCase):
                 continue
             if any(w.startswith("examples/") for w in e["where"]):
                 self.assertIn(f'data-machine="{key}"', gallery, e["where"])
+
+
+class TestGalleryGenerator(unittest.TestCase):
+    """Regeneration must retain the layout's sole H1 and a clean EOF."""
+
+    def test_gallery_regenerates_without_title_or_newline_drift(self) -> None:
+        from scripts import place_stately_embeds as generator
+
+        with tempfile.TemporaryDirectory() as directory:
+            docs = Path(directory)
+            (docs / "_guide").mkdir()
+            target = docs / "_guide" / "example-gallery.md"
+            with patch.object(generator, "DOCS", docs):
+                generator.write_gallery()
+                first = target.read_bytes()
+                generator.write_gallery()
+                self.assertEqual(target.read_bytes(), first)
+        self.assertTrue(first.endswith(b"\n"))
+        self.assertFalse(first.endswith(b"\n\n"))
+        self.assertNotIn(b"\r", first)
+        text = first.decode("utf-8")
+        self.assertIn("title: Example gallery\n", text)
+        self.assertNotRegex(text, r"(?m)^#\s+", "layout supplies the H1")
+        self.assertEqual(
+            text,
+            (DOCS / "_guide" / "example-gallery.md").read_text("utf-8"),
+        )
 
 
 if __name__ == "__main__":

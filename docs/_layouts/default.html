@@ -65,23 +65,27 @@
         <a href="{{ '/guide/cli/' | relative_url }}" class="nav-link">CLI</a>
         <a href="{{ '/api/' | relative_url }}" class="nav-link">API Reference</a>
         <a href="{{ '/guide/examples/' | relative_url }}" class="nav-link">Examples</a>
-        <button class="nav-search-btn" id="searchBtn" aria-label="Search documentation (Ctrl+K)">
+        <a href="https://github.com/basiltt/xstate-statemachine" class="nav-link nav-github" target="_blank" rel="noopener" aria-label="GitHub repository">
+          <svg height="20" width="20" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          <span class="nav-github-label">GitHub</span>
+        </a>
+      </div>
+      <div class="nav-actions">
+        <button class="nav-search-btn" id="searchBtn" type="button" aria-label="Search documentation (Ctrl+K)">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M11.5 7a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0Zm-.82 4.74a6 6 0 1 1 1.06-1.06l3.04 3.04a.75.75 0 1 1-1.06 1.06l-3.04-3.04Z"/></svg>
           <span class="search-shortcut">Ctrl K</span>
         </button>
-        <button class="theme-toggle" id="themeToggle" aria-label="Toggle dark mode" title="Toggle dark mode">
+        <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle dark mode" title="Toggle dark mode">
           <svg class="icon-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
           <svg class="icon-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
         </button>
-        <a href="https://github.com/basiltt/xstate-statemachine" class="nav-link nav-github" target="_blank" rel="noopener" aria-label="GitHub repository">
-          <svg height="20" width="20" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-        </a>
+        <button class="nav-toggle" id="navToggle" type="button" aria-label="Open navigation" aria-expanded="false" aria-controls="navLinks">
+          <span></span><span></span><span></span>
+        </button>
       </div>
-      <button class="nav-toggle" id="navToggle" type="button" aria-label="Toggle navigation" aria-expanded="false" aria-controls="navLinks">
-        <span></span><span></span><span></span>
-      </button>
     </div>
   </nav>
+  <div class="nav-overlay" id="navOverlay" aria-hidden="true"></div>
 
   <!-- Search Modal -->
   <div class="search-modal" id="searchModal" role="dialog" aria-label="Search documentation" aria-hidden="true" aria-modal="true">
@@ -89,8 +93,8 @@
     <div class="search-dialog">
       <div class="search-header">
         <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" class="search-icon"><path d="M11.5 7a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0Zm-.82 4.74a6 6 0 1 1 1.06-1.06l3.04 3.04a.75.75 0 1 1-1.06 1.06l-3.04-3.04Z"/></svg>
-        <input type="text" class="search-input" id="searchInput" placeholder="Search documentation..." autocomplete="off" autofocus>
-        <kbd class="search-kbd">Esc</kbd>
+        <input type="text" class="search-input" id="searchInput" placeholder="Search documentation..." autocomplete="off" aria-label="Search documentation">
+        <button type="button" class="search-close" id="searchClose" aria-label="Close search">&times;</button>
       </div>
       <div class="search-results" id="searchResults">
         <div class="search-empty">Type to search the documentation...</div>
@@ -104,11 +108,29 @@
   </div>
 
   {% if page.layout == 'home' %}
-  {{ content }}
+  <main id="main-content" tabindex="-1">
+    {{ content }}
+  </main>
   {% else %}
+  <!-- In-flow controls reserve reading space beneath the sticky main header. -->
+  <div class="docs-toolbar" aria-label="Documentation controls">
+    <div class="docs-toolbar-inner">
+      <button class="sidebar-toggle" id="sidebarToggle" type="button" aria-label="Open documentation navigation" aria-expanded="false" aria-controls="sidebar">
+        <span aria-hidden="true">&#9776;</span> Docs menu
+      </button>
+      <button class="mobile-toc-toggle" id="mobileTocToggle" type="button" aria-label="Table of contents" title="Table of contents" aria-expanded="false" aria-controls="mobileTocDrawer">
+        <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M2 4a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3.75-1.5a.75.75 0 0 0 0 1.5h8.5a.75.75 0 0 0 0-1.5h-8.5zm0 5a.75.75 0 0 0 0 1.5h8.5a.75.75 0 0 0 0-1.5h-8.5zm0 5a.75.75 0 0 0 0 1.5h8.5a.75.75 0 0 0 0-1.5h-8.5zM3 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm-1 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/></svg>
+        <span>On this page</span>
+      </button>
+    </div>
+  </div>
   <div class="page-wrapper">
     <!-- Left Sidebar -->
     <aside class="sidebar" id="sidebar" role="navigation" aria-label="Documentation navigation">
+      <div class="sidebar-header">
+        <span>Documentation</span>
+        <button type="button" class="sidebar-close" id="sidebarClose" aria-label="Close documentation navigation">&times;</button>
+      </div>
       <div class="sidebar-inner">
         <div class="sidebar-section">
           <h3 class="sidebar-heading">Getting Started</h3>
@@ -209,7 +231,7 @@
     </aside>
 
     <!-- Main Content -->
-    <main class="main-content" id="main-content" role="main">
+    <main class="main-content" id="main-content" role="main" tabindex="-1">
       <!-- Breadcrumbs -->
       <nav class="breadcrumbs" aria-label="Breadcrumb">
         <a href="{{ '/' | relative_url }}">Home</a>
@@ -328,17 +350,14 @@
     </aside>
   </div>
 
-  <!-- Mobile TOC Toggle -->
-  <button class="mobile-toc-toggle" id="mobileTocToggle" aria-label="Table of contents" title="Table of contents">
-    <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M2 4a1 1 0 1 0 0-2 1 1 0 0 0 0 2zm3.75-1.5a.75.75 0 0 0 0 1.5h8.5a.75.75 0 0 0 0-1.5h-8.5zm0 5a.75.75 0 0 0 0 1.5h8.5a.75.75 0 0 0 0-1.5h-8.5zm0 5a.75.75 0 0 0 0 1.5h8.5a.75.75 0 0 0 0-1.5h-8.5zM3 8a1 1 0 1 1-2 0 1 1 0 0 1 2 0zm-1 6a1 1 0 1 0 0-2 1 1 0 0 0 0 2z"/></svg>
-  </button>
+  <div class="sidebar-overlay" id="sidebarOverlay" aria-hidden="true"></div>
 
   <!-- Mobile TOC Drawer -->
-  <div class="mobile-toc-overlay" id="mobileTocOverlay"></div>
-  <div class="mobile-toc-drawer" id="mobileTocDrawer" role="dialog" aria-label="Table of contents" aria-hidden="true">
+  <div class="mobile-toc-overlay" id="mobileTocOverlay" aria-hidden="true"></div>
+  <div class="mobile-toc-drawer" id="mobileTocDrawer" role="dialog" aria-label="Table of contents" aria-hidden="true" inert>
     <div class="mobile-toc-header">
       <span>On this page</span>
-      <button class="mobile-toc-close" id="mobileTocClose" aria-label="Close table of contents">&times;</button>
+      <button class="mobile-toc-close" id="mobileTocClose" type="button" aria-label="Close table of contents">&times;</button>
     </div>
     <nav class="mobile-toc-list" id="mobileTocList">
       <!-- Cloned from tocList by JavaScript -->
@@ -346,7 +365,7 @@
   </div>
   {% endif %}
 
-  <script src="{{ '/assets/js/main.js' | relative_url }}"></script>
+  <script src="{{ '/assets/js/main.js' | relative_url }}" data-search-index="{{ '/assets/js/search-index.json' | relative_url }}"></script>
   <!-- Stately editor embeds: <div class="stately" data-machine="…"> → theme-following iframe -->
   <script src="{{ '/assets/js/stately.js' | relative_url }}" data-base="{{ site.baseurl }}" defer></script>
   <!-- Mermaid statecharts: ```mermaid blocks become live SVG diagrams in the site theme -->
@@ -357,83 +376,216 @@
       /^\s*(stateDiagram(-v2)?|flowchart|graph|sequenceDiagram)\b/.test(c.textContent);
     const blocks = [...document.querySelectorAll('pre > code')].filter(isMermaid);
     if (blocks.length) {
-      const dark = document.documentElement.getAttribute('data-theme') !== 'light';
-      const fg = dark ? '#EEF0FA' : '#0F1222', dim = dark ? '#9AA1BD' : '#545B73';
-      const bkg = dark ? '#141833' : '#EEF0F7', line = dark ? 'rgba(255,255,255,.14)' : 'rgba(16,18,36,.14)';
-      mermaid.initialize({
-        startOnLoad: false, theme: 'base', securityLevel: 'loose',
-        state: { padding: 18, nodeSpacing: 40, rankSpacing: 48, useMaxWidth: true },
-        flowchart: { padding: 14, nodeSpacing: 36, rankSpacing: 44, useMaxWidth: true, htmlLabels: true },
-        themeVariables: {
-          fontFamily: 'Space Grotesk, ui-sans-serif, system-ui', fontSize: '14px',
-          primaryColor: bkg, primaryTextColor: fg, primaryBorderColor: '#10B981',
-          lineColor: dim, tertiaryColor: dark ? '#0C0D18' : '#FFFFFF', tertiaryBorderColor: line, tertiaryTextColor: dim,
-          background: 'transparent', mainBkg: bkg, nodeBorder: '#10B981',
-          clusterBkg: dark ? 'rgba(45,212,191,.07)' : 'rgba(15,143,107,.05)', clusterBorder: line,
-          edgeLabelBackground: dark ? '#0D0F1C' : '#FFFFFF', labelTextColor: fg,
-          transitionColor: dim, transitionLabelColor: dark ? '#34D399' : '#0F8F6B',
-          stateBkg: bkg, stateLabelColor: fg, altBackground: dark ? '#0C0D18' : '#F6F7FB',
-          compositeBackground: dark ? 'rgba(45,212,191,.07)' : 'rgba(15,143,107,.05)',
-          compositeTitleBackground: dark ? 'rgba(45,212,191,.14)' : 'rgba(15,143,107,.10)',
-          noteBkgColor: dark ? '#0D0F1C' : '#FFFFFF', noteBorderColor: line, noteTextColor: dim
-        }
-      });
-      let i = 0;
-      for (const code of blocks) {
-        const pre = code.closest('pre');
-        // Replace the outermost wrapper Jekyll/main.js put around the <pre>.
-        let host = pre;
-        for (const sel of ['.code-frame', '.highlighter-rouge', '.highlight']) {
-          const w = pre.closest(sel); if (w && w.contains(pre)) host = w;
-        }
-        const fig = document.createElement('figure');
-        fig.className = 'statechart';
-        fig.innerHTML = '<button type="button" class="statechart-expand" aria-label="View diagram full screen">'
-          + '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4"/></svg>Full screen</button>'
-          + '<div class="statechart-canvas"></div><figcaption>statechart</figcaption>';
-        const src = code.textContent;
-        host.replaceWith(fig);
-        try {
-          const { svg } = await mermaid.render('sc-' + (i++), src);
-          fig.querySelector('.statechart-canvas').innerHTML = svg;
-        } catch (e) {
-          fig.querySelector('.statechart-canvas').innerHTML = '<pre></pre>';
-          fig.querySelector('pre').textContent = src;
-          fig.querySelector('.statechart-expand').remove();
-        }
+      function configureMermaid() {
+        const dark = document.documentElement.getAttribute('data-theme') === 'dark';
+        const fg = dark ? '#EEF0FA' : '#0F1222', dim = dark ? '#9AA1BD' : '#545B73';
+        const bkg = dark ? '#141833' : '#EEF0F7', line = dark ? 'rgba(255,255,255,.14)' : 'rgba(16,18,36,.14)';
+        mermaid.initialize({
+          startOnLoad: false, theme: 'base', securityLevel: 'loose',
+          state: { padding: 18, nodeSpacing: 40, rankSpacing: 48, useMaxWidth: true },
+          flowchart: { padding: 14, nodeSpacing: 36, rankSpacing: 44, useMaxWidth: true, htmlLabels: true },
+          themeVariables: {
+            fontFamily: 'Space Grotesk, ui-sans-serif, system-ui', fontSize: '14px',
+            primaryColor: bkg, primaryTextColor: fg, primaryBorderColor: '#10B981',
+            lineColor: dim, tertiaryColor: dark ? '#0C0D18' : '#FFFFFF', tertiaryBorderColor: line, tertiaryTextColor: dim,
+            background: 'transparent', mainBkg: bkg, nodeBorder: '#10B981',
+            clusterBkg: dark ? 'rgba(45,212,191,.07)' : 'rgba(15,143,107,.05)', clusterBorder: line,
+            edgeLabelBackground: dark ? '#0D0F1C' : '#FFFFFF', labelTextColor: fg,
+            transitionColor: dim, transitionLabelColor: dark ? '#34D399' : '#0F8F6B',
+            stateBkg: bkg, stateLabelColor: fg, altBackground: dark ? '#0C0D18' : '#F6F7FB',
+            compositeBackground: dark ? 'rgba(45,212,191,.07)' : 'rgba(15,143,107,.05)',
+            compositeTitleBackground: dark ? 'rgba(45,212,191,.14)' : 'rgba(15,143,107,.10)',
+            noteBkgColor: dark ? '#0D0F1C' : '#FFFFFF', noteBorderColor: line, noteTextColor: dim
+          }
+        });
+        return dark ? 'dark' : 'light';
       }
 
-      // Full-screen viewer: one shared lightbox, zoom with buttons / wheel, Esc closes.
+      // Keep the original source so theme changes can rerender every chart.
+      const diagrams = blocks.map((code, index) => {
+        const pre = code.closest('pre');
+        const host = pre.closest('.highlighter-rouge') || pre.closest('.highlight') || pre.closest('.code-frame') || pre;
+        const fig = document.createElement('figure');
+        fig.className = 'statechart';
+        fig.innerHTML = '<button type="button" class="statechart-expand" aria-label="View diagram full screen" disabled>'
+          + '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4"/></svg>Full screen</button>'
+          + '<div class="statechart-canvas"></div><figcaption>statechart</figcaption>';
+        const source = code.textContent;
+        host.replaceWith(fig);
+        return { fig, source, index };
+      });
+
+      // One modal viewer. Real SVG dimensions keep both zoomed edges reachable.
       const lb = document.createElement('div');
-      lb.className = 'statechart-lightbox'; lb.setAttribute('role', 'dialog'); lb.setAttribute('aria-modal', 'true'); lb.setAttribute('aria-label', 'Diagram');
+      lb.className = 'statechart-lightbox';
+      lb.setAttribute('role', 'dialog'); lb.setAttribute('aria-modal', 'true');
+      lb.setAttribute('aria-label', 'Diagram'); lb.setAttribute('aria-hidden', 'true');
+      lb.setAttribute('inert', '');
       lb.innerHTML = '<div class="statechart-lightbox-bar"><span class="lb-title">statechart</span><div class="actions">'
-        + '<button type="button" data-zoom="-1" aria-label="Zoom out">−</button><button type="button" data-zoom="0" aria-label="Reset zoom">100%</button>'
+        + '<button type="button" data-zoom="-1" aria-label="Zoom out">−</button><button type="button" data-zoom="0" aria-label="Fit diagram to screen" title="Fit diagram to screen">Fit</button>'
         + '<button type="button" data-zoom="1" aria-label="Zoom in">+</button><button type="button" data-close aria-label="Close">Close · Esc</button>'
-        + '</div></div><div class="statechart-lightbox-canvas"></div>';
+        + '</div></div><div class="statechart-lightbox-canvas statechart-canvas" tabindex="0" role="region" aria-label="Diagram; use arrow keys to scroll when zoomed"></div>';
       document.body.appendChild(lb);
       const canvas = lb.querySelector('.statechart-lightbox-canvas'), zoomLabel = lb.querySelector('[data-zoom="0"]');
-      let scale = 1, lastFocus = null;
-      const apply = () => { const s = canvas.querySelector('svg'); if (s) s.style.transform = 'scale(' + scale + ')'; zoomLabel.textContent = Math.round(scale * 100) + '%'; };
-      const close = () => { lb.classList.remove('open'); document.body.style.overflow = ''; canvas.innerHTML = ''; if (lastFocus) lastFocus.focus(); };
+      const closeButton = lb.querySelector('[data-close]');
+      const backgroundState = new Map();
+      let scale = 1, naturalWidth = 1, naturalHeight = 1;
+      let activeDiagram = null, lastFocus = null, canvasSize = '', viewportSize = '';
+      let fitted = true;
+
+      function isolate(element) {
+        if (element === lb || !(element instanceof HTMLElement) || backgroundState.has(element)) return;
+        backgroundState.set(element, element.hasAttribute('inert'));
+        element.setAttribute('inert', '');
+      }
+
+      function fitScale() {
+        const padding = getComputedStyle(canvas);
+        const width = Math.max(1, canvas.clientWidth - parseFloat(padding.paddingLeft) - parseFloat(padding.paddingRight));
+        const height = Math.max(1, canvas.clientHeight - parseFloat(padding.paddingTop) - parseFloat(padding.paddingBottom));
+        return Math.min(1, width / naturalWidth, height / naturalHeight);
+      }
+
+      function applyZoom() {
+        const svg = canvas.querySelector('svg');
+        if (!svg) return;
+        svg.style.width = (naturalWidth * scale) + 'px';
+        svg.style.height = (naturalHeight * scale) + 'px';
+        zoomLabel.textContent = Math.round(scale * 100) + '%';
+      }
+
+      function fitDiagram() {
+        if (!activeDiagram) return;
+        fitted = true;
+        scale = fitScale();
+        applyZoom();
+        canvas.scrollLeft = 0; canvas.scrollTop = 0;
+        const bounds = canvas.getBoundingClientRect();
+        canvasSize = bounds.width + ':' + bounds.height;
+        viewportSize = innerWidth + ':' + innerHeight;
+      }
+
+      function changeZoom(direction) {
+        if (!direction) { fitDiagram(); return; }
+        fitted = false;
+        scale = Math.min(4, Math.max(Math.min(.1, fitScale()), scale * (direction > 0 ? 1.25 : .8)));
+        applyZoom();
+      }
+
+      function refreshViewer(reset) {
+        const svg = activeDiagram && activeDiagram.fig.querySelector('.statechart-canvas svg');
+        if (!svg) return;
+        const clone = svg.cloneNode(true);
+        clone.removeAttribute('width'); clone.removeAttribute('height'); clone.style.maxWidth = 'none';
+        const vb = (svg.getAttribute('viewBox') || '').trim().split(/[\s,]+/).map(Number);
+        naturalWidth = vb.length === 4 && vb[2] > 0 ? vb[2] : Math.max(1, svg.getBoundingClientRect().width);
+        naturalHeight = vb.length === 4 && vb[3] > 0 ? vb[3] : Math.max(1, svg.getBoundingClientRect().height);
+        canvas.replaceChildren(clone);
+        if (reset) fitDiagram();
+        else applyZoom();
+      }
+
+      function closeViewer() {
+        if (!activeDiagram) return;
+        activeDiagram = null;
+        backgroundState.forEach((wasInert, element) => element.toggleAttribute('inert', wasInert));
+        backgroundState.clear();
+        document.body.classList.remove('diagram-open');
+        const target = lastFocus && lastFocus.isConnected && !lastFocus.disabled ? lastFocus : document.querySelector('#main-content');
+        if (target) target.focus({ preventScroll: true });
+        lb.classList.remove('open'); lb.setAttribute('aria-hidden', 'true'); lb.setAttribute('inert', '');
+        canvas.replaceChildren();
+      }
+
+      function openViewer(diagram, trigger) {
+        if (!diagram.fig.querySelector('.statechart-canvas svg')) return;
+        activeDiagram = diagram; lastFocus = trigger;
+        lb.querySelector('.lb-title').textContent = diagram.fig.closest('.content')?.querySelector('h1')?.textContent.trim() || document.title.split(' | ')[0] || 'statechart';
+        lb.removeAttribute('inert'); lb.setAttribute('aria-hidden', 'false'); lb.classList.add('open');
+        document.body.classList.add('diagram-open');
+        refreshViewer(true);
+        closeButton.focus({ preventScroll: true });
+        [...document.body.children].forEach(isolate);
+      }
+
       lb.addEventListener('click', e => {
         const b = e.target.closest('button');
-        if (!b) { if (e.target === lb || e.target === canvas) close(); return; }
-        if (b.hasAttribute('data-close')) return close();
-        const z = +b.dataset.zoom; scale = z === 0 ? 1 : Math.min(4, Math.max(.4, scale * (z > 0 ? 1.25 : .8))); apply();
+        if (!b) { if (e.target === lb || e.target === canvas) closeViewer(); return; }
+        if (b.hasAttribute('data-close')) closeViewer();
+        else changeZoom(Number(b.dataset.zoom));
       });
-      canvas.addEventListener('wheel', e => { if (!e.ctrlKey && !e.metaKey) return; e.preventDefault(); scale = Math.min(4, Math.max(.4, scale * (e.deltaY < 0 ? 1.1 : .9))); apply(); }, { passive: false });
-      document.addEventListener('keydown', e => { if (e.key === 'Escape' && lb.classList.contains('open')) close(); });
-      document.addEventListener('click', e => {
-        const btn = e.target.closest('.statechart-expand'); if (!btn) return;
-        const fig = btn.closest('.statechart'), svg = fig.querySelector('.statechart-canvas svg'); if (!svg) return;
-        lastFocus = btn; scale = 1;
-        const clone = svg.cloneNode(true); clone.removeAttribute('width'); clone.removeAttribute('height'); clone.style.maxWidth = 'none';
-        const vb = (svg.getAttribute('viewBox') || '').split(/\s+/).map(Number);
-        if (vb.length === 4 && vb[2]) { const fit = Math.min((innerWidth - 80) / vb[2], (innerHeight - 140) / vb[3]); clone.style.width = Math.round(vb[2] * Math.max(1, fit)) + 'px'; }
-        canvas.innerHTML = ''; canvas.appendChild(clone);
-        lb.querySelector('.lb-title').textContent = (fig.closest('.content')?.querySelector('h1')?.textContent.trim() || document.title.split(' | ')[0] || 'statechart');
-        lb.classList.add('open'); document.body.style.overflow = 'hidden'; apply(); lb.querySelector('[data-close]').focus();
+      canvas.addEventListener('wheel', e => {
+        if (!e.ctrlKey && !e.metaKey) return;
+        e.preventDefault(); changeZoom(e.deltaY < 0 ? 1 : -1);
+      }, { passive: false });
+      lb.addEventListener('keydown', e => {
+        // Viewer keystrokes must not open search/help underneath the modal.
+        e.stopPropagation();
+        if (((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') || e.key === '/' || e.key === '?') {
+          e.preventDefault(); return;
+        }
+        if (e.key === 'Escape') { e.preventDefault(); closeViewer(); return; }
+        if (e.key !== 'Tab') return;
+        const focusable = [...lb.querySelectorAll('button:not(:disabled), [tabindex="0"]')];
+        const first = focusable[0], last = focusable[focusable.length - 1];
+        if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
       });
+      document.addEventListener('focusin', e => {
+        if (activeDiagram && !lb.contains(e.target)) closeButton.focus({ preventScroll: true });
+      });
+      new MutationObserver(records => {
+        if (!activeDiagram) return;
+        records.forEach(record => record.addedNodes.forEach(node => {
+          if (node.parentElement === document.body) isolate(node);
+        }));
+      }).observe(document.body, { childList: true });
+
+      function refitOnResize() {
+        if (!activeDiagram) return;
+        const bounds = canvas.getBoundingClientRect();
+        const nextCanvasSize = bounds.width + ':' + bounds.height;
+        // Scrollbars or a toolbar reflow must not erase a user's zoom level.
+        if (viewportSize !== innerWidth + ':' + innerHeight || (fitted && canvasSize !== nextCanvasSize)) fitDiagram();
+        else canvasSize = nextCanvasSize;
+      }
+      if ('ResizeObserver' in window) new ResizeObserver(refitOnResize).observe(canvas, { box: 'border-box' });
+      window.addEventListener('resize', refitOnResize);
+      diagrams.forEach(diagram => {
+        const button = diagram.fig.querySelector('.statechart-expand');
+        button.addEventListener('click', () => openViewer(diagram, button));
+      });
+
+      // Serialize rendering and discard outdated work during rapid theme toggles.
+      let generation = 0, renderQueue = Promise.resolve();
+      function renderDiagrams() {
+        const requested = ++generation;
+        renderQueue = renderQueue.then(async () => {
+          if (requested !== generation) return;
+          const theme = configureMermaid();
+          for (const diagram of diagrams) {
+            if (requested !== generation) return;
+            const surface = diagram.fig.querySelector('.statechart-canvas');
+            const button = diagram.fig.querySelector('.statechart-expand');
+            try {
+              const { svg } = await mermaid.render('sc-' + requested + '-' + diagram.index, diagram.source);
+              if (requested !== generation) return;
+              surface.innerHTML = svg;
+              diagram.fig.setAttribute('data-rendered-theme', theme);
+              button.disabled = false;
+              if (activeDiagram === diagram) refreshViewer(false);
+            } catch (_) {
+              if (requested !== generation) return;
+              surface.innerHTML = '<pre></pre>';
+              surface.querySelector('pre').textContent = diagram.source;
+              button.disabled = true;
+              if (activeDiagram === diagram) closeViewer();
+            }
+          }
+        });
+      }
+      new MutationObserver(renderDiagrams).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+      renderDiagrams();
     }
   </script>
 </body>

@@ -36,53 +36,128 @@ xsm simulate examples/recipes/websocket_reconnect/machine.json --events CONNECT,
 
 ```python
 import random
-from xstate_statemachine import MachineLogic, SimulatedClock, SyncInterpreter, create_machine, from_callback
+from xstate_statemachine import (
+    MachineLogic,
+    SimulatedClock,
+    SyncInterpreter,
+    create_machine,
+    from_callback,
+)
 from xstate_statemachine.patterns import RetryPolicy
 
-class FakeClient:                         # your adapter over `websockets`, `aiohttp`, ...
+
+class FakeClient:  # your adapter over `websockets`, `aiohttp`, ...
     fail = 0
+
     def connect(self):
         if FakeClient.fail:
-            FakeClient.fail -= 1; raise ConnectionRefusedError
-    def close(self): self.closed = True
+            FakeClient.fail -= 1
+            raise ConnectionRefusedError
 
-chart = {"id": "socket", "initial": "disconnected", "context": {"attempt": 0}, "states": {
-    "disconnected": {"on": {"CONNECT": "connecting"}},
-    "connecting": {"invoke": {"src": "openSocket",
-                              "onDone": {"target": "connected", "actions": "retryReset"},
-                              "onError": {"target": "reconnecting", "actions": "retryBump"}}},
-    "connected": {"invoke": {"src": "listen"},
-                  "on": {"DROPPED": {"target": "reconnecting", "actions": "retryBump"},
-                         "DISCONNECT": "disconnected"}},
-    "reconnecting": {"on": {"DISCONNECT": "disconnected"},
-                     "after": {"retryDelay": [{"target": "connecting", "guard": "retryCanRetry"},
-                                              {"target": "failed"}]}},
-    "failed": {}}}
+    def close(self):
+        self.closed = True
+
+
+chart = {
+    "id": "socket",
+    "initial": "disconnected",
+    "context": {
+        "attempt": 0,
+    },
+    "states": {
+        "disconnected": {
+            "on": {
+                "CONNECT": "connecting",
+            },
+        },
+        "connecting": {
+            "invoke": {
+                "src": "openSocket",
+                "onDone": {
+                    "target": "connected",
+                    "actions": "retryReset",
+                },
+                "onError": {
+                    "target": "reconnecting",
+                    "actions": "retryBump",
+                },
+            },
+        },
+        "connected": {
+            "invoke": {
+                "src": "listen",
+            },
+            "on": {
+                "DROPPED": {
+                    "target": "reconnecting",
+                    "actions": "retryBump",
+                },
+                "DISCONNECT": "disconnected",
+            },
+        },
+        "reconnecting": {
+            "on": {
+                "DISCONNECT": "disconnected",
+            },
+            "after": {
+                "retryDelay": [
+                    {
+                        "target": "connecting",
+                        "guard": "retryCanRetry",
+                    },
+                    {
+                        "target": "failed",
+                    },
+                ],
+            },
+        },
+        "failed": {},
+    },
+}
 
 sockets = []
+
+
 def open_socket(i, ctx, e):
-    c = FakeClient(); c.connect(); sockets.append(c)       # raises -> onError
+    c = FakeClient()
+    c.connect()
+    sockets.append(c)  # raises -> onError
+
+
 def listen(send_back, receive, ctx, e):
     c = sockets[-1]
-    c.drop = lambda: send_back("DROPPED")                  # wire your client's on_close here
-    return c.close                                         # cleanup, exactly once
+    c.drop = lambda: send_back("DROPPED")  # wire your client's on_close here
+    return c.close  # cleanup, exactly once
 
-policy = RetryPolicy(max_attempts=3, base_ms=1000, jitter="full", rng=random.Random(7).random)
-logic = MachineLogic(services={"openSocket": open_socket, "listen": from_callback(listen)}).merge(policy.logic())
+
+policy = RetryPolicy(
+    max_attempts=3, base_ms=1000, jitter="full", rng=random.Random(7).random
+)
+logic = MachineLogic(
+    services={
+        "openSocket": open_socket,
+        "listen": from_callback(listen),
+    }
+).merge(policy.logic())
 clock = SimulatedClock()
 s = SyncInterpreter(create_machine(chart, logic=logic), clock=clock).start()
 
 s.send("CONNECT")
 assert s.value == "connected"
-sockets[-1].drop(); clock.increment(0)                     # the server went away
-assert s.value == "reconnecting" and sockets[-1].closed    # old socket closed by the cleanup
-clock.increment(1000)                                      # full jitter: at most base_ms
+sockets[-1].drop()
+clock.increment(0)  # the server went away
+assert (
+    s.value == "reconnecting" and sockets[-1].closed
+)  # old socket closed by the cleanup
+clock.increment(1000)  # full jitter: at most base_ms
 assert s.value == "connected" and s.context["attempt"] == 0
 
-FakeClient.fail = 99                                       # server stays down
-sockets[-1].drop(); clock.increment(0)
-for _ in range(3): clock.increment(4000)
-assert s.value == "failed"                                 # gave up after max_attempts
+FakeClient.fail = 99  # server stays down
+sockets[-1].drop()
+clock.increment(0)
+for _ in range(3):
+    clock.increment(4000)
+assert s.value == "failed"  # gave up after max_attempts
 ```
 
 <div class="stately" data-machine="19bd205b78" data-height="420" data-title="socket"></div>

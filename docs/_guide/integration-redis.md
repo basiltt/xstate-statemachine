@@ -19,40 +19,76 @@ For a complete, runnable app that uses the Redis Streams adapter -- run it on `f
 
 <!-- doc-requires: redis, fakeredis -->
 ```python
-import fakeredis                                   # stand-in for redis.Redis.from_url("redis://...")
+import fakeredis  # stand-in for redis.Redis.from_url("redis://...")
 from xstate_statemachine import MachineLogic, create_machine
 from xstate_statemachine.contrib.redis import RedisInbox, RedisLog, RedisStore
-from xstate_statemachine.persistence import AuditPlugin, IdempotencyPlugin, persisted
+from xstate_statemachine.persistence import (
+    AuditPlugin,
+    IdempotencyPlugin,
+    persisted,
+)
 
 r = fakeredis.FakeRedis()
-store = RedisStore(r, prefix="shop")               # prefix is mandatory: one namespace per app
+store = RedisStore(
+    r, prefix="shop"
+)  # prefix is mandatory: one namespace per app
 inbox = RedisInbox(r, prefix="shop")
 log = RedisLog(r, prefix="shop")
 
 cfg = {
     "id": "order",
     "initial": "cart",
-    "context": {"items": 0},
+    "context": {
+        "items": 0,
+    },
     "states": {
-        "cart": {"on": {"ADD": {"actions": "add"}, "PAY": "paid"}},
-        "paid": {"type": "final"},
+        "cart": {
+            "on": {
+                "ADD": {
+                    "actions": "add",
+                },
+                "PAY": "paid",
+            },
+        },
+        "paid": {
+            "type": "final",
+        },
     },
 }
+
+
 def add(i, ctx, e, a):
     ctx["items"] += 1
-machine = create_machine(cfg, logic=MachineLogic(actions={"add": add}))
-plugins = [IdempotencyPlugin(inbox, principal=lambda e: "acct_1"), AuditPlugin(log)]
+
+
+machine = create_machine(
+    cfg,
+    logic=MachineLogic(
+        actions={
+            "add": add,
+        }
+    ),
+)
+plugins = [
+    IdempotencyPlugin(inbox, principal=lambda e: "acct_1"),
+    AuditPlugin(log),
+]
 
 # Any worker on any host:
 with persisted(store, "order:42", machine, plugins=plugins) as order:
     order.send("ADD", idempotency_key="evt_1", actor="alice")
 with persisted(store, "order:42", machine, plugins=plugins) as order:
-    order.send("ADD", idempotency_key="evt_1", actor="alice")   # redelivery: deduplicated
+    order.send(
+        "ADD", idempotency_key="evt_1", actor="alice"
+    )  # redelivery: deduplicated
     order.send("PAY", actor="alice", reason="checkout")
 
 record = store.load("order:42")
 assert record.version == 2 and record.machine_version == ""
-assert [(x.event_type, x.actor) for x in log.read("order:42")] == [("ADD", "alice"), ("PAY", "alice")]
+assert [(x.event_type, x.actor) for x in log.read("order:42")] == [
+    ("ADD", "alice"),
+    ("PAY", "alice"),
+]
 with persisted(store, "order:42", machine) as order:
     assert order.context["items"] == 1 and order.matches("order.paid")
 ```

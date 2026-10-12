@@ -33,10 +33,22 @@ config = {
     "id": "trafficLight",
     "initial": "red",
     "states": {
-        "red": {"on": {"TIMER": "green"}},
-        "green": {"on": {"TIMER": "yellow"}},
-        "yellow": {"on": {"TIMER": "red"}}
-    }
+        "red": {
+            "on": {
+                "TIMER": "green",
+            },
+        },
+        "green": {
+            "on": {
+                "TIMER": "yellow",
+            },
+        },
+        "yellow": {
+            "on": {
+                "TIMER": "red",
+            },
+        },
+    },
 }
 
 machine = create_machine(config)
@@ -104,10 +116,22 @@ config = {
     "id": "trafficLight",
     "initial": "red",
     "states": {
-        "red": {"on": {"TIMER": "green"}},
-        "green": {"on": {"TIMER": "yellow"}},
-        "yellow": {"on": {"TIMER": "red"}}
-    }
+        "red": {
+            "on": {
+                "TIMER": "green",
+            },
+        },
+        "green": {
+            "on": {
+                "TIMER": "yellow",
+            },
+        },
+        "yellow": {
+            "on": {
+                "TIMER": "red",
+            },
+        },
+    },
 }
 
 machine = create_machine(config)
@@ -266,24 +290,36 @@ config = {
     "id": "editor",
     "initial": "idle",
     "states": {
-        "idle": {"on": {"OPEN": "editing"}},
+        "idle": {
+            "on": {
+                "OPEN": "editing",
+            },
+        },
         "editing": {
             "initial": "drafting",
             "states": {
                 "drafting": {
                     "on": {
                         "PREVIEW": "previewing",
-                        "SAVE": "saving"
-                    }
+                        "SAVE": "saving",
+                    },
                 },
-                "previewing": {"on": {"EDIT": "drafting"}},
+                "previewing": {
+                    "on": {
+                        "EDIT": "drafting",
+                    },
+                },
                 "saving": {
-                    "on": {"SAVE_DONE": "drafting"}
-                }
+                    "on": {
+                        "SAVE_DONE": "drafting",
+                    },
+                },
             },
-            "on": {"CLOSE": "idle"}
-        }
-    }
+            "on": {
+                "CLOSE": "idle",
+            },
+        },
+    },
 }
 
 machine = create_machine(config)
@@ -334,22 +370,42 @@ config = {
                 "video": {
                     "initial": "loading",
                     "states": {
-                        "loading": {"on": {"VIDEO_READY": "streaming"}},
-                        "streaming": {"on": {"BUFFER": "loading"}}
-                    }
+                        "loading": {
+                            "on": {
+                                "VIDEO_READY": "streaming",
+                            },
+                        },
+                        "streaming": {
+                            "on": {
+                                "BUFFER": "loading",
+                            },
+                        },
+                    },
                 },
                 "audio": {
                     "initial": "muted",
                     "states": {
-                        "muted": {"on": {"UNMUTE": "audible"}},
-                        "audible": {"on": {"MUTE": "muted"}}
-                    }
-                }
+                        "muted": {
+                            "on": {
+                                "UNMUTE": "audible",
+                            },
+                        },
+                        "audible": {
+                            "on": {
+                                "MUTE": "muted",
+                            },
+                        },
+                    },
+                },
             },
-            "on": {"STOP": "stopped"}
+            "on": {
+                "STOP": "stopped",
+            },
         },
-        "stopped": {"type": "final"}
-    }
+        "stopped": {
+            "type": "final",
+        },
+    },
 }
 
 machine = create_machine(config)
@@ -443,37 +499,55 @@ from xstate_statemachine import MachineLogic, create_machine
 config = {
     "id": "orderSystem",
     "initial": "browsing",
-    "context": {"cart": [], "total": 0},
+    "context": {
+        "cart": [],
+        "total": 0,
+    },
     "states": {
         "browsing": {
             "on": {
-                "ADD_ITEM": {"actions": "addToCart"},
-                "CHECKOUT": {"target": "checkout", "guard": "cartNotEmpty"}
-            }
+                "ADD_ITEM": {
+                    "actions": "addToCart",
+                },
+                "CHECKOUT": {
+                    "target": "checkout",
+                    "guard": "cartNotEmpty",
+                },
+            },
         },
         "checkout": {
             "initial": "shipping",
             "states": {
                 "shipping": {
-                    "on": {"SUBMIT_ADDRESS": "payment"}
+                    "on": {
+                        "SUBMIT_ADDRESS": "payment",
+                    },
                 },
                 "payment": {
-                    "on": {"SUBMIT_PAYMENT": "processing"}
+                    "on": {
+                        "SUBMIT_PAYMENT": "processing",
+                    },
                 },
                 "processing": {
                     "invoke": {
                         "src": "processPayment",
                         "onDone": "confirmation",
-                        "onError": "payment"
-                    }
+                        "onError": "payment",
+                    },
                 },
-                "confirmation": {"type": "final"}
+                "confirmation": {
+                    "type": "final",
+                },
             },
-            "on": {"CANCEL": "browsing"},
-            "onDone": "complete"
+            "on": {
+                "CANCEL": "browsing",
+            },
+            "onDone": "complete",
         },
-        "complete": {"type": "final"}
-    }
+        "complete": {
+            "type": "final",
+        },
+    },
 }
 
 # Diagrams need only the SHAPE; stub the named logic so the build-time
@@ -481,9 +555,15 @@ config = {
 machine = create_machine(
     config,
     logic=MachineLogic(
-        actions={"addToCart": lambda *a: None},
-        guards={"cartNotEmpty": lambda c, e: True},
-        services={"processPayment": lambda *a: None},
+        actions={
+            "addToCart": lambda *a: None,
+        },
+        guards={
+            "cartNotEmpty": lambda c, e: True,
+        },
+        services={
+            "processPayment": lambda *a: None,
+        },
     ),
 )
 

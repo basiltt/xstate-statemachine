@@ -29,9 +29,17 @@ import django
 from django.conf import settings
 
 settings.configure(
-    INSTALLED_APPS=["django.contrib.contenttypes", "django.contrib.auth",
-                    "xstate_statemachine.contrib.django"],
-    DATABASES={"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}},
+    INSTALLED_APPS=[
+        "django.contrib.contenttypes",
+        "django.contrib.auth",
+        "xstate_statemachine.contrib.django",
+    ],
+    DATABASES={
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": ":memory:",
+        },
+    },
     DEFAULT_AUTO_FIELD="django.db.models.BigAutoField",
 )
 django.setup()
@@ -39,36 +47,97 @@ django.setup()
 from django.core.management import call_command
 from django.db import connection, models
 from xstate_statemachine import MachineLogic
-from xstate_statemachine.contrib.django import StatechartField, StatechartModelMixin
+from xstate_statemachine.contrib.django import (
+    StatechartField,
+    StatechartModelMixin,
+)
+
 
 def record(i, ctx, e, a):
     ctx["paid"] = e.payload["amount"]
 
+
 class Order(StatechartModelMixin, models.Model):
     statechart_machine = {
-        "id": "order", "initial": "cart", "context": {"paid": 0},
+        "id": "order",
+        "initial": "cart",
+        "context": {
+            "paid": 0,
+        },
         "states": {
-            "cart": {"on": {"CHECKOUT": "review"}},
-            "review": {"type": "parallel", "onDone": "approved", "states": {
-                "legal": {"initial": "pending", "states": {
-                    "pending": {"on": {"LEGAL_OK": "ok"}}, "ok": {"type": "final"}}},
-                "finance": {"initial": "pending", "states": {
-                    "pending": {"on": {"FINANCE_OK": "ok"}}, "ok": {"type": "final"}}}}},
-            "approved": {"after": {"86400000": "expired"},
-                         "on": {"PAY": {"target": "paid", "actions": "record"}}},
-            "expired": {}, "paid": {"type": "final"}}}
-    statechart_logic = MachineLogic(actions={"record": record})
-    statechart = StatechartField()      # + statechart_state / _state_ids / _version ...
+            "cart": {
+                "on": {
+                    "CHECKOUT": "review",
+                },
+            },
+            "review": {
+                "type": "parallel",
+                "onDone": "approved",
+                "states": {
+                    "legal": {
+                        "initial": "pending",
+                        "states": {
+                            "pending": {
+                                "on": {
+                                    "LEGAL_OK": "ok",
+                                },
+                            },
+                            "ok": {
+                                "type": "final",
+                            },
+                        },
+                    },
+                    "finance": {
+                        "initial": "pending",
+                        "states": {
+                            "pending": {
+                                "on": {
+                                    "FINANCE_OK": "ok",
+                                },
+                            },
+                            "ok": {
+                                "type": "final",
+                            },
+                        },
+                    },
+                },
+            },
+            "approved": {
+                "after": {
+                    "86400000": "expired",
+                },
+                "on": {
+                    "PAY": {
+                        "target": "paid",
+                        "actions": "record",
+                    },
+                },
+            },
+            "expired": {},
+            "paid": {
+                "type": "final",
+            },
+        },
+    }
+    statechart_logic = MachineLogic(
+        actions={
+            "record": record,
+        }
+    )
+    statechart = (
+        StatechartField()
+    )  # + statechart_state / _state_ids / _version ...
 
     class Meta:
         app_label = "shop"
 
+
 call_command("migrate", verbosity=0)
-with connection.schema_editor() as editor:     # in a project: makemigrations
+with connection.schema_editor() as editor:  # in a project: makemigrations
     editor.create_model(Order)
 
-order = Order.objects.create()                 # initial snapshot built on insert
-order.send("CHECKOUT")                         # atomic() + select_for_update()
+order = Order.objects.create()  # initial snapshot built on insert
+order.send("CHECKOUT")  # atomic() + select_for_update()
 assert Order.objects.in_state("order.review").get() == order
 order.send("LEGAL_OK")
 order.send("FINANCE_OK")
@@ -76,8 +145,15 @@ assert order.state == "order.approved" and order.can("PAY")
 assert order.send("PAY", amount=42).changed
 assert Order.objects.filter(statechart__state="order.paid").count() == 1
 assert order.machine.context["paid"] == 42
-assert [h.event for h in order.history] == [       # the audit trail, same transaction
-    "CHECKOUT", "LEGAL_OK", "FINANCE_OK", "done.state.order.review", "PAY"]
+assert [
+    h.event for h in order.history
+] == [  # the audit trail, same transaction
+    "CHECKOUT",
+    "LEGAL_OK",
+    "FINANCE_OK",
+    "done.state.order.review",
+    "PAY",
+]
 ```
 
 <div class="stately" data-machine="fdee9ad0ad" data-height="640" data-title="order"></div>
@@ -224,9 +300,17 @@ import django
 from django.conf import settings
 
 settings.configure(
-    INSTALLED_APPS=["django.contrib.contenttypes", "django.contrib.auth",
-                    "xstate_statemachine.contrib.django"],
-    DATABASES={"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}},
+    INSTALLED_APPS=[
+        "django.contrib.contenttypes",
+        "django.contrib.auth",
+        "xstate_statemachine.contrib.django",
+    ],
+    DATABASES={
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": ":memory:",
+        },
+    },
     DEFAULT_AUTO_FIELD="django.db.models.BigAutoField",
 )
 django.setup()
@@ -236,32 +320,72 @@ from django.core.management import call_command
 from django.db import connection, models, transaction
 from xstate_statemachine import MachineLogic
 from xstate_statemachine.contrib.django import (
-    DjangoOutboxStore, PermissionGuard, RoleGuard, StatechartField,
-    StatechartModelMixin, TransitionVetoed, has_event_permission,
-    permitted_events, post_transition, pre_transition)
+    DjangoOutboxStore,
+    PermissionGuard,
+    RoleGuard,
+    StatechartField,
+    StatechartModelMixin,
+    TransitionVetoed,
+    has_event_permission,
+    permitted_events,
+    post_transition,
+    pre_transition,
+)
 from xstate_statemachine.eda import OutboxPlugin, OutboxRelay
+
 
 class Invoice(StatechartModelMixin, models.Model):
     statechart_machine = {
-        "id": "invoice", "initial": "draft", "context": {"lines": 0},
+        "id": "invoice",
+        "initial": "draft",
+        "context": {
+            "lines": 0,
+        },
         "states": {
-            "draft": {"on": {
-                "ADD_LINE": {"actions": "addLine"},
-                "APPROVE": {"target": "approved",          # "approver" OR "cfo"
-                            "guard": {"type": "and", "children": [
-                                {"type": "or", "children": ["canApprove", "isCfo"]},
-                                "hasLines"]}}}},
-            "approved": {"tags": ["publish"], "type": "final"}}}
+            "draft": {
+                "on": {
+                    "ADD_LINE": {
+                        "actions": "addLine",
+                    },
+                    "APPROVE": {
+                        "target": "approved",  # "approver" OR "cfo"
+                        "guard": {
+                            "type": "and",
+                            "children": [
+                                {
+                                    "type": "or",
+                                    "children": ["canApprove", "isCfo"],
+                                },
+                                "hasLines",
+                            ],
+                        },
+                    },
+                },
+            },
+            "approved": {
+                "tags": ["publish"],
+                "type": "final",
+            },
+        },
+    }
     statechart_logic = MachineLogic(
-        actions={"addLine": lambda i, ctx, e, a: ctx.update(lines=ctx["lines"] + 1)},
-        guards={"canApprove": PermissionGuard("auth.change_user"),  # any real perm
-                "isCfo": RoleGuard("cfo"),
-                "hasLines": lambda ctx, e: ctx["lines"] > 0})
-    statechart_plugins = staticmethod(lambda row: [OutboxPlugin(DjangoOutboxStore())])
+        actions={
+            "addLine": lambda i, ctx, e, a: ctx.update(lines=ctx["lines"] + 1),
+        },
+        guards={
+            "canApprove": PermissionGuard("auth.change_user"),  # any real perm
+            "isCfo": RoleGuard("cfo"),
+            "hasLines": lambda ctx, e: ctx["lines"] > 0,
+        },
+    )
+    statechart_plugins = staticmethod(
+        lambda row: [OutboxPlugin(DjangoOutboxStore())]
+    )
     statechart = StatechartField()
 
     class Meta:
         app_label = "billing"
+
 
 call_command("migrate", verbosity=0)
 with connection.schema_editor() as editor:
@@ -273,15 +397,20 @@ intern = User.objects.create_user("intern")
 inv = Invoice.objects.create()
 
 # 🔐 "forbidden" vs "not possible right now"
-assert has_event_permission(cfo, inv, "APPROVE", require_enabled=False)  # may try
-assert not has_event_permission(cfo, inv, "APPROVE")                     # no lines yet
+assert has_event_permission(
+    cfo, inv, "APPROVE", require_enabled=False
+)  # may try
+assert not has_event_permission(cfo, inv, "APPROVE")  # no lines yet
 assert not has_event_permission(intern, inv, "APPROVE", require_enabled=False)
 assert inv.send("APPROVE", actor=intern).denied
+
 
 # 📣 a pre_transition veto: denied, nothing written
 def frozen(sender, **kw):
     if kw["event"].type == "APPROVE":
         raise TransitionVetoed("period closed")
+
+
 pre_transition.connect(frozen)
 inv.send("ADD_LINE", actor=cfo)
 assert permitted_events(cfo, inv) == ["ADD_LINE", "APPROVE"]
@@ -290,26 +419,35 @@ pre_transition.disconnect(frozen)
 
 # 📣 on_commit receivers run after COMMIT only (and disconnect(fn) works)
 sent = []
+
+
 def notify(sender, instance, to_states, **kw):
     sent.append(to_states)
+
+
 post_transition.connect(notify, on_commit=True)
 with transaction.atomic():
     assert inv.send("APPROVE", actor=cfo, reason="ok").changed
-    assert sent == []                                # not yet committed
+    assert sent == []  # not yet committed
 post_transition.disconnect(notify)
 assert sent == [("invoice.approved",)]
 
 # 🧾 the audit trail: every attempt, in order, with the actor
 assert [(h.event, h.disposition, h.actor_id) for h in inv.history] == [
-    ("APPROVE", "denied", intern.pk),                # a guard refusal: recorded
-    ("ADD_LINE", "transition", cfo.pk),              # (the veto wrote nothing)
-    ("APPROVE", "transition", cfo.pk)]
+    ("APPROVE", "denied", intern.pk),  # a guard refusal: recorded
+    ("ADD_LINE", "transition", cfo.pk),  # (the veto wrote nothing)
+    ("APPROVE", "transition", cfo.pk),
+]
 
 # 📤 the outbox row committed WITH the approval; the relay publishes it
 published = []
+
+
 class Broker:
     def publish(self, topic, envelope):
         published.append(envelope.id)
+
+
 assert OutboxRelay(DjangoOutboxStore(), Broker()).relay_once_sync() == 1
 assert OutboxRelay(DjangoOutboxStore(), Broker()).relay_once_sync() == 0
 assert len(published) == 1

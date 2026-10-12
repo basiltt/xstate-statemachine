@@ -24,38 +24,73 @@ from typing import Literal
 from pydantic import BaseModel
 from xstate_statemachine import MachineLogic, SyncInterpreter, create_machine
 from xstate_statemachine.contrib.pydantic import (
-    ContextValidationError, EventModel, TypedContextPlugin, context_model, context_of,
-    events_union, typed_context,
+    ContextValidationError,
+    EventModel,
+    TypedContextPlugin,
+    context_model,
+    context_of,
+    events_union,
+    typed_context,
 )
+
 
 class OrderContext(BaseModel):
     total: Decimal = Decimal(0)
     currency: Literal["USD", "EUR"] = "USD"
 
-class Pay(EventModel):                       # an instance IS an event
+
+class Pay(EventModel):  # an instance IS an event
     type: Literal["PAY"] = "PAY"
     amount: Decimal
 
-cfg = {"id": "order", "initial": "open", "actionErrorPolicy": "rollback",
-       "states": {"open": {"on": {"PAY": {"actions": "add"}, "BREAK": {"actions": "bad"}}}}}
-logic = MachineLogic(actions={
-    "add": lambda i, ctx, e, a: ctx.__setitem__("total", ctx["total"] + e.payload["amount"]),
-    "bad": lambda i, ctx, e, a: ctx.__setitem__("currency", "GBP"),   # not in the Literal
-})
+
+cfg = {
+    "id": "order",
+    "initial": "open",
+    "actionErrorPolicy": "rollback",
+    "states": {
+        "open": {
+            "on": {
+                "PAY": {
+                    "actions": "add",
+                },
+                "BREAK": {
+                    "actions": "bad",
+                },
+            },
+        },
+    },
+}
+logic = MachineLogic(
+    actions={
+        "add": lambda i, ctx, e, a: ctx.__setitem__(
+            "total", ctx["total"] + e.payload["amount"]
+        ),
+        "bad": lambda i, ctx, e, a: ctx.__setitem__(
+            "currency", "GBP"
+        ),  # not in the Literal
+    }
+)
 machine = create_machine(
-    typed_context(OrderContext, cfg),                      # initial context validated + completed
+    typed_context(OrderContext, cfg),  # initial context validated + completed
     logic=logic,
-    context_validator=context_model(OrderContext),         # re-validated after every mutating action
-    event_schemas=events_union(Pay),                       # payloads validated at send()
+    context_validator=context_model(
+        OrderContext
+    ),  # re-validated after every mutating action
+    event_schemas=events_union(Pay),  # payloads validated at send()
 )
 order = SyncInterpreter(machine).use(TypedContextPlugin(OrderContext)).start()
 
-order.send(Pay(amount=Decimal("9.50")))                    # typed event, no dict
+order.send(Pay(amount=Decimal("9.50")))  # typed event, no dict
 assert context_of(order, OrderContext) == OrderContext(total=Decimal("9.50"))
 
-receipt = order.send("BREAK", wait=True)                   # the action breaks the model...
-assert isinstance(receipt.error, ContextValidationError)   # ...reported as an action error...
-assert order.context["currency"] == "USD"                  # ...and rolled back: never an invalid context
+receipt = order.send("BREAK", wait=True)  # the action breaks the model...
+assert isinstance(
+    receipt.error, ContextValidationError
+)  # ...reported as an action error...
+assert (
+    order.context["currency"] == "USD"
+)  # ...and rolled back: never an invalid context
 ```
 
 <div class="stately" data-machine="bf4b4c6159" data-height="320" data-title="order"></div>

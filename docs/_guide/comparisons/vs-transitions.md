@@ -34,28 +34,68 @@ This is not executed here.
 from transitions import Machine
 from transitions.extensions.states import Timeout, add_state_features
 
+
 @add_state_features(Timeout)
 class TimeoutMachine(Machine):
     pass
 
+
 class Order:
     items = 1
+
     def has_items(self):
         return self.items > 0
 
-states = ["cart",
-          {"name": "awaiting_payment", "timeout": 900, "on_timeout": "expire"},
-          "paid", "shipped", "expired", "cancelled"]
+
+states = [
+    "cart",
+    {
+        "name": "awaiting_payment",
+        "timeout": 900,
+        "on_timeout": "expire",
+    },
+    "paid",
+    "shipped",
+    "expired",
+    "cancelled",
+]
 order = Order()
-TimeoutMachine(model=order, states=states, initial="cart", transitions=[
-    {"trigger": "checkout", "source": "cart", "dest": "awaiting_payment",
-     "conditions": "has_items"},
-    {"trigger": "pay", "source": "awaiting_payment", "dest": "paid"},
-    {"trigger": "ship", "source": "paid", "dest": "shipped"},
-    {"trigger": "expire", "source": "awaiting_payment", "dest": "expired"},
-    {"trigger": "cancel", "source": ["cart", "awaiting_payment"], "dest": "cancelled"},
-])
-order.checkout(); order.pay(); order.ship()
+TimeoutMachine(
+    model=order,
+    states=states,
+    initial="cart",
+    transitions=[
+        {
+            "trigger": "checkout",
+            "source": "cart",
+            "dest": "awaiting_payment",
+            "conditions": "has_items",
+        },
+        {
+            "trigger": "pay",
+            "source": "awaiting_payment",
+            "dest": "paid",
+        },
+        {
+            "trigger": "ship",
+            "source": "paid",
+            "dest": "shipped",
+        },
+        {
+            "trigger": "expire",
+            "source": "awaiting_payment",
+            "dest": "expired",
+        },
+        {
+            "trigger": "cancel",
+            "source": ["cart", "awaiting_payment"],
+            "dest": "cancelled",
+        },
+    ],
+)
+order.checkout()
+order.pay()
+order.ship()
 # The 900 s timeout is a threading.Timer in this process; a restart loses it.
 ```
 
@@ -67,16 +107,41 @@ The same chart as JSON, run here with `stub_logic`, which satisfies the `hasItem
 from xstate_statemachine import SyncInterpreter, create_machine, stub_logic
 
 chart = {
-    "id": "order", "initial": "cart",
+    "id": "order",
+    "initial": "cart",
     "states": {
-        "cart": {"on": {"CHECKOUT": {"target": "awaitingPayment", "guard": "hasItems"},
-                        "CANCEL": "cancelled"}},
-        "awaitingPayment": {"after": {"900000": "expired"},           # 15 minutes
-                            "on": {"PAY": "paid", "CANCEL": "cancelled"}},
-        "paid": {"on": {"SHIP": "shipped"}},
-        "shipped": {"type": "final"},
-        "expired": {"type": "final"},
-        "cancelled": {"type": "final"},
+        "cart": {
+            "on": {
+                "CHECKOUT": {
+                    "target": "awaitingPayment",
+                    "guard": "hasItems",
+                },
+                "CANCEL": "cancelled",
+            },
+        },
+        "awaitingPayment": {
+            "after": {
+                "900000": "expired",
+            },  # 15 minutes
+            "on": {
+                "PAY": "paid",
+                "CANCEL": "cancelled",
+            },
+        },
+        "paid": {
+            "on": {
+                "SHIP": "shipped",
+            },
+        },
+        "shipped": {
+            "type": "final",
+        },
+        "expired": {
+            "type": "final",
+        },
+        "cancelled": {
+            "type": "final",
+        },
     },
 }
 order = SyncInterpreter(create_machine(chart, logic=stub_logic(chart))).start()
@@ -84,7 +149,7 @@ order.send("CHECKOUT")
 order.send("PAY")
 order.send("SHIP")
 assert order.current_state_ids == {"order.shipped"}
-snapshot = order.get_snapshot()          # JSON: state, context and deadlines
+snapshot = order.get_snapshot()  # JSON: state, context and deadlines
 order.stop()
 ```
 

@@ -38,36 +38,111 @@ xsm simulate examples/recipes/feature_flag_rollout/machine.json --events START,+
 
 ```python
 import json, pathlib, tempfile
-from xstate_statemachine import MachineLogic, SimulatedClock, SyncInterpreter, create_machine
+from xstate_statemachine import (
+    MachineLogic,
+    SimulatedClock,
+    SyncInterpreter,
+    create_machine,
+)
 
 HOUR = 3_600_000
-stage = lambda pct, bake, nxt: {"entry": {"type": "setPercent", "params": {"percent": pct}},
-                                "after": {str(bake): [{"target": nxt, "guard": "metricsHealthy"},
-                                                      {"target": "#rollout.rolled_back"}]}}
-chart = {"id": "rollout", "initial": "disabled", "context": {"percent": 0}, "states": {
-    "disabled": {"on": {"START": "exposed"}},
-    "exposed": {"initial": "internal", "on": {"METRICS_BAD": "#rollout.rolled_back"}, "states": {
-        "internal": stage(0.1, HOUR, "canary_1"),
-        "canary_1": stage(1, HOUR, "canary_25"),
-        "canary_25": stage(25, 24 * HOUR, "#rollout.ga")}},
-    "ga": {"entry": {"type": "setPercent", "params": {"percent": 100}}},
-    "rolled_back": {"entry": {"type": "setPercent", "params": {"percent": 0}}}}}
+stage = lambda pct, bake, nxt: {
+    "entry": {
+        "type": "setPercent",
+        "params": {
+            "percent": pct,
+        },
+    },
+    "after": {
+        str(bake): [
+            {
+                "target": nxt,
+                "guard": "metricsHealthy",
+            },
+            {
+                "target": "#rollout.rolled_back",
+            },
+        ],
+    },
+}
+chart = {
+    "id": "rollout",
+    "initial": "disabled",
+    "context": {
+        "percent": 0,
+    },
+    "states": {
+        "disabled": {
+            "on": {
+                "START": "exposed",
+            },
+        },
+        "exposed": {
+            "initial": "internal",
+            "on": {
+                "METRICS_BAD": "#rollout.rolled_back",
+            },
+            "states": {
+                "internal": stage(0.1, HOUR, "canary_1"),
+                "canary_1": stage(1, HOUR, "canary_25"),
+                "canary_25": stage(25, 24 * HOUR, "#rollout.ga"),
+            },
+        },
+        "ga": {
+            "entry": {
+                "type": "setPercent",
+                "params": {
+                    "percent": 100,
+                },
+            },
+        },
+        "rolled_back": {
+            "entry": {
+                "type": "setPercent",
+                "params": {
+                    "percent": 0,
+                },
+            },
+        },
+    },
+}
 
-live = {"error_rate": 0.001, "p99_ms": 250}                 # your metrics backend
-def metrics_healthy(ctx, e): return live["error_rate"] <= 0.01 and live["p99_ms"] <= 800
+live = {
+    "error_rate": 0.001,
+    "p99_ms": 250,
+}  # your metrics backend
+
+
+def metrics_healthy(ctx, e):
+    return live["error_rate"] <= 0.01 and live["p99_ms"] <= 800
+
+
 pushed = []
-def set_percent(i, ctx, e, a):
-    ctx["percent"] = a.params["percent"]; pushed.append(ctx["percent"])   # -> your flag system
 
-machine = create_machine(chart, logic=MachineLogic(actions={"setPercent": set_percent},
-                                                   guards={"metricsHealthy": metrics_healthy}))
+
+def set_percent(i, ctx, e, a):
+    ctx["percent"] = a.params["percent"]
+    pushed.append(ctx["percent"])  # -> your flag system
+
+
+machine = create_machine(
+    chart,
+    logic=MachineLogic(
+        actions={
+            "setPercent": set_percent,
+        },
+        guards={
+            "metricsHealthy": metrics_healthy,
+        },
+    ),
+)
 clock = SimulatedClock()
 r = SyncInterpreter(machine, clock=clock).start()
 r.send("START")
-clock.increment(HOUR)                                       # internal baked, healthy
-clock.increment(HOUR)                                       # canary_1 baked, healthy
-live["error_rate"] = 0.04                                   # canary_25 goes bad ...
-clock.increment(24 * HOUR)                                  # ... and the bake gate says no
+clock.increment(HOUR)  # internal baked, healthy
+clock.increment(HOUR)  # canary_1 baked, healthy
+live["error_rate"] = 0.04  # canary_25 goes bad ...
+clock.increment(24 * HOUR)  # ... and the bake gate says no
 assert r.value == "rolled_back" and pushed == [0.1, 1, 25, 0]
 ```
 

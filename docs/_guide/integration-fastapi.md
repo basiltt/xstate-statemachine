@@ -24,43 +24,76 @@ from fastapi.testclient import TestClient
 
 from xstate_statemachine import create_machine
 from xstate_statemachine.contrib.fastapi import (
-    StatechartRegistry, StatechartRouter, instrument_app,
+    StatechartRegistry,
+    StatechartRouter,
+    instrument_app,
 )
 from xstate_statemachine.contrib.pydantic import EventModel, events_union
 from xstate_statemachine.persistence import MemoryStore
+
 
 class Pay(EventModel):
     type: Literal["PAY"] = "PAY"
     amount: int
 
+
 class Cancel(EventModel):
     type: Literal["CANCEL"] = "CANCEL"
 
+
 order = create_machine(
-    {"id": "order", "initial": "open",
-     "states": {"open": {"on": {"PAY": "paid", "CANCEL": "cancelled"}},
-                "paid": {}, "cancelled": {}}},
+    {
+        "id": "order",
+        "initial": "open",
+        "states": {
+            "open": {
+                "on": {
+                    "PAY": "paid",
+                    "CANCEL": "cancelled",
+                },
+            },
+            "paid": {},
+            "cancelled": {},
+        },
+    },
     event_schemas=events_union(Pay, Cancel),
 )
 
+
 def authorize(request, *, name, key, event):
-    return request.headers.get("x-user") is not None   # your auth here
+    return request.headers.get("x-user") is not None  # your auth here
+
 
 registry = StatechartRegistry(MemoryStore())
 registry.register("order", order, authorize=authorize)
 
 app = FastAPI()
-app.include_router(StatechartRouter(registry, "order", prefix="/orders",
-                                    tags=["orders"]))
-instrument_app(app, registry)       # probes, lifespan, problem handlers
+app.include_router(
+    StatechartRouter(registry, "order", prefix="/orders", tags=["orders"])
+)
+instrument_app(app, registry)  # probes, lifespan, problem handlers
 
 with TestClient(app) as client:
-    user = {"x-user": "ann"}
-    r = client.post("/orders/7/send", json={"type": "PAY", "amount": 10},
-                    headers=user)
+    user = {
+        "x-user": "ann",
+    }
+    r = client.post(
+        "/orders/7/send",
+        json={
+            "type": "PAY",
+            "amount": 10,
+        },
+        headers=user,
+    )
     assert r.status_code == 200 and r.json()["state"] == "paid"
-    bad = client.post("/orders/8/send", json={"type": "PAY"}, headers=user)
-    assert bad.status_code == 422                     # `amount` missing
+    bad = client.post(
+        "/orders/8/send",
+        json={
+            "type": "PAY",
+        },
+        headers=user,
+    )
+    assert bad.status_code == 422  # `amount` missing
     assert bad.headers["content-type"] == "application/problem+json"
     assert client.get("/orders/7").status_code == 403  # no user
     body = app.openapi()["paths"]["/orders/{id}/send"]["post"]["requestBody"]
@@ -134,48 +167,85 @@ from fastapi.testclient import TestClient
 
 from xstate_statemachine import create_machine
 from xstate_statemachine.contrib.fastapi import (
-    StatechartRegistry, StatechartRouter, allow_all, instrument_app,
+    StatechartRegistry,
+    StatechartRouter,
+    allow_all,
+    instrument_app,
 )
 from xstate_statemachine.contrib.pydantic import EventModel, events_union
 from xstate_statemachine.persistence import MemoryInbox, MemoryStore
 
+
 class Pay(EventModel):
     type: Literal["PAY"] = "PAY"
 
+
 order = create_machine(
-    {"id": "order", "initial": "open",
-     "states": {"open": {"on": {"PAY": "paid"}}, "paid": {}}},
+    {
+        "id": "order",
+        "initial": "open",
+        "states": {
+            "open": {
+                "on": {
+                    "PAY": "paid",
+                },
+            },
+            "paid": {},
+        },
+    },
     event_schemas=events_union(Pay),
 )
-registry = StatechartRegistry(MemoryStore(), inbox=MemoryInbox(),
-                              principal=lambda conn: "ann")
+registry = StatechartRegistry(
+    MemoryStore(), inbox=MemoryInbox(), principal=lambda conn: "ann"
+)
 registry.register("order", order, authorize=allow_all)
 sent = []
 
 app = FastAPI()
 
-@app.post("/orders/{id}/events/PAY")          # registered first: shadows the router's
+
+@app.post("/orders/{id}/events/PAY")  # registered first: shadows the router's
 async def pay(id: str, request: Request, background: BackgroundTasks):
     response = await registry.send_event(request, "order", id, "PAY", {})
     if response.status_code == 200:
         import json
+
         body = json.loads(response.body)
         if body["changed"] and not body["duplicate"] and body["error"] is None:
-            background.add_task(sent.append, id)   # after the response, once
+            background.add_task(sent.append, id)  # after the response, once
     return response
+
 
 # PAY is refused on /send (403); in a real service ALSO gate it in
 # `authorize` (see "Request rules") so another router cannot bypass it
-app.include_router(StatechartRouter(registry, "order", prefix="/orders",
-                                    per_event_dependencies={"PAY": []}))
+app.include_router(
+    StatechartRouter(
+        registry,
+        "order",
+        prefix="/orders",
+        per_event_dependencies={
+            "PAY": [],
+        },
+    )
+)
 instrument_app(app, registry)
 
 with TestClient(app) as client:
-    key = {"Idempotency-Key": "p1"}
+    key = {
+        "Idempotency-Key": "p1",
+    }
     assert client.post("/orders/1/events/PAY", headers=key).json()["changed"]
     again = client.post("/orders/1/events/PAY", headers=key).json()
     assert again["duplicate"] is True
-    assert client.post("/orders/1/send", json={"type": "PAY"}).status_code == 403
+    assert (
+        client.post(
+            "/orders/1/send",
+            json={
+                "type": "PAY",
+            },
+        ).status_code
+        == 403
+    )
 assert sent == ["1"]
 ```
 
@@ -214,26 +284,53 @@ from fastapi.testclient import TestClient
 
 from xstate_statemachine import create_machine
 from xstate_statemachine.contrib.fastapi import (
-    ReceiptResponse, StatechartRegistry, allow_all, get_interpreter,
+    ReceiptResponse,
+    StatechartRegistry,
+    allow_all,
+    get_interpreter,
     instrument_app,
 )
 from xstate_statemachine.persistence import MemoryStore
 
-registry = StatechartRegistry(MemoryStore(),
-                              principal=lambda conn: conn.cookies["session"])
-registry.register("checkout", create_machine(
-    {"id": "checkout", "initial": "shipping", "states": {
-        "shipping": {"on": {"NEXT": "payment"}},
-        "payment": {"on": {"NEXT": "review"}}, "review": {}}}),
-    authorize=allow_all)
+registry = StatechartRegistry(
+    MemoryStore(), principal=lambda conn: conn.cookies["session"]
+)
+registry.register(
+    "checkout",
+    create_machine(
+        {
+            "id": "checkout",
+            "initial": "shipping",
+            "states": {
+                "shipping": {
+                    "on": {
+                        "NEXT": "payment",
+                    },
+                },
+                "payment": {
+                    "on": {
+                        "NEXT": "review",
+                    },
+                },
+                "review": {},
+            },
+        }
+    ),
+    authorize=allow_all,
+)
 app = instrument_app(FastAPI(), registry)
 
+
 def wizard_key(request: Request) -> str:
-    return request.cookies["session"]            # set by your session middleware
+    return request.cookies["session"]  # set by your session middleware
+
 
 @app.post("/checkout/next")
-async def next_step(wizard=get_interpreter(registry, "checkout", key=wizard_key)):
+async def next_step(
+    wizard=get_interpreter(registry, "checkout", key=wizard_key)
+):
     return ReceiptResponse(wizard, await wizard.send("NEXT", wait=True))
+
 
 with TestClient(app) as ann, TestClient(app) as bob:
     ann.cookies.set("session", "s-ann")
@@ -260,27 +357,58 @@ from fastapi import FastAPI
 
 from xstate_statemachine import create_machine
 from xstate_statemachine.contrib.fastapi import (
-    StatechartRegistry, StatechartRouter, allow_all, instrument_app,
+    StatechartRegistry,
+    StatechartRouter,
+    allow_all,
+    instrument_app,
 )
 from xstate_statemachine.persistence import MemoryStore
 
 registry = StatechartRegistry(MemoryStore())
-registry.register("t", create_machine(
-    {"id": "t", "initial": "a", "states": {"a": {"on": {"GO": "b"}}, "b": {}}}),
-    authorize=allow_all)
+registry.register(
+    "t",
+    create_machine(
+        {
+            "id": "t",
+            "initial": "a",
+            "states": {
+                "a": {
+                    "on": {
+                        "GO": "b",
+                    },
+                },
+                "b": {},
+            },
+        }
+    ),
+    authorize=allow_all,
+)
 app = instrument_app(FastAPI(), registry)
 app.include_router(StatechartRouter(registry, "t"))
 
+
 async def race():
     transport = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://t"
+    ) as c:
         return await asyncio.gather(
-            *(c.post("/t/k/send", json={"type": "GO", "payload": {}})
-              for _ in range(20)))
+            *(
+                c.post(
+                    "/t/k/send",
+                    json={
+                        "type": "GO",
+                        "payload": {},
+                    },
+                )
+                for _ in range(20)
+            )
+        )
+
 
 results = asyncio.run(race())
 winners = [r for r in results if r.status_code == 200 and r.json()["changed"]]
-assert len(winners) == 1                         # the rest: 409 or unchanged
+assert len(winners) == 1  # the rest: 409 or unchanged
 ```
 
 <div class="stately" data-machine="8c1fd940a8" data-height="320" data-title="t"></div>
@@ -401,26 +529,39 @@ import httpx
 
 from xstate_statemachine import __version__  # noqa: F401 (client: httpx only)
 
+
 async def post_with_retry(client, url, json, *, key, attempts=5, base_s=0.05):
     """Retry 409s with full jitter; the same Idempotency-Key every time."""
     for attempt in range(attempts):
-        r = await client.post(url, json=json, headers={"Idempotency-Key": key})
+        r = await client.post(
+            url,
+            json=json,
+            headers={
+                "Idempotency-Key": key,
+            },
+        )
         if r.status_code != 409:
             return r
-        await asyncio.sleep(random.uniform(0, base_s * 2 ** attempt))
+        await asyncio.sleep(random.uniform(0, base_s * 2**attempt))
     return r
+
 
 calls = []
 
-def handler(request):                            # stands in for the API
+
+def handler(request):  # stands in for the API
     calls.append(request.headers["Idempotency-Key"])
     return httpx.Response(409 if len(calls) < 3 else 200, json={})
 
+
 async def main():
     transport = httpx.MockTransport(handler)
-    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+    async with httpx.AsyncClient(
+        transport=transport, base_url="http://t"
+    ) as c:
         r = await post_with_retry(c, "/orders/1/events/PAY", {}, key="pay-1")
     assert r.status_code == 200 and calls == ["pay-1"] * 3
+
 
 asyncio.run(main())
 ```

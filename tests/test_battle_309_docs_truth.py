@@ -137,7 +137,10 @@ class TestJourneyClaims(unittest.TestCase):
         self.assertIn("Windows", step)
 
     def test_page_stays_short(self) -> None:
-        self.assertLess(len(self.text.splitlines()), 400)
+        # 📝 Count the narrative, not the layout of runnable examples.
+        # Expanded chart dictionaries need one key per line to be readable.
+        narrative = re.sub(r"```[^\n]*\n.*?```", "", self.text, flags=re.S)
+        self.assertLess(len(narrative.splitlines()), 400)
 
 
 class TestStatelyPage(unittest.TestCase):

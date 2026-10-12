@@ -30,24 +30,24 @@ flowchart LR
 > **Recommended for new projects.** No JSON, no boilerplate — just Python.
 
 ```python
-from xstate_statemachine import (
-    State, build_machine, SyncInterpreter, action
-)
+from xstate_statemachine import State, build_machine, SyncInterpreter, action
 
 # 1. Define states
 off = State("off", initial=True)
-on  = State("on")
+on = State("on")
 
 # 2. Define transitions — capture the Transition objects so they can be
 #    passed to build_machine(); State.to() only *creates* a transition,
 #    it does not register it anywhere on its own.
-t1 = off.to(on,  event="TOGGLE", actions=["logToggle"])
+t1 = off.to(on, event="TOGGLE", actions=["logToggle"])
 t2 = on.to(off, event="TOGGLE", actions=["logToggle"])
+
 
 # 3. Define actions
 @action
 def log_toggle(interpreter, context, event, action_def):
     context["flips"] = context.get("flips", 0) + 1
+
 
 # 4. Build the machine — pass the transitions explicitly via `transitions=`
 machine = build_machine(
@@ -55,7 +55,9 @@ machine = build_machine(
     states=[off, on],
     transitions=[t1, t2],
     actions=[log_toggle],
-    context={"flips": 0},
+    context={
+        "flips": 0,
+    },
 )
 
 # 5. Run it
@@ -88,7 +90,9 @@ Use this approach when you have an existing XState JSON file, or when you want t
 {
   "id": "lightSwitch",
   "initial": "off",
-  "context": { "flips": 0 },
+  "context": {
+    "flips": 0
+  },
   "states": {
     "off": {
       "on": {
@@ -193,22 +197,29 @@ Best for larger machines where you want everything organized in a single class:
 
 ```python
 from xstate_statemachine import (
-    State, StateMachine, SyncInterpreter, action, guard
+    State,
+    StateMachine,
+    SyncInterpreter,
+    action,
+    guard,
 )
+
 
 class TrafficLight(StateMachine):
     machine_id = "trafficLight"
-    initial_context = {"cycle_count": 0}
+    initial_context = {
+        "cycle_count": 0,
+    }
 
     # States
-    green  = State("green",  initial=True)
+    green = State("green", initial=True)
     yellow = State("yellow")
-    red    = State("red")
+    red = State("red")
 
     # Transitions
     slow_down = green.to(yellow, event="TIMER")
-    caution   = yellow.to(red,   event="TIMER")
-    go        = red.to(green,    event="TIMER", actions="countCycle")
+    caution = yellow.to(red, event="TIMER")
+    go = red.to(green, event="TIMER", actions="countCycle")
 
     # Actions
     @action
@@ -228,6 +239,7 @@ class TrafficLight(StateMachine):
     @green.enter
     def on_enter_green(self, interpreter, context, event, action_def):
         print("GO! Green light.")
+
 
 # Run it
 machine = TrafficLight.create_machine()
@@ -256,14 +268,20 @@ Fluent API for dynamic or programmatic machine construction:
 ```python
 from xstate_statemachine import MachineBuilder, SyncInterpreter, action
 
+
 @action
 def log_state(interpreter, context, event, action_def):
     print(f"State: {interpreter.active_state_ids}")
 
+
 machine = (
     MachineBuilder("doorLock")
-    .context({"attempts": 0})
-    .state("locked",   initial=True)
+    .context(
+        {
+            "attempts": 0,
+        }
+    )
+    .state("locked", initial=True)
     .state("unlocked")
     .state("blocked")
     .transition("locked", "UNLOCK", "unlocked", guard="hasKey")

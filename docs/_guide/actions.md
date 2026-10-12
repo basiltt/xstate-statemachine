@@ -127,7 +127,7 @@ Entry and exit support arrays too:
   "states": {
     "editing": {
       "entry": ["loadDraft", "startAutoSave"],
-      "exit":  ["saveDraft", "stopAutoSave"]
+      "exit": ["saveDraft", "stopAutoSave"]
     }
   }
 }
@@ -143,7 +143,11 @@ from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 config = {
     "id": "formMachine",
     "initial": "editing",
-    "context": {"draft": "", "errors": [], "isValid": False},
+    "context": {
+        "draft": "",
+        "errors": [],
+        "isValid": False,
+    },
     "states": {
         "editing": {
             "entry": "loadDraft",
@@ -151,20 +155,28 @@ config = {
             "on": {
                 "SUBMIT": {
                     "target": "submitting",
-                    "actions": ["validate", "clearErrors"]
-                }
-            }
+                    "actions": ["validate", "clearErrors"],
+                },
+            },
         },
         "submitting": {
             "entry": "showSpinner",
             "on": {
-                "SUCCESS": {"target": "done"},
-                "FAILURE": {"target": "editing", "actions": "setError"}
-            }
+                "SUCCESS": {
+                    "target": "done",
+                },
+                "FAILURE": {
+                    "target": "editing",
+                    "actions": "setError",
+                },
+            },
         },
-        "done": {"type": "final"}
-    }
+        "done": {
+            "type": "final",
+        },
+    },
 }
+
 
 class FormLogic(MachineLogic):
     def load_draft(self, interpreter, context, event, action_def):
@@ -189,6 +201,7 @@ class FormLogic(MachineLogic):
         error_msg = event.payload.get("message", "Unknown error")
         context["errors"].append(error_msg)
         print(f"Error: {error_msg}")
+
 
 machine = create_machine(config, logic=FormLogic())
 interp = SyncInterpreter(machine).start()
@@ -315,27 +328,41 @@ from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 config = {
     "id": "todoApp",
     "initial": "active",
-    "context": {"todos": [], "completedCount": 0},
+    "context": {
+        "todos": [],
+        "completedCount": 0,
+    },
     "states": {
         "active": {
             "on": {
-                "ADD_TODO":      {"actions": "addTodo"},
-                "COMPLETE_TODO": {"actions": "completeTodo"}
-            }
-        }
-    }
+                "ADD_TODO": {
+                    "actions": "addTodo",
+                },
+                "COMPLETE_TODO": {
+                    "actions": "completeTodo",
+                },
+            },
+        },
+    },
 }
+
 
 class TodoLogic(MachineLogic):
     def add_todo(self, interpreter, context, event, action_def):
         title = event.payload.get("title", "Untitled")
-        context["todos"].append({"title": title, "done": False})
+        context["todos"].append(
+            {
+                "title": title,
+                "done": False,
+            }
+        )
 
     def complete_todo(self, interpreter, context, event, action_def):
         index = event.payload.get("index", 0)
         if 0 <= index < len(context["todos"]):
             context["todos"][index]["done"] = True
             context["completedCount"] += 1
+
 
 machine = create_machine(config, logic=TodoLogic())
 interp = SyncInterpreter(machine).start()
@@ -463,26 +490,58 @@ config — each returns a plain action definition, so they also work as raw JSON
 
 ```python
 from xstate_statemachine import (
-    create_machine, SyncInterpreter, MachineLogic, assign, choose,
+    create_machine,
+    SyncInterpreter,
+    MachineLogic,
+    assign,
+    choose,
 )
 
 config = {
     "id": "m",
     "initial": "a",
-    "context": {"vip": True, "tier": ""},
+    "context": {
+        "vip": True,
+        "tier": "",
+    },
     "states": {
-        "a": {"on": {"CLASSIFY": {"actions": choose([
-            {"guard": "isVip", "actions": assign({"tier": lambda x: "gold"})},
-            {"actions": assign({"tier": lambda x: "standard"})},
-        ])}}}
+        "a": {
+            "on": {
+                "CLASSIFY": {
+                    "actions": choose(
+                        [
+                            {
+                                "guard": "isVip",
+                                "actions": assign(
+                                    {
+                                        "tier": lambda x: "gold",
+                                    }
+                                ),
+                            },
+                            {
+                                "actions": assign(
+                                    {
+                                        "tier": lambda x: "standard",
+                                    }
+                                ),
+                            },
+                        ]
+                    ),
+                },
+            },
+        },
     },
 }
 
-logic = MachineLogic(guards={"isVip": lambda ctx, e: ctx["vip"]})
+logic = MachineLogic(
+    guards={
+        "isVip": lambda ctx, e: ctx["vip"],
+    }
+)
 interp = SyncInterpreter(create_machine(config, logic=logic)).start()
 
 interp.send("CLASSIFY")
-print(interp.context["tier"])      # gold
+print(interp.context["tier"])  # gold
 ```
 
 ### `enqueue_actions` — imperative queueing
@@ -491,28 +550,50 @@ The most flexible creator: it subsumes both `pure` and `choose`. Your callback
 receives **one mapping** with `context`, `event`, `enqueue`, `check` and `self`:
 
 ```python
-from xstate_statemachine import create_machine, SyncInterpreter, enqueue_actions
+from xstate_statemachine import (
+    create_machine,
+    SyncInterpreter,
+    enqueue_actions,
+)
+
 
 def build_queue(args):
     enqueue = args["enqueue"]
-    enqueue.assign({"n": lambda x: x["context"]["n"] + 10})
+    enqueue.assign(
+        {
+            "n": lambda x: x["context"]["n"] + 10,
+        }
+    )
     if args["context"]["n"] == 0:
-        enqueue.raise_({"type": "NEXT"})
+        enqueue.raise_(
+            {
+                "type": "NEXT",
+            }
+        )
+
 
 config = {
     "id": "m",
     "initial": "a",
-    "context": {"n": 0},
+    "context": {
+        "n": 0,
+    },
     "states": {
-        "a": {"on": {"E": {"actions": enqueue_actions(build_queue)},
-                     "NEXT": "b"}},
+        "a": {
+            "on": {
+                "E": {
+                    "actions": enqueue_actions(build_queue),
+                },
+                "NEXT": "b",
+            },
+        },
         "b": {},
     },
 }
 
 interp = SyncInterpreter(create_machine(config)).start()
 interp.send("E")
-print(interp.context, interp.current_state_ids)   # {'n': 10} {'m.b'}
+print(interp.context, interp.current_state_ids)  # {'n': 10} {'m.b'}
 ```
 
 The `enqueue` object exposes `assign`, `raise_`, `send_to`, `send_parent`,
@@ -578,11 +659,18 @@ class Logic(MachineLogic):
 
 ```python
 "saving": {
-    "on": {"DONE": [
-        {"target": "failed", "guard": "hasError"},
-        {"target": "saved"},
-    ]}
-}
+    "on": {
+        "DONE": [
+            {
+                "target": "failed",
+                "guard": "hasError",
+            },
+            {
+                "target": "saved",
+            },
+        ],
+    },
+},
 ```
 
 ### Observing contained failures
@@ -627,7 +715,9 @@ The behavior above is one of three policies, controlled by the machine-config ke
   "id": "m",
   "actionErrorPolicy": "rollback",
   "initial": "a",
-  "states": { "a": {} }
+  "states": {
+    "a": {}
+  }
 }
 ```
 
@@ -672,9 +762,14 @@ Each action should do one thing. If an action is getting complex, split it into 
 # Instead of one monolithic action:
 # def processOrder(self, interpreter, context, event, action_def):
 #     validate + calculate + save + notify + log
-
 # Split into focused actions:
-"actions": ["validateOrder", "calculateTotal", "saveOrder", "notifyUser", "logOrder"]
+"actions": [
+    "validateOrder",
+    "calculateTotal",
+    "saveOrder",
+    "notifyUser",
+    "logOrder",
+],
 ```
 
 ### Use Context for Data Flow
@@ -687,7 +782,7 @@ class Logic(MachineLogic):
         # Store validation result in context
         context["validationResult"] = {
             "isValid": True,
-            "errors": []
+            "errors": [],
         }
 
     def submit_form(self, interpreter, context, event, action_def):
@@ -723,36 +818,58 @@ A comprehensive form machine demonstrating entry, exit, and transition actions w
 > decorates `hasRequiredFields` with `@guard` for exactly this reason.
 
 ```python
-from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic, guard
+from xstate_statemachine import (
+    create_machine,
+    SyncInterpreter,
+    MachineLogic,
+    guard,
+)
 
 config = {
     "id": "contactForm",
     "initial": "editing",
     "context": {
-        "formData": {"name": "", "email": "", "message": ""},
+        "formData": {
+            "name": "",
+            "email": "",
+            "message": "",
+        },
         "errors": [],
         "draft": None,
         "submissionId": None,
-        "isLoading": False
+        "isLoading": False,
     },
     "states": {
         "editing": {
             "entry": ["loadDraft", "clearErrors"],
             "exit": "saveDraft",
             "on": {
-                "UPDATE_FIELD": {"actions": "updateField"},
+                "UPDATE_FIELD": {
+                    "actions": "updateField",
+                },
                 "SUBMIT": [
-                    {"target": "validating", "guard": "hasRequiredFields"},
-                    {"target": "editing", "actions": "showFieldErrors"}
-                ]
-            }
+                    {
+                        "target": "validating",
+                        "guard": "hasRequiredFields",
+                    },
+                    {
+                        "target": "editing",
+                        "actions": "showFieldErrors",
+                    },
+                ],
+            },
         },
         "validating": {
             "entry": "validateAll",
             "on": {
-                "VALIDATION_PASS": {"target": "submitting"},
-                "VALIDATION_FAIL": {"target": "editing", "actions": "setErrors"}
-            }
+                "VALIDATION_PASS": {
+                    "target": "submitting",
+                },
+                "VALIDATION_FAIL": {
+                    "target": "editing",
+                    "actions": "setErrors",
+                },
+            },
         },
         "submitting": {
             "entry": "showSpinner",
@@ -760,20 +877,21 @@ config = {
             "on": {
                 "SUCCESS": {
                     "target": "success",
-                    "actions": ["storeSubmissionId", "clearDraft"]
+                    "actions": ["storeSubmissionId", "clearDraft"],
                 },
                 "FAILURE": {
                     "target": "editing",
-                    "actions": "setErrors"
-                }
-            }
+                    "actions": "setErrors",
+                },
+            },
         },
         "success": {
             "entry": "showConfirmation",
-            "type": "final"
-        }
-    }
+            "type": "final",
+        },
+    },
 }
+
 
 class ContactFormLogic(MachineLogic):
     # ---- Entry Actions ----
@@ -846,6 +964,7 @@ class ContactFormLogic(MachineLogic):
         fd = context["formData"]
         return bool(fd.get("name") and fd.get("email") and fd.get("message"))
 
+
 # Run the form machine
 machine = create_machine(config, logic=ContactFormLogic())
 interp = SyncInterpreter(machine).start()
@@ -881,18 +1000,23 @@ The `LogicLoader` is a singleton that automatically discovers actions, guards, a
 # my_logic.py — separate file with all your logic
 from xstate_statemachine import MachineLogic
 
+
 def validate_input(interpreter, context, event, action_def):
     """Auto-maps to 'validateInput' in JSON config."""
-    data = event.data if hasattr(event, 'data') else {}
+    data = event.data if hasattr(event, "data") else {}
     context["is_valid"] = bool(data.get("name"))
+
 
 def is_valid(context, event):
     """Auto-maps to 'isValid' guard in JSON config."""
     return context.get("is_valid", False)
 
+
 def fetch_data(interpreter, context, event):
     """Auto-maps to 'fetchData' service in JSON config."""
-    return {"items": [1, 2, 3]}
+    return {
+        "items": [1, 2, 3],
+    }
 ```
 
 <!-- doc-fragment -->
@@ -904,30 +1028,39 @@ from xstate_statemachine import create_machine, SyncInterpreter
 config = {
     "id": "autoDiscover",
     "initial": "input",
-    "context": {"is_valid": False},
+    "context": {
+        "is_valid": False,
+    },
     "states": {
         "input": {
             "on": {
                 "SUBMIT": {
                     "target": "validating",
-                    "actions": "validateInput"
-                }
-            }
+                    "actions": "validateInput",
+                },
+            },
         },
         "validating": {
             "always": [
-                {"target": "fetching", "guard": "isValid"},
-                {"target": "input"}
-            ]
+                {
+                    "target": "fetching",
+                    "guard": "isValid",
+                },
+                {
+                    "target": "input",
+                },
+            ],
         },
         "fetching": {
             "invoke": {
                 "src": "fetchData",
-                "onDone": "done"
-            }
+                "onDone": "done",
+            },
         },
-        "done": {"type": "final"}
-    }
+        "done": {
+            "type": "final",
+        },
+    },
 }
 
 # Pass the module — LogicLoader discovers all matching functions
@@ -948,6 +1081,7 @@ interp.stop()
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter
 
+
 class OrderLogic:
     """Class with methods that auto-map to JSON names."""
 
@@ -960,22 +1094,33 @@ class OrderLogic:
         """Maps to 'hasItems' guard in JSON."""
         return len(context.get("items", [])) > 0
 
+
 config = {
     "id": "order",
     "initial": "cart",
-    "context": {"items": [{"name": "Widget", "price": 9.99}], "total": 0},
+    "context": {
+        "items": [
+            {
+                "name": "Widget",
+                "price": 9.99,
+            }
+        ],
+        "total": 0,
+    },
     "states": {
         "cart": {
             "on": {
                 "CHECKOUT": {
                     "target": "checkout",
                     "guard": "hasItems",
-                    "actions": "calculateTotal"
-                }
-            }
+                    "actions": "calculateTotal",
+                },
+            },
         },
-        "checkout": {"type": "final"}
-    }
+        "checkout": {
+            "type": "final",
+        },
+    },
 }
 
 # Pass instances — LogicLoader discovers methods by snake_case matching

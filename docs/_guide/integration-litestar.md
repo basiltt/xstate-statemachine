@@ -22,34 +22,69 @@ from litestar.testing import TestClient
 
 from xstate_statemachine import create_machine
 from xstate_statemachine.contrib.litestar import (
-    StatechartRegistry, XStatePlugin, create_statechart_controller,
+    StatechartRegistry,
+    XStatePlugin,
+    create_statechart_controller,
 )
 from xstate_statemachine.persistence import MemoryStore
 
-door = create_machine({
-    "id": "door", "initial": "closed",
-    "states": {"closed": {"on": {"OPEN": "open"}},
-               "open": {"on": {"CLOSE": "closed"}}},
-})
+door = create_machine(
+    {
+        "id": "door",
+        "initial": "closed",
+        "states": {
+            "closed": {
+                "on": {
+                    "OPEN": "open",
+                },
+            },
+            "open": {
+                "on": {
+                    "CLOSE": "closed",
+                },
+            },
+        },
+    }
+)
+
 
 def authorize(request, *, name, key, event):
-    return request.headers.get("x-user") is not None   # your auth here
+    return request.headers.get("x-user") is not None  # your auth here
+
 
 registry = StatechartRegistry(MemoryStore())
 registry.register("door", door, authorize=authorize)
 
 app = Litestar(
-    route_handlers=[create_statechart_controller(registry, "door", path="/doors")],
-    plugins=[XStatePlugin(registry)],   # lifespan, probes, problem mapping
+    route_handlers=[
+        create_statechart_controller(registry, "door", path="/doors")
+    ],
+    plugins=[XStatePlugin(registry)],  # lifespan, probes, problem mapping
 )
 
 with TestClient(app) as client:
-    user = {"x-user": "ann"}
-    r = client.post("/doors/1/send", json={"type": "OPEN"}, headers=user)
+    user = {
+        "x-user": "ann",
+    }
+    r = client.post(
+        "/doors/1/send",
+        json={
+            "type": "OPEN",
+        },
+        headers=user,
+    )
     assert r.status_code == 200 and r.json()["state"] == "open"
-    assert client.post("/doors/1/send", json={"type": "OPNE"},
-                       headers=user).status_code == 422
-    assert client.get("/doors/1").status_code == 403       # no user
+    assert (
+        client.post(
+            "/doors/1/send",
+            json={
+                "type": "OPNE",
+            },
+            headers=user,
+        ).status_code
+        == 422
+    )
+    assert client.get("/doors/1").status_code == 403  # no user
     assert client.get("/_xsm/ready").json()["status"] == "ready"
     assert "/doors/{id}/send" in app.openapi_schema.paths
 ```
@@ -71,42 +106,76 @@ from litestar.testing import TestClient
 
 from xstate_statemachine import create_machine
 from xstate_statemachine.contrib.litestar import (
-    ReceiptResponse, StatechartRegistry, XStatePlugin,
-    create_statechart_controller, get_interpreter,
+    ReceiptResponse,
+    StatechartRegistry,
+    XStatePlugin,
+    create_statechart_controller,
+    get_interpreter,
 )
 from xstate_statemachine.persistence import MemoryStore
 
-order = create_machine({
-    "id": "order", "initial": "open",
-    "states": {"open": {"on": {"PAY": "paid"}}, "paid": {}},
-})
+order = create_machine(
+    {
+        "id": "order",
+        "initial": "open",
+        "states": {
+            "open": {
+                "on": {
+                    "PAY": "paid",
+                },
+            },
+            "paid": {},
+        },
+    }
+)
+
 
 def authorize(request, *, name, key, event):
     # get_interpreter authorizes with event=None; every generated route
     # and WebSocket frame passes the event type, so PAY never gets through
     return event != "PAY"
 
+
 registry = StatechartRegistry(MemoryStore())
 registry.register("order", order, authorize=authorize)
 charged = []
 
-@post("/orders/{id:str}/events/PAY", status_code=200,
-      dependencies={"order": get_interpreter(registry, "order")})
+
+@post(
+    "/orders/{id:str}/events/PAY",
+    status_code=200,
+    dependencies={
+        "order": get_interpreter(registry, "order"),
+    },
+)
 async def pay(order: Any, id: str) -> Any:
     receipt = await order.send("PAY", wait=True)
     if receipt.changed:
-        charged.append(id)          # real code: an outbox row
+        charged.append(id)  # real code: an outbox row
     return ReceiptResponse(order, receipt)
 
+
 app = Litestar(
-    route_handlers=[pay, create_statechart_controller(
-        registry, "order", path="/orders", exclude_events=("PAY",))],
+    route_handlers=[
+        pay,
+        create_statechart_controller(
+            registry, "order", path="/orders", exclude_events=("PAY",)
+        ),
+    ],
     plugins=[XStatePlugin(registry)],
 )
 
 with TestClient(app) as client:
     assert client.post("/orders/1/events/PAY").json()["state"] == "paid"
-    assert client.post("/orders/2/send", json={"type": "PAY"}).status_code == 403
+    assert (
+        client.post(
+            "/orders/2/send",
+            json={
+                "type": "PAY",
+            },
+        ).status_code
+        == 403
+    )
 assert charged == ["1"]
 ```
 

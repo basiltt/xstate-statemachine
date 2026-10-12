@@ -34,18 +34,28 @@ The web process creates the instance and saves it. The deadlines are saved in th
 
 ```python
 from xstate_statemachine import MachineLogic, SimulatedClock, create_machine
-from xstate_statemachine.persistence import DueTimerScanner, MemoryStore, persisted
+from xstate_statemachine.persistence import (
+    DueTimerScanner,
+    MemoryStore,
+    persisted,
+)
 
 DAY = 86_400
 chart = {
     "id": "trial",
     "initial": "trialing",
-    "context": {"reminders": 0},
+    "context": {
+        "reminders": 0,
+    },
     "states": {
         "trialing": {
             "initial": "fresh",
-            "on": {"SUBSCRIBE": "#trial.subscribed"},
-            "after": {"1209600000": "#trial.expired"},
+            "on": {
+                "SUBSCRIBE": "#trial.subscribed",
+            },
+            "after": {
+                "1209600000": "#trial.expired",
+            },
             "states": {
                 "fresh": {
                     "after": {
@@ -58,24 +68,50 @@ chart = {
                 "reminded": {},
             },
         },
-        "subscribed": {"type": "final"},
-        "expired": {"type": "final", "entry": "expire"},
+        "subscribed": {
+            "type": "final",
+        },
+        "expired": {
+            "type": "final",
+            "entry": "expire",
+        },
     },
 }
 sent = []
-def remind(i, ctx, e, a): ctx["reminders"] += 1; sent.append("reminder")
-def expire(i, ctx, e, a): sent.append("expired")
-machine = create_machine(chart, logic=MachineLogic(actions={"remind": remind, "expire": expire}))
+
+
+def remind(i, ctx, e, a):
+    ctx["reminders"] += 1
+    sent.append("reminder")
+
+
+def expire(i, ctx, e, a):
+    sent.append("expired")
+
+
+machine = create_machine(
+    chart,
+    logic=MachineLogic(
+        actions={
+            "remind": remind,
+            "expire": expire,
+        }
+    ),
+)
 
 store = MemoryStore()
-with persisted(store, "trial.ann", machine, clock=SimulatedClock(wall_start=0)):
-    pass                                           # signed up at t=0; two deadlines stored
+with persisted(
+    store, "trial.ann", machine, clock=SimulatedClock(wall_start=0)
+):
+    pass  # signed up at t=0; two deadlines stored
 
 # Scheduler role: this is the function the APScheduler job calls every minute.
 scanner = DueTimerScanner(store, lambda key: machine, prefix="trial.")
-assert scanner.run_once(now=6 * DAY) == 0          # nothing due
-assert scanner.run_once(now=7 * DAY + 60) == 1     # the reminder, even across restarts
-assert scanner.run_once(now=7 * DAY + 120) == 0    # fired once, not every minute
+assert scanner.run_once(now=6 * DAY) == 0  # nothing due
+assert (
+    scanner.run_once(now=7 * DAY + 60) == 1
+)  # the reminder, even across restarts
+assert scanner.run_once(now=7 * DAY + 120) == 0  # fired once, not every minute
 assert scanner.run_once(now=14 * DAY + 60) == 1
 assert sent == ["reminder", "expired"]
 ```
@@ -90,12 +126,27 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from xstate_statemachine import create_machine
 from xstate_statemachine.persistence import DueTimerScanner, MemoryStore
 
-machine = create_machine({"id": "trial", "initial": "t", "states": {"t": {}}})
+machine = create_machine(
+    {
+        "id": "trial",
+        "initial": "t",
+        "states": {
+            "t": {},
+        },
+    }
+)
 scanner = DueTimerScanner(MemoryStore(), lambda key: machine, prefix="trial.")
 
 sched = BackgroundScheduler(timezone="UTC")
-sched.add_job(scanner.run_once, "cron", minute="*",   # or "interval", seconds=60
-              id="xsm-due-timers", max_instances=1, coalesce=True, replace_existing=True)
+sched.add_job(
+    scanner.run_once,
+    "cron",
+    minute="*",  # or "interval", seconds=60
+    id="xsm-due-timers",
+    max_instances=1,
+    coalesce=True,
+    replace_existing=True,
+)
 sched.start()
 # ... serve until SIGTERM ...
 sched.shutdown()

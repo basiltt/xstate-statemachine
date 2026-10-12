@@ -35,40 +35,70 @@ from xstate_statemachine.eda import (
 )
 from xstate_statemachine.persistence import MemoryInbox, MemoryStore
 
-order = create_machine({
-    "id": "order",
-    "initial": "open",
-    "context": {"total": 0},
-    "states": {
-        "open": {"on": {"PAY": {
-            "target": "paid",
-            "actions": "setTotal",
-            "meta": {"publish": {"type": "order.paid", "data": ["total"]}},
-        }}},
-        "paid": {"type": "final"},
+order = create_machine(
+    {
+        "id": "order",
+        "initial": "open",
+        "context": {
+            "total": 0,
+        },
+        "states": {
+            "open": {
+                "on": {
+                    "PAY": {
+                        "target": "paid",
+                        "actions": "setTotal",
+                        "meta": {
+                            "publish": {
+                                "type": "order.paid",
+                                "data": ["total"],
+                            },
+                        },
+                    },
+                },
+            },
+            "paid": {
+                "type": "final",
+            },
+        },
     },
-}, logic=MachineLogic(actions={
-    "setTotal": lambda i, ctx, e, a: ctx.update(total=e.payload["total"]),
-}))
+    logic=MachineLogic(
+        actions={
+            "setTotal": lambda i, ctx, e, a: ctx.update(
+                total=e.payload["total"]
+            ),
+        }
+    ),
+)
 
 broker = FakeBrokerAdapter()
 dispatcher = InboundDispatcher(
-    MemoryStore(),                      # instances keyed by envelope.subject
-    {"xsm.order.PAY": order},           # CloudEvents type -> machine
-    inbox=MemoryInbox(),                # redeliveries are answered, not re-run
+    MemoryStore(),  # instances keyed by envelope.subject
+    {
+        "xsm.order.PAY": order,
+    },  # CloudEvents type -> machine
+    inbox=MemoryInbox(),  # redeliveries are answered, not re-run
     plugins=[OutboxPlugin(broker, topic="order-events")],
 )
 
 
 async def main() -> None:
-    cmd = Envelope.new(type="xsm.order.PAY", subject="o-42", data={"total": 99})
+    cmd = Envelope.new(
+        type="xsm.order.PAY",
+        subject="o-42",
+        data={
+            "total": 99,
+        },
+    )
     await broker.deliver("orders", cmd)
     await broker.deliver("orders", cmd)  # the broker redelivers
     result = await dispatcher.run_once(broker, "orders")
     assert (result.processed, result.duplicates) == (1, 1)
 
     [paid] = broker.published_on("order-events")
-    assert paid.type == "order.paid" and paid.data == {"total": 99}
+    assert paid.type == "order.paid" and paid.data == {
+        "total": 99,
+    }
     assert paid.causationid == cmd.id and paid.subject == "o-42"
 
 
@@ -191,18 +221,28 @@ xsm dlq --dlq sqlite:///dlq.db purge --older-than 30d --yes --reason "retention"
 `patterns.SagaBuilder` turns an orchestrated saga into **plain chart JSON**: nothing is interpreted at runtime, the result is editable in Stately, and it is `strictConfig`-clean.
 
 ```python
-from xstate_statemachine import MachineLogic, SimulatedClock, SyncInterpreter, create_machine
+from xstate_statemachine import (
+    MachineLogic,
+    SimulatedClock,
+    SyncInterpreter,
+    create_machine,
+)
 from xstate_statemachine.patterns import RetryPolicy, SagaBuilder
 
 saga = (
     SagaBuilder("fulfil")
-    .step("reserve", invoke="reserveStock", compensate="releaseStock",
-          timeout_ms=5000, retry=RetryPolicy(max_attempts=3, jitter="none"))
+    .step(
+        "reserve",
+        invoke="reserveStock",
+        compensate="releaseStock",
+        timeout_ms=5000,
+        retry=RetryPolicy(max_attempts=3, jitter="none"),
+    )
     .step("charge", invoke="chargeCard", compensate="refundCard")
     .step("ship", invoke="ship")
     .on_failure("notifyOps")
 )
-config = saga.build()            # a dict you can json.dump and open in Stately
+config = saga.build()  # a dict you can json.dump and open in Stately
 
 calls = []
 
@@ -213,20 +253,35 @@ def service(name, fail=False):
         if fail:
             raise RuntimeError(name)
         return f"{name}-ok"
+
     return run
 
 
-logic = saga.logic().merge(MachineLogic(
-    services={
-        "reserveStock": service("reserve"), "releaseStock": service("release"),
-        "chargeCard": service("charge"), "refundCard": service("refund"),
-        "ship": service("ship", fail=True),
-    },
-    actions={"notifyOps": lambda i, ctx, e, a: None},
-))
-interp = SyncInterpreter(create_machine(config, logic=logic), clock=SimulatedClock()).start()
+logic = saga.logic().merge(
+    MachineLogic(
+        services={
+            "reserveStock": service("reserve"),
+            "releaseStock": service("release"),
+            "chargeCard": service("charge"),
+            "refundCard": service("refund"),
+            "ship": service("ship", fail=True),
+        },
+        actions={
+            "notifyOps": lambda i, ctx, e, a: None,
+        },
+    )
+)
+interp = SyncInterpreter(
+    create_machine(config, logic=logic), clock=SimulatedClock()
+).start()
 assert interp.current_state_ids == {"fulfil.failed"}
-assert calls == ["reserve", "charge", "ship", "refund", "release"]   # reverse, once each
+assert calls == [
+    "reserve",
+    "charge",
+    "ship",
+    "refund",
+    "release",
+]  # reverse, once each
 assert interp.context["compensated"] == ["charge", "reserve"]
 ```
 
@@ -242,8 +297,13 @@ To make completion idempotent when the upstream event may be re-minted with a ne
 ```python
 from xstate_statemachine import MachineLogic, create_machine
 from xstate_statemachine.eda import (
-    DeadLetterPlugin, Envelope, InboundDispatcher, MemoryDeadLetterStore,
-    MemoryOutboxStore, OutboxPlugin, SyncFakeBrokerAdapter,
+    DeadLetterPlugin,
+    Envelope,
+    InboundDispatcher,
+    MemoryDeadLetterStore,
+    MemoryOutboxStore,
+    OutboxPlugin,
+    SyncFakeBrokerAdapter,
 )
 from xstate_statemachine.patterns import SagaBuilder
 from xstate_statemachine.persistence import MemoryInbox, MemoryStore
@@ -257,40 +317,63 @@ seen = []
 
 
 def reserve(i, ctx, e):
-    seen.append(i.store_key)          # the order id comes from the subject
-    return {"hold": f"h-{i.store_key}"}
+    seen.append(i.store_key)  # the order id comes from the subject
+    return {
+        "hold": f"h-{i.store_key}",
+    }
 
 
 def charge(i, ctx, e):
     raise RuntimeError("card declined")
 
 
-def release(i, ctx, e):               # idempotent: a restart may re-run it
+def release(i, ctx, e):  # idempotent: a restart may re-run it
     raise RuntimeError("warehouse API down")
 
 
-machine = create_machine(saga.build(), logic=saga.logic().merge(MachineLogic(
-    services={"reserveStock": reserve, "chargeCard": charge,
-              "releaseStock": release},
-)), strict_config=True)
-store, bus, dlq = MemoryStore(), SyncFakeBrokerAdapter(), MemoryDeadLetterStore()
+machine = create_machine(
+    saga.build(),
+    logic=saga.logic().merge(
+        MachineLogic(
+            services={
+                "reserveStock": reserve,
+                "chargeCard": charge,
+                "releaseStock": release,
+            },
+        )
+    ),
+    strict_config=True,
+)
+store, bus, dlq = (
+    MemoryStore(),
+    SyncFakeBrokerAdapter(),
+    MemoryDeadLetterStore(),
+)
 dispatcher = InboundDispatcher(
-    store, {"xsm.fulfil.START": machine}, inbox=MemoryInbox(),
-    plugins=[OutboxPlugin(MemoryOutboxStore(), topic="sagas"),
-             DeadLetterPlugin(dlq)],
-    dead_letters=dlq, on_unknown="ignore",
+    store,
+    {
+        "xsm.fulfil.START": machine,
+    },
+    inbox=MemoryInbox(),
+    plugins=[
+        OutboxPlugin(MemoryOutboxStore(), topic="sagas"),
+        DeadLetterPlugin(dlq),
+    ],
+    dead_letters=dlq,
+    on_unknown="ignore",
 )
 start = Envelope.new(type="xsm.fulfil.START", subject="o-42")
 bus.publish("commands", start)
 dispatcher.run_once_sync(bus, "commands")
 
 assert seen == ["o-42"]
-[letter] = dlq.list()                             # the operator's ticket
+[letter] = dlq.list()  # the operator's ticket
 assert letter.state_id == "fulfil.compensationFailed"
 assert [e["message"] for e in letter.errors] == [
-    "card declined", "warehouse API down",        # cause, then the stuck undo
+    "card declined",
+    "warehouse API down",  # cause, then the stuck undo
 ]
-bus.publish("commands", start)                    # redelivered: a no-op
+bus.publish("commands", start)  # redelivered: a no-op
 assert dispatcher.run_once_sync(bus, "commands").duplicates == 1
 assert len(dlq.list()) == 1
 ```
@@ -311,15 +394,58 @@ from xstate_statemachine.eda import Envelope, FakeBrokerAdapter, OutboxPlugin
 from xstate_statemachine.patterns import ChoreographyRouter
 from xstate_statemachine.persistence import MemoryInbox, MemoryStore
 
-order = create_machine({"id": "order", "initial": "new", "states": {
-    "new": {"on": {"PLACE": {"target": "awaiting", "meta": {"publish": "order.placed"}}}},
-    "awaiting": {"on": {"PAID": {"target": "completed", "meta": {"publish": "order.completed"}}}},
-    "completed": {"type": "final"},
-}})
-payment = create_machine({"id": "payment", "initial": "idle", "states": {
-    "idle": {"on": {"CHARGE": {"target": "paid", "meta": {"publish": "payment.captured"}}}},
-    "paid": {"type": "final"},
-}})
+order = create_machine(
+    {
+        "id": "order",
+        "initial": "new",
+        "states": {
+            "new": {
+                "on": {
+                    "PLACE": {
+                        "target": "awaiting",
+                        "meta": {
+                            "publish": "order.placed",
+                        },
+                    },
+                },
+            },
+            "awaiting": {
+                "on": {
+                    "PAID": {
+                        "target": "completed",
+                        "meta": {
+                            "publish": "order.completed",
+                        },
+                    },
+                },
+            },
+            "completed": {
+                "type": "final",
+            },
+        },
+    }
+)
+payment = create_machine(
+    {
+        "id": "payment",
+        "initial": "idle",
+        "states": {
+            "idle": {
+                "on": {
+                    "CHARGE": {
+                        "target": "paid",
+                        "meta": {
+                            "publish": "payment.captured",
+                        },
+                    },
+                },
+            },
+            "paid": {
+                "type": "final",
+            },
+        },
+    }
+)
 
 bus, store = FakeBrokerAdapter(), MemoryStore()
 router = ChoreographyRouter(
@@ -335,7 +461,9 @@ router = ChoreographyRouter(
 
 
 async def main() -> None:
-    cmd = Envelope.new(type="xsm.order.PLACE", subject="o-1", correlationid="c-1")
+    cmd = Envelope.new(
+        type="xsm.order.PLACE", subject="o-1", correlationid="c-1"
+    )
     await bus.deliver("events", cmd)
     await router.run_until_quiet(bus)
     chain = {e.type: e for e in bus.published}
