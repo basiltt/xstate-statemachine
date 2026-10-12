@@ -338,8 +338,15 @@ class TestFormattingAvailability(unittest.TestCase):
                     raise ImportError("blocked")
                 return None
 
-        sys.meta_path.insert(0, _Blocker())
+        # 📝 Probe a cold import even if earlier formatter tests loaded Black.
+        #    find_spec returns a cached module's spec without asking finders.
+        missing = object()
+        cached_black = sys.modules.pop("black", missing)
+        blocker = _Blocker()
+        sys.meta_path.insert(0, blocker)
         try:
             self.assertFalse(formatting_available())
         finally:
-            sys.meta_path.pop(0)
+            sys.meta_path.remove(blocker)
+            if cached_black is not missing:
+                sys.modules["black"] = cached_black
