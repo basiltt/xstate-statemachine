@@ -1,64 +1,97 @@
 <div align="center">
 
-<a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=8232a8c5-b681-4e0f-a26d-57983804d72c"><img src="docs/assets/images/machines/order_eda.png" alt="An order-fulfilment statechart in the Stately editor: placed → paid → packed → shipped, with PAY publishing OrderPaid, a 60 s packing escalation, shipOrder invoked, and CANCEL from every state" width="900"></a>
-<br><sub>🔗 <a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=8232a8c5-b681-4e0f-a26d-57983804d72c">Open this machine in the Stately editor</a> — public, no account needed.</sub>
+<a href="https://basiltt.github.io/xstate-statemachine/">
+<picture>
+  <source media="(max-width: 640px)" srcset="docs/assets/images/readme-hero-mobile.svg">
+  <img src="docs/assets/images/readme-hero.svg" alt="xstate-statemachine — Make every event count. Visual statecharts. Native Python." width="1200">
+</picture>
+</a>
 
-# ⚙️ xstate-statemachine
+<a id="-xstate-statemachine"></a>
 
-### Event-driven Python, with the diagram as the source of truth.
+# xstate-statemachine
+
+<a id="event-driven-python-with-the-diagram-as-the-source-of-truth"></a>
+
+**The event-driven workflow toolkit for Python.**
+
+Design the flow. Make the rules explicit. Build systems you can explain.
 
 [![PyPI](https://img.shields.io/pypi/v/xstate-statemachine?style=flat-square&cacheSeconds=3600&logo=pypi&logoColor=white&color=3775A9)](https://pypi.org/project/xstate-statemachine/)
-[![Python](https://img.shields.io/pypi/pyversions/xstate-statemachine?style=flat-square&logo=python&logoColor=white&color=3776AB)](https://pypi.org/project/xstate-statemachine/)
+[![Python](https://img.shields.io/badge/python-3.9%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://pypi.org/project/xstate-statemachine/)
 [![CI](https://img.shields.io/github/actions/workflow/status/basiltt/xstate-statemachine/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI)](https://github.com/basiltt/xstate-statemachine/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-8%2C596_passing-3fb950?style=flat-square&logo=pytest&logoColor=white)](https://github.com/basiltt/xstate-statemachine/tree/main/tests/)
-[![Coverage](https://img.shields.io/badge/coverage-93%25-3fb950?style=flat-square&logo=codecov&logoColor=white)](.github/workflows/ci.yml)
-[![Dependencies](https://img.shields.io/badge/dependencies-0-ff8c00?style=flat-square)](pyproject.toml)
-[![Typed](https://img.shields.io/badge/typing-py.typed-3776AB?style=flat-square)](src/xstate_statemachine/py.typed)
-[![License](https://img.shields.io/pypi/l/xstate-statemachine?style=flat-square&color=yellow)](https://github.com/basiltt/xstate-statemachine/blob/main/LICENSE)
+[![License](https://img.shields.io/pypi/l/xstate-statemachine?style=flat-square&color=10b981)](https://github.com/basiltt/xstate-statemachine/blob/main/LICENSE)
+<br>
+[![Tests](https://img.shields.io/badge/tests-regression_tested-10b981?style=flat-square&logo=pytest&logoColor=white)](https://github.com/basiltt/xstate-statemachine/tree/main/tests/)
+[![Coverage gate](https://img.shields.io/badge/coverage_gate-90%25-10b981?style=flat-square)](.github/workflows/ci.yml)
+[![Core dependencies](https://img.shields.io/badge/core_dependencies-0-10b981?style=flat-square)](pyproject.toml)
+[![Typed](https://img.shields.io/badge/typing-py.typed_%C2%B7_mypy_--strict-3776AB?style=flat-square)](src/xstate_statemachine/py.typed)
 
 <br>
 
-**Draw the flow in [Stately](https://stately.ai/). Run the same JSON in Python — unmodified.
-Let `xsm` generate the typed code, the tests and the docs. Then wire it to your broker,
-your database and your web framework, and it stays correct when the process dies,
-the webhook arrives twice, or the LLM asks for a tool it is not allowed to use.**
+**From a two-state toggle to an event-driven order system, keep the workflow in one place.**
 
-Async **and** sync engines · durable persistence, idempotency and timers · a transactional
-outbox and a dead-letter queue · FastAPI, Django, Flask, Celery, Kafka, RabbitMQ, NATS,
-SQS, Redis Streams · LLM-agent orchestration · **zero runtime dependencies**.
+Draw it in [Stately](https://stately.ai/), load XState-compatible JSON, or define it in Python.
+Run it with an async or sync engine. Let `xsm` generate the typed code, tests and docs.
+Add persistence, broker messaging and framework integrations when your application needs them.
+
+**Zero runtime dependencies in the core. MIT licensed. Infrastructure is optional.**
 
 <br>
 
-[**Try it in 60 seconds**](#-the-60-second-start) · [**Event-driven architecture**](#-event-driven-architecture-the-main-event) · [**Generate the code**](#-automatic-code-generation) · [**Persistence**](#-persistence--snapshots-stores-and-durable-timers) · [**Integrations**](#-integrations--optional-extras) · [**Agents**](#-for-llm-agents) · [**API**](#-api-reference) · [**Docs**](https://basiltt.github.io/xstate-statemachine/)
+[**Try it in 60 seconds →**](#-the-60-second-start) &nbsp; · &nbsp; [**Explore event-driven architecture**](#-event-driven-architecture-the-main-event) &nbsp; · &nbsp; [**Compare your options**](#-how-it-compares) &nbsp; · &nbsp; [**Read the docs**](https://basiltt.github.io/xstate-statemachine/)
 
 </div>
 
----
+<br>
 
-<div align="center">
+<table>
+<tr>
+<td width="33%" valign="top">
+<strong>Design</strong>
+<p>Visual statecharts.<br>Shared JSON.<br>Native Python logic.</p>
+</td>
+<td width="33%" valign="top">
+<strong>Execute</strong>
+<p>Guards and services.<br>Timers and actors.<br>Explicit recovery.</p>
+</td>
+<td width="33%" valign="top">
+<strong>Operate</strong>
+<p>Durable snapshots.<br>Broker support.<br>Traces and replay.</p>
+</td>
+</tr>
+</table>
 
-### 🗺️ Find your way
+<a id="-find-your-way"></a>
 
-</div>
+<details>
+<summary><strong>Find your way — the complete guide, examples and API reference</strong></summary>
+
+<br>
+
+New here? Start with the quick start. Evaluating for a project? Explore the use cases,
+event-driven architecture and comparisons. The full technical reference stays on this page.
 
 |   | Section | What you get |
 |:--|:--|:--|
 | ⚡ | [**60-Second Start**](#-the-60-second-start) · [**Install**](#-install) | Running before your coffee cools |
 | 🧰 | [**Real problems this solves**](#-real-problems-this-solves) | 13 shipped, battle-tested examples: LLM agents with human approval, FastAPI behind N workers, Stripe webhooks, Django approvals, EDA, workers, breakers, durable timers |
-| 🧠 | [**Why a statechart?**](#-why-a-statechart) · [**Mental model**](#-the-mental-model) | The three bugs this deletes, six concepts, done |
+| 🧠 | [**Why a statechart?**](#-why-a-statechart) · [**Mental model**](#-the-mental-model) | Three bug classes to prevent and six concepts to learn |
 | 📨 | [**Event-driven architecture**](#-event-driven-architecture-the-main-event) | Charts that talk only through a broker: outbox, dedup, DLQ, sagas, AsyncAPI — runnable in-process |
-| 🏭 | [**Automatic code generation**](#-automatic-code-generation) | `xsm gt` turns JSON into typed Python, recorded tests and docs — and **proves** the result before writing |
-| 🔗 | [**Stately ⇄ Python**](#-one-json-two-runtimes) | Every diagram here is the editor rendering the exact JSON the adjacent Python runs |
-| 🧩 | [**Context**](#-context--the-machines-memory) · [**Guards**](#️-guards--conditional-transitions) · [**Actions**](#-actions--side-effects) · [**Services**](#-services--invoke) · [**Timers**](#️-timers--delayed-transitions) | The building blocks |
+| 🏭 | [**Automatic code generation**](#-automatic-code-generation) | `xsm gt` turns JSON into typed Python, recorded tests and docs, with structural checks before writing |
+| 🔗 | [**Stately ⇄ Python**](#-one-json-two-runtimes) | Share a workflow definition; inspect the source-backed Stately diagrams and Python examples |
+| 🧩 | [**Context**](#-context--the-machines-memory) · [**Guards**](#-guards--conditional-transitions) · [**Actions**](#-actions--side-effects) · [**Services**](#-services--invoke) · [**Timers**](#-timers--delayed-transitions) | The building blocks |
 | 🌳 | [**Nested**](#-nested--parallel-states) · [**Parallel**](#parallel-states--concurrent-regions) · [**History**](#-history--final-states) · [**Actors**](#-the-actor-model) | Real-world hierarchy and systems of machines |
 | 💾 | [**Persistence**](#-persistence--snapshots-stores-and-durable-timers) | Stores, locks, idempotency, durable `after`, audit log, migrations |
 | 🔌 | [**Integrations**](#-integrations--optional-extras) | FastAPI · Starlette · Litestar · Flask · Django (+DRF, Channels) · SQLAlchemy · Redis · Celery · five brokers |
 | 🤖 | [**For LLM agents**](#-for-llm-agents) | The model proposes, the machine decides: tool allow-lists, budgets, durable human approval |
 | 🔭 | [**Observability**](#-observability--inspection) · [**Introspection & plugins**](#-introspection--plugins) · [**Pure API**](#-the-pure-api--no-interpreter) | OTel, Prometheus, the live Stately Inspector; observe and test |
-| 🐍 | [**Pythonic API**](#-prefer-pure-python-three-more-ways-to-define-a-machine) · [**CLI**](#️-cli-tool) | No JSON required; the whole terminal toolkit |
+| 🐍 | [**Pythonic API**](#-prefer-pure-python-three-more-ways-to-define-a-machine) · [**CLI**](#-cli-tool) | No JSON required; the whole terminal toolkit |
 | 📚 | [**Cookbook**](#-cookbook) · [**Recipes**](https://basiltt.github.io/xstate-statemachine/guide/recipes/) · [**FAQ**](#-faq) | Copy-paste solutions and eight CI-tested recipes |
-| ⚖️ | [**How it compares**](#️-how-it-compares) | vs [transitions](https://basiltt.github.io/xstate-statemachine/guide/vs-transitions/), [python-statemachine](https://basiltt.github.io/xstate-statemachine/guide/vs-python-statemachine/), [django-fsm](https://basiltt.github.io/xstate-statemachine/guide/vs-django-fsm/), [LangGraph](https://basiltt.github.io/xstate-statemachine/guide/vs-langgraph/), [Burr](https://basiltt.github.io/xstate-statemachine/guide/vs-burr/), [@statelyai/agent](https://basiltt.github.io/xstate-statemachine/guide/vs-statelyai-agent/), [AWS Step Functions](https://basiltt.github.io/xstate-statemachine/guide/vs-step-functions/) |
+| ⚖️ | [**How it compares**](#-how-it-compares) | vs [transitions](https://basiltt.github.io/xstate-statemachine/guide/vs-transitions/), [python-statemachine](https://basiltt.github.io/xstate-statemachine/guide/vs-python-statemachine/), [django-fsm](https://basiltt.github.io/xstate-statemachine/guide/vs-django-fsm/), [LangGraph](https://basiltt.github.io/xstate-statemachine/guide/vs-langgraph/), [Burr](https://basiltt.github.io/xstate-statemachine/guide/vs-burr/), [@statelyai/agent](https://basiltt.github.io/xstate-statemachine/guide/vs-statelyai-agent/), [AWS Step Functions](https://basiltt.github.io/xstate-statemachine/guide/vs-step-functions/) |
 | 🛡️ | [**Production**](#-running-it-in-production) · [**Security**](#-security--trust-model) · [**API reference**](#-api-reference) · [**Troubleshooting**](#-troubleshooting) | Failure semantics, threat model, every kwarg, every error |
+
+</details>
 
 ---
 
@@ -71,22 +104,25 @@ pip install xstate-statemachine
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter
 
-machine = create_machine({
-    "id": "toggle",
-    "initial": "inactive",
-    "states": {
-        "inactive": {"on": {"TOGGLE": "active"}},
-        "active":   {"on": {"TOGGLE": "inactive"}},
-    },
-})
+machine = create_machine(
+    {
+        "id": "toggle",
+        "initial": "inactive",
+        "states": {
+            "inactive": {"on": {"TOGGLE": "active"}},
+            "active": {"on": {"TOGGLE": "inactive"}},
+        },
+    }
+)
 
 light = SyncInterpreter(machine).start()
 
-print(light.current_state_ids)      # {'toggle.inactive'}
+print(light.current_state_ids)  # {'toggle.inactive'}
 light.send("TOGGLE")
-print(light.current_state_ids)      # {'toggle.active'}
-light.send("BANANA")                # not a legal event here
-print(light.current_state_ids)      # {'toggle.active'}  ← ignored, not crashed
+print(light.current_state_ids)  # {'toggle.active'}
+light.send("BANANA")  # not a legal event here
+print(light.current_state_ids)  # {'toggle.active'}  ← ignored, not crashed
+light.stop()
 ```
 
 <div align="center">
@@ -102,8 +138,46 @@ them. `TOGGLE` advances the machine. `BANANA` is ignored — not raised, not sil
 mishandled — because the current state does not accept it. (Prefer it to raise?
 `SyncInterpreter(machine, strict=True)` → `UnknownEventError` at the call site.)
 
-That single property kills a whole category of bug. The rest of this page is what happens
-when you take it seriously: across a process restart, across a message broker, across a team.
+You have a running machine: explicit states, named events and predictable transitions.
+The same model scales to workflows that cross process restarts, message brokers and teams.
+
+<details>
+<summary><strong>Already using asyncio? Run the same machine with the async engine.</strong></summary>
+
+<br>
+
+This is the async version of the toggle above, as a complete runnable program.
+`wait=True` waits for the event to finish processing before you inspect the result.
+
+```python
+import asyncio
+from xstate_statemachine import Interpreter, create_machine
+
+
+async def main() -> None:
+    """Toggle a light with the asynchronous engine."""
+    machine = create_machine(
+        {
+            "id": "toggle",
+            "initial": "inactive",
+            "states": {
+                "inactive": {"on": {"TOGGLE": "active"}},
+                "active": {"on": {"TOGGLE": "inactive"}},
+            },
+        }
+    )
+    light = await Interpreter(machine).start()
+    try:
+        receipt = await light.send("TOGGLE", wait=True)
+        print(sorted(receipt.state_ids))  # ['toggle.active']
+    finally:
+        await light.stop()
+
+
+asyncio.run(main())
+```
+
+</details>
 
 <table>
 <tr>
@@ -117,16 +191,32 @@ interactive launcher will walk you through generating a project from a JSON file
 </td>
 <td width="50%" valign="top">
 
-**🧑‍🔧 Shipped a few workflow engines already?** Jump to
-[Event-driven architecture](#-event-driven-architecture-the-main-event) — a transactional
-outbox, idempotent inbound dispatch and a dead-letter queue in forty lines with no broker
-running — then [Persistence](#-persistence--snapshots-stores-and-durable-timers) for the
+**Building a production workflow?** Jump to
+[Event-driven architecture](#-event-driven-architecture-the-main-event) for an in-process
+example of broker messaging, inbound deduplication and outbox delivery — then
+[Persistence](#-persistence--snapshots-stores-and-durable-timers) for the
 ordering guarantees, and [Production](#-running-it-in-production) for what is contained
 when things fail.
 
 </td>
 </tr>
 </table>
+
+### Why choose xstate-statemachine?
+
+| What you want to ship | What you get here |
+|:--|:--|
+| **A workflow the whole team can understand** | An XState-compatible definition you can visualize in Stately, review in Git and execute in Python. JSON, class-based, builder and functional APIs compile to the same model. |
+| **Business rules that live in one place** | Guards, nested and parallel states, history, `invoke`, `after` and actors make the allowed transitions explicit. `can()`, tags and metadata let the UI ask the machine what is possible. |
+| **A fast path from diagram to working code** | `xsm` generates implementation stubs, types, recorded tests and documentation, with structural round-trip checks for Python-generating templates. |
+| **A practical path to durable workflows** | Optional stores, version checks, idempotency, migrations and persisted deadlines support workflows that outlive a request or worker. |
+| **Event-driven services with shared tooling** | CloudEvents envelopes, inbound dispatch, an outbox, dead letters, sagas and AsyncAPI export, plus adapters for five broker families. |
+| **Confidence before and after deployment** | A pure transition API, virtual time, replay, statechart coverage, lifecycle plugins, OpenTelemetry, Prometheus and live inspection. |
+| **Control over adoption and dependencies** | Start in one Python process with no infrastructure. Add only the integrations you need; keep your definitions, data and deployment under your control. |
+
+The advantage is the combination: **visual statecharts, native Python execution and
+operational building blocks around the same definition**. See
+[How it compares](#-how-it-compares) for specific trade-offs and reproducible benchmarks.
 
 ---
 
@@ -142,10 +232,15 @@ Everything else is an **extra** you opt into — `pip install "xstate-statemachi
 `[django]`, `[redis]`, `[kafka]`, `[agents]`, `[observability]`, `[testing]`, … or `[all]`.
 The full table is under [Integrations](#-integrations--optional-extras).
 
+> **Match the docs to your version.** This README covers the repository's **0.11.0**
+> source version. The PyPI badge shows the published package, which may be older.
+> Run `xsm info` to check your installation; use the source checkout below when evaluating
+> features that are not in your installed release yet.
+
 [![xsm-check](https://img.shields.io/badge/GitHub%20Action-xsm--check-blue?logo=githubactions&logoColor=white)](https://basiltt.github.io/xstate-statemachine/guide/cli/#in-ci-and-pre-commit) [![pre-commit](https://img.shields.io/badge/pre--commit-xsm--validate-FAB040?logo=pre-commit&logoColor=white)](https://basiltt.github.io/xstate-statemachine/guide/cli/#in-ci-and-pre-commit) — validate machine JSON and keep generated code current in CI. Starting a service from scratch? `xsm new my_service --template fastapi` scaffolds one from a tested example app.
 
 <details>
-<summary><b>uv · poetry · pipx · Windows · supply chain</b></summary>
+<summary><b>uv · poetry · pipx · source checkout · Windows · supply chain</b></summary>
 
 <br>
 
@@ -153,6 +248,17 @@ The full table is under [Integrations](#-integrations--optional-extras).
 uv add xstate-statemachine
 poetry add xstate-statemachine
 pipx install xstate-statemachine     # if you only want the `xsm` CLI
+```
+
+**Try the development version from source:**
+
+```bash
+git clone https://github.com/basiltt/xstate-statemachine.git
+cd xstate-statemachine
+python -m pip install -e .
+python -m xstate_statemachine info
+# Add only the extras you need, for example:
+python -m pip install -e ".[fastapi]"
 ```
 
 **Windows, `xsm.exe` blocked by an Application Control policy?** That is pip's unsigned
@@ -169,8 +275,11 @@ each wheel and sdist to the exact run, commit and workflow that built it:
 ```bash
 pip install pypi-attestations
 pypi-attestations verify pypi --repository https://github.com/basiltt/xstate-statemachine \
-  pypi:xstate_statemachine-0.11.0-py3-none-any.whl   # prints "OK: <file>" on success
+  pypi:xstate_statemachine-0.10.5-py3-none-any.whl   # example published wheel; choose your release
 ```
+
+The verifier prints `OK: <file>` on success. Use a filename from the published release
+you installed; development versions do not have PyPI attestations before publication.
 
 Want the code generator's output line-wrapped to match your linter? `pip install "xstate-statemachine[format]"`
 adds `black` and `isort`; without them generated code is still valid, just not reformatted.
@@ -181,12 +290,25 @@ adds `black` and `isort`; without them generated code is still valid, just not r
 
 ## 🧰 Real Problems This Solves
 
-Every row is a shipped, CI-tested example: a problem you have actually had, the guarantee the statechart gives you, and the code to copy. Each one runs unchanged from its folder.
+Start with a problem that looks like yours. The examples cover customer-facing APIs,
+background workflows, event-driven services and supervised AI agents. Each row links to
+a shipped example and its setup instructions; the associated suites exercise failure paths
+as well as the happy path.
 
-| The problem you have | What the statechart guarantees | Run it |
+**Build an API** with [FastAPI orders](examples/integrations/fastapi_orders/) or
+[Django approvals](examples/integrations/django_approvals/). **Connect services** with
+[event-driven fulfilment](examples/integrations/eda_fulfilment/). **Control an agent** with
+the [offline support bot](examples/integrations/agents_support_bot/).
+
+<details>
+<summary><strong>Explore all 13 use cases — implementation, behavior and runnable code</strong></summary>
+
+<br>
+
+| The problem you have | How the example handles it | Run it |
 |:--|:--|:--|
 | **An LLM agent that calls tools — and must not refund money on its own.** Prompt-engineering "please ask first" does not hold. | The model proposes, the machine decides: per-state tool **allow-lists**, token/USD **budgets** that cut the loop, and a `refund_order` call that parks in `awaiting_human` — a persisted state with a one-hour escalation deadline — until a person approves. Works with pydantic-ai, LangGraph or a raw client. | [`agents_support_bot`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/agents_support_bot) · [guide](https://basiltt.github.io/xstate-statemachine/guide/integration-agents/) |
-| **A FastAPI order service behind N uvicorn workers; 200 concurrent `POST /pay` on one order must charge exactly once.** | One `POST /send` per state transition; a pessimistic lock + optimistic version means the 199 losers get **409**, not a second charge; `after: 15 min` expiry survives worker restarts; OpenAPI shows every event. | [`fastapi_orders`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/fastapi_orders) · [guide](https://basiltt.github.io/xstate-statemachine/guide/integration-fastapi/) |
+| **A FastAPI order service behind N uvicorn workers; 200 concurrent payment requests race on one order.** | The example's lock + version check admits one payment transition; the other requests get **409**. Persisted `after: 15 min` deadlines survive restarts, and OpenAPI shows the events. Payment-provider idempotency is still required for external charges across failures. | [`fastapi_orders`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/fastapi_orders) · [guide](https://basiltt.github.io/xstate-statemachine/guide/integration-fastapi/) |
 | **Stripe retries webhooks; the same `invoice.paid` arrives twice, out of order, a day late, or forged.** | Signature + timestamp verified at the edge; the `Idempotency-Key` inbox answers the replay with the **stored receipt** without touching the machine; an event the current state does not accept is a clean `200` no-op, never a double credit. | [`stripe_webhooks`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/recipes/stripe_webhooks) · [recipe](https://basiltt.github.io/xstate-statemachine/guide/recipes/stripe-webhooks/) |
 | **A Django approval flow: legal and finance review in parallel, each with its own role, visible in the admin, with a live status page.** | Parallel regions on one row; `StatechartField` keeps the denormalised state columns; a DRF viewset with per-event permissions; Channels broadcasts each transition; the audit log is written in the **same transaction** as the state change. | [`django_approvals`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/django_approvals) · [guide](https://basiltt.github.io/xstate-statemachine/guide/integration-django/) |
 | **Two services that must never call each other, but an order has to make it from checkout to shipped.** | Charts talk only through a broker (Redis Streams, Kafka, RabbitMQ, NATS, SQS): a transactional **outbox** so no event is lost between commit and publish, consumer-side dedup, a dead-letter queue, and a compensating saga when the warehouse says no. | [`eda_fulfilment`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/eda_fulfilment) · [guide](https://basiltt.github.io/xstate-statemachine/guide/integration-eda/) |
@@ -200,6 +322,14 @@ Every row is a shipped, CI-tested example: a problem you have actually had, the 
 | **An order row in SQLAlchemy whose state column must agree with its history.** | The chart lives on the ORM row (`StatechartMixin`); the state column, the snapshot and the outbox are written in one `commit()`. | [`sqlalchemy_orders`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/sqlalchemy_orders) · [guide](https://basiltt.github.io/xstate-statemachine/guide/integration-sqlalchemy/) |
 
 Each of these is also a **battle-test** in the suite: the FastAPI example is hammered with 200 concurrent payments across several worker processes; the Stripe example is fed 1,000 deliveries with forged signatures, tampered bodies and day-old timestamps; the agent example is given a model that tries to call a tool it was not offered. The guarantees above are the assertions.
+
+</details>
+
+> **Deployment matters.** These are tested scenarios, not a promise of exactly-once
+> external I/O. Use the documented store, locking, inbox and broker configuration;
+> make payment calls and other external effects idempotent. The
+> [Guarantees](https://basiltt.github.io/xstate-statemachine/guide/guarantees/) page
+> explains the crash windows explicitly.
 
 ---
 
@@ -222,12 +352,12 @@ elif is_authenticated and not is_loading:
     ...
 ```
 
-Four booleans = **16 combinations**. You handled maybe six.
-The other ten are *reachable* — and one of them is
+Four booleans = **16 combinations**. If only six are meaningful,
+the remaining ten need to be ruled out explicitly — including
 `is_loading=True, is_error=True, is_success=True`.
 
-Nothing stops it. Nothing warns you. It just happens in
-production at 3am.
+Without a shared model, every handler has to maintain those
+invariants independently.
 
 </td>
 <td width="50%" valign="top">
@@ -254,7 +384,9 @@ Illegal events in the current state are simply ignored.
 </tr>
 </table>
 
-### The three bugs this eliminates
+<a id="the-three-bugs-this-eliminates"></a>
+
+### Three bug classes the model helps prevent
 
 | Bug | How booleans cause it | How a statechart prevents it |
 |:--|:--|:--|
@@ -265,9 +397,9 @@ Illegal events in the current state are simply ignored.
 Now scale that up. In a distributed system the "late API response" is a **redelivered
 message**, the "second click" is a **retried webhook**, and the "boolean soup" is a status
 column plus six feature flags plus a cron job that nobody fully understands. The same
-property fixes the same bugs — *if* the machine survives restarts, deduplicates its input and
-publishes its output exactly as often as it should. That is what the rest of this library is
-for.
+design addresses the same problems — when paired with durable persistence, input
+deduplication and reliable output delivery. That is what the rest of this library provides
+building blocks for.
 
 > **The rule** — a machine is in **exactly one state per region**. Parallel states have
 > multiple regions, so multiple states are active at once, which is why
@@ -277,7 +409,7 @@ for.
 
 ## 🧩 The Mental Model
 
-Six concepts. That's the entire library.
+Six concepts give you the foundation. The rest of the library builds on them.
 
 | Concept | What it is | In JSON |
 |:--|:--|:--|
@@ -289,8 +421,8 @@ Six concepts. That's the entire library.
 | **Action** | A side effect that fires during a transition | `{"target": "x", "actions": ["save"]}` |
 
 The split that matters: **state** is *where you are*, **context** is *what you know*.
-`retries` is context. `retrying` is a state. Getting that boundary right is 90% of good
-statechart design.
+`retries` is context. `retrying` is a state. Keeping that boundary clear makes workflows
+easier to understand and change.
 
 <div align="center">
 <a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=4ef7b8e7-dda0-44a9-9b3a-b5d59f2b0763"><img src="docs/assets/images/machines/fetch.png" alt="fetch machine: idle →FETCH→ loading (invoke fetchUser) → success (final) or failure →RETRY→ loading" width="600"></a>
@@ -307,26 +439,77 @@ brokers — is those six things composed.
 
 ## 📨 Event-Driven Architecture: the main event
 
-This is the part most workflow libraries leave as an exercise. Here it is the design centre.
+**Events describe what happened. Statecharts decide what is allowed to happen next.**
+
+A checkout publishes `OrderPaid`. The warehouse reacts by packing the order. A shipping
+service reacts when packing completes. Each service owns its behavior and communicates
+through an event contract, rather than reaching into another service's internals.
+
+This is why event-driven architecture matters: it lets workflows grow beyond one request,
+one process and one team while keeping the hand-offs explicit.
+
+### Why build around events?
+
+| Architectural advantage | What it means for your application |
+|:--|:--|
+| **Looser coupling** | Producers describe business facts; consumers decide how to respond. Add a notification or analytics consumer without embedding that behavior in the checkout workflow. |
+| **Independent scaling** | Separate work by consumer and instance key. Scale the busy parts of the system without treating every workflow step as one synchronous request. |
+| **Resilience across interruptions** | With a durable broker and correctly configured stores, committed state and pending outbound events can outlive a worker. Retry policy and recovery paths stay explicit. |
+| **A traceable business story** | Named events, correlation and causation ids connect the lifecycle of an order across services. Statecharts show where each instance is waiting and why. |
+| **Testable contracts** | Exercise the event flow with fake brokers and virtual time, then expose the chart's publish/consume declarations through AsyncAPI. |
+
+You do not need microservices to benefit. Start with events inside one application;
+introduce a broker when independent consumers, buffering or cross-process delivery become
+useful. Event-driven systems introduce their own responsibilities: **eventual consistency,
+duplicate delivery, ordering, schema evolution and operational monitoring**. The library
+provides explicit tools for these concerns; it does not remove the need to design for them.
 
 A statechart is a **consumer** (it reacts to events) and a **producer** (its transitions mean
-something to other services). The hard problems of an event-driven system are exactly the
-problems of doing both honestly:
+something to other services). Here is how the pieces fit together:
 
-| The problem | What usually happens | What this library does |
+```text
+Producer → Broker → InboundDispatcher → Statechart
+                           │                │
+                    validate + dedup   guards + actions
+                                            │
+                             snapshot + inbox mark + outbox
+                                  one shared transaction
+                                            │
+                                      OutboxRelay
+                                            │
+                                 Broker → Next consumer
+```
+
+The transaction shown above requires a shared transactional store and the documented
+locking strategy. The incoming delivery is acknowledged after the state commit;
+the relay publishes committed outbox records separately and may retry.
+
+### Reliability is part of the workflow
+
+| The problem | The failure to design for | The building block |
 |:--|:--|:--|
-| A message is delivered twice | You add an `if already_processed` that races with itself | `InboundDispatcher` deduplicates on the envelope id **before** the machine sees it, with the receipt from the first delivery |
-| You save state, then the publish fails | The order is "paid" and nobody heard | `OutboxPlugin` writes the outgoing event **in the same store transaction** as the snapshot; `OutboxRelay` publishes afterwards and retries |
+| A message is delivered twice | A duplicate applies the same business operation again | With an inbox configured, `InboundDispatcher` deduplicates on the envelope id before the machine sees it and returns the original receipt within the configured retention window |
+| You save state, then the publish fails | The order is "paid" and nobody heard | With a shared transactional store and `PessimisticLock`, `OutboxPlugin` writes the outgoing event in the same transaction as the snapshot; `OutboxRelay` publishes afterwards and retries |
 | A poison message loops forever | A worker restarts every 30 s | After `max_attempts` the envelope is a `DeadLetter` record; `xsm dlq replay` is a dry run by default |
 | Two consumers handle one order at once | Lost update, or a global lock | Per-subject ordering in the dispatcher, plus `OptimisticLock` / fenced `PessimisticLock` on the store |
 | Nobody knows what your service emits | A wiki page from last year | `meta.publish` on the chart **is** the contract; `xsm asyncapi` renders it as AsyncAPI 3.0 |
-| The broker is Kafka today and SQS next quarter | A rewrite | One `BrokerAdapter` protocol; five adapters that pass one contract suite; `FakeBrokerAdapter` for tests |
+| The broker is Kafka today and SQS next quarter | Transport-specific logic spreads through the workflow | Shared async and sync adapter protocols; five broker families with a contract suite, and fake adapters for tests. Transport configuration and ordering still depend on the broker |
 
 ### Two charts, one broker, no servers
 
-The order chart from the top of this page and a warehouse chart that never call each other.
-Every hand-off is an event. This runs as-is — the broker, the store, the inbox and the
-outbox are all in-process:
+The order-fulfilment chart below shows a richer workflow: payment, packing, shipping,
+escalation and cancellation, all visible in the model.
+
+<div align="center">
+<a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=8232a8c5-b681-4e0f-a26d-57983804d72c"><img src="docs/assets/images/machines/order_eda.png" alt="An order-fulfilment statechart in the Stately editor: placed → paid → packed → shipped, with PAY publishing OrderPaid, a 60 s packing escalation, shipOrder invoked, and CANCEL from every state" width="900"></a>
+<br><sub>🔗 <a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=8232a8c5-b681-4e0f-a26d-57983804d72c">Open this machine in the Stately editor</a> — public, no account needed.</sub>
+</div>
+
+Start with a smaller, runnable version: an order chart and a warehouse chart that never
+call each other. Every hand-off is an event. The broker, store, inbox and outbox are all
+in-process, so you can try the full conversation without running a server. The demo's
+`PACKED` event completes the order directly; it does not invoke the richer chart's
+`shipOrder` service.
 
 <div align="center">
 <a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=e42d1fe7-8c71-42a2-b9a2-e9591112bc19"><img src="docs/assets/images/machines/warehouse.png" alt="warehouse: waiting →PACK (publishes OrderPacked)→ packed" width="480"></a>
@@ -336,72 +519,134 @@ outbox are all in-process:
 ```python
 from xstate_statemachine import MachineLogic, assign, create_machine
 from xstate_statemachine.eda import (
-    Envelope, InboundDispatcher, MemoryOutboxStore, OutboxPlugin, OutboxRelay,
+    Envelope,
+    InboundDispatcher,
+    MemoryOutboxStore,
+    OutboxPlugin,
+    OutboxRelay,
     SyncFakeBrokerAdapter,
 )
 from xstate_statemachine.persistence import MemoryInbox, MemoryStore
 
 ORDER = {
-    "id": "order", "initial": "placed", "context": {"total": 0},
+    "id": "order",
+    "initial": "placed",
+    "context": {"total": 0},
     "states": {
-        "placed": {"on": {"PAY": {
-            "target": "paid", "guard": "hasTotal",
-            "actions": assign({"total": lambda a: a["event"].payload["total"]}),
-            "meta": {"publish": {"type": "OrderPaid", "data": ["total"]}},   # ← the contract
-        }}},
-        "paid":    {"on": {"PACKED": "shipped"}},
+        "placed": {
+            "on": {
+                "PAY": {
+                    "target": "paid",
+                    "guard": "hasTotal",
+                    "actions": assign(
+                        {"total": lambda a: a["event"].payload["total"]}
+                    ),
+                    "meta": {
+                        "publish": {"type": "OrderPaid", "data": ["total"]}
+                    },  # ← the contract
+                }
+            }
+        },
+        "paid": {"on": {"PACKED": "shipped"}},
         "shipped": {"type": "final"},
     },
 }
 WAREHOUSE = {
-    "id": "warehouse", "initial": "waiting",
+    "id": "warehouse",
+    "initial": "waiting",
     "states": {
-        "waiting": {"on": {"PACK": {"target": "packed", "meta": {"publish": "OrderPacked"}}}},
-        "packed":  {"type": "final"},
+        "waiting": {
+            "on": {
+                "PACK": {
+                    "target": "packed",
+                    "meta": {"publish": "OrderPacked"},
+                }
+            }
+        },
+        "packed": {"type": "final"},
     },
 }
-order = create_machine(ORDER, logic=MachineLogic(
-    guards={"hasTotal": lambda ctx, e: e.payload.get("total", 0) > 0}))
+order = create_machine(
+    ORDER,
+    logic=MachineLogic(
+        guards={"hasTotal": lambda ctx, e: e.payload.get("total", 0) > 0}
+    ),
+)
 warehouse = create_machine(WAREHOUSE)
 
-store, inbox = MemoryStore(), MemoryInbox()            # SQLiteStore / RedisStore / DjangoStore in prod
-outbox, broker = MemoryOutboxStore(), SyncFakeBrokerAdapter()   # SQLiteOutboxStore + KafkaBroker, …
-publisher = OutboxPlugin(outbox, topic="events")       # meta.publish → outbox row, same transaction
-relay = OutboxRelay(outbox, broker)                    # outbox rows → broker, after commit
+store, inbox = (
+    MemoryStore(),
+    MemoryInbox(),
+)  # in-memory demo, not crash-durable
+outbox, broker = MemoryOutboxStore(), SyncFakeBrokerAdapter()
+publisher = OutboxPlugin(
+    outbox, topic="events"
+)  # meta.publish → staged outbox record
+relay = OutboxRelay(outbox, broker)  # committed outbox records → broker
 
-ROUTES = {                                  # envelope type → (machine, the event it means to it)
+ROUTES = {  # envelope type → (machine, the event it means to it)
     "xsm.order.PAY": (order, "PAY"),
-    "OrderPaid":     (warehouse, "PACK"),   # the warehouse reacts to the order's event…
-    "OrderPacked":   (order, "PACKED"),     # …and the order reacts to the warehouse's
+    "OrderPaid": (
+        warehouse,
+        "PACK",
+    ),  # the warehouse reacts to the order's event…
+    "OrderPacked": (
+        order,
+        "PACKED",
+    ),  # …and the order reacts to the warehouse's
 }
 dispatcher = InboundDispatcher(
     store,
     lambda t: ROUTES[t][0] if t in ROUTES else None,
     event_type=lambda env: ROUTES[env.type][1],
-    key_for=lambda env, m: f"{m.id}:{env.subject}",   # one order id, two machines
-    plugins=[publisher], inbox=inbox,                 # dedup on envelope.id
+    key_for=lambda env, m: f"{m.id}:{env.subject}",  # one order id, two machines
+    plugins=[publisher],
+    inbox=inbox,  # dedup on envelope.id
 )
 
 # checkout publishes a command; nothing else is called directly
-broker.publish("events", Envelope.new(
-    type="xsm.order.PAY", subject="order-1", data={"total": 42}, source="checkout"))
+broker.publish(
+    "events",
+    Envelope.new(
+        type="xsm.order.PAY",
+        subject="order-1",
+        data={"total": 42},
+        source="checkout",
+    ),
+)
 
-for _ in range(4):                          # PAY → OrderPaid → PACK → OrderPacked → PACKED
+for _ in range(4):  # PAY → OrderPaid → PACK → OrderPacked → PACKED
     dispatcher.run_once_sync(broker, "events")
     relay.relay_once_sync()
 
 import json
-print(json.loads(store.load("order:order-1").snapshot)["value"])     # shipped
+
+print(json.loads(store.load("order:order-1").snapshot)["value"])  # shipped
 print([e.type for e in broker.published_on("events")])
 # ['xsm.order.PAY', 'OrderPaid', 'OrderPacked']
 ```
 
-Swap `SyncFakeBrokerAdapter()` for `RedisStreamsBroker(...)`, `KafkaBroker(...)`,
-`RabbitMQBroker(...)`, `NatsBroker(...)` or `SqsBroker(...)` and the code above does not
-change. Swap `MemoryStore()` for `SQLiteStore("app.db")` and the outbox row, the inbox mark
-and the snapshot land in one SQLite transaction. Publish the same envelope twice and the
-second one is a `duplicate` that runs no actions. Make `shipOrder` raise three times and the
-envelope is in the DLQ with `attempts == 3`.
+**Take the same design to production in three steps:**
+
+1. **Make state and outgoing events durable.** Use `SQLiteStore("app.db")`,
+   `SQLiteInbox(store)` and `SQLiteOutboxStore(store)` with `PessimisticLock()` passed to
+   `InboundDispatcher`. Sharing the store and transaction is what makes snapshot, inbox
+   mark and outbox commit together. Replacing only `MemoryStore` is not enough.
+2. **Choose the broker and execution model.** The sync loop can use
+   `SyncRedisStreamsBroker(...)` or `SyncSqsBroker(...)`. For `RedisStreamsBroker(...)`,
+   `KafkaBroker(...)`, `RabbitMQBroker(...)`, `NatsBroker(...)` or `SqsBroker(...)`, use the
+   async dispatcher and relay APIs. The machine definitions and event contracts stay the
+   same; connection settings, queue setup and ordering requirements are broker-specific.
+3. **Exercise redelivery and recovery.** Publish the same envelope twice: with the inbox
+   configured, the second delivery is a `duplicate` and runs no actions. Configure a
+   dead-letter store and `max_attempts=3`, then inject a delivery-processing failure: an
+   exhausted delivery becomes a DLQ record. An invoked service such as `shipOrder` instead
+   reports its failure through `onError`; that alone does not make a broker delivery fail.
+
+> **Delivery contract:** outbox delivery is **at least once**, not exactly once. Keep
+> external effects idempotent. Per-subject order needs the broker topology described in
+> the guide; SQS Standard does not preserve it. Kafka has no broker-side delivery count,
+> so the dispatcher's poison-attempt counter does not survive a consumer restart there.
 
 ### What's in the box
 
@@ -409,7 +654,7 @@ envelope is in the DLQ with `attempts == 3`.
 |:--|:--|
 | `Envelope` | A CloudEvents 1.0 envelope (`id`, `type`, `subject`, `source`, `data`, extensions) with size and nesting caps; `redact_record()` before anything is logged. The `[cloudevents]` extra adds SDK / HTTP-binding interop |
 | `InboundDispatcher` | Consumes from any adapter: dedup by envelope id, **per-subject ordering**, bounded in-flight, `max_attempts` then dead-letter, unknown types dead-lettered (or ignored, your call). Sync and async APIs |
-| `OutboxPlugin` + `OutboxRelay` | **Transactional outbox** from `meta.publish`: the record is written with the snapshot, relayed after, retried on broker failure; `SQLiteOutboxStore`, `SQLAlchemyOutboxStore`, `DjangoOutboxStore`, `MemoryOutboxStore` |
+| `OutboxPlugin` + `OutboxRelay` | **Transactional outbox** from `meta.publish` when sharing the snapshot transaction: records are relayed after commit and retried on broker failure. `SQLiteOutboxStore`, `SQLAlchemyOutboxStore`, `DjangoOutboxStore`; `MemoryOutboxStore` for in-process use |
 | `DeadLetter` · `SQLiteDeadLetterStore` · `BrokerDeadLetterSink` | Every refused or exhausted envelope is a record with its attempts and reason; `xsm dlq list / show / replay / purge` |
 | `ChoreographyRouter` · `SagaBuilder` | Route a bus of many services' events to many charts by type; or orchestrate a saga with compensation steps and `causationid` dedup (`xstate_statemachine.patterns`) |
 | `RetryPolicy` · `CircuitBreaker` · `DeadLetterPlugin` | Resilience as guards, delays and plugins — full/equal jitter, caps, half-open probes |
@@ -472,19 +717,23 @@ class SubscriptionMachine(StateMachine):
     machine_id = "subscription"
     initial_context = {"failures": 0, "last_invoice": None}
 
-    incomplete = State("incomplete", initial=True, on={
-        "PAYMENT_SUCCEEDED": {"target": "active",
-                              "actions": ["recordPayment"]},
-        "CANCELED": "canceled",
-    })
+    incomplete = State(
+        "incomplete",
+        initial=True,
+        on={
+            "PAYMENT_SUCCEEDED": {
+                "target": "active",
+                "actions": ["recordPayment"],
+            },
+            "CANCELED": "canceled",
+        },
+    )
     active = State("active", on={...}, tags=["billable"])
-    past_due = State("past_due", on={...},
-                     tags=["billable", "dunning"])
+    past_due = State("past_due", on={...}, tags=["billable", "dunning"])
     canceled = State("canceled", tags=["terminal"])
 
     @action
-    def record_payment(self, interpreter, context,
-                       event, action_def) -> None:
+    def record_payment(self, interpreter, context, event, action_def) -> None:
         # TODO: implement action logic
         ...
 ```
@@ -499,8 +748,8 @@ each step written down. Green on day one; red the day the chart changes.
 ```python
 def test_step_01_PAYMENT_SUCCEEDED(interp, clock):
     interp.send("PAYMENT_SUCCEEDED")
-    assert sorted(interp.current_state_ids) == [
-        "subscription.active"]
+    assert sorted(interp.current_state_ids) == ["subscription.active"]
+
 
 def test_every_declared_event_is_known(machine): ...
 def test_snapshot_round_trip(interp, clock, machine): ...
@@ -509,10 +758,10 @@ def test_snapshot_round_trip(interp, clock, machine): ...
 **`subscription_types.py`** — the chart's vocabulary as types your IDE and mypy enforce:
 
 ```python
-EventType = Literal["CANCELED", "PAYMENT_FAILED",
-                    "PAYMENT_SUCCEEDED"]
-StateId = Literal["subscription.active",
-                  "subscription.canceled", ...]
+EventType = Literal["CANCELED", "PAYMENT_FAILED", "PAYMENT_SUCCEEDED"]
+StateId = Literal["subscription.active", "subscription.canceled", ...]
+
+
 class Context(TypedDict): ...
 ```
 
@@ -520,11 +769,15 @@ class Context(TypedDict): ...
 </tr>
 </table>
 
-**The generator proves its output before writing it.** For templates that build the machine
+**The generator checks structural equivalence before writing.** For templates that build the machine
 in Python, `xsm` compiles the generated code, runs it, and compares the resulting machine
 against `create_machine(your.json)`. If anything diverges it prints what and exits non-zero —
 nothing is written. Nesting, parallel regions, history, timers (numeric *and* named delays),
 composite guards, `invoke`, tags and meta all round-trip exactly.
+
+This verifies the generated machine's structure, not the business correctness of the
+implementations you add. Recorded tests start with stub logic; extend them with your own
+guard, action and service scenarios.
 
 | Template | Produces |
 |:--|:--|
@@ -565,24 +818,28 @@ You take **that exact file** — unedited — and run it in Python:
 import json
 from xstate_statemachine import create_machine, MachineLogic, SyncInterpreter
 
-with open("checkout.json") as f:          # ← straight from the frontend repo
+with open("checkout.json") as f:  # ← straight from the frontend repo
     config = json.load(f)
 
-machine = create_machine(config, logic=MachineLogic(
-    actions={"charge_card": charge_card},   # you supply the Python side
-    guards={"has_stock": has_stock},
-))
+machine = create_machine(
+    config,
+    logic=MachineLogic(
+        actions={"charge_card": charge_card},  # you supply the Python side
+        guards={"has_stock": has_stock},
+    ),
+)
 
 checkout = SyncInterpreter(machine).start()
 ```
 
-One definition. Two runtimes. **The UI cannot render a step your backend considers illegal**,
-because there is only one source of truth for what the steps *are*.
+One definition. Two runtimes. **The UI and backend can share the same workflow contract**
+instead of reimplementing the state graph independently. Keep implementations and versions
+aligned, and continue to enforce authorization and business rules on the backend.
 
-Every diagram in this README is the Stately editor rendering the exact JSON the adjacent
-Python runs — the configs live in
+The statechart screenshots in this README come from the Stately editor — the source configs live in
 [`docs/assets/images/machines/machines.json`](docs/assets/images/machines/machines.json).
-`xsm diagram` and `machine.to_mermaid()` draw the same picture without leaving the terminal.
+Examples show the corresponding workflow or an explicitly simplified subset.
+`xsm diagram` and `machine.to_mermaid()` render a machine without leaving the terminal.
 The round trip, the `version` key, meta conventions and the editor JSON Schema are in
 [Stately editor → Python](https://basiltt.github.io/xstate-statemachine/guide/stately-export/).
 
@@ -595,8 +852,9 @@ The test suite includes **104 real-world machines exported from Stately.ai**. 10
 structurally unmodified. The single exception has no top-level `states` key at all — it isn't a
 well-formed machine.
 
-Both XState **v4** (`cond`) and **v5** (`guard`) transition spellings are accepted, so machines
-from either generation work.
+Both XState **v4** (`cond`) and **v5** (`guard`) transition spellings are accepted.
+Structural parsing is not a claim that every JavaScript API or runtime extension is supported;
+the library targets XState v5 statechart semantics.
 
 What is *not* supported: JS/TS action implementations embedded in the JSON. Those are code, not
 data — you supply the Python equivalents via `MachineLogic`, which is the whole point of the
@@ -617,26 +875,40 @@ Context is a plain dict. Update it declaratively with `assign`:
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter, assign
 
-cart = SyncInterpreter(create_machine({
-    "id": "cart",
-    "initial": "shopping",
-    "context": {"items": 0, "total": 0.0},
-    "states": {
-        "shopping": {
-            "on": {
-                "ADD_ITEM": {"actions": assign({
-                    "items": lambda a: a["context"]["items"] + 1,
-                    "total": lambda a: a["context"]["total"] + a["event"].payload["price"],
-                })},
-                "CLEAR": {"actions": assign(lambda a: {"items": 0, "total": 0.0})},
-            }
+cart = SyncInterpreter(
+    create_machine(
+        {
+            "id": "cart",
+            "initial": "shopping",
+            "context": {"items": 0, "total": 0.0},
+            "states": {
+                "shopping": {
+                    "on": {
+                        "ADD_ITEM": {
+                            "actions": assign(
+                                {
+                                    "items": lambda a: a["context"]["items"]
+                                    + 1,
+                                    "total": lambda a: a["context"]["total"]
+                                    + a["event"].payload["price"],
+                                }
+                            )
+                        },
+                        "CLEAR": {
+                            "actions": assign(
+                                lambda a: {"items": 0, "total": 0.0}
+                            )
+                        },
+                    }
+                }
+            },
         }
-    },
-})).start()
+    )
+).start()
 
 cart.send("ADD_ITEM", price=9.99)
 cart.send("ADD_ITEM", price=5.01)
-print(cart.context)          # {'items': 2, 'total': 15.0}
+print(cart.context)  # {'items': 2, 'total': 15.0}
 ```
 
 `assign` takes either a **dict of per-key updaters** or a **single callable** returning a
@@ -673,29 +945,41 @@ config = {
         "idle": {
             "on": {
                 "WITHDRAW": [
-                    {"target": "approved", "guard": {
-                        "type": "and",
-                        "params": {"guards": [
-                            "hasFunds",
-                            {"type": "not", "params": {"guards": ["isFrozen"]}},
-                        ]},
-                    }},
-                    {"target": "denied"},          # fallback — no guard
+                    {
+                        "target": "approved",
+                        "guard": {
+                            "type": "and",
+                            "params": {
+                                "guards": [
+                                    "hasFunds",
+                                    {
+                                        "type": "not",
+                                        "params": {"guards": ["isFrozen"]},
+                                    },
+                                ]
+                            },
+                        },
+                    },
+                    {"target": "denied"},  # fallback — no guard
                 ]
             }
         },
-        "approved": {}, "denied": {},
+        "approved": {},
+        "denied": {},
     },
 }
 
-logic = MachineLogic(guards={
-    "hasFunds": lambda ctx, e: ctx["balance"] >= e.payload.get("amount", 0),
-    "isFrozen": lambda ctx, e: ctx["frozen"],
-})
+logic = MachineLogic(
+    guards={
+        "hasFunds": lambda ctx, e: ctx["balance"]
+        >= e.payload.get("amount", 0),
+        "isFrozen": lambda ctx, e: ctx["frozen"],
+    }
+)
 
 atm = SyncInterpreter(create_machine(config, logic=logic)).start()
 atm.send("WITHDRAW", amount=50)
-print(atm.current_state_ids)      # {'atm.approved'}
+print(atm.current_state_ids)  # {'atm.approved'}
 ```
 
 **Composite guards** — `and`, `or`, `not` nest arbitrarily via `params.guards`. There's also
@@ -812,7 +1096,11 @@ into the machine as `onDone` / `onError`. This is how you do I/O.
 ```python
 import asyncio
 from xstate_statemachine import (
-    create_machine, Interpreter, MachineLogic, assign, wait_for,
+    create_machine,
+    Interpreter,
+    MachineLogic,
+    assign,
+    wait_for,
 )
 
 config = {
@@ -824,10 +1112,16 @@ config = {
         "loading": {
             "invoke": {
                 "src": "fetchUser",
-                "onDone": {"target": "success",
-                           "actions": assign({"user": lambda a: a["event"].data})},
-                "onError": {"target": "failure",
-                            "actions": assign({"error": lambda a: str(a["event"].data)})},
+                "onDone": {
+                    "target": "success",
+                    "actions": assign({"user": lambda a: a["event"].data}),
+                },
+                "onError": {
+                    "target": "failure",
+                    "actions": assign(
+                        {"error": lambda a: str(a["event"].data)}
+                    ),
+                },
             }
         },
         "success": {"type": "final"},
@@ -835,26 +1129,32 @@ config = {
     },
 }
 
+
 async def fetch_user(interpreter, ctx, event):
     await asyncio.sleep(0.01)
     return {"id": 1, "name": "Ada"}
 
+
 async def main():
-    machine = create_machine(config, logic=MachineLogic(services={"fetch_user": fetch_user}))
+    machine = create_machine(
+        config, logic=MachineLogic(services={"fetch_user": fetch_user})
+    )
     svc = await Interpreter(machine).start()
 
     await svc.send("FETCH")
     await wait_for(svc, lambda s: s.matches("fetch.success"), timeout=2)
 
-    print(svc.context["user"])        # {'id': 1, 'name': 'Ada'}
+    print(svc.context["user"])  # {'id': 1, 'name': 'Ada'}
     await svc.stop()
+
 
 asyncio.run(main())
 ```
 
 - **Success** → `onDone`, with the return value on `event.data`
 - **Failure** → `onError`, with the *exception object* on `event.data`
-- Leaving the state **cancels** the service automatically — no zombie tasks
+- Leaving the state **cancels** the invocation and discards stale completion events.
+  Cancellation is cooperative; it cannot forcibly stop a blocking thread or undo an external request
 - A plain-`def` service under the async engine runs on a private thread pool
   (`service_pool_size`, or your `service_executor`) so a blocking call cannot stall the loop
 
@@ -864,7 +1164,7 @@ or a thread), `from_iterator` / `from_async_iterator` (each item becomes a `Stre
 `celery_service`.
 
 > **Tip** — use `wait_for` (async) or `wait_for_sync` rather than `asyncio.sleep()` guesses.
-> It polls a predicate with a real timeout, so tests stay fast and never flake.
+> It waits on a predicate with a real timeout, so tests do not depend on guessed delays.
 
 ---
 
@@ -884,10 +1184,13 @@ Name your delays to keep magic numbers out of the config — and to compute them
 which is exactly how you express **exponential backoff**:
 
 ```python
-logic = MachineLogic(delays={
-    "TIMEOUT": 60_000,
-    "BACKOFF": lambda ctx, e: 2 ** ctx["attempt"] * 1000,   # 1s, 2s, 4s, 8s…
-})
+logic = MachineLogic(
+    delays={
+        "TIMEOUT": 60_000,
+        "BACKOFF": lambda ctx, e: 2 ** ctx["attempt"]
+        * 1000,  # 1s, 2s, 4s, 8s…
+    }
+)
 ```
 
 ```jsonc
@@ -949,29 +1252,47 @@ state — fan-out and fan-in with no bookkeeping:
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter
 
-ci = SyncInterpreter(create_machine({
-    "id": "ci",
-    "initial": "running",
-    "states": {
-        "running": {
-            "type": "parallel",
-            "onDone": "deployed",
+ci = SyncInterpreter(
+    create_machine(
+        {
+            "id": "ci",
+            "initial": "running",
             "states": {
-                "build": {"initial": "b", "states": {
-                    "b": {"on": {"BUILD_OK": "done"}}, "done": {"type": "final"}}},
-                "lint":  {"initial": "l", "states": {
-                    "l": {"on": {"LINT_OK": "done"}},  "done": {"type": "final"}}},
+                "running": {
+                    "type": "parallel",
+                    "onDone": "deployed",
+                    "states": {
+                        "build": {
+                            "initial": "b",
+                            "states": {
+                                "b": {"on": {"BUILD_OK": "done"}},
+                                "done": {"type": "final"},
+                            },
+                        },
+                        "lint": {
+                            "initial": "l",
+                            "states": {
+                                "l": {"on": {"LINT_OK": "done"}},
+                                "done": {"type": "final"},
+                            },
+                        },
+                    },
+                },
+                "deployed": {},
             },
-        },
-        "deployed": {},
-    },
-})).start()
+        }
+    )
+).start()
 
-print(sorted(ci.current_state_ids))   # ['ci.running.build.b', 'ci.running.lint.l']
+print(
+    sorted(ci.current_state_ids)
+)  # ['ci.running.build.b', 'ci.running.lint.l']
 ci.send("BUILD_OK")
-print(sorted(ci.current_state_ids))   # ['ci.running.build.done', 'ci.running.lint.l']
+print(
+    sorted(ci.current_state_ids)
+)  # ['ci.running.build.done', 'ci.running.lint.l']
 ci.send("LINT_OK")
-print(sorted(ci.current_state_ids))   # ['ci.deployed']   ← fan-in fired
+print(sorted(ci.current_state_ids))  # ['ci.deployed']   ← fan-in fired
 ```
 
 This is where `current_state_ids` returning a **set** finally makes sense.
@@ -1030,11 +1351,15 @@ worker = {
     "id": "worker",
     "initial": "idle",
     "context": {"jobs": 0},
-    "states": {"idle": {"on": {"JOB": {"target": "idle", "actions": ["count"]}}}},
+    "states": {
+        "idle": {"on": {"JOB": {"target": "idle", "actions": ["count"]}}}
+    },
 }
-worker_logic = MachineLogic(actions={
-    "count": lambda i, ctx, e, a: ctx.__setitem__("jobs", ctx["jobs"] + 1),
-})
+worker_logic = MachineLogic(
+    actions={
+        "count": lambda i, ctx, e, a: ctx.__setitem__("jobs", ctx["jobs"] + 1),
+    }
+)
 
 parent = {
     "id": "super",
@@ -1042,25 +1367,42 @@ parent = {
     "context": {},
     "states": {
         "up": {
-            "entry": [{"type": "spawnChild",
-                       "params": {"src": "worker", "id": "pool", "systemId": "pool"}}],
-            "on": {"DISPATCH": {"actions": [
-                {"type": "sendTo", "params": {"to": "pool", "event": {"type": "JOB"}}}
-            ]}},
+            "entry": [
+                {
+                    "type": "spawnChild",
+                    "params": {
+                        "src": "worker",
+                        "id": "pool",
+                        "systemId": "pool",
+                    },
+                }
+            ],
+            "on": {
+                "DISPATCH": {
+                    "actions": [
+                        {
+                            "type": "sendTo",
+                            "params": {"to": "pool", "event": {"type": "JOB"}},
+                        }
+                    ]
+                }
+            },
         }
     },
 }
 
-logic = MachineLogic(services={
-    "worker": lambda i, ctx, e: create_machine(worker, logic=worker_logic),
-})
+logic = MachineLogic(
+    services={
+        "worker": lambda i, ctx, e: create_machine(worker, logic=worker_logic),
+    }
+)
 
 sup = SyncInterpreter(create_machine(parent, logic=logic)).start()
-print(list(sup.system.get_all()))          # ['pool']
+print(list(sup.system.get_all()))  # ['pool']
 
 sup.send("DISPATCH")
 sup.send("DISPATCH")
-print(sup.system.get("pool").context["jobs"])   # 2
+print(sup.system.get("pool").context["jobs"])  # 2
 ```
 
 Children talk back with `send_parent`, escalate failures with `escalate`, and are torn down
@@ -1084,12 +1426,12 @@ from xstate_statemachine import create_machine, SyncInterpreter
 job = SyncInterpreter(create_machine(config)).start()
 job.send("NEXT")
 
-snapshot = job.get_snapshot()      # a JSON string → Redis, Postgres, a file…
+snapshot = job.get_snapshot()  # a JSON string → Redis, Postgres, a file…
 job.stop()
 
 # …new process, hours later…
 resumed = SyncInterpreter.from_snapshot(snapshot, create_machine(config))
-print(resumed.current_state_ids)   # {'job.step2'}   ← exactly where it left off
+print(resumed.current_state_ids)  # {'job.step2'}   ← exactly where it left off
 resumed.send("NEXT")
 ```
 
@@ -1111,14 +1453,30 @@ whole loop with built-in stores — `MemoryStore`, `FileStore` (atomic writes, `
 from xstate_statemachine import MachineLogic, create_machine
 from xstate_statemachine.persistence import MemoryStore, persisted
 
-cfg = {"id": "order", "initial": "cart", "context": {"items": 0},
-       "states": {"cart": {"on": {"ADD": {"actions": "add"}, "PAY": "paid"}},
-                  "paid": {"type": "final"}}}
-machine = create_machine(cfg, logic=MachineLogic(
-    actions={"add": lambda i, ctx, e, a: ctx.__setitem__("items", ctx["items"] + 1)}))
-store = MemoryStore()                      # or SQLiteStore("orders.db"), RedisStore(...)
+cfg = {
+    "id": "order",
+    "initial": "cart",
+    "context": {"items": 0},
+    "states": {
+        "cart": {"on": {"ADD": {"actions": "add"}, "PAY": "paid"}},
+        "paid": {"type": "final"},
+    },
+}
+machine = create_machine(
+    cfg,
+    logic=MachineLogic(
+        actions={
+            "add": lambda i, ctx, e, a: ctx.__setitem__(
+                "items", ctx["items"] + 1
+            )
+        }
+    ),
+)
+store = MemoryStore()  # or SQLiteStore("orders.db"), RedisStore(...)
 
-with persisted(store, "order:42", machine) as order:   # loaded (or created), started
+with persisted(
+    store, "order:42", machine
+) as order:  # loaded (or created), started
     order.send("ADD")
     order.send("ADD")
 # saved with expected_version on clean exit; a concurrent writer gets ConflictError
@@ -1142,11 +1500,14 @@ assert store.load("order:42").version == 2
 | Schema drift | `@migrator.register("1.0", "1.1")` steps upgrade in-flight instances across a deploy; `xsm snapshots --stale` finds the ones written by another machine version; unknown or newer layouts are refused, never guessed at |
 | Adopting an existing table | `from_state_ids(machine, ids, context)` mints a valid snapshot from the state column you already have (how `xsm_migrate_fsm` moves a django-fsm model over) |
 | Secrets | One `redact()` denylist applied by every built-in sink; a `SnapshotCodec` seam for encryption at rest; `SnapshotTooLargeError` caps blob size |
-| The store is down | `StoreUnavailableError` → **503** in every web adapter, never a half-applied event |
+| The store is down | `StoreUnavailableError` → **503** in the web adapters; a failed save does not commit a new snapshot. External effects performed before the failure still need idempotency |
 
-The honest boundary: transitions are **exactly-once** for an idempotency-keyed event; the
-side effects your actions perform are **at-least-once**. Put them behind `invoke` or the
-[transactional outbox](#-event-driven-architecture-the-main-event) and make them idempotent. Full guide →
+The honest boundary: the persistence layer's **exactly-once transition** guarantee applies
+to idempotency-keyed events while deduplication evidence is retained, using the documented
+store and locking setup. Actions' external side effects and outbox delivery are
+**at-least-once**, and a memory-only inbox is not durable retention. Use `invoke` to model
+I/O, use the [transactional outbox](#-event-driven-architecture-the-main-event) for outgoing
+messages, and make external effects idempotent. Full guide →
 [Persistence & Durability](https://basiltt.github.io/xstate-statemachine/guide/persistence/).
 
 ---
@@ -1171,31 +1532,40 @@ and every framework version it claims is proven by a CI cell on the
 | `[django]` | `StatechartField` on your model (`in_state()`, `__state` lookups), `send()` in `atomic()` with `lock="optimistic"` or a row lock, `pre_transition` / `post_transition` / `statechart_error` signals, `TransitionLog` audit in the same transaction, `PermissionGuard` / `RoleGuard` / `AnyOf` / `AllOf`, `DjangoStore`, `DjangoOutboxStore`, admin transition buttons (CSRF-protected), `manage.py xsm_inspect / xsm_diagram / xsm_docs / xsm_simulate / xsm_snapshots --stale / xsm_deadlines`, `xsm_migrate_fsm` + `FSMDualWriteMixin` to leave django-fsm | [Django](https://basiltt.github.io/xstate-statemachine/guide/integration-django/) |
 | `[drf]` / `[channels]` | `StatechartViewSetMixin` (an `@action` per event, closed by default, receipt → status, drf-spectacular schema, `DjangoInbox` for `Idempotency-Key`); `StatechartConsumer` (live transitions over WebSocket, requires `AuthMiddlewareStack`) | [DRF & Channels](https://basiltt.github.io/xstate-statemachine/guide/integration-drf/) |
 | `[celery]` | A Celery task as an `invoke` service (`celery_service`), `@statechart_task` worker act-loop, Celery Beat as the durable `after` scheduler (`DurableTimerScheduler`), `outbox_relay_task`; refuses pickle / YAML serializers | [Celery](https://basiltt.github.io/xstate-statemachine/guide/integration-celery/) |
-| `[kafka]` `[rabbitmq]` `[nats]` `[sqs]` + `[redis]` | Broker adapters (`KafkaBroker`, `RabbitMQBroker`, `NatsBroker`, `SqsBroker` / `SyncSqsBroker`, `RedisStreamsBroker` / `SyncRedisStreamsBroker`): at-least-once, per-subject order, redelivery counts as attempts, poison → DLQ. All pass one `AsyncBrokerContract`; `xsm plugins` lists them | [Brokers](https://basiltt.github.io/xstate-statemachine/guide/integration-brokers/) |
+| `[kafka]` `[rabbitmq]` `[nats]` `[sqs]` + `[redis]` | Broker adapters (`KafkaBroker`, `RabbitMQBroker`, `NatsBroker`, `SqsBroker` / `SyncSqsBroker`, `RedisStreamsBroker` / `SyncRedisStreamsBroker`): at-least-once delivery, topology-dependent per-subject ordering and poison → DLQ. Broker redelivery counts become attempts where available; Kafka has no such count. Shared contract tests; `xsm plugins` lists the adapters | [Brokers](https://basiltt.github.io/xstate-statemachine/guide/integration-brokers/) |
 | *(core)* + `[cloudevents]` | The [event-driven core](#-event-driven-architecture-the-main-event) above; the extra adds CloudEvents SDK / HTTP binding interop | [Event-driven](https://basiltt.github.io/xstate-statemachine/guide/integration-eda/) |
 | `[agents]` | [LLM agents](#-for-llm-agents): `TOOL_LOOP`, per-state tool allow-lists, budgets (`BudgetPlugin`, `budget_guards`, `Usage`), durable human approval, `spawn_agent`; `agent_logic`, `run_agent_sync`, `structured_output`, `handoff_guard`, `AgentTracePlugin`, `ToolDeniedError`; OpenAI / Anthropic providers are soft imports | [LLM agents](https://basiltt.github.io/xstate-statemachine/guide/integration-agents/) |
 | `[observability]` | `OpenTelemetryPlugin` spans, `PrometheusPlugin` metrics, structlog / loguru context, Sentry breadcrumbs — `instrument_all()` in one line; label allow-list by default | [Observability](https://basiltt.github.io/xstate-statemachine/guide/integration-observability/) |
 | `[testing]` | A pytest plugin: `xsm_*` fixtures (machine, interpreter, simulated clock, recorded scenarios), `xsm_path` walks every engine-verified path, state / transition coverage with `--xsm-fail-under-*`, Hypothesis strategies (`model_test`, `events_strategy`), `replay()` / `assert_replay_consistent()`, fake brokers | [Testing](https://basiltt.github.io/xstate-statemachine/guide/integration-testing/) |
 | `[format]` | `black` + `isort` so `xsm generate-template` output matches your linter | [CLI](https://basiltt.github.io/xstate-statemachine/guide/cli/) |
-| `[web]` · `[eda]` · `[all]` | Umbrellas: every web adapter · the whole event-driven stack · everything | [Integration extras](https://basiltt.github.io/xstate-statemachine/guide/integrations-extras/) |
+| `[web]` · `[eda]` · `[all]` | Convenience bundles: selected web integrations · Celery/Redis/Kafka/RabbitMQ/CloudEvents/observability · all shipped integration and testing extras. Add `[nats]` or `[sqs]` to `[eda]` when needed; install `[format]` separately for formatting tools | [Integration extras](https://basiltt.github.io/xstate-statemachine/guide/integrations-extras/) |
 
 <!-- doc-fragment -->
 ```python
 from fastapi import FastAPI
-from xstate_statemachine.contrib.fastapi import StatechartRouter, instrument_app
+from xstate_statemachine.contrib.fastapi import (
+    StatechartRouter,
+    instrument_app,
+)
 from xstate_statemachine.contrib.starlette import StatechartRegistry
 from xstate_statemachine.persistence import SQLiteStore
 
 # … order_machine, AddItem/Pay/Cancel event models and my_authorizer defined elsewhere
-registry = StatechartRegistry(SQLiteStore(DB_PATH), run_timers=True)   # or RedisStore for many hosts
-registry.register("orders", order_machine, authorize=my_authorizer)   # closed by default
+registry = StatechartRegistry(
+    SQLiteStore(DB_PATH), run_timers=True
+)  # or RedisStore for many hosts
+registry.register(
+    "orders", order_machine, authorize=my_authorizer
+)  # closed by default
 
 app = FastAPI()
-instrument_app(app, registry)                                           # lifespan, /_xsm/health, /_xsm/ready
-app.include_router(StatechartRouter(registry, "orders", event_models=[AddItem, Pay, Cancel]))
+instrument_app(app, registry)  # lifespan, /_xsm/health, /_xsm/ready
+app.include_router(
+    StatechartRouter(registry, "orders", event_models=[AddItem, Pay, Cancel])
+)
 # POST /orders/42/events/PAY  →  200 {state, state_ids, changed, available_events, …}
 #                            →  409 when a business rule (guard) refuses, 422 on a bad body
-#                            →  503 when the store is unavailable — never a half-applied event
+#                            →  503 when the store is unavailable
 ```
 
 Every web integration is **closed by default** — `authorize=` is required, `GET` returns
@@ -1245,14 +1615,26 @@ human-approval wait is a state you can see, test, persist and diagram:
 ```python
 # pip install "xstate-statemachine[agents]"   # … the extra's only hard dependency is pydantic
 import asyncio
-from xstate_statemachine.contrib.agents import FakeModel, run_agent, tool_registry
+from xstate_statemachine.contrib.agents import (
+    FakeModel,
+    run_agent,
+    tool_registry,
+)
+
 
 def get_weather(city: str) -> str:
     """Current weather for a city."""
     return f"sunny in {city}"
 
-model = FakeModel([{"tool": "get_weather", "args": {"city": "Kochi"}}, {"text": "Sunny."}])
-res = asyncio.run(run_agent(model, tools=tool_registry(get_weather), prompt="Weather?", max_turns=5))
+
+model = FakeModel(
+    [{"tool": "get_weather", "args": {"city": "Kochi"}}, {"text": "Sunny."}]
+)
+res = asyncio.run(
+    run_agent(
+        model, tools=tool_registry(get_weather), prompt="Weather?", max_turns=5
+    )
+)
 assert res.final_state == "toolLoop.done" and res.usage["turns"] == 2
 ```
 
@@ -1261,7 +1643,7 @@ two-minute offline walkthrough is
 [`examples/integrations/agents_support_bot`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/integrations/agents_support_bot)
 (`python run.py --fake --prompt "refund order 42"` — one refund, never two). Honest
 [comparisons](https://basiltt.github.io/xstate-statemachine/guide/vs-langgraph/) with LangGraph, Burr and
-@statelyai/agent are re-checked nightly against the installed competitor.
+@statelyai/agent include checked-version notes and scheduled drift checks.
 
 ---
 
@@ -1279,9 +1661,10 @@ Three ways to see inside a running machine, from zero-dependency to full APM.
 <!-- doc-fragment -->
 ```python
 from xstate_statemachine.contrib.observability import instrument_all
+
 # OpenTelemetry spans per transition/service, Prometheus counters and histograms,
 # structlog / loguru context vars, Sentry breadcrumbs — whichever SDKs are installed
-instrument_all(interpreter)        # … any running Interpreter / SyncInterpreter
+instrument_all(interpreter)  # … any running Interpreter / SyncInterpreter
 ```
 
 Metric labels are an **allow-list** by default (state and event names, never payloads), and
@@ -1303,24 +1686,32 @@ a set of side-effect-free functions over immutable snapshots — ideal for tests
 
 ```python
 from xstate_statemachine import (
-    MachineLogic, create_machine, initial_transition, pure_transition,
+    MachineLogic,
+    create_machine,
+    initial_transition,
+    pure_transition,
 )
 
-machine = create_machine({
-    "id": "fetch",
-    "initial": "idle",
-    "states": {
-        "idle":    {"on": {"FETCH": {"target": "loading", "actions": "logStart"}}},
-        "loading": {"on": {"OK": "done"}},
-        "done":    {"type": "final"},
+machine = create_machine(
+    {
+        "id": "fetch",
+        "initial": "idle",
+        "states": {
+            "idle": {
+                "on": {"FETCH": {"target": "loading", "actions": "logStart"}}
+            },
+            "loading": {"on": {"OK": "done"}},
+            "done": {"type": "final"},
+        },
     },
-}, logic=MachineLogic())      # 📝 no implementations needed — nothing runs
+    logic=MachineLogic(),
+)  # 📝 no implementations needed — nothing runs
 
 snapshot, entry_actions = initial_transition(machine)
 next_snapshot, actions = pure_transition(machine, snapshot, "FETCH")
 
-print(snapshot.state_ids)         # {'fetch.idle'}
-print(next_snapshot.state_ids)    # {'fetch.loading'}
+print(snapshot.state_ids)  # {'fetch.idle'}
+print(next_snapshot.state_ids)  # {'fetch.loading'}
 print([a.type for a in actions])  # ['logStart'] — what WOULD have run
 ```
 
@@ -1343,36 +1734,54 @@ from it without duplicating its logic in your view layer.
 
 ```python
 from xstate_statemachine import (
-    create_machine, MachineLogic, SyncInterpreter, assign, emit,
+    create_machine,
+    MachineLogic,
+    SyncInterpreter,
+    assign,
+    emit,
 )
 
-editor = create_machine({
-    "id": "editor",
-    "initial": "clean",
-    "context": {"saves": 0},
-    "states": {
-        "clean":  {"tags": ["idle"],
-                   "meta": {"hint": "Nothing to save"},
-                   "on": {"EDIT": "dirty"}},
-        "dirty":  {"tags": ["unsaved"], "on": {"SAVE": "saving"}},
-        "saving": {"tags": ["unsaved", "busy"],
-                   "on": {"OK": {"target": "clean", "actions": [
-                       assign({"saves": lambda a: a["context"]["saves"] + 1}),
-                       emit("saved"),
-                   ]}}},
+editor = create_machine(
+    {
+        "id": "editor",
+        "initial": "clean",
+        "context": {"saves": 0},
+        "states": {
+            "clean": {
+                "tags": ["idle"],
+                "meta": {"hint": "Nothing to save"},
+                "on": {"EDIT": "dirty"},
+            },
+            "dirty": {"tags": ["unsaved"], "on": {"SAVE": "saving"}},
+            "saving": {
+                "tags": ["unsaved", "busy"],
+                "on": {
+                    "OK": {
+                        "target": "clean",
+                        "actions": [
+                            assign(
+                                {"saves": lambda a: a["context"]["saves"] + 1}
+                            ),
+                            emit("saved"),
+                        ],
+                    }
+                },
+            },
+        },
     },
-}, logic=MachineLogic())
+    logic=MachineLogic(),
+)
 
 ed = SyncInterpreter(editor).start()
 
-ed.matches("editor.clean")   # True  — nested paths work: "a.b.c"
-ed.can("EDIT")               # True  — would this event do anything *right now*?
-ed.can("SAVE")               # False — not handled in `clean`
-ed.has_tag("idle")           # True
-ed.tags                      # {'idle'}
-ed.get_meta()                # {'editor.clean': {'hint': 'Nothing to save'}}
-ed.context                   # {'saves': 0}
-ed.is_running                # True
+ed.matches("editor.clean")  # True  — nested paths work: "a.b.c"
+ed.can("EDIT")  # True  — would this event do anything *right now*?
+ed.can("SAVE")  # False — not handled in `clean`
+ed.has_tag("idle")  # True
+ed.tags  # {'idle'}
+ed.get_meta()  # {'editor.clean': {'hint': 'Nothing to save'}}
+ed.context  # {'saves': 0}
+ed.is_running  # True
 ```
 
 ### `can()` — disable buttons without duplicating logic
@@ -1420,7 +1829,7 @@ ed.on("saved", lambda ev: print("saved!", ev.type))
 ```python
 from xstate_statemachine import LoggingInspector
 
-ed.use(LoggingInspector())    # complete transition audit trail
+ed.use(LoggingInspector())  # complete transition audit trail
 ```
 
 Subclass `PluginBase` for metrics, tracing, or persistence-on-every-transition. Every
@@ -1444,12 +1853,14 @@ hook is optional:
 ```python
 from xstate_statemachine import PluginBase
 
+
 class Metrics(PluginBase):
     def on_transition(self, interpreter, from_states, to_states, transition):
         statsd.increment(f"fsm.{transition.event}")
 
     def on_action_error(self, interpreter, action, error):
-        sentry.capture_exception(error)   # otherwise silently contained
+        sentry.capture_exception(error)  # otherwise silently contained
+
 
 ed.use(Metrics())
 ```
@@ -1465,8 +1876,13 @@ loads **only** the distributions you name (it never runs an unmarked callable �
 
 ## ⚖️ How It Compares
 
-Seven pages, each re-checked against the **installed** competitor so a claimed gap that
-closes shows up as a failing nightly test rather than a stale table:
+**Choose for the workflow you need, not the longest feature list.** The distinctive
+combination here is XState JSON portability, Python statechart execution and optional
+persistence, web and event-driven integrations around the same model.
+
+The seven detailed comparisons include source notes and checked versions. The repository
+also runs scheduled release/API drift checks; those are not a claim to test every feature
+of every competing product on every release:
 [transitions](https://basiltt.github.io/xstate-statemachine/guide/vs-transitions/) ·
 [python-statemachine](https://basiltt.github.io/xstate-statemachine/guide/vs-python-statemachine/) ·
 [django-fsm](https://basiltt.github.io/xstate-statemachine/guide/vs-django-fsm/) ·
@@ -1475,40 +1891,60 @@ closes shows up as a failing nightly test rather than a stale table:
 [@statelyai/agent](https://basiltt.github.io/xstate-statemachine/guide/vs-statelyai-agent/) ·
 [AWS Step Functions](https://basiltt.github.io/xstate-statemachine/guide/vs-step-functions/).
 
-| | **xstate-statemachine** | **transitions** | **python-statemachine** |
-|:--|:--:|:--:|:--:|
-| XState / Stately JSON | ✅ **runs unmodified** | ❌ | ❌ |
-| Compound (nested) states | ✅ | ✅ | ✅ |
-| Parallel regions | ✅ | ✅ | ✅ |
-| History states | ✅ | ❌ | ✅ |
-| `invoke` services + `onDone`/`onError` | ✅ built-in | ⚙️ DIY | ⚙️ `invoke` (callables) |
-| Delayed transitions (`after`) | ✅ built-in, durable | ⚙️ `Timeout` extension (one OS thread per entry) | ✅ `delay=` |
-| Actor model / spawning | ✅ | ❌ | ❌ |
-| Snapshot persistence, stores, locks, idempotency | ✅ | ⚙️ DIY | ⚙️ DIY |
-| Sync **and** async runtimes | ✅ two engines | ✅ | ✅ |
-| Framework adapters (FastAPI, Django, Flask, Celery, brokers) | ✅ | ❌ | ❌ |
-| Diagram export | ✅ no binaries | ✅ Graphviz or Mermaid | ✅ Graphviz or Mermaid |
-| CLI: generate, inspect, simulate, diagram, docs | ✅ | ❌ | ❌ |
-| Live inspector (Stately Inspector protocol) | ✅ `xsm inspect --live` | ❌ | ❌ |
-| Virtual clock for tests | ✅ `SimulatedClock` | ❌ | ❌ |
-| Bounded inbox / backpressure | ✅ `max_queue_size` | — | — |
-| Runtime dependencies | **0** | 1 (`six`) | 0 |
+### Python state-machine libraries
 
-**Pick `transitions`** if you want the most battle-tested option and a simple FSM bolted onto
-an existing class. It's mature, widely deployed, and excellent at that job.
+The feature comparison is scoped to the APIs recorded in the
+[comparison source notes](docs/_data/comparisons.json), including `transitions 0.9.3` and
+`python-statemachine 3.2.1`. Application code and third-party extensions can add capabilities
+beyond those listed. See the projects' own documentation for their current surface:
+[transitions](https://github.com/pytransitions/transitions) and
+[python-statemachine](https://python-statemachine.readthedocs.io/).
+
+| Capability | **xstate-statemachine** | **transitions** | **python-statemachine** |
+|:--|:--|:--|:--|
+| XState / Stately JSON | **Native input**; Python implements the named logic | Its own configuration format | Its own JSON/YAML/SCXML formats |
+| Compound (nested) states | Built in | `HierarchicalMachine` | `StateChart` |
+| Parallel regions | Built in | Hierarchical extension | `State.Parallel` |
+| History states | Shallow and deep | Application-managed in the checked API | Shallow and deep |
+| Invoked services and completion/error events | `invoke` + `onDone` / `onError` | Application callbacks | Built-in `invoke`, including child machines |
+| Delayed transitions | `after`; durable with persistence + a scanner | `Timeout` and thread-free `AsyncTimeout`; in-process | `delay=` / timeout helpers; in-process |
+| Actor model / spawning | Spawned actors, messaging and `systemId` registry | Application-managed | Invoked children; not the same spawn/registry API |
+| Snapshot persistence, stores, locks, idempotency | Integrated persistence layer | Model-state storage / serialization + application integration | Model-field persistence + application integration |
+| Sync **and** async runtimes | Two explicit engines | Sync and async extensions | Sync and async engines |
+| Framework adapters (FastAPI, Django, Flask, Celery, brokers) | Optional integration packages | Application / ecosystem integration | Django model mixin; other integrations are application-specific |
+| Diagram export | Mermaid, PlantUML, ASCII; no rendering binaries required | Graphviz or Mermaid | Graphviz or Mermaid |
+| CLI: generate, inspect, simulate, diagram, docs | `xsm` developer and operations toolkit | Application / ecosystem tooling | Diagram CLI and documentation tooling |
+| Live inspector (Stately Inspector protocol) | `xsm inspect --live` | No bundled Stately bridge in the checked API | No bundled Stately bridge in the checked API |
+| Virtual clock for tests | `SimulatedClock` | Test-specific clock control | Test-specific clock control |
+| Bounded inbox / backpressure | Async `max_queue_size` + overflow policies | Different queueing model | Different queueing model |
+| Core runtime dependencies | **0** | 1 (`six`) | 0 |
+
+**Pick `transitions`** if you want a mature, flexible FSM attached to an existing class,
+with extensions for hierarchy, async execution and diagrams.
 
 **Pick `python-statemachine`** if you want a beautiful, pythonic declarative API and don't
-need JS interop. It genuinely supports compound, parallel and history states too — this is a
-real alternative, not a strawman.
+need XState JSON interop. Its compound, parallel and history states, invoked services and
+diagram tooling make it a substantive alternative.
 
 **Pick this library** when you want XState/Stately JSON to run in Python unchanged, or you
 want `invoke`, `after`, actors, persistence and framework adapters as first-class primitives
 instead of patterns you assemble yourself.
 
+### Beyond a state-machine library
+
+| Your priority | Consider | Why choose this library for that project? |
+|:--|:--|:--|
+| **A lightweight FSM on a Django model** | [django-fsm / django-fsm-2](https://basiltt.github.io/xstate-statemachine/guide/vs-django-fsm/) | When the workflow needs nested or parallel states, durable deadlines, broker events and the broader statechart toolkit. A migration command and dual-write mixin support incremental adoption. |
+| **Graph-based AI orchestration, checkpoints and debugging** | [LangGraph](https://basiltt.github.io/xstate-statemachine/guide/vs-langgraph/) or [Burr](https://basiltt.github.io/xstate-statemachine/guide/vs-burr/) | When explicit statechart semantics, per-state tool permissions and durable approval deadlines should govern the agent alongside ordinary application workflows. These tools can also be integrated rather than replaced. |
+| **XState-native agents in TypeScript** | [@statelyai/agent](https://basiltt.github.io/xstate-statemachine/guide/vs-statelyai-agent/) | When your services and business logic live in Python and you want to keep a portable statechart definition. |
+| **AWS-managed workflow orchestration** | [AWS Step Functions](https://basiltt.github.io/xstate-statemachine/guide/vs-step-functions/) | When you want an embedded Python runtime and control over the hosting, database and broker. This library is not a managed service; you operate and scale the deployment. |
+
 ### Speed
 
 Same machine shape, each library through its own idiomatic API, all measured in one session
-on 0.11.0 (2026-10-11, Python 3.14, median of 7 runs, GC disabled, setup excluded). Events per second;
+on 0.11.0 (**October 11, 2026**, Python 3.14, median of 7 runs, GC disabled, setup excluded
+except for the construction scenario). These are a **recorded benchmark snapshot**, not
+live measurements or a throughput guarantee. Events per second;
 **bold** is fastest in the row.
 
 | Scenario | **xstate-statemachine** (sync) | transitions 0.9.3 | python-statemachine 3.2.1 | sismic 1.6.14 |
@@ -1520,18 +1956,24 @@ on 0.11.0 (2026-10-11, Python 3.14, median of 7 runs, GC disabled, setup exclude
 | Construction (machines/s) | **8,684** | 7,649 | 854 | 220 |
 | 1,000 instances (inst/s) | **33,213** | 30,215 | 2,221 | 7,109 |
 
-`transitions` is a transition table, not a statechart engine, and wins the *flat* scenario
-by ~1.8×. The moment states nest or run in parallel it has to emulate the SCXML algorithm and
-this library is 3.7–4.5× faster than the next library. Construction and fanning out to
-1,000 instances are **14 % and 10 % ahead** of `transitions` (stable across two full runs) —
-while still running the full build-time validator on every `create_machine()`. Full table, method and caveats:
+In this recorded run, `transitions` leads the *flat* scenario by approximately **1.8×**.
+`xstate-statemachine` leads the two measured nested/parallel scenarios by **3.7–4.5×**
+over the next library. Construction and the 1,000-instance scenario are **14% and 10%
+ahead** of `transitions`, while retaining build-time validation.
+
+These are workload-specific microbenchmarks. They do not measure database writes, broker
+delivery, network calls or model latency, and they do not establish a universal ranking.
+Full table, method and caveats:
 [`benchmarks/competitors/`](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/competitors/README.md). The production numbers (throughput budget, `after` lateness under load) come from [`benchmarks/production_characteristics.py`](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/production_characteristics.py); run it with `--json` on your own hardware to gate CI on your figures.
 
 ### When *not* to use this
 
 For a three-state toggle with no I/O, a plain `enum` and an `if` is less machinery and easier
-to read. Statecharts start paying for themselves when you have **concurrency, timeouts,
-cancellation, or more than ~5 states** — and they pay enormously at 20.
+to read. Around five states, a sketch may be enough; at twenty interacting states, an
+explicit model can be much easier to reason about. State count is only a heuristic:
+**concurrency, timeouts, cancellation and recovery paths** are better reasons to adopt
+a statechart. Use a managed workflow service when managed operations are the requirement,
+and a task queue when all you need is independent background jobs.
 
 ---
 
@@ -1565,7 +2007,10 @@ records the failure reason, in 40 lines:
 
 ```python
 from xstate_statemachine import (
-    MachineLogic, SyncInterpreter, assign, create_machine,
+    MachineLogic,
+    SyncInterpreter,
+    assign,
+    create_machine,
 )
 
 ORDER = {
@@ -1575,32 +2020,43 @@ ORDER = {
     "states": {
         "cart": {
             "on": {
-                "ADD": {"actions": assign(
-                    {"items": lambda a: a["context"]["items"] + 1})},
+                "ADD": {
+                    "actions": assign(
+                        {"items": lambda a: a["context"]["items"] + 1}
+                    )
+                },
                 "CHECKOUT": {"target": "charging", "guard": "hasItems"},
             },
         },
         "charging": {
-            "entry": assign({"attempts": lambda a: a["context"]["attempts"] + 1}),
+            "entry": assign(
+                {"attempts": lambda a: a["context"]["attempts"] + 1}
+            ),
             "invoke": {
                 "src": "chargeCard",
                 "onDone": "shipped",
                 "onError": {
                     "target": "failed",
-                    "actions": assign({"error": lambda a: str(a["event"].data)}),
+                    "actions": assign(
+                        {"error": lambda a: str(a["event"].data)}
+                    ),
                 },
             },
         },
-        "failed": {"on": {"RETRY": {"target": "charging", "guard": "canRetry"}}},
+        "failed": {
+            "on": {"RETRY": {"target": "charging", "guard": "canRetry"}}
+        },
         "shipped": {"type": "final"},
     },
 }
+
 
 def charge_card(interpreter, context, event):
     """Fails the first time, succeeds on the retry."""
     if context["attempts"] < 2:
         raise RuntimeError("card declined")
     return {"receipt": "r-123"}
+
 
 logic = MachineLogic(
     guards={
@@ -1612,23 +2068,24 @@ logic = MachineLogic(
 
 order = SyncInterpreter(create_machine(ORDER, logic=logic)).start()
 
-order.send("CHECKOUT")                    # guard blocks — the cart is empty
-print(sorted(order.current_state_ids))    # ['order.cart']
+order.send("CHECKOUT")  # guard blocks — the cart is empty
+print(sorted(order.current_state_ids))  # ['order.cart']
 
 order.send("ADD")
-order.send("CHECKOUT")                    # charges; the service raises
-print(sorted(order.current_state_ids))    # ['order.failed']
-print(order.context["error"])             # card declined
+order.send("CHECKOUT")  # charges; the service raises
+print(sorted(order.current_state_ids))  # ['order.failed']
+print(order.context["error"])  # card declined
 
-order.send("RETRY")                       # second attempt succeeds
-print(sorted(order.current_state_ids))    # ['order.shipped']
-print(order.context["attempts"])          # 2
+order.send("RETRY")  # second attempt succeeds
+print(sorted(order.current_state_ids))  # ['order.shipped']
+print(order.context["attempts"])  # 2
 ```
 
 Note what is **absent**: no `try/except` around the charge, no `is_charging` flag, no
-"did we already ship?" check. A declined card is a `onError` edge, "cart is empty" is a
-guard, and double-charging is impossible because `shipped` is `final` and `charging`
-has no `CHECKOUT` handler.
+"did we already ship?" check. A declined card is an `onError` edge and "cart is empty" is
+a guard. A repeated `CHECKOUT` cannot start another local charge: `shipped` is `final`
+and `charging` has no `CHECKOUT` handler. For a real payment provider, also use durable
+persistence and provider-side idempotency to handle retries across failures.
 
 </details>
 
@@ -1657,16 +2114,18 @@ config = {
                 "onDone": "success",
                 "onError": [
                     {"target": "waiting", "guard": "canRetry"},
-                    {"target": "failed"},               # out of retries
+                    {"target": "failed"},  # out of retries
                 ],
             }
         },
         "waiting": {
-            "entry": assign({"attempt": lambda a: a["context"]["attempt"] + 1}),
+            "entry": assign(
+                {"attempt": lambda a: a["context"]["attempt"] + 1}
+            ),
             "after": {"BACKOFF": "loading"},
         },
         "success": {"type": "final"},
-        "failed":  {"type": "final"},
+        "failed": {"type": "final"},
     },
 }
 
@@ -1684,7 +2143,7 @@ Attempt counting, backoff math, and the give-up condition are each in exactly on
 </details>
 
 <details>
-<summary><b>🛒 Checkout that can't double-charge</b></summary>
+<summary><b>🛒 Checkout that blocks duplicate submissions</b></summary>
 
 <br>
 
@@ -1700,9 +2159,10 @@ Attempt counting, backoff math, and the give-up condition are each in exactly on
 }
 ```
 
-The second click while `charging` does nothing. Not because you remembered to disable the
-button — because the state has no handler for it. The bug is *unrepresentable*. For the
-network-level twin (the same webhook delivered twice) use `IdempotencyPlugin`.
+The second click while `charging` does nothing because the state has no handler for it.
+The local duplicate submission is blocked by the model. For the network-level twin
+(the same webhook delivered twice), use `IdempotencyPlugin`; external payment calls
+still need their own idempotency key.
 
 </details>
 
@@ -1730,7 +2190,7 @@ network-level twin (the same webhook delivered twice) use `IdempotencyPlugin`.
 A late `onDone` from a cancelled connection attempt is discarded — `disconnected` doesn't
 handle it. That's the zombie-callback class of bug, gone structurally. The full version,
 with a `from_callback` actor wrapping the socket, is the
-[WebSocket reconnect recipe](https://basiltt.github.io/xstate-statemachine/guide/websocket-reconnect/).
+[WebSocket reconnect recipe](https://basiltt.github.io/xstate-statemachine/guide/recipes/websocket-reconnect/).
 
 </details>
 
@@ -1775,12 +2235,14 @@ allow-lists, budgets and a persisted `awaiting_human` state — see
 
 ```python
 def test_declined_card_allows_retry():
-    checkout = SyncInterpreter(create_machine(config, logic=test_logic)).start()
+    checkout = SyncInterpreter(
+        create_machine(config, logic=test_logic)
+    ).start()
 
     checkout.send("SUBMIT")
     assert checkout.matches("checkout.charging")
 
-    checkout.send("SUBMIT")                       # double click
+    checkout.send("SUBMIT")  # double click
     assert checkout.matches("checkout.charging")  # …ignored
 ```
 
@@ -1802,26 +2264,28 @@ frontend, define machines in Python instead.
 ```python
 from xstate_statemachine import State, StateMachine, SyncInterpreter, action
 
+
 class Checkout(StateMachine):
     machine_id = "checkout"
     initial_context = {"attempts": 0}
 
     reviewing = State(initial=True)
-    charging  = State()
+    charging = State()
     confirmed = State()
 
     submit = reviewing.to(charging, event="SUBMIT", actions=["recordAttempt"])
-    ok     = charging.to(confirmed, event="PAID")
+    ok = charging.to(confirmed, event="PAID")
 
     @action
     def record_attempt(self, interpreter, ctx, evt, action_def):
         ctx["attempts"] += 1
 
+
 c = SyncInterpreter(Checkout.create_machine()).start()
 c.send("SUBMIT")
-print(c.current_state_ids, c.context)   # {'checkout.charging'} {'attempts': 1}
-c.send("SUBMIT")                        # double click → ignored
-print(c.context)                        # {'attempts': 1}
+print(c.current_state_ids, c.context)  # {'checkout.charging'} {'attempts': 1}
+c.send("SUBMIT")  # double click → ignored
+print(c.context)  # {'attempts': 1}
 ```
 
 > **Watch out** — `@action`, `@guard` and `@service` convert `snake_case` method names to
@@ -1838,12 +2302,14 @@ flip = off.to(on, event="TOGGLE") | on.to(off, event="TOGGLE")
 ```python
 from xstate_statemachine import MachineBuilder
 
-machine = (MachineBuilder("toggle")
-           .state("off", initial=True)
-           .state("on")
-           .transition("off", "TOGGLE", "on")
-           .transition("on", "TOGGLE", "off")
-           .build())
+machine = (
+    MachineBuilder("toggle")
+    .state("off", initial=True)
+    .state("on")
+    .transition("off", "TOGGLE", "on")
+    .transition("on", "TOGGLE", "off")
+    .build()
+)
 ```
 
 `transition()` takes `(source, event, target)`, so states and transitions can be declared
@@ -1856,17 +2322,24 @@ data you are assembling, not a shape you are declaring:
 
 ```python
 from xstate_statemachine import (
-    State, SyncInterpreter, action, build_machine,
+    State,
+    SyncInterpreter,
+    action,
+    build_machine,
 )
+
 
 @action
 def record_attempt(interpreter, ctx, evt, action_def):
     ctx["attempts"] += 1
 
-reviewing = State("reviewing", initial=True,
-                  on={"SUBMIT": {"target": "charging",
-                                 "actions": ["recordAttempt"]}})
-charging  = State("charging", on={"PAID": "confirmed"})
+
+reviewing = State(
+    "reviewing",
+    initial=True,
+    on={"SUBMIT": {"target": "charging", "actions": ["recordAttempt"]}},
+)
+charging = State("charging", on={"PAID": "confirmed"})
 confirmed = State("confirmed", final=True, tags=["done"])
 
 machine = build_machine(
@@ -1878,9 +2351,13 @@ machine = build_machine(
 
 c = SyncInterpreter(machine).start()
 c.send("SUBMIT")
-print(sorted(c.current_state_ids), c.context)   # ['checkout.charging'] {'attempts': 1}
+print(
+    sorted(c.current_state_ids), c.context
+)  # ['checkout.charging'] {'attempts': 1}
 c.send("PAID")
-print(sorted(c.current_state_ids), sorted(c.tags))  # ['checkout.confirmed'] ['done']
+print(
+    sorted(c.current_state_ids), sorted(c.tags)
+)  # ['checkout.confirmed'] ['done']
 ```
 
 ### Everything the JSON format supports
@@ -1912,8 +2389,8 @@ machine = build_machine(
 )
 
 p = SyncInterpreter(machine).start()
-p.send("EMERGENCY")                       # works from ANY state
-print(sorted(p.current_state_ids))        # ['press.halted']
+p.send("EMERGENCY")  # works from ANY state
+print(sorted(p.current_state_ids))  # ['press.halted']
 ```
 
 `MachineBuilder.root(...)` and a `machine_root` class attribute do the same for
@@ -1997,7 +2474,21 @@ Everything above is the happy path. Here is what matters once real traffic arriv
 
 ### Throughput, timers and threads — read this before sizing
 
-All async interpreters in a process share **one** event loop on **one** thread: throughput is a per-process budget (~30k trivial ev/s on a laptop), divided among your machines. `after` timers now fire through a **priority lane** the run loop checks ahead of its inbox — ~45 ms late at 500 busy machines, down from ~180 ms before 0.8.0 — and a `SyncInterpreter` timer only fires when someone calls `send()` or `tick()`, on the caller's thread. In fact, neither engine spawns an OS thread per timer anymore; the only thread work either one does is running a non-blocking `spawn_*` child. Pass `Interpreter(clock=SimulatedClock())` in tests to fire an `after` timer without sleeping — see **Testing** below. The measured tables and a sizing rule are in **[Production Characteristics](https://basiltt.github.io/xstate-statemachine/guide/production-characteristics/)** — the one page to read before deploying.
+Async interpreters attached to the **same event loop share its thread and execution
+budget**. Adding more machines does not create more CPU capacity. The published reference
+measurements report roughly **30k trivial events/s** on a laptop, and approximately
+**45 ms `after` lateness at 500 busy machines**, compared with approximately 180 ms before
+0.8.0. These are historical workload measurements, not a deployment SLA.
+
+`after` timers use a **priority lane** ahead of the async inbox. A sync timer runs on the
+owner's thread when it calls `send()` or `tick()`. Neither engine creates an OS thread per
+timer. Other work can use threads: blocking `def` services in the async engine run in its
+service executor, and non-blocking spawned work has engine-specific delivery.
+
+Pass `Interpreter(machine, clock=SimulatedClock())` in tests to advance time without
+sleeping. For measured tables, the benchmark runner and a sizing rule, read
+**[Production Characteristics](https://basiltt.github.io/xstate-statemachine/guide/production-characteristics/)**
+before deploying, then measure your own machine shapes, handlers and persistence layer.
 
 ### Failure semantics — know what is contained
 
@@ -2024,9 +2515,11 @@ wire up the hooks early — every one of them fires whatever policy you choose:
 ```python
 from xstate_statemachine import PluginBase
 
+
 class ErrorReporter(PluginBase):
     def on_action_error(self, interpreter, action, error):
         sentry.capture_exception(error)
+
 
 interp.use(ErrorReporter())
 ```
@@ -2045,7 +2538,9 @@ receipt = await interp.send("SUBMIT", wait=True)
 # Receipt(state_ids=frozenset({'checkout.paying'}), changed=True, error=None,
 #         deferred=False, denied=False)
 
-await interp.send_priority("CANCEL")   # ahead of the inbox, exempt from its bound
+await interp.send_priority(
+    "CANCEL"
+)  # ahead of the inbox, exempt from its bound
 ```
 
 `priority=True` on `send()` does the same as `send_priority()`. A `Receipt` has five
@@ -2068,7 +2563,9 @@ from xstate_statemachine import wait_for, wait_for_sync, to_promise
 
 # async
 await wait_for(interp, lambda i: i.matches("job.done"), timeout=30)
-result = await to_promise(interp)          # resolves when the machine reaches a final state
+result = await to_promise(
+    interp
+)  # resolves when the machine reaches a final state
 
 # sync
 wait_for_sync(interp, lambda i: i.matches("job.done"), timeout=30)
@@ -2084,13 +2581,16 @@ wait_for_sync(interp, lambda i: i.matches("job.done"), timeout=30)
 Same machine JSON, same semantics, same guarantees. Timers, services and actors all work
 on both engines; neither spawns an OS thread per timer — the sync engine delivers a due
 `after` timer on the caller's own thread inside `send()` or `tick()`, and the async engine
-delivers it through the priority lane described above. A `spawn_*` (non-blocking) child is
-the one thing either engine runs off-thread.
+delivers it through the priority lane described above. Blocking services on the async
+engine use its service executor. A `SyncInterpreter` remains caller-driven; use
+`send_threadsafe()` for cross-thread producers and drain its mailbox with `send()` or `tick()`.
 
 ### Long-running machines
 
-- **Persist on transition,** not on a timer — `get_persisted_snapshot()` in a
-  `subscribe()` callback gives you crash-safe resume points.
+- **Persist at settled transition boundaries.** Prefer the `persisted()` / `apersisted()`
+  loop and a durable store for the documented locking and crash-recovery behavior.
+  `get_persisted_snapshot()` in a `subscribe()` callback gives you a snapshot for custom
+  storage; the callback alone does not make the write atomic or durable.
 - **`after` timers across a restore.** A snapshot carries each pending timer's wall-clock
   deadline. The `persisted()` loop and the web registries resume the **remaining** time
   (`restart_timers="resume"`), and `DueTimerScanner` fires a deadline that matured while
@@ -2142,7 +2642,7 @@ from xstate_statemachine import SyncInterpreter, SimulatedClock
 
 clock = SimulatedClock()
 interp = SyncInterpreter(machine, clock=clock).start()
-clock.increment(30_000)             # fires a 30 s `after` with no real delay
+clock.increment(30_000)  # fires a 30 s `after` with no real delay
 assert interp.matches("job.timedout")
 ```
 
@@ -2177,7 +2677,7 @@ proves it: [Security](https://basiltt.github.io/xstate-statemachine/guide/securi
 
 | Name | Purpose |
 |:--|:--|
-| `create_machine(config, *, context_type=None, logic=None, logic_modules=None, logic_providers=None, strict_targets=True, event_schemas=None, strict_config=None)` | Build a machine from a dict/JSON config. `strict_targets=False` downgrades unresolvable transition targets to a `DeprecationWarning` (removed in 1.0). `event_schemas={'FILL': Fill}` adds opt-in payload validation — a callable that raises to reject, a dataclass, or anything with a `model_validate`-style constructor — raising `InvalidEventPayloadError` at the `send()` call site regardless of `strict`. `strict_config=True` (or config `"strictConfig": true`) refuses an unknown key anywhere in the config with `InvalidConfigError`; the default logs a WARNING with a "did you mean" hint and the path |
+| `create_machine(config, *, context_type=None, logic=None, logic_modules=None, logic_providers=None, strict_targets=True, event_schemas=None, strict_config=None, context_validator=None)` | Build a machine from a dict/JSON config. `strict_targets=False` downgrades unresolvable transition targets to a `DeprecationWarning` (removed in 1.0). `event_schemas={'FILL': Fill}` adds opt-in payload validation — a callable that raises to reject, a dataclass, or anything with a `model_validate`-style constructor — raising `InvalidEventPayloadError` at the `send()` call site regardless of `strict`. `strict_config=True` (or config `"strictConfig": true`) refuses an unknown key anywhere in the config with `InvalidConfigError`; the default logs a WARNING with a "did you mean" hint and the path. `context_validator=` validates changed context after actions |
 | `MachineLogic(actions=, guards=, services=, delays=, *, strict=False)` | Bind names in the config to Python callables. `snake_case` and `camelCase` names match each other; two *different* callables whose names differ only by case/separators are rejected. `strict=True` refuses undecorated registrations |
 | `Interpreter(machine, input=None, clock=None, max_queue_size=None, overflow_policy=OverflowPolicy.RAISE, strict=None, service_executor=None, service_pool_size=4)` | **Async** engine — `await .start(children_timeout=2.0)`, `.send()`, `.stop()`. Plain-`def` services run on a private thread pool of `service_pool_size` workers (or your `service_executor`) so a blocking service cannot stall the loop |
 | `SyncInterpreter(machine, input=None, clock=None, strict=None, max_queue_size=None, overflow_policy=None)` | **Sync** engine — no event loop anywhere. No inbox bound by design (`send()` runs each event to completion before returning); the two bound kwargs exist for parity and a non-`None` bound raises `ValueError` |
@@ -2207,11 +2707,12 @@ they're registered automatically by arity: `(ctx, event)` is a guard,
 | `.send(event, *, wait=False, priority=False, **payload)` | Send an event; kwargs become `event.payload`. `wait=True` returns (async: awaits) a `Receipt`; `priority=True` delivers ahead of the inbox, exempt from its bound |
 | `.send_priority(event, **payload)` | **Async only** — shorthand for `send(event, priority=True, wait=True, **payload)` |
 | `.send_threadsafe(event, internal=None, **payload)` | **Async only** — send from a foreign OS thread; returns a `concurrent.futures.Future`. `send()` from a foreign thread — including via `asyncio.run_coroutine_threadsafe` — raises `WrongThreadError` instead. `internal=True` charges the send to `maxIterations` as a self-send (an action that hands its own re-trigger to a plain thread) |
+| `.send_threadsafe(event, **payload)` | **Sync** — enqueue from another thread into a locked mailbox; returns `None`. The owner processes it on its next `send()` / `tick()`, where admission checks run. The mailbox is unbounded; bound your producers. `send()` itself is not thread-safe |
 | `.tick()` | **Sync only** — deliver any timer that has come due since the last call, outside of `send()` |
 | `.current_state_ids` / `.active_state_ids` | Set of active leaf state ids |
 | `.value` | Active configuration in XState's hierarchical form — a leaf key, `{parent: child}`, or one key per parallel region; `{}` before `start()` |
 | `.context` | The live context dict |
-| `.status` / `.is_running` | `"running"` / `"stopped"`, and a liveness check |
+| `.status` / `.is_running` | `"uninitialized"`, `"running"`, `"stopped"`, `"done"` or `"error"`; `.is_running` checks whether status is `"running"` |
 | `.matches(id_or_value)` | Is this state active? Accepts a string path or a partial `.value`-shaped dict |
 | `.can(event)` | Would this event cause anything? |
 | `.has_tag(tag)` / `.get_meta()` | Tags and merged `meta` of active states |
@@ -2272,8 +2773,8 @@ Constants: `DEFAULT_CHILDREN_TIMEOUT` (2.0 s, `Interpreter.start(children_timeou
 | Name | Purpose |
 |:--|:--|
 | `Clock` | Protocol every clock implements: `.now()`, `.set_timeout(fn, delay_sec, owner=)`, `.clear_timeout(handle)`, `.pending` |
-| `RealClock()` | Wall-clock time (default). Delivers a fired `after` timer through a priority lane the async run loop checks ahead of the inbox, so a due timer can't be starved behind a burst of external events |
-| `SimulatedClock()` | Virtual time — nothing advances until you do. `.now()`, `await .set(ms)`, `await .increment(ms)`, `.pump()` (fire everything due, returns the count fired), `.pending` (count of armed timers) |
+| `RealClock()` | Default clock: `.now()` is monotonic for scheduling; `.wall_now()` is epoch time for durable deadlines. Delivers a fired `after` timer through a priority lane the async loop checks ahead of its inbox |
+| `SimulatedClock(wall_start=...)` | Virtual time — nothing advances until you do. `.now()`, `.set(ms)`, `.increment(ms)`, `.pump()` (fire everything due, returns the count fired), `.pending` (count of armed timers). Await `.set()` / `.increment()` in async code; call them directly in sync code. `wall_start` models elapsed wall time across a restart |
 
 Pass `Interpreter(clock=)` / `SyncInterpreter(clock=)`; spawned and invoked children inherit the
 parent's clock (and its `strict` setting). `SyncInterpreter` never spawns an OS thread for an
@@ -2305,9 +2806,10 @@ parent's clock (and its `strict` setting). `SyncInterpreter` never spawns an OS 
 
 <br>
 
-**Plugins — `PluginBase` hooks** (22; `LoggingInspector(redact_keys=, log_context=)` implements the
+**Plugins — `PluginBase` hooks** (`LoggingInspector(redact_keys=, log_context=)` implements the
 transition/action/guard/service/lifecycle ones):
-`on_interpreter_start` · `on_interpreter_stop` · `on_transition` · `on_event_received` ·
+`on_interpreter_start` · `on_interpreter_stop` · `on_transition` · `on_before_send` ·
+`on_event_received` · `on_event_processed` · `on_event_refused` · `on_event_sent` ·
 `on_action_execute` · `on_action_error` · `on_guard_evaluated` · `on_guard_error` ·
 `on_service_start` · `on_service_done` · `on_service_error` · `on_transition_failed` ·
 `on_unhandled_event` · `on_event_dropped` · `on_error` · `on_done` ·
@@ -2358,8 +2860,9 @@ Your machine names an action, guard or service that nothing provides. This is a
 transition that mysteriously never fires.
 
 ```python
-create_machine({"id": "a", "initial": "s",
-                "states": {"s": {"entry": "logStart"}}})
+create_machine(
+    {"id": "a", "initial": "s", "states": {"s": {"entry": "logStart"}}}
+)
 # ImplementationMissingError: Action 'logStart' is defined in the machine
 # but no implementation was found …
 ```
@@ -2368,7 +2871,7 @@ create_machine({"id": "a", "initial": "s",
 
 ```python
 create_machine(config, logic=MachineLogic(actions={"logStart": my_fn}))
-create_machine(config, logic=MachineLogic())   # accept the stubs; nothing runs
+create_machine(config, logic=MachineLogic())  # accept the stubs; nothing runs
 ```
 
 `MachineLogic()` with no arguments is the right choice for tests, diagram export,
@@ -2410,9 +2913,11 @@ warning exists: `"entyr"` means an entry action that never runs, `"onn"` a trans
 does not exist.
 
 ```python
-create_machine({"id": "c"})        # InvalidConfigError: 'states' key is missing
-create_machine({"id": "c", "initial": "a", "states": {"a": {"entyr": ["x"]}}},
-               strict_config=True)
+create_machine({"id": "c"})  # InvalidConfigError: 'states' key is missing
+create_machine(
+    {"id": "c", "initial": "a", "states": {"a": {"entyr": ["x"]}}},
+    strict_config=True,
+)
 # InvalidConfigError: Machine 'c' has unknown config key(s) -- c.a: 'entyr'
 #   (did you mean 'entry'?) ...
 ```
@@ -2432,9 +2937,9 @@ no delay, or two `always` transitions target each other. The machine cuts the ta
 are the ones you read:
 
 ```python
-interp.chain_trips          # monotonic, survives a snapshot
-interp.last_chain_error     # the RunawayChainError, latched until clear_chain_error()
-receipt.error               # on the send(wait=True) that tripped it
+interp.chain_trips  # monotonic, survives a snapshot
+interp.last_chain_error  # the RunawayChainError, latched until clear_chain_error()
+receipt.error  # on the send(wait=True) that tripped it
 ```
 
 `last_error` also carries it, but only until the next clean event. A **delayed**
@@ -2455,9 +2960,11 @@ step), or hand the receipt to another task:
 
 ```python
 async def act(i, ctx, event, action):
-    i.send("GO")                                         # fine
-    fut = asyncio.ensure_future(i.send("GO", wait=True))  # fine: awaited elsewhere
-    await i.send("GO", wait=True)                        # ReentrantWaitError
+    i.send("GO")  # fine
+    fut = asyncio.ensure_future(
+        i.send("GO", wait=True)
+    )  # fine: awaited elsewhere
+    await i.send("GO", wait=True)  # ReentrantWaitError
 ```
 
 A helper task the action spawns may await the machine freely — the rule is about the
@@ -2478,7 +2985,8 @@ is invisible unless you look:
 ```python
 class ErrorReporter(PluginBase):
     def on_action_error(self, interpreter, action, error):
-        raise error          # or log it, or ship it to Sentry
+        raise error  # or log it, or ship it to Sentry
+
 
 interp.use(ErrorReporter())
 ```
@@ -2494,13 +3002,16 @@ An event that the current state does not handle is **ignored**, by design —
 `send("BANANA")` is a no-op, never an exception. Three ways to find out why:
 
 ```python
-interp.can("SUBMIT")          # False → not handled here at all
-interp.current_state_ids      # are you in the state you think you are?
+interp.can("SUBMIT")  # False → not handled here at all
+interp.current_state_ids  # are you in the state you think you are?
 interp.use(LoggingInspector())  # shows guards evaluating and rejecting
 ```
 
-If `can()` is `True` but nothing moves, a **guard** is returning `False`. The
-`on_guard_evaluated` plugin hook tells you which one.
+`can()` evaluates guards: `False` can mean either no handler or no passing guard. The
+`on_guard_evaluated` hook distinguishes those cases. If `can()` is `True` but the state
+does not change, inspect for a targetless or self-transition; it may legitimately run
+actions without moving to another state. For async sends, await `send(..., wait=True)`
+before inspecting the settled result.
 
 </details>
 
@@ -2509,19 +3020,22 @@ If `can()` is `True` but nothing moves, a **guard** is returning `False`. The
 
 <br>
 
-Correct by default. A snapshot records that a timer was *pending*, not how far along it
-was, so a static restore leaves it dormant (`interp.has_dormant_timers` is `True`). Pass
-`from_snapshot(..., restart_timers=True)` to re-arm every dormant timer from zero on
-`start()`. A timer that had already fired, and a delayed self-`raise`, *are* persisted and
-resume.
+Correct for a **static restore**: `from_snapshot()` does not start timers by default,
+and `interp.has_dormant_timers` reports them. Current snapshots do record wall-clock
+deadlines. Pass `restart_timers="resume"` to resume the remaining time, or
+`restart_timers=True` to restart the delay from zero. A timer event that had already
+fired, and a delayed self-`raise`, are also persisted.
 
-If the exact remaining time must survive a restart, model it as data:
+The `persisted()` loop and web registries use remaining-time resume; `DueTimerScanner`
+wakes instances whose deadlines elapsed while no interpreter was running. A manual
+deadline is still an option for an application-specific expiry rule:
 
 ```jsonc
 "entry": assign({"deadline": lambda a: time.time() + 30}),
 ```
 
-…then compare against wall-clock on resume, rather than relying on `after`.
+Compare that explicit deadline against wall time on resume. For ordinary statechart
+timers, persisted `after` deadlines already provide this behavior.
 
 </details>
 
@@ -2562,8 +3076,9 @@ Both share one correctness core, so a machine behaves identically on either.
 <br>
 
 Structurally, yes — 103 of the 104 real-world exports in the test suite parse unchanged, and
-both v4 `cond` and v5 `guard` spellings are accepted. Every diagram on this page is the editor
-rendering the exact JSON the Python next to it runs.
+both v4 `cond` and v5 `guard` spellings are accepted. The statechart screenshots link to
+the editor, and their source configurations are kept in the repository. Structural parsing
+is not a blanket promise of parity with every JavaScript runtime feature.
 
 What doesn't transfer is JS/TS action *implementations*, because those are code rather than
 data. You supply Python equivalents through `MachineLogic`. That separation is the point:
@@ -2607,8 +3122,10 @@ Invoked **services** are different — their failures *are* routed back into the
 
 <br>
 
-8,601 tests (93% coverage, 90% is the CI gate), run on Python 3.9–3.15 across Linux, macOS and
-Windows on every PR, plus an `[all]`-extras wheel smoke on all three OSes and a compatibility
+The 0.11.0 README reference snapshot records **8,601 tests and 93% coverage**; those are
+recorded figures, not a live badge. The repository enforces a **90% coverage gate**.
+CI covers Python 3.9–3.15 on Linux with Windows and macOS spot-checks, plus an
+`[all]`-extras wheel smoke on all three OSes and a compatibility
 matrix that installs each framework version the docs claim. Every integration and recipe has
 been through an adversarial "battle" pass — a scenario test written from the user's point of
 view, two independent reviewers attacking correctness and docs, and a regression file for
@@ -2616,8 +3133,14 @@ every defect found; the issues are labelled `battle-tested` on GitHub. The engin
 the SCXML transition-selection algorithm with a dedicated suite pinning that behaviour, and
 another pinning XState v5 parity.
 
-Zero runtime dependencies means nothing to audit, no version conflicts, and it works in slim
-containers and locked-down environments.
+The core's zero runtime dependencies reduce the third-party dependency surface and simplify
+deployment in slim containers or restricted environments. The library itself, Python and
+any optional extras still need security review and maintenance.
+
+The package is currently classified **Beta**, and `contrib` integrations are provisional.
+Evaluate the [failure semantics](#failure-semantics--know-what-is-contained),
+[security model](#-security--trust-model) and workload-specific tests for your deployment;
+there is no managed-service SLA implied by the library.
 
 </details>
 
@@ -2655,7 +3178,7 @@ made by importing the same JSON into the Stately editor; `to_mermaid()` gives yo
 GitHub renders inline:
 
 ```python
-print(machine.to_mermaid())      # paste into GitHub, Notion, Obsidian…
+print(machine.to_mermaid())  # paste into GitHub, Notion, Obsidian…
 print(machine.to_plantuml())
 ```
 
@@ -2677,9 +3200,9 @@ Guides · API reference · [What's new and the upgrade notes](https://basiltt.gi
 
 ### Versioning & support
 
-**Semantic Versioning.** The core API, the JSON machine format, the `xsm` CLI and the persistence layer (including the snapshot layout) follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html): breaking changes happen only in a new major. `contrib` extras are **provisional**. A deprecated API warns for at least one minor release and is removed no earlier than the next major. See the [Deprecation Policy](https://basiltt.github.io/xstate-statemachine/guide/deprecation-policy/) and the tested framework versions in [Compatibility](https://basiltt.github.io/xstate-statemachine/guide/compatibility/).
+**Semantic Versioning.** From **1.0**, the core API, JSON machine format, `xsm` CLI and persistence layer (including the snapshot layout) carry the documented [Semantic Versioning](https://semver.org/spec/v2.0.0.html) stability promise: breaking changes only in a new major. The current **0.x** series is pre-1.0. `contrib` extras remain **provisional**, including in 1.0, and may change in a minor release. A deprecated API warns for at least one minor release and is removed no earlier than the next major under the published policy. See the [Deprecation Policy](https://basiltt.github.io/xstate-statemachine/guide/deprecation-policy/) and tested framework versions in [Compatibility](https://basiltt.github.io/xstate-statemachine/guide/compatibility/).
 
-**Install everything:** `pip install "xstate-statemachine[all]"` pulls every shipped extra (each is also installable alone; see [Integrations & extras](https://basiltt.github.io/xstate-statemachine/guide/integrations-extras/)).
+**Install the integration stack:** `pip install "xstate-statemachine[all]"` pulls the shipped integration and testing extras. Each is also installable alone; add `[format]` separately for Black/isort formatting tools. See [Integrations & extras](https://basiltt.github.io/xstate-statemachine/guide/integrations-extras/).
 
 **Supported Python: 3.9 – 3.15** (CPython), tested on Linux, plus Windows and macOS spot-checks, on every PR.
 
@@ -2696,6 +3219,16 @@ Every PR runs the full matrix: lint, the full test suite, a coverage gate, a pac
 
 <br>
 
-If this saved you from a 3am impossible-state bug, consider starring the repo ⭐
+### Build something you can reason about.
+
+Start with one workflow: an order, an approval, a retry loop or an agent tool call.
+Make its states explicit. Send the first event. Then add the integrations your project needs.
+
+[**Run the quick start →**](#-the-60-second-start) · [**Choose a runnable example**](#-real-problems-this-solves) · [**Explore the documentation**](https://basiltt.github.io/xstate-statemachine/)
+
+<br>
+
+If the project helps your team, a GitHub star helps other developers discover it.
+Feedback, bug reports and contributions are welcome.
 
 </div>

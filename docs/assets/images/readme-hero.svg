@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="440" viewBox="0 0 1200 440" role="img" aria-labelledby="title description">
+  <title id="title">xstate-statemachine — Make every event count.</title>
+  <desc id="description">Visual statecharts. Native Python. An order moves from placed to paid to fulfilled as events arrive. Design once, execute explicitly, and observe the workflow.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#071512"/>
+      <stop offset="1" stop-color="#102D29"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#6EE7B7"/>
+      <stop offset="1" stop-color="#5EEAD4"/>
+    </linearGradient>
+    <radialGradient id="glow">
+      <stop stop-color="#14B8A6" stop-opacity=".18"/>
+      <stop offset="1" stop-color="#14B8A6" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse">
+      <path d="M32 0H0V32" fill="none" stroke="#9AE6CF" stroke-opacity=".045"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="440" rx="20" fill="url(#background)"/>
+  <rect width="1200" height="440" rx="20" fill="url(#grid)"/>
+  <ellipse cx="990" cy="205" rx="360" ry="265" fill="url(#glow)"/>
+  <g font-family="Segoe UI, Inter, Arial, sans-serif">
+    <g transform="translate(56 43)" fill="none" stroke="#6EE7B7" stroke-width="2">
+      <path d="M7 7H28V28H49"/>
+      <circle cx="7" cy="7" r="5" fill="#0B1D18"/>
+      <circle cx="28" cy="28" r="5" fill="#0B1D18"/>
+      <circle cx="49" cy="28" r="5" fill="#6EE7B7"/>
+    </g>
+    <text x="128" y="66" fill="#D5E9E1" font-size="19" font-weight="600" letter-spacing=".4">xstate-statemachine</text>
+    <text x="56" y="166" fill="#F3FBF7" font-size="74" font-weight="700" letter-spacing="-3">Make every</text>
+    <text x="56" y="244" fill="url(#accent)" font-size="74" font-weight="700" letter-spacing="-3">event count.</text>
+    <text x="59" y="295" fill="#B5CFC6" font-size="23">Visual statecharts. Native Python.</text>
+    <text x="59" y="380" fill="#86B5A3" font-size="13" font-weight="600" letter-spacing="2.4">DESIGN ONCE. EXECUTE. OBSERVE.</text>
+    <g transform="translate(686 94)">
+      <rect width="458" height="245" rx="16" fill="#0A1D18" stroke="#2A5144"/>
+      <path d="M0 56H458" stroke="#25473C"/>
+      <circle cx="25" cy="28" r="4" fill="#6EE7B7"/>
+      <text x="41" y="34" fill="#D5E9E1" font-size="16" font-weight="600">order.workflow</text>
+      <rect x="340" y="17" width="99" height="23" rx="11.5" fill="#163B2F"/>
+      <text x="389" y="33" fill="#86EFAC" font-size="11" font-weight="600" letter-spacing="1" text-anchor="middle">RUNNING</text>
+      <text x="24" y="92" fill="#96B7A8" font-size="13" letter-spacing="1.3">EVENT IN. NEXT STATE OUT.</text>
+      <path d="M127 138H172M285 138H327" fill="none" stroke="#4B9478" stroke-width="2"/>
+      <path d="M165 133L172 138L165 143M320 133L327 138L320 143" fill="none" stroke="#6EE7B7" stroke-width="2"/>
+      <rect x="24" y="113" width="105" height="49" rx="9" fill="#122D23" stroke="#315D4B"/>
+      <text x="76" y="143" fill="#C4DDD0" font-size="16" text-anchor="middle">placed</text>
+      <rect x="173" y="113" width="110" height="49" rx="9" fill="#6EE7B7"/>
+      <text x="228" y="143" fill="#073724" font-size="16" font-weight="700" text-anchor="middle">paid</text>
+      <rect x="328" y="113" width="106" height="49" rx="9" fill="#122D23" stroke="#315D4B"/>
+      <text x="381" y="143" fill="#C4DDD0" font-size="16" text-anchor="middle">fulfilled</text>
+      <path d="M24 191H434" stroke="#25473C"/>
+      <text x="24" y="221" fill="#94B9A8" font-size="13" font-family="Cascadia Code, Consolas, monospace">await order.send("PAY", wait=True)</text>
+    </g>
+    <text x="1143" y="380" fill="#86B5A3" font-size="13" font-weight="600" letter-spacing="2" text-anchor="end">PYTHON · XSTATE · OPEN SOURCE</text>
+  </g>
+  <path d="M22 439H1178" stroke="url(#accent)" stroke-opacity=".55"/>
+</svg>

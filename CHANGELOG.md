@@ -9,6 +9,13 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
 
 ## [Unreleased]
 
+### Changed
+
+- Redesigned the README with responsive SVG branding, clearer onboarding and
+  navigation, an expanded event-driven architecture introduction, and scoped
+  competitor comparisons. Preserved the technical guide, examples, diagrams
+  and API reference while clarifying operational guarantees and limitations.
+
 ## [0.11.0] - 2026-10-12
 
 ### Release polish (Changed)
