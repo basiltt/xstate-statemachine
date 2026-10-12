@@ -100,7 +100,9 @@ class CeleryInvocation:
     deadline: Optional[float]
 
 
-def _default_args(ctx: Any, event: Any) -> Tuple[tuple, dict]:
+def _default_args(
+    ctx: Any, event: Any
+) -> Tuple[Tuple[Any, ...], Dict[str, Any]]:
     return (), {}
 
 
@@ -136,6 +138,9 @@ class _LiveGuard(PluginBase[Any]):
         interp.send_threadsafe(event)
 
     def on_before_send(self, interpreter: Any, event: Any) -> Any:
+        """Deliver a Celery completion only if its invocation is still the live
+        one; discard stale ones.
+        """
         if not isinstance(event, (DoneEvent, ErrorEvent)):
             return None
         with self._lock:
@@ -509,6 +514,9 @@ def deliver_result(
     machine = _machine(machine_for_key, key)
 
     def act(interp: Any) -> bool:
+        """Apply a Celery task's result or error to the active invocation,
+        dropping stale completions; returns whether it applied.
+        """
         pend = interp.context.get(CONTEXT_KEY) or {}
         rec = pend.get(invocation_id)
         inv = _active_invocation(interp, invocation_id)

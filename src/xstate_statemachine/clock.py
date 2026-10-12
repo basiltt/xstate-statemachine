@@ -43,10 +43,7 @@ import threading
 import time
 from typing import Any, Awaitable, Callable, List, Optional, Union
 
-try:  # pragma: no cover - Python 3.8+ has Protocol; kept defensive
-    from typing import Protocol, runtime_checkable
-except ImportError:  # pragma: no cover
-    from typing_extensions import Protocol, runtime_checkable  # type: ignore
+from typing import Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -140,6 +137,16 @@ class _DeadlineHeap:
         return lock
 
     def push(self, due: float, fn: Callable[[], Any], owner: Any) -> _Timer:
+        """Schedule *fn* to run once the heap time reaches *due*.
+
+        Args:
+            due: Absolute deadline on the owning clock's timeline.
+            fn: Zero-argument callable to invoke when the timer fires.
+            owner: Opaque owner stored on the timer for bookkeeping.
+
+        Returns:
+            The queued timer, usable as a handle for `cancel`.
+        """
         t = _Timer(due, next(self._seq), fn, owner)
         with self._lock:
             heapq.heappush(self._heap, t)
@@ -150,6 +157,14 @@ class _DeadlineHeap:
             t.cancelled = True
 
     def due_before(self, now: float) -> List[_Timer]:
+        """Pop and return the live timers whose deadline is at or before *now*.
+
+        Args:
+            now: Current time on the owning clock's timeline.
+
+        Returns:
+            Uncancelled timers in deadline order; cancelled ones are discarded.
+        """
         out: List[_Timer] = []
         if not self._heap:  # ⚡ no lock for the empty case
             return out
@@ -218,6 +233,19 @@ class RealClock:
         owner: Any = None,
         sync: Optional[bool] = None,
     ) -> Any:
+        """Schedule *fn* after *delay_sec* seconds.
+
+        Args:
+            fn: Zero-argument callable to run when the delay elapses.
+            delay_sec: Delay in seconds; negative values are treated as 0.
+            owner: Opaque owner recorded on heap timers.
+            sync: ``True`` forces the heap (fired by `pump`), ``False`` uses
+                the running asyncio loop. ``None`` picks the loop when one is
+                running and the heap otherwise.
+
+        Returns:
+            A handle to pass to `clear_timeout`.
+        """
         if sync is None:
             try:
                 asyncio.get_running_loop()
@@ -237,6 +265,11 @@ class RealClock:
             self._heap.cancel(handle)
 
     def pump(self) -> int:
+        """Fire every heap timer that is due now.
+
+        Returns:
+            The number of timers fired (``0`` when none are armed).
+        """
         # ⚡ The sync engine pumps at the top of EVERY send(); a machine
         #    with no timers armed must not pay for a lock + monotonic() +
         #    heap scan each time. An empty list is a plain attribute read.
@@ -318,6 +351,11 @@ class SimulatedClock:
         self._heap.cancel(handle)
 
     def pump(self) -> int:
+        """Fire every timer due at the simulated time.
+
+        Returns:
+            The number of timers fired (``0`` when none are armed).
+        """
         if not self._heap._heap:  # ⚡ see RealClock.pump
             return 0
         fired = 0
@@ -403,7 +441,7 @@ class SimulatedClock:
         for settle in list(self._settlers):
             result = settle()
             if hasattr(result, "close"):  # an async settler in sync mode
-                result.close()  # type: ignore[union-attr]
+                result.close()
 
     async def _drain_async(self, target: float) -> None:
         while True:
@@ -483,7 +521,7 @@ class _MustAwait:
             )
             coro = self._coro
             if hasattr(coro, "close"):
-                coro.close()  # type: ignore[attr-defined]
+                coro.close()
 
 
 __all__ = ["Clock", "RealClock", "SimulatedClock"]

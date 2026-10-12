@@ -118,8 +118,6 @@ This order is guaranteed and consistent across all interpreter types.
 }
 ```
 
-<div class="stately" data-machine="7f622fde3d" data-height="320" data-title="7f622fde3d"></div>
-
 ### Multiple Entry/Exit Actions
 
 Entry and exit support arrays too:
@@ -134,8 +132,6 @@ Entry and exit support arrays too:
   }
 }
 ```
-
-<div class="stately" data-machine="eb8aa34500" data-height="320" data-title="eb8aa34500"></div>
 
 ## 🧠 Action Implementation with MachineLogic
 
@@ -634,8 +630,6 @@ The behavior above is one of three policies, controlled by the machine-config ke
   "states": { "a": {} }
 }
 ```
-
-<div class="stately" data-machine="1a58abf6dd" data-height="320" data-title="m"></div>
 
 Guards have an analogous `guardErrorPolicy` (`"false"`/`"true"`/`"raise"`, see
 [Guards](../guards/)) and unhandled events have their own `onUnhandled`

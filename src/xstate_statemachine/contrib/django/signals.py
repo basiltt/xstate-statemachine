@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import threading
 import weakref
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from django.db import transaction
 from django.dispatch import Signal
@@ -92,10 +92,10 @@ def _wrapper_uid(receiver: Any, dispatch_uid: Any) -> Any:
     return dispatch_uid or ("xsm_on_commit", _make_id(receiver))
 
 
-class PostTransitionSignal(Signal):
+class PostTransitionSignal(Signal):  # type: ignore[misc]  # Signal is untyped (Any base)
     """A `Signal` whose ``connect`` takes ``on_commit=``."""
 
-    def connect(  # type: ignore[override]
+    def connect(
         self,
         receiver: Any,
         sender: Any = None,
@@ -103,6 +103,7 @@ class PostTransitionSignal(Signal):
         dispatch_uid: Any = None,
         on_commit: bool = False,
     ) -> None:
+        """Connect a receiver, optionally deferred to transaction commit."""
         if not on_commit:
             super().connect(receiver, sender, weak, dispatch_uid)
             return
@@ -110,13 +111,14 @@ class PostTransitionSignal(Signal):
         wrapper = _OnCommit(receiver, weak, self, (uid, sender))
         super().connect(wrapper, sender, False, uid)
 
-    def disconnect(  # type: ignore[override]
+    def disconnect(
         self,
         receiver: Any = None,
         sender: Any = None,
         dispatch_uid: Any = None,
         on_commit: bool = False,
     ) -> bool:
+        """Disconnect a receiver, including one connected with ``on_commit``."""
         # 📝 #281 battle: `disconnect(fn)` after `connect(fn, on_commit=
         #    True)` silently did nothing (the wrapper, not `fn`, was the
         #    receiver) -- the receiver kept firing for the rest of the
@@ -128,8 +130,8 @@ class PostTransitionSignal(Signal):
             None, sender, _wrapper_uid(receiver, dispatch_uid)
         )
         if removed or on_commit:
-            return removed
-        return super().disconnect(receiver, sender, dispatch_uid)
+            return cast("bool", removed)
+        return cast("bool", super().disconnect(receiver, sender, dispatch_uid))
 
 
 #: ``(sender=Model, instance, event, from_states, actor, using)``

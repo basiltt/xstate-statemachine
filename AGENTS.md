@@ -5,7 +5,7 @@
 A Python library for parsing and running XState-compatible JSON state machines. This is a **published PyPI library** (`xstate-statemachine`) with daily downloads. Changes must be documented in CHANGELOG.md following the Keep a Changelog format.
 
 **Key Facts:**
-- Python 3.9+ support (3.9 through 3.14 in CI)
+- Python 3.9+ support (3.9 through 3.15 in CI)
 - Async-first (`Interpreter`) with sync fallback (`SyncInterpreter`)
 - 100% XState JSON compatible
 - Actor model support with spawn actions
@@ -67,7 +67,7 @@ independent jobs, so a red build tells you *what kind* of thing broke:
 | Job | Gate |
 |:----|:-----|
 | **lint** | `black --check` (line length 79) + `flake8` — same flags and pinned versions as `.pre-commit-config.yaml` |
-| **test** | Full suite on Python 3.9–3.14 (Linux) plus Windows 3.9/3.14 and macOS 3.14 spot-checks; also runs the `doctest` examples |
+| **test** | Full suite on Python 3.9–3.15 (Linux) plus Windows 3.9/3.15 and macOS 3.15 spot-checks; also runs the `doctest` examples |
 | **coverage** | Full suite with `pytest --cov`; **minimum 90%** line+branch coverage is a repository rule (`fail_under` in `pyproject.toml`, enforced locally and in CI; a ratchet — raise it, never lower it) |
 | **build** | `python -m build`, `twine check`, then installs the built **wheel** into a clean venv and smoke-tests the public API and the `xsm` entry point |
 
@@ -888,7 +888,7 @@ xstate-statemachine/
 │   ├── sync/                  # Sync interpreter examples
 │   ├── async/                 # Async interpreter examples
 │   └── hybrid/                # Mixed async/sync examples
-├── pyproject.toml            # Poetry configuration
+├── pyproject.toml            # Project metadata, extras, tool config (uv / PEP 621)
 ├── .pre-commit-config.yaml   # Pre-commit hooks
 ├── CHANGELOG.md              # Version history
 ├── CONTRIBUTING.md           # Full contribution guide

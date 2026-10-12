@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, Iterator, List, Set, Tuple
 
 from ..extractor import extract_logic_names
 from ..utils import camel_to_snake
@@ -28,7 +28,7 @@ from ._shared import (
 from .base import BaseStrategy, GenerationContext
 
 
-def _walk(config: Dict[str, Any]):
+def _walk(config: Dict[str, Any]) -> Iterator[Tuple[str, Any]]:
     for name, st in (config.get("states") or {}).items():
         yield name, st
         yield from _walk(st)
@@ -211,6 +211,8 @@ HOOKS = [
 
 
 class PluginSkeletonStrategy(BaseStrategy):
+    """Strategy that generates an observer plugin skeleton."""
+
     @property
     def name(self) -> str:
         return "plugin"
@@ -219,6 +221,7 @@ class PluginSkeletonStrategy(BaseStrategy):
         return ""
 
     def generate_logic(self, ctx: GenerationContext) -> str:
+        """Emit a ``PluginBase`` observer with only the selected hooks."""
         config = ctx.configs[0]
         feats = _features(config)
         cls = (

@@ -50,12 +50,10 @@ from typing import (
     List,
     Optional,
     TypeVar,
+    cast,
 )
 
-try:  # pragma: no cover
-    from typing import Protocol, runtime_checkable
-except ImportError:  # pragma: no cover
-    from typing_extensions import Protocol, runtime_checkable  # type: ignore
+from typing import Protocol, runtime_checkable
 
 from ..clock import Clock
 from ..exceptions import ConflictError, LockTimeoutError
@@ -421,6 +419,28 @@ class OptimisticLock:
         verify_machine_hash: bool = True,
         expected_machine_hash: Optional[str] = None,
     ) -> T:
+        """Run *fn* in a load, act, save cycle, retrying on `ConflictError`.
+
+        Args:
+            store: The state store.
+            key: The snapshot key.
+            machine: The machine definition.
+            fn: Called with the restored interpreter.
+            clock: Optional clock for the interpreter.
+            plugins: Plugins to attach.
+            create_if_missing: Start a fresh machine when no snapshot exists.
+            migrator: Optional snapshot migrator.
+            on_version_mismatch: Policy when machine versions differ.
+            restart_timers: Timer restart policy on restore.
+            verify_machine_hash: Check the stored machine hash.
+            expected_machine_hash: Hash to expect instead of the machine's.
+
+        Returns:
+            Whatever *fn* returned.
+
+        Raises:
+            ConflictError: When conflicts persist beyond the retry budget.
+        """
         attempt = 0
         while True:
             attempt += 1
@@ -922,4 +942,5 @@ def persisted_retry(
     invoked up to ``retries + 1`` times under `OptimisticLock`.
     """
     strategy = _strategy(lock)
-    return strategy.run(store, key, machine, fn, **kw)
+    # 📝 `_strategy` yields a LockStrategy whose `run` returns fn's result.
+    return cast(T, strategy.run(store, key, machine, fn, **kw))

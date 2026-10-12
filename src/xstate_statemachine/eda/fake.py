@@ -333,6 +333,7 @@ class FakeBrokerAdapter(_Core):
     async def subscribe(
         self, topic: str, *, timeout: Optional[float] = None
     ) -> AsyncIterator[Delivery]:
+        """Async `subscribe` on the in-memory bus; *timeout* is idle time."""
         deadline = None if timeout is None else time.monotonic() + timeout
         while True:
             d = self._take(topic)
@@ -372,6 +373,7 @@ class SyncFakeBrokerAdapter(_Core):
     def subscribe(
         self, topic: str, *, timeout: Optional[float] = None
     ) -> Iterator[Delivery]:
+        """Sync `subscribe` on the in-memory bus; *timeout* is idle time."""
         deadline = None if timeout is None else time.monotonic() + timeout
         while True:
             d = self._take(topic)

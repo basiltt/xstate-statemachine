@@ -44,6 +44,8 @@ def validate_prefix(prefix: str) -> str:
 
 
 class Keys:
+    """Builds every Redis key name under one validated prefix."""
+
     __slots__ = ("p",)
 
     def __init__(self, prefix: str) -> None:

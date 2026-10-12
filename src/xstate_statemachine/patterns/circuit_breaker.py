@@ -152,7 +152,7 @@ def _count_probe(i: Any, ctx: Dict[str, Any], e: Any, a: Any) -> None:
     ctx["half_open_calls"] = int(ctx["half_open_calls"]) + 1
 
 
-def circuit_breaker_logic(cooldown_ms: float) -> MachineLogic:
+def circuit_breaker_logic(cooldown_ms: float) -> MachineLogic[Any]:
     """The logic `CIRCUIT_BREAKER_CONFIG` needs, with the cooldown bound."""
     return MachineLogic(
         actions={
@@ -198,7 +198,7 @@ class CircuitBreaker:
         clock: Optional[Clock] = None,
         plugins: Iterable[Any] = (),
         name: Optional[str] = None,
-        exceptions: tuple = (Exception,),
+        exceptions: Tuple[Any, ...] = (Exception,),
     ) -> None:
         if failure_threshold < 1 or half_open_max_calls < 1:
             raise ValueError(
@@ -381,6 +381,17 @@ def circuit_breaker(
     """
 
     def deco(fn: Callable[..., Any]) -> Callable[..., Any]:
+        """Wrap *fn* in a new `CircuitBreaker`.
+
+        Args:
+            fn: The function or coroutine function to guard.
+
+        Returns:
+            A wrapper (async if *fn* is) exposing the breaker as ``.breaker``.
+
+        Raises:
+            TypeError: If *fn* is a generator function.
+        """
         # 📝 #265 battle: a generator's body runs AFTER the wrapper has
         #    returned, so the breaker would record SUCCESS before any work
         #    happened and never see the failures. Refuse loudly.

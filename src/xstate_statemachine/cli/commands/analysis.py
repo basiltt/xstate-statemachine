@@ -44,7 +44,7 @@ class Facts:
 
     path: Path
     config: Dict[str, Any] = field(default_factory=dict)
-    machine: Optional[MachineNode] = None
+    machine: Optional[MachineNode[Any]] = None
     findings: List[Finding] = field(default_factory=list)
     actions: Set[str] = field(default_factory=set)
     guards: Set[str] = field(default_factory=set)
@@ -67,6 +67,14 @@ class Facts:
         )
 
     def state_count(self, *, all_levels: bool = False) -> int:
+        """Count the states of the machine.
+
+        Args:
+            all_levels: Count nested states too, not only top-level ones.
+
+        Returns:
+            The number of states.
+        """
         if self.machine is None:
             return (
                 len(self.config.get("states", {}))
@@ -108,7 +116,7 @@ class _CaptureWarnings(logging.Handler):
 
 def _stub_logic(
     actions: Set[str], guards: Set[str], services: Set[str]
-) -> MachineLogic:
+) -> MachineLogic[Any]:
     """Placeholder logic so `create_machine` does not fail on missing impls."""
     return MachineLogic(
         actions={a: (lambda i, c, e, ad: None) for a in actions},
@@ -117,11 +125,16 @@ def _stub_logic(
     )
 
 
-def _unreachable(machine: MachineNode) -> List[str]:
+def _unreachable(machine: MachineNode[Any]) -> List[str]:
     """State ids no transition, initial or history target can reach."""
     reachable: Set[str] = set()
 
-    def enter(node: StateNode) -> None:
+    def enter(node: StateNode[Any]) -> None:
+        """Mark *node* reachable, then follow its default entry path.
+
+        Args:
+            node: State being entered.
+        """
         if node.id in reachable:
             return
         reachable.add(node.id)
@@ -133,12 +146,17 @@ def _unreachable(machine: MachineNode) -> List[str]:
         elif node.type == "compound" and node.states and not node.initial:
             enter(next(iter(node.states.values())))
 
-    def enter_target(node: StateNode) -> None:
+    def enter_target(node: StateNode[Any]) -> None:
         # 🔥 #269 battle: a target deep in the tree (`#m.a.b.leaf`, a
         #    history node) enters every ancestor on the way down -- and
         #    every sibling region of a parallel ancestor. Only the target
         #    itself used to be marked, so `xsm inspect` / `validate` called
         #    `m.a` "unreachable" while the engine sat in `m.a.b.leaf`.
+        """Mark a transition target and the ancestors entered with it.
+
+        Args:
+            node: Target state of a transition or history node.
+        """
         enter(node)
         if node.type == "history":
             parent = node.parent
@@ -288,7 +306,10 @@ def analyse(
 
 
 def _engine_unreachable(
-    machine: MachineNode, static_unreachable: List[str], *, max_depth: int = 8
+    machine: MachineNode[Any],
+    static_unreachable: List[str],
+    *,
+    max_depth: int = 8,
 ) -> List[str]:
     """Settled states the engine never reaches that the static pass missed.
 
@@ -317,11 +338,13 @@ def _engine_unreachable(
     return sorted(out)
 
 
-def kind_of(node: StateNode) -> str:
+def kind_of(node: StateNode[Any]) -> str:
     return node.type
 
 
-def event_table(machine: MachineNode) -> List[Tuple[str, str, str, str, str]]:
+def event_table(
+    machine: MachineNode[Any],
+) -> List[Tuple[str, str, str, str, str]]:
     """(event, from state, target, guard, actions) for every transition."""
     rows = []
     for node in walk(machine):

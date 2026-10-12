@@ -75,12 +75,13 @@ def sibling_values(
     }
 
 
-class _SiblingTransform(Transform):
+class _SiblingTransform(Transform):  # type: ignore[misc]  # Transform is untyped (Any base)
     """``statechart__state`` → the ``statechart_state`` column itself."""
 
     sibling: str = ""
 
     def as_sql(self, compiler: Any, connection: Any) -> Any:
+        """Compile to the sibling denormalised column instead of the JSON."""
         field = self.lhs.output_field
         model = field.model
         target = model._meta.get_field(f"{field.name}_{self.sibling}")
@@ -88,7 +89,7 @@ class _SiblingTransform(Transform):
         return compiler.compile(col)
 
     @property
-    def output_field(self) -> Any:  # type: ignore[override]
+    def output_field(self) -> Any:
         field = self.lhs.output_field
         return field.model._meta.get_field(f"{field.name}_{self.sibling}")
 
@@ -104,7 +105,7 @@ def _transform(suffix: str) -> Any:
 _TRANSFORMS = {s: _transform(s) for s in SIBLINGS}
 
 
-class StatechartField(models.JSONField):
+class StatechartField(models.JSONField):  # type: ignore[misc]  # JSONField is untyped (Any base)
     """The statechart snapshot of a row (see module notes).
 
     Args:
@@ -138,6 +139,9 @@ class StatechartField(models.JSONField):
 
     # -- migrations -------------------------------------------------------------
     def deconstruct(self) -> Any:
+        """Serialise the field for migrations, keeping the explicit null/blank
+        values.
+        """
         name, path, args, kwargs = super().deconstruct()
         path = "xstate_statemachine.contrib.django.fields.StatechartField"
         # 📝 Our defaults are null/blank=True, Django's are False: the base
@@ -160,7 +164,7 @@ class StatechartField(models.JSONField):
             kwargs["denormalize"] = False
         return name, path, args, kwargs
 
-    def sibling_fields(self) -> Dict[str, models.Field]:  # type: ignore[type-arg]
+    def sibling_fields(self) -> Dict[str, models.Field]:
         """Fresh instances of the sibling fields, keyed by column name."""
         n = self.name
         return {
@@ -184,7 +188,7 @@ class StatechartField(models.JSONField):
 
     def sibling_fields_named(
         self, name: str
-    ) -> List[Tuple[str, models.Field]]:  # type: ignore[type-arg]
+    ) -> List[Tuple[str, models.Field]]:
         """`sibling_fields` for a field that will be called *name* --
         for hand-written migrations adding the field to an existing
         model: ``[("statechart", StatechartField()),
@@ -199,6 +203,7 @@ class StatechartField(models.JSONField):
     def contribute_to_class(
         self, cls: Any, name: str, *args: Any, **kwargs: Any
     ) -> None:
+        """Attach the field and, when denormalising, its sibling columns."""
         super().contribute_to_class(cls, name, *args, **kwargs)
         if not self.denormalize or cls.__module__ == "__fake__":
             # 📝 Historical (migration) models list the siblings
@@ -211,6 +216,9 @@ class StatechartField(models.JSONField):
 
     # -- lookups ------------------------------------------------------------------
     def get_transform(self, name: str) -> Any:
+        """Return the sibling-column transform for known names, else the
+        default.
+        """
         if self.denormalize and name in _TRANSFORMS:
             return _TRANSFORMS[name]
         return super().get_transform(name)

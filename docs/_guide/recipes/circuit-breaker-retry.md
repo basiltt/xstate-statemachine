@@ -4,8 +4,6 @@ permalink: /guide/circuit-breaker-retry/
 description: "A real-shaped HTTP client: per-request retry with jittered backoff as a chart, a shared CircuitBreaker around the transport, 4xx never retried, and an open breaker that fails fast. Stdlib urllib, a fake transport in tests."
 ---
 
-# Recipe: Circuit breaker & retry
-
 The building blocks are documented in [Resilience patterns](../patterns/): [`RetryPolicy`](../patterns/#retry-with-backoff-and-jitter), [dead-lettering](../patterns/#dead-lettering-with-error-context) and [`CircuitBreaker`](../patterns/#circuit-breaker-as-a-statechart). This page puts them together around an HTTP call the way you would in a service, with every choice written down.
 
 Files: [`examples/recipes/circuit_breaker_retry/`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/recipes/circuit_breaker_retry). `http_client.py` is about 60 lines. The transport is stdlib `urllib`, so there is no new dependency.

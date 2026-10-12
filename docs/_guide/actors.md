@@ -3,8 +3,6 @@ title: "Actor Model"
 description: "Spawn independent child machines from parent machines — isolated state, context, and lifecycle."
 ---
 
-# Actor Model
-
 The **Actor Model** lets you spawn independent child state machines from a parent machine. Each actor runs in isolation with its own state, context, and lifecycle. This is essential for modeling concurrent workflows, delegation patterns, and task distribution.
 
 ## 🎭 What is the Actor Model?
@@ -199,8 +197,6 @@ A machine-level `spawnBlockingTimeout` config key (milliseconds) bounds how long
   "states": { "editing": {} }
 }
 ```
-
-<div class="stately" data-machine="176adc9528" data-height="320" data-title="form"></div>
 
 When unset, a **30-second default** applies (`DEFAULT_SPAWN_BLOCKING_TIMEOUT_MS`). The wait is never unbounded: an unbounded wait inside a transition would wedge the parent forever if the child never reaches a final state, while the machine still reported `"running"`. If the timeout lapses, the parent logs a warning and continues — it does **not** raise.
 
@@ -675,7 +671,5 @@ except RuntimeError:
 print(interp.current_state_ids)  # still {'parent.idle'} -- the transition rolled back
 print(interp._actors)             # {} -- the spawned child was stopped, not orphaned
 ```
-
-<div class="stately" data-machine="42ed0d0231" data-height="320" data-title="child"></div>
 
 See also [Interpreters — Lifecycle: completion and teardown](../interpreters/#lifecycle-completion-and-teardown).

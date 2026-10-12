@@ -1,52 +1,4 @@
 {
- "7f622fde3d": {
-  "id": "machine",
-  "config": {
-   "states": {
-    "editing": {
-     "entry": "loadDraft",
-     "exit": "saveDraft",
-     "on": {
-      "SUBMIT": {
-       "target": "submitting",
-       "actions": [
-        "validate",
-        "clearErrors"
-       ]
-      }
-     }
-    },
-    "submitting": {
-     "entry": "showSpinner"
-    }
-   }
-  },
-  "valid": false,
-  "where": [
-   "docs/_guide/actions.md"
-  ]
- },
- "eb8aa34500": {
-  "id": "machine",
-  "config": {
-   "states": {
-    "editing": {
-     "entry": [
-      "loadDraft",
-      "startAutoSave"
-     ],
-     "exit": [
-      "saveDraft",
-      "stopAutoSave"
-     ]
-    }
-   }
-  },
-  "valid": false,
-  "where": [
-   "docs/_guide/actions.md"
-  ]
- },
  "f5f3e25e82": {
   "id": "formMachine",
   "config": {
@@ -2236,30 +2188,6 @@
    "docs/_guide/final-states.md"
   ]
  },
- "27760a64ca": {
-  "id": "machine",
-  "config": {
-   "initial": "validating",
-   "states": {
-    "validating": {
-     "on": {
-      "VALID": "complete"
-     }
-    },
-    "complete": {
-     "type": "final"
-    }
-   },
-   "onDone": {
-    "target": "finished",
-    "actions": "logCompletion"
-   }
-  },
-  "valid": false,
-  "where": [
-   "docs/_guide/final-states.md"
-  ]
- },
  "4e6bb1722d": {
   "id": "withActions",
   "config": {
@@ -2361,38 +2289,6 @@
      "type": "final"
     }
    }
-  },
-  "valid": false,
-  "where": [
-   "docs/_guide/final-states.md"
-  ]
- },
- "d6842e9ef2": {
-  "id": "machine",
-  "config": {
-   "initial": "paying",
-   "states": {
-    "paying": {
-     "initial": "processing",
-     "states": {
-      "processing": {
-       "invoke": {
-        "src": "chargeCard",
-        "onDone": "success",
-        "onError": "failed"
-       }
-      },
-      "success": {
-       "type": "final"
-      },
-      "failed": {
-       "type": "final"
-      }
-     },
-     "onDone": "confirmation"
-    }
-   },
-   "confirmation": {}
   },
   "valid": false,
   "where": [
@@ -2921,43 +2817,6 @@
    "docs/_guide/json-config.md"
   ]
  },
- "38a72202d7": {
-  "id": "machine",
-  "config": {
-   "initial": "dashboard",
-   "states": {
-    "dashboard": {},
-    "profile": {},
-    "settings": {}
-   }
-  },
-  "valid": false,
-  "where": [
-   "docs/_guide/hierarchical.md"
-  ]
- },
- "85bc7ac76a": {
-  "id": "machine",
-  "config": {
-   "initial": "dashboard",
-   "states": {
-    "dashboard": {
-     "on": {
-      "VIEW_PROFILE": "profile"
-     }
-    },
-    "profile": {
-     "on": {
-      "BACK": "dashboard"
-     }
-    }
-   }
-  },
-  "valid": false,
-  "where": [
-   "docs/_guide/hierarchical.md"
-  ]
- },
  "18f6e6f442": {
   "id": "m",
   "config": {
@@ -3009,33 +2868,6 @@
    }
   },
   "valid": true,
-  "where": [
-   "docs/_guide/hierarchical.md"
-  ]
- },
- "61c1e8a5e0": {
-  "id": "machine",
-  "config": {
-   "initial": "dashboard",
-   "states": {
-    "dashboard": {
-     "on": {
-      "REFRESH": {
-       "actions": "loadDashboard"
-      }
-     }
-    },
-    "profile": {},
-    "settings": {}
-   },
-   "on": {
-    "LOGOUT": "loggedOut",
-    "SHOW_HELP": {
-     "actions": "openHelpPanel"
-    }
-   }
-  },
-  "valid": false,
   "where": [
    "docs/_guide/hierarchical.md"
   ]
@@ -3116,33 +2948,6 @@
    "docs/_guide/hierarchical.md"
   ]
  },
- "884f9e017b": {
-  "id": "machine",
-  "config": {
-   "initial": "cart",
-   "states": {
-    "cart": {
-     "on": {
-      "PROCEED": [
-       {
-        "target": "payment",
-        "guard": "cartNotEmpty"
-       },
-       {
-        "target": "cart",
-        "actions": "showEmptyError"
-       }
-      ]
-     }
-    },
-    "payment": {}
-   }
-  },
-  "valid": false,
-  "where": [
-   "docs/_guide/hierarchical.md"
-  ]
- },
  "7b7e3ed7ad": {
   "id": "shop",
   "config": {
@@ -3183,55 +2988,6 @@
      }
     },
     "cancelled": {}
-   }
-  },
-  "valid": false,
-  "where": [
-   "docs/_guide/hierarchical.md"
-  ]
- },
- "fbeedc34be": {
-  "id": "machine",
-  "config": {
-   "entry": "loadUserSession",
-   "exit": "cleanupSession",
-   "initial": "dashboard",
-   "states": {
-    "dashboard": {
-     "entry": "loadDashboardData",
-     "exit": "clearDashboardCache"
-    },
-    "profile": {
-     "entry": "loadProfileData"
-    }
-   }
-  },
-  "valid": false,
-  "where": [
-   "docs/_guide/hierarchical.md"
-  ]
- },
- "bf3df967cf": {
-  "id": "machine",
-  "config": {
-   "initial": "loading",
-   "states": {
-    "loading": {
-     "invoke": {
-      "src": "fetchUserData",
-      "onDone": {
-       "target": "dashboard",
-       "actions": "storeUserData"
-      },
-      "onError": "error"
-     }
-    },
-    "dashboard": {},
-    "error": {
-     "on": {
-      "RETRY": "loading"
-     }
-    }
    }
   },
   "valid": false,
@@ -4998,66 +4754,6 @@
    "docs/_guide/parallel.md"
   ]
  },
- "a332b2becf": {
-  "id": "machine",
-  "config": {
-   "type": "parallel",
-   "states": {
-    "regionA": {
-     "initial": "idle",
-     "states": {
-      "idle": {
-       "on": {
-        "START_A": "running"
-       }
-      },
-      "running": {
-       "on": {
-        "STOP_A": "idle"
-       }
-      }
-     }
-    },
-    "regionB": {
-     "initial": "idle",
-     "states": {
-      "idle": {
-       "on": {
-        "START_B": "running"
-       }
-      },
-      "running": {
-       "on": {
-        "STOP_B": "idle"
-       }
-      }
-     }
-    }
-   }
-  },
-  "valid": false,
-  "where": [
-   "docs/_guide/parallel.md"
-  ]
- },
- "c917fa8b48": {
-  "id": "machine",
-  "config": {
-   "initial": "loading",
-   "states": {
-    "loading": {
-     "on": {
-      "VIDEO_LOADED": "showing"
-     }
-    },
-    "showing": {}
-   }
-  },
-  "valid": false,
-  "where": [
-   "docs/_guide/parallel.md"
-  ]
- },
  "95fca98534": {
   "id": "game",
   "config": {
@@ -5169,52 +4865,6 @@
     },
     "stopped": {
      "type": "final"
-    }
-   }
-  },
-  "valid": false,
-  "where": [
-   "docs/_guide/parallel.md"
-  ]
- },
- "5993c63d33": {
-  "id": "machine",
-  "config": {
-   "type": "parallel",
-   "states": {
-    "dataFeed": {
-     "initial": "live",
-     "states": {
-      "live": {
-       "on": {
-        "REFRESH": [
-         {
-          "target": "refreshing",
-          "guard": "isOnline"
-         },
-         {
-          "actions": "showOfflineMessage"
-         }
-        ]
-       }
-      },
-      "refreshing": {
-       "on": {
-        "DATA_LOADED": "live"
-       }
-      }
-     }
-    },
-    "alerts": {
-     "initial": "checking",
-     "states": {
-      "checking": {
-       "on": {
-        "ALERTS_LOADED": "displaying"
-       }
-      },
-      "displaying": {}
-     }
     }
    }
   },
@@ -5870,24 +5520,6 @@
   "valid": true,
   "where": [
    "docs/_guide/plugins.md"
-  ]
- },
- "78303f149b": {
-  "id": "machine",
-  "config": {
-   "initial": "unread",
-   "states": {
-    "unread": {
-     "on": {
-      "MARK_READ": "read"
-     }
-    },
-    "read": {}
-   }
-  },
-  "valid": false,
-  "where": [
-   "docs/_guide/pythonic-api.md"
   ]
  },
  "e0b70fe57c": {

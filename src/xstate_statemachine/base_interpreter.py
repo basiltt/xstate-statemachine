@@ -45,6 +45,8 @@ from typing import (
     Generic,
     List,
     Optional,
+    Sequence,
+    FrozenSet,
     Set,
     Tuple,
     Type,
@@ -123,7 +125,7 @@ from . import persistence
 from .clock import Clock, RealClock
 
 # This TypeVar allows methods to return the specific subclass instance (self).
-TInterpreter = TypeVar("TInterpreter", bound="BaseInterpreter")
+TInterpreter = TypeVar("TInterpreter", bound="BaseInterpreter[Any]")
 
 # -----------------------------------------------------------------------------
 # 🪵 Logger Configuration
@@ -219,6 +221,12 @@ class _LogicTarget:
         return "stopped" if self._handle.finished else "running"
 
     def send(self, event: Any, **payload: Any) -> None:
+        """Forward the event to the running logic, dropping it if finished.
+
+        Args:
+            event: An event object or a type string.
+            **payload: Payload used when *event* is a string.
+        """
         if isinstance(event, str):
             event = Event(type=event, payload=payload)
         handle = self._handle
@@ -368,7 +376,7 @@ class _SafePlugin:
 
     @staticmethod
     def _report(
-        plugin: Any, hook: str, exc: BaseException, args: tuple
+        plugin: Any, hook: str, exc: BaseException, args: Tuple[Any, ...]
     ) -> None:
         """Log a contained hook failure and offer it to `on_plugin_error`.
 
@@ -468,6 +476,9 @@ def _accepts_kwarg(fn: Callable[..., Any], name: str) -> bool:
 
 
 _ACCEPTS_KWARG_KEEPALIVE: List[Any] = []
+
+#: ⚡ Shared empty actor-id set for `_execute_transition` (never mutated).
+_NO_IDS: FrozenSet[str] = frozenset()
 
 #: ⚡ The init / exit trigger events are constant, payload-less sentinels;
 #: `Event` is an immutable NamedTuple, so one instance each is safe to share
@@ -610,7 +621,7 @@ class BaseInterpreter(Generic[TContext]):
     def __init__(
         self,
         machine: MachineNode[TContext],
-        interpreter_class: Optional[Type["BaseInterpreter"]] = None,
+        interpreter_class: Optional[Type["BaseInterpreter[Any]"]] = None,
         input: Optional[Any] = None,
         clock: Optional[Clock] = None,
         strict: Optional[bool] = None,
@@ -689,11 +700,11 @@ class BaseInterpreter(Generic[TContext]):
         self._invoked_as: Optional[str] = None
 
         # 🌳 State & Actor Management
-        self._active_state_nodes: Set[StateNode] = set()
+        self._active_state_nodes: Set[StateNode[Any]] = set()
         #: Remembered configurations for history pseudo-states, keyed by the
         #: *parent* state id. Recorded on exit, replayed when a transition
         #: targets a `type: "history"` child of that parent.
-        self._history: Dict[str, List[StateNode]] = {}
+        self._history: Dict[str, List[StateNode[Any]]] = {}
         #: Listeners registered via :meth:`subscribe`.
         self._subscribers: List[Callable[[Any], None]] = []
         #: The machine's final output, set when a top-level final state is
@@ -820,7 +831,7 @@ class BaseInterpreter(Generic[TContext]):
         #: a rollback -- therefore never submits its service, on either
         #: engine and for either service kind: "it does not make sense to
         #: start an invocation in a state that will be exited immediately".
-        self._states_to_invoke: List[StateNode] = []
+        self._states_to_invoke: List[StateNode[Any]] = []
         #: ⏱️ #128: re-arm `after` timers of the restored configuration on
         #: the next `start()`.
         self._restart_timers_on_start: bool = False
@@ -972,7 +983,7 @@ class BaseInterpreter(Generic[TContext]):
             return {}
         return self._value_of(self.machine)
 
-    def _value_of(self, node: StateNode) -> Union[str, Dict[str, Any]]:
+    def _value_of(self, node: StateNode[Any]) -> Union[str, Dict[str, Any]]:
         """Recursive worker for :attr:`value`; *node* must be active.
 
         Returns the value of *node*'s active DESCENDANTS. For the root that
@@ -1003,7 +1014,7 @@ class BaseInterpreter(Generic[TContext]):
             return child.key
         return {child.key: self._value_of(child)}
 
-    def _is_childless(self, node: StateNode) -> bool:
+    def _is_childless(self, node: StateNode[Any]) -> bool:
         """True when a compound/parallel *node* has no active child (F1)."""
         active = self._active_state_nodes
         return not any(c in active for c in node.states.values())
@@ -1040,7 +1051,7 @@ class BaseInterpreter(Generic[TContext]):
         return False
 
     def _matches_value(
-        self, node: StateNode, pattern: Union[str, Dict[str, Any]]
+        self, node: StateNode[Any], pattern: Union[str, Dict[str, Any]]
     ) -> bool:
         """Recursive worker for the dict form of :meth:`matches`."""
         active = self._active_state_nodes
@@ -1677,7 +1688,8 @@ class BaseInterpreter(Generic[TContext]):
         if not active:
             return False
 
-        def legal(node: StateNode) -> bool:
+        def legal(node: StateNode[Any]) -> bool:
+            """Return whether *node* is validly configured in the active set."""
             if node.type == "parallel":
                 regions = [
                     c for c in node.states.values() if c.type != "history"
@@ -2535,7 +2547,7 @@ class BaseInterpreter(Generic[TContext]):
         )
 
     def _invocation_is_live(
-        self, state: StateNode, invocation: InvokeDefinition
+        self, state: StateNode[Any], invocation: InvokeDefinition
     ) -> bool:
         """Engine-specific: is a service/actor currently running for this?"""
         raise NotImplementedError  # pragma: no cover
@@ -2635,7 +2647,7 @@ class BaseInterpreter(Generic[TContext]):
                 plugin.on_invocation_stranded(self, state_id, invoke_id, error)
 
     def _completion_is_for_live_invocation(
-        self, state: StateNode, invocation: InvokeDefinition, event: Any
+        self, state: StateNode[Any], invocation: InvokeDefinition, event: Any
     ) -> bool:
         """#195: may *event* drive this invocation's `onDone` / `onError`?
 
@@ -2962,7 +2974,7 @@ class BaseInterpreter(Generic[TContext]):
         )
 
     def _cancel_state_tasks(
-        self, state: StateNode
+        self, state: StateNode[Any]
     ) -> Union[None, Awaitable[None]]:
         """Cancels all background tasks associated with a given state.
 
@@ -3302,7 +3314,8 @@ class BaseInterpreter(Generic[TContext]):
             event_or_type, "payload"
         ):
             # Trust and forward as-is to preserve any subclass information.
-            return event_or_type  # type: ignore[return-value]
+            # 📝 foreign duck-typed event, forwarded as-is on purpose.
+            return cast(AnyEvent, event_or_type)
 
         # 5️⃣ Anything else is an unsupported format.
         raise InvalidEventError(
@@ -3316,7 +3329,7 @@ class BaseInterpreter(Generic[TContext]):
 
     def _resolve_target_state_node(
         self, transition: TransitionDefinition
-    ) -> Optional[StateNode]:
+    ) -> Optional[StateNode[Any]]:
         """Resolves a transition's target string to a concrete StateNode."""
         root = self.machine
         parent = transition.source.parent
@@ -3331,7 +3344,7 @@ class BaseInterpreter(Generic[TContext]):
             transition.source.id,
         )
 
-        target_state: Optional[StateNode] = None
+        target_state: Optional[StateNode[Any]] = None
 
         # Standard resolution attempts
         resolution_attempts = [
@@ -3995,7 +4008,8 @@ class BaseInterpreter(Generic[TContext]):
         #    child running and registered even after the whole transition was
         #    undone -- orphaned from any active state and reachable only
         #    until the parent itself eventually stopped.
-        actor_ids_before = set(self._actors.keys())
+        # ⚡ Most machines spawn nothing; share one empty set then.
+        actor_ids_before = set(self._actors) if self._actors else _NO_IDS
         domain, path_to_enter = self._transition_geometry(
             transition, target_state
         )
@@ -4024,7 +4038,7 @@ class BaseInterpreter(Generic[TContext]):
         # 🕰️ A history pseudo-state is never entered itself. Replace it with
         #    the remembered configuration (or the default), computed *before*
         #    exiting so the recorded history is the pre-transition one.
-        history_targets: List[StateNode] = []
+        history_targets: List[StateNode[Any]] = []
         if target_state.type == "history":
             history_targets = self._resolve_history_target(target_state)
             # Enter down to the history node's parent, then the remembered
@@ -4059,16 +4073,23 @@ class BaseInterpreter(Generic[TContext]):
         self._lifecycle_failures.append((transition, []))
         try:
             await self._exit_states(
-                sorted(
-                    list(states_to_exit),
-                    # 🔀 Depth alone leaves ties between sibling parallel
-                    #    regions, so set iteration order decided which exited
-                    #    first — the same machine and event could emit exit
-                    #    actions in a different order between runs, which is
-                    #    untestable and makes cleanup logic subtly unreliable.
-                    #    `id` is a stable secondary key.
-                    key=lambda s: (s.depth, s.id),
-                    reverse=True,
+                # ⚡ A single state to exit (every flat transition and most
+                #    nested ones) needs no sort.
+                #
+                # 🔀 Depth alone leaves ties between sibling parallel
+                #    regions, so set iteration order decided which exited
+                #    first -- the same machine and event could emit exit
+                #    actions in a different order between runs, which is
+                #    untestable and makes cleanup logic subtly unreliable.
+                #    `id` is a stable secondary key.
+                (
+                    list(states_to_exit)
+                    if len(states_to_exit) <= 1
+                    else sorted(
+                        states_to_exit,
+                        key=lambda s: (s.depth, s.id),
+                        reverse=True,
+                    )
                 ),
                 event,
             )
@@ -4094,7 +4115,7 @@ class BaseInterpreter(Generic[TContext]):
             #    a configuration SCXML forbids and that breaks the
             #    one-state-per-region invariant the whole library rests on.
             if target_state.type == "history":
-                combined_path: List[StateNode] = []
+                combined_path: List[StateNode[Any]] = []
                 for node in history_targets:
                     for step in self._get_path_to_state(node, stop_at=domain):
                         if step not in combined_path:
@@ -4146,7 +4167,7 @@ class BaseInterpreter(Generic[TContext]):
             #    `self._actors`/the system registry even though the
             #    transition that spawned it was fully undone -- an orphaned,
             #    leaked actor unreachable from any active state.
-            spawned_ids = set(self._actors.keys()) - actor_ids_before
+            spawned_ids = set(self._actors) - actor_ids_before
             if spawned_ids:
                 registry = self._system_registry()
                 for actor_id in spawned_ids:
@@ -4661,7 +4682,7 @@ class BaseInterpreter(Generic[TContext]):
 
     async def _enter_states(
         self,
-        states_to_enter: List[StateNode],
+        states_to_enter: List[StateNode[Any]],
         event: Optional[AnyEvent] = None,
     ) -> None:
         """Enters a list of states in order, running actions and tasks.
@@ -4765,7 +4786,7 @@ class BaseInterpreter(Generic[TContext]):
                 if regions:
                     await self._enter_states(regions, trigger_event)
 
-    def _record_history(self, states_to_exit: List[StateNode]) -> None:
+    def _record_history(self, states_to_exit: List[StateNode[Any]]) -> None:
         """Remembers the active configuration of states being exited.
 
         Called immediately before exit actions run. For every state that owns
@@ -4790,9 +4811,9 @@ class BaseInterpreter(Generic[TContext]):
         #    and it is the history-owning ancestor whose configuration must be
         #    remembered. Walking up from each exiting node covers both the
         #    "parent is exiting too" and "only descendants are exiting" cases.
-        candidates: Set[StateNode] = set()
+        candidates: Set[StateNode[Any]] = set()
         for node in exiting:
-            current: Optional[StateNode] = node
+            current: Optional[StateNode[Any]] = node
             while current is not None:
                 candidates.add(current)
                 current = current.parent
@@ -4817,8 +4838,8 @@ class BaseInterpreter(Generic[TContext]):
                 )
 
     def _resolve_history_target(
-        self, history_node: StateNode
-    ) -> List[StateNode]:
+        self, history_node: StateNode[Any]
+    ) -> List[StateNode[Any]]:
         """Expands a history pseudo-state into the states to actually enter.
 
         Args:
@@ -4865,8 +4886,8 @@ class BaseInterpreter(Generic[TContext]):
         return shallow or remembered
 
     def _resolve_state_by_target(
-        self, target: str, reference: StateNode
-    ) -> Optional[StateNode]:
+        self, target: str, reference: StateNode[Any]
+    ) -> Optional[StateNode[Any]]:
         """Resolves a target string relative to a reference node.
 
         Args:
@@ -4887,7 +4908,9 @@ class BaseInterpreter(Generic[TContext]):
             return None
 
     async def _exit_states(
-        self, states_to_exit: List[StateNode], event: Optional[AnyEvent] = None
+        self,
+        states_to_exit: List[StateNode[Any]],
+        event: Optional[AnyEvent] = None,
     ) -> None:
         """Exits a list of states in order, canceling tasks and running actions.
 
@@ -4937,7 +4960,7 @@ class BaseInterpreter(Generic[TContext]):
     # 🔎 State Evaluation & Pathfinding Helpers
     # -------------------------------------------------------------------------
 
-    def _is_state_done(self, state_node: StateNode) -> bool:
+    def _is_state_done(self, state_node: StateNode[Any]) -> bool:
         """Recursively determines if a compound or parallel state is "done".
 
         This is a key part of the SCXML algorithm for `onDone` transitions.
@@ -4997,7 +5020,9 @@ class BaseInterpreter(Generic[TContext]):
         # For atomic, non-final states.
         return False
 
-    async def _check_and_fire_on_done(self, final_state: StateNode) -> None:
+    async def _check_and_fire_on_done(
+        self, final_state: StateNode[Any]
+    ) -> None:
         """Bubbles up from a final state to fire parent `onDone` transitions.
 
         When a state machine enters a `final` state, this method is called to
@@ -5059,7 +5084,7 @@ class BaseInterpreter(Generic[TContext]):
                 return None
         return output
 
-    def _resolve_output(self, final_state: StateNode) -> Any:
+    def _resolve_output(self, final_state: StateNode[Any]) -> Any:
         """Computes the done data contributed by a final state.
 
         `output` may be a literal or a callable of ``{context, event}``,
@@ -5498,7 +5523,7 @@ class BaseInterpreter(Generic[TContext]):
 
     @staticmethod
     def _matching_descriptors(
-        node: StateNode, event_type: str, *, system: bool = False
+        node: StateNode[Any], event_type: str, *, system: bool = False
     ) -> List[str]:
         """Finds the `on` keys that match an event type, most specific first.
 
@@ -5541,7 +5566,7 @@ class BaseInterpreter(Generic[TContext]):
 
     def _collect_eligible_transitions(
         self,
-        state: StateNode,
+        state: StateNode[Any],
         event: AnyEvent,
         guard_cache: Optional[Dict[int, bool]] = None,
     ) -> List[TransitionDefinition]:
@@ -5589,17 +5614,37 @@ class BaseInterpreter(Generic[TContext]):
 
         # 🧭 Determine which transition flavours are in play for this event.
         is_explicit_transient_event = event.type == ""
+        # ⚡ Hot path: the event's kind does not change while walking the
+        #    ancestor chain; decide it once per call, not once per level.
+        event_type = event.type
+        system = is_system_event(event)
+        is_after = system and isinstance(event, AfterEvent)
 
-        current: Optional[StateNode] = state
+        current: Optional[StateNode[Any]] = state
         while current:
             # 📨 Standard `on` event transitions, including wildcard and
             #    partial descriptors, most specific first.
             if not is_explicit_transient_event:
                 blocked = False
-                for key in self._matching_descriptors(
-                    current, event.type, system=is_system_event(event)
-                ):
-                    for t in current.on[key]:
+                on_map = current.on
+                # ⚡ Inline the exact-key case (no partial descriptors, no
+                #    wildcard -- the overwhelming majority of nodes) so a
+                #    flat machine skips a method call and a list allocation
+                #    per ancestor level. `_matching_descriptors` stays the
+                #    authority for every other shape.
+                keys: Sequence[str]
+                if not current._on_partials and not current._on_has_wildcard:
+                    keys = (
+                        (event_type,)
+                        if event_type and event_type in on_map
+                        else ()
+                    )
+                else:
+                    keys = self._matching_descriptors(
+                        current, event_type, system=system
+                    )
+                for key in keys:
+                    for t in on_map[key]:
                         # 🚫 A forbidden transition consumes the event here so
                         #    no ancestor handler can see it.
                         if t.forbidden:
@@ -5648,7 +5693,7 @@ class BaseInterpreter(Generic[TContext]):
                         eligible.append(t)
 
             # 🏁 `onDone` transitions for compound/parallel states.
-            if current.on_done and current.on_done.event == event.type:
+            if current.on_done and current.on_done.event == event_type:
                 if _passes(current.on_done):
                     eligible.append(current.on_done)
 
@@ -5659,16 +5704,16 @@ class BaseInterpreter(Generic[TContext]):
             #    traffic and must not fire a timer whose deadline has not
             #    elapsed; only the engine's own `_fire` (which mints via
             #    `_engine_after`) may drive an `after` transition.
-            if isinstance(event, AfterEvent) and is_system_event(event):
+            if is_after and current.after:
                 for transitions in current.after.values():
                     for t in transitions:
-                        if t.event == event.type and _passes(t):
+                        if t.event == event_type and _passes(t):
                             eligible.append(t)
 
             # 🤖 `onDone`/`onError` for invoked services. `ErrorEvent`
             #    (#80) is a distinct type so consumers can branch on it,
             #    but it routes through `inv.on_error` the same way.
-            if isinstance(event, (DoneEvent, ErrorEvent)):
+            if isinstance(event, (DoneEvent, ErrorEvent)) and current.invoke:
                 for inv in current.invoke:
                     if event.src != inv.id:
                         continue
@@ -5729,15 +5774,24 @@ class BaseInterpreter(Generic[TContext]):
         """
         # 🍃 Only atomic/final leaves seed selection; ancestors are reached by
         #    the upward walk inside `_collect_eligible_transitions`.
+        active = self._active_state_nodes
+        # ⚡ Hot path (#307 benchmark): a non-parallel machine has exactly
+        #    ONE active leaf. Skip the leaf filter, both sorts and the
+        #    de-dup set. `_collect_eligible_transitions` walks UP from the
+        #    leaf, so its list is already deepest-source first and the
+        #    winner is its first entry -- the same element `max` by depth
+        #    returns (`max` keeps the first of equal keys).
+        if len(active) == 1:
+            (leaf,) = active
+            return self._collect_eligible_transitions(leaf, event, {})[:1]
+
         leaves = [
-            s
-            for s in self._active_state_nodes
-            if s.is_atomic or s.is_final or not s.states
+            s for s in active if s.is_atomic or s.is_final or not s.states
         ]
         # 🛟 Fallback: if the configuration has no leaf (defensive), consider
         #    every active node so behaviour degrades gracefully.
         if not leaves:
-            leaves = list(self._active_state_nodes)
+            leaves = list(active)
 
         selected: List[TransitionDefinition] = []
         seen: Set[int] = set()
@@ -5746,7 +5800,6 @@ class BaseInterpreter(Generic[TContext]):
         guard_cache: Dict[int, bool] = {}
 
         # 🔽 Deterministic ordering: deepest leaves first, then by id.
-        #    ⚡ A non-parallel machine has exactly one leaf; skip the sort.
         if len(leaves) > 1:
             leaves.sort(key=lambda s: (-s.depth, s.id))
         for leaf in leaves:
@@ -5756,8 +5809,9 @@ class BaseInterpreter(Generic[TContext]):
             if not eligible:
                 continue
 
-            # 🏆 This leaf's winner is the transition on its deepest ancestor.
-            winner = max(eligible, key=lambda t: t.source.depth)
+            # 🏆 This leaf's winner is the transition on its deepest ancestor:
+            #    the first entry of the upward walk (see the fast path above).
+            winner = eligible[0]
 
             # 🧹 De-duplicate by identity so an ancestor transition shared by
             #    several regions fires exactly once.
@@ -5766,12 +5820,13 @@ class BaseInterpreter(Generic[TContext]):
                 selected.append(winner)
 
         # 🔽 Execute deepest-source-first for predictable action ordering.
-        selected.sort(key=lambda t: -t.source.depth)
+        if len(selected) > 1:
+            selected.sort(key=lambda t: -t.source.depth)
         return selected
 
     def _compute_states_to_exit(
-        self, domain: Optional[StateNode], target_state: StateNode
-    ) -> Set[StateNode]:
+        self, domain: Optional[StateNode[Any]], target_state: StateNode[Any]
+    ) -> Set[StateNode[Any]]:
         """Determines which active states an external transition must exit.
 
         Normally every active descendant of the transition domain is exited.
@@ -5805,7 +5860,7 @@ class BaseInterpreter(Generic[TContext]):
         # 🌐 Scope to one region when the domain is a parallel state, so
         #    orthogonal siblings are left untouched.
         if domain is not None and domain.type == "parallel":
-            branch: Optional[StateNode] = target_state
+            branch: Optional[StateNode[Any]] = target_state
             while branch is not None and branch.parent is not domain:
                 branch = branch.parent
             if branch is not None:
@@ -5818,8 +5873,8 @@ class BaseInterpreter(Generic[TContext]):
         return candidates
 
     def _transition_geometry(
-        self, transition: TransitionDefinition, target_state: StateNode
-    ) -> Tuple[Optional[StateNode], List[StateNode]]:
+        self, transition: TransitionDefinition, target_state: StateNode[Any]
+    ) -> Tuple[Optional[StateNode[Any]], List[StateNode[Any]]]:
         """The static part of a transition's execution plan, memoised.
 
         ⚡ Returns ``(domain, path_to_enter)``. Both depend only on the
@@ -5848,8 +5903,8 @@ class BaseInterpreter(Generic[TContext]):
         return domain, path
 
     def _find_transition_domain(
-        self, transition: TransitionDefinition, target_state: StateNode
-    ) -> Optional[StateNode]:
+        self, transition: TransitionDefinition, target_state: StateNode[Any]
+    ) -> Optional[StateNode[Any]]:
         """Calculates the transition domain (LCCA) for an external transition.
 
         The "domain" is the least common compound ancestor (LCCA) of the source
@@ -5905,8 +5960,8 @@ class BaseInterpreter(Generic[TContext]):
 
     @staticmethod
     def _get_path_to_state(
-        to_state: StateNode, *, stop_at: Optional[StateNode] = None
-    ) -> List[StateNode]:
+        to_state: StateNode[Any], *, stop_at: Optional[StateNode[Any]] = None
+    ) -> List[StateNode[Any]]:
         """Builds the ordered list of states to enter to reach a target.
 
         This method traces the ancestry from the target state (`to_state`) up
@@ -5923,8 +5978,8 @@ class BaseInterpreter(Generic[TContext]):
             List[StateNode]: A list of states to be entered, from outermost
             to innermost.
         """
-        path: List[StateNode] = []
-        current: Optional[StateNode] = to_state
+        path: List[StateNode[Any]] = []
+        current: Optional[StateNode[Any]] = to_state
         while current and current is not stop_at:
             path.append(current)
             current = current.parent
@@ -5933,7 +5988,7 @@ class BaseInterpreter(Generic[TContext]):
         return path
 
     @staticmethod
-    def _get_ancestors(node: StateNode) -> Set[StateNode]:
+    def _get_ancestors(node: StateNode[Any]) -> Set[StateNode[Any]]:
         """Gets the set of all ancestors of a node, including the node itself.
 
         Args:
@@ -5942,15 +5997,17 @@ class BaseInterpreter(Generic[TContext]):
         Returns:
             Set[StateNode]: A set containing the node and all of its parents.
         """
-        ancestors: Set[StateNode] = set()
-        current: Optional[StateNode] = node
+        ancestors: Set[StateNode[Any]] = set()
+        current: Optional[StateNode[Any]] = node
         while current:
             ancestors.add(current)
             current = current.parent
         return ancestors
 
     @staticmethod
-    def _is_descendant(node: StateNode, ancestor: Optional[StateNode]) -> bool:
+    def _is_descendant(
+        node: StateNode[Any], ancestor: Optional[StateNode[Any]]
+    ) -> bool:
         """Checks if a node is a descendant of a specified ancestor.
 
         A node is considered a descendant of another if its ID starts with the
@@ -5975,7 +6032,7 @@ class BaseInterpreter(Generic[TContext]):
     # 🛡️ Task & Guard Management
     # -------------------------------------------------------------------------
 
-    def _schedule_state_tasks(self, state: StateNode) -> None:
+    def _schedule_state_tasks(self, state: StateNode[Any]) -> None:
         """Schedules `after` and `invoke` tasks for a state upon its entry.
 
         This method dispatches to the abstract `_after_timer` and
@@ -6011,7 +6068,7 @@ class BaseInterpreter(Generic[TContext]):
             if state in active and state.invoke:
                 self._schedule_state_invokes(state)
 
-    def _schedule_state_timers(self, state: StateNode) -> None:
+    def _schedule_state_timers(self, state: StateNode[Any]) -> None:
         """Arm every ``after`` timer *state* declares (#128 split).
 
         Separate from invoke scheduling so a restore can re-arm timers
@@ -6021,7 +6078,7 @@ class BaseInterpreter(Generic[TContext]):
 
     def _schedule_state_timers_with(
         self,
-        state: StateNode,
+        state: StateNode[Any],
         remaining: Optional[Dict[str, float]],
     ) -> None:
         """Arm *state*'s timers; *remaining* (event type → ms left) overrides
@@ -6100,7 +6157,7 @@ class BaseInterpreter(Generic[TContext]):
                     state.id,
                 )
 
-    def _schedule_state_invokes(self, state: StateNode) -> None:
+    def _schedule_state_invokes(self, state: StateNode[Any]) -> None:
         """Start every ``invoke`` *state* declares (#128 split)."""
         # 📞 Schedule `invoke` services.
         for invocation in state.invoke:

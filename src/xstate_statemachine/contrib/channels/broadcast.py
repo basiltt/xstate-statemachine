@@ -74,7 +74,10 @@ def group_names_for(instance: Any) -> List[str]:
     return names
 
 
-def transition_message(instance: Any, event: Any) -> dict:
+def transition_message(instance: Any, event: Any) -> Dict[str, Any]:
+    """Build the ``xsm.transition`` group message with the event type and
+    current version.
+    """
     vcol = f"{instance.statechart_field_obj().name}_version"
     return {
         "type": "xsm.transition",
@@ -83,7 +86,9 @@ def transition_message(instance: Any, event: Any) -> dict:
     }
 
 
-def _on_commit(sender: Any, instance: Any, event: Any, receipt: Any, **kw):
+def _on_commit(
+    sender: Any, instance: Any, event: Any, receipt: Any, **kw: Any
+) -> None:
     if not getattr(receipt, "changed", False):
         return
     layer = get_channel_layer()
@@ -94,7 +99,7 @@ def _on_commit(sender: Any, instance: Any, event: Any, receipt: Any, **kw):
         _push(layer, group, message, event)
 
 
-def _push(layer: Any, group: str, message: dict, event: Any) -> None:
+def _push(layer: Any, group: str, message: Dict[str, Any], event: Any) -> None:
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:

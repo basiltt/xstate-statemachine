@@ -3,8 +3,6 @@ title: "Observability integration"
 description: "OpenTelemetry spans, Prometheus metrics, structlog / loguru context and Sentry breadcrumbs for every machine -- one line with instrument_all(), telemetry-hygienic by default."
 ---
 
-# Observability
-
 This library contains failures by design: a raising action is logged and the transition still completes, a raising guard is `False`, an unhandled event is dropped. A long-lived machine should not die because one side effect had a bad day — which also means those failures are **invisible unless you look**. The `[observability]` extra is how you look: every plugin is a thin mapping over the existing hooks, attached to one interpreter with `.use()` or to every interpreter in the process with a single `instrument_all()` call at startup.
 
 ## Install

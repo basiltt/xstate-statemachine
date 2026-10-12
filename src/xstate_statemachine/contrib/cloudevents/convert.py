@@ -18,9 +18,13 @@ from ...eda.envelope import (
 from ...persistence.store import DEFAULT_MAX_SNAPSHOT_BYTES
 
 try:  # cloudevents 2.x keeps the 1.x API under `v1`
-    from cloudevents.v1 import http as _ce_http  # type: ignore
+    from cloudevents.v1 import http as _ce_http
 except ImportError:  # pragma: no cover - cloudevents 1.x
-    from cloudevents import http as _ce_http  # type: ignore
+    # 📝 Whichever major is installed decides which branch the checker can
+    #    see; the other is a no-redef / attr-defined to it.
+    from cloudevents import (  # type: ignore[attr-defined,no-redef,unused-ignore]
+        http as _ce_http,
+    )
 
 __all__ = [
     "from_cloudevent",

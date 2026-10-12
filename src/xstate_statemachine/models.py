@@ -73,7 +73,7 @@ logger = logging.getLogger(__name__)
 # machine's context and events, leading to more robust and self-documenting code.
 # -----------------------------------------------------------------------------
 
-from ._typing import TContext  # noqa: E402
+from ._typing import TContext as TContext  # noqa: E402
 
 # Define a specific type for state types for clarity and reuse.
 StateType = Literal["atomic", "compound", "parallel", "final", "history"]
@@ -491,7 +491,7 @@ class TransitionDefinition:
         self,
         event: str,
         config: Dict[str, Any],
-        source: "StateNode",
+        source: "StateNode[Any]",
         actions: Optional[List[ActionDefinition]] = None,
     ):
         """Initializes the TransitionDefinition.
@@ -510,7 +510,7 @@ class TransitionDefinition:
                 config,
             )
         self.event: str = event
-        self.source: "StateNode" = source
+        self.source: "StateNode[Any]" = source
         target = config.get("target")
         if target is not None and not isinstance(target, str):
             # 🛡️ #266 battle: a list / number target escaped as a bare
@@ -532,7 +532,7 @@ class TransitionDefinition:
         #: unresolvable target kept alive by `strict_targets=False`), and the
         #: runtime falls back to resolving live. The resolver stays the single
         #: authority: this only memoises its result.
-        self.resolved_target: Optional["StateNode"] = None
+        self.resolved_target: Optional["StateNode[Any]"] = None
         #: ⚡ Perf: static transition GEOMETRY, memoised on first execution
         #: by `BaseInterpreter._transition_geometry`. For a given resolved
         #: target the domain (LCCA) and the entry path from the domain down
@@ -541,9 +541,9 @@ class TransitionDefinition:
         #: target's identity so a live-resolved (`strict_targets=False`)
         #: transition that resolves differently is not served a stale answer.
         #: The EXIT set stays dynamic -- it depends on the live configuration.
-        self._geometry: Optional[Tuple[int, Any, Tuple["StateNode", ...]]] = (
-            None
-        )
+        self._geometry: Optional[
+            Tuple[int, Any, Tuple["StateNode[Any]", ...]]
+        ] = None
 
         # 🛡️ Guard resolution.
         #
@@ -676,7 +676,7 @@ class InvokeDefinition:
         self,
         invoke_id: str,
         config: Dict[str, Any],
-        source: "StateNode",
+        source: "StateNode[Any]",
         on_done: List[TransitionDefinition],
         on_error: List[TransitionDefinition],
     ):
@@ -725,7 +725,7 @@ class InvokeDefinition:
         #: it by this name from anywhere in the tree. Was silently dropped
         #: at parse time before 0.8.0.
         self.system_id: Optional[str] = config.get("systemId")
-        self.source: "StateNode" = source
+        self.source: "StateNode[Any]" = source
         self.on_done: List[TransitionDefinition] = on_done
         self.on_error: List[TransitionDefinition] = on_error
 
@@ -867,8 +867,8 @@ class StateNode(Generic[TContext]):
     # resolving the "Unresolved attribute reference" warnings in IDEs.
     id: str
     key: str
-    parent: Optional["StateNode"]
-    machine: "MachineNode"
+    parent: Optional["StateNode[Any]"]
+    machine: "MachineNode[Any]"
     type: StateType
     initial: Optional[str]
     on: Dict[str, List[TransitionDefinition]]
@@ -880,14 +880,14 @@ class StateNode(Generic[TContext]):
     entry: List[ActionDefinition]
     exit: List[ActionDefinition]
     invoke: List[InvokeDefinition]
-    states: Dict[str, "StateNode"]
+    states: Dict[str, "StateNode[Any]"]
 
     def __init__(
         self,
-        machine: "MachineNode",
+        machine: "MachineNode[Any]",
         config: Dict[str, Any],
         key: str,
-        parent: Optional["StateNode"] = None,
+        parent: Optional["StateNode[Any]"] = None,
     ):
         """Initializes a StateNode and its subtree from a configuration.
 
@@ -998,38 +998,42 @@ class StateNode(Generic[TContext]):
         #    so `tags` (UI-state modelling) and `meta` (arbitrary annotation)
         #    were silently unavailable to users who had declared them.
         if raw_tags is None:
-            raw_tags = []
-        if isinstance(raw_tags, str):
-            raw_tags = [raw_tags]
-        # ⚠️ Validate rather than let `set()` decide. A bare `set(raw_tags)`
-        #    turned `tags: 123` into an opaque "'int' object is not iterable"
-        #    with no hint as to WHICH state was malformed, and silently
-        #    accepted `tags: {"a": 1}` as the tag set {"a"} by iterating the
-        #    mapping's keys — a config typo that produced working-looking
-        #    nonsense.
-        if isinstance(raw_tags, (dict, bytes)) or not isinstance(
-            raw_tags, (list, tuple, set, frozenset)
-        ):
-            raise InvalidConfigError(
-                f"State '{self.id}' has an invalid 'tags' value of type "
-                f"'{type(raw_tags).__name__}'. Expected a string or a list "
-                f"of strings."
-            )
-        non_strings = [tag for tag in raw_tags if not isinstance(tag, str)]
-        if non_strings:
-            raise InvalidConfigError(
-                f"State '{self.id}' has non-string tag(s): {non_strings!r}. "
-                f"Every tag must be a string."
-            )
-        self.tags: Set[str] = set(raw_tags)
+            # ⚡ The overwhelmingly common case: no tags declared.
+            self.tags: Set[str] = set()
+        else:
+            if isinstance(raw_tags, str):
+                raw_tags = [raw_tags]
+            # ⚠️ Validate rather than let `set()` decide. A bare
+            #    `set(raw_tags)` turned `tags: 123` into an opaque "'int'
+            #    object is not iterable" with no hint as to WHICH state was
+            #    malformed, and silently accepted `tags: {"a": 1}` as the
+            #    tag set {"a"} by iterating the mapping's keys — a config
+            #    typo that produced working-looking nonsense.
+            if isinstance(raw_tags, (dict, bytes)) or not isinstance(
+                raw_tags, (list, tuple, set, frozenset)
+            ):
+                raise InvalidConfigError(
+                    f"State '{self.id}' has an invalid 'tags' value of type "
+                    f"'{type(raw_tags).__name__}'. Expected a string or a "
+                    f"list of strings."
+                )
+            non_strings = [tag for tag in raw_tags if not isinstance(tag, str)]
+            if non_strings:
+                raise InvalidConfigError(
+                    f"State '{self.id}' has non-string tag(s): "
+                    f"{non_strings!r}. Every tag must be a string."
+                )
+            self.tags = set(raw_tags)
 
-        raw_meta = raw_meta or {}
-        if not isinstance(raw_meta, dict):
-            raise InvalidConfigError(
-                f"State '{self.id}' has an invalid 'meta' value of type "
-                f"'{type(raw_meta).__name__}'. Expected an object/dict."
-            )
-        self.meta: Dict[str, Any] = raw_meta
+        if raw_meta is None:
+            self.meta: Dict[str, Any] = {}
+        else:
+            if not isinstance(raw_meta, dict):
+                raise InvalidConfigError(
+                    f"State '{self.id}' has an invalid 'meta' value of type "
+                    f"'{type(raw_meta).__name__}'. Expected an object/dict."
+                )
+            self.meta = raw_meta
         self.description: Optional[str] = cfg_get("description")
 
         # 🏁 Final states may declare `output` (a.k.a. "done data"), which is
@@ -1159,21 +1163,24 @@ class StateNode(Generic[TContext]):
         has_history = self.type == "history"
         has_always = "" in self.on
         self.states = {}
+        # ⚡ One thread-local lookup per node, not three per child.
+        descent: Set[int] = _config_stack._set()
         for state_key, state_config in raw_states.items():
-            if id(state_config) in _config_stack:
+            cfg_id = id(state_config)
+            if cfg_id in descent:
                 raise InvalidConfigError(
                     f"State '{self.id}.{state_key}' is defined by a config "
                     f"dict that is already one of its own ancestors (an "
                     f"aliased cycle). Each state must have its own config "
                     f"object; copy the template instead of reusing it."
                 )
-            _config_stack.add(id(state_config))
+            descent.add(cfg_id)
             try:
                 child = self.states[state_key] = StateNode(
                     machine, state_config, state_key, self
                 )
             finally:
-                _config_stack.discard(id(state_config))
+                descent.discard(cfg_id)
             has_actions = has_actions or child.subtree_has_actions
             has_history = has_history or child._subtree_has_history
             has_always = has_always or child._subtree_has_always
@@ -1263,7 +1270,8 @@ class StateNode(Generic[TContext]):
         ]
 
         if len(candidates) == 1:
-            inferred = candidates[0]
+            # 📝 keys of the user's `states` mapping are state names (str).
+            inferred = cast(str, candidates[0])
             logger.debug(
                 "🧭 Compound state '%s' has no 'initial'; inferring its only "
                 "child '%s'.",
@@ -1500,18 +1508,18 @@ class StateNode(Generic[TContext]):
         # Tree Traversal Helpers
         # -------------------------------------------------------------------------
 
-    def _get_ancestors(self) -> Set["StateNode"]:
+    def _get_ancestors(self) -> Set["StateNode[Any]"]:
         """Gets a set of all ancestors of a node, including the node itself."""
-        ancestors: Set["StateNode"] = set()
+        ancestors: Set["StateNode[Any]"] = set()
         # FIX: Changed 'node' back to 'self' to act as an instance method.
-        current: Optional[StateNode] = self
+        current: Optional[StateNode[Any]] = self
         while current:
             ancestors.add(current)
             current = current.parent
         return ancestors
 
     def _is_descendant(  # noqa
-        self, node: "StateNode", ancestor: Optional["StateNode"]
+        self, node: "StateNode[Any]", ancestor: Optional["StateNode[Any]"]
     ) -> bool:
         """Checks if a node is a descendant of a specified ancestor."""
         # The 'self' parameter is unused here, but the method is part of the
@@ -1522,13 +1530,13 @@ class StateNode(Generic[TContext]):
 
     def _get_path_to_state(  # noqa
         self,
-        to_state: "StateNode",
+        to_state: "StateNode[Any]",
         *,
-        stop_at: Optional["StateNode"] = None,
-    ) -> List["StateNode"]:
+        stop_at: Optional["StateNode[Any]"] = None,
+    ) -> List["StateNode[Any]"]:
         """Builds the list of states to enter to reach a target state."""
-        path: List[StateNode] = []
-        current: Optional[StateNode] = to_state
+        path: List[StateNode[Any]] = []
+        current: Optional[StateNode[Any]] = to_state
         while current and current is not stop_at:
             path.append(current)
             current = current.parent
@@ -1555,7 +1563,7 @@ class StateNode(Generic[TContext]):
 
 
 def _root_number(
-    config: Dict[str, Any], key: str, default: Any, kind: Callable
+    config: Dict[str, Any], key: str, default: Any, kind: Callable[..., Any]
 ) -> Any:
     """Coerce a numeric root policy, naming the key on failure.
 
@@ -1737,7 +1745,7 @@ class MachineNode(StateNode[TContext]):
         #: Custom `id` → node registry, populated by `StateNode.__init__` as
         #: the tree is built. Must exist BEFORE `super().__init__` recurses
         #: into the children that register themselves here.
-        self._custom_ids: Dict[str, StateNode] = {}
+        self._custom_ids: Dict[str, StateNode[Any]] = {}
 
         # 🚀 Call the parent constructor to build the entire state tree.
         super().__init__(self, config, config["id"])
@@ -1770,7 +1778,7 @@ class MachineNode(StateNode[TContext]):
         )
         # (subtree_has_actions is set per node during the parse.)
 
-    def _mark_subtree_actions(node: "StateNode") -> bool:
+    def _mark_subtree_actions(node: "StateNode[Any]") -> bool:
         """Post-order walk setting `StateNode.subtree_has_actions` (#27).
 
         True when *node* or any descendant declares `entry` / `exit`
@@ -1800,7 +1808,7 @@ class MachineNode(StateNode[TContext]):
         return self._context_is_immutable
 
     @staticmethod
-    def _tree_declares_actions(root: "StateNode") -> bool:
+    def _tree_declares_actions(root: "StateNode[Any]") -> bool:
         """True if any state in the tree declares an action anywhere.
 
         Walks entry/exit, every `on` / `after` / `onDone` transition and
@@ -1824,7 +1832,7 @@ class MachineNode(StateNode[TContext]):
             stack.extend(node.states.values())
         return False
 
-    def _scan_tree_features(root: "StateNode") -> Tuple[bool, bool]:
+    def _scan_tree_features(root: "StateNode[Any]") -> Tuple[bool, bool]:
         """One walk: (any history child anywhere, any `always` anywhere)."""
         history = False
         always = "" in root.on
@@ -1955,7 +1963,7 @@ class MachineNode(StateNode[TContext]):
     def state_ids_by_bare_name(self, bare: str) -> List[str]:
         """Every state id in the machine whose last segment is *bare* (#132)."""
         out: List[str] = []
-        stack: List[StateNode] = [self]
+        stack: List[StateNode[Any]] = [self]
         while stack:
             node = stack.pop()
             if node is not self and node.key == bare:
@@ -1963,7 +1971,7 @@ class MachineNode(StateNode[TContext]):
             stack.extend(node.states.values())
         return out
 
-    def get_state_by_id(self, state_id: str) -> Optional[StateNode]:
+    def get_state_by_id(self, state_id: str) -> Optional[StateNode[Any]]:
         """Finds a state node by its fully qualified ID.
 
         This method traverses the state tree to find a specific node.
@@ -1989,7 +1997,7 @@ class MachineNode(StateNode[TContext]):
             return None
 
         # 🌳 Traverse the tree segment by segment.
-        node: StateNode = self
+        node: StateNode[Any] = self
         for key in path_segments[1:]:
             if key not in node.states:
                 logger.warning(
@@ -2032,7 +2040,7 @@ class MachineNode(StateNode[TContext]):
         if not from_node:
             return None
 
-        current: Optional[StateNode] = from_node
+        current: Optional[StateNode[Any]] = from_node
         while current:
             if event.type in current.on:
                 for transition in current.on[event.type]:
@@ -2066,7 +2074,13 @@ class MachineNode(StateNode[TContext]):
         """
         content = ["@startuml", "hide empty description"]
 
-        def build_puml_states(node: StateNode, level: int):
+        def build_puml_states(node: StateNode[Any], level: int) -> None:
+            """Emit PlantUML state declarations for *node* and its descendants.
+
+            Args:
+                node: The state to render.
+                level: Nesting depth used for indentation.
+            """
             indent = "  " * level
             safe_id = node.id.replace(".", "_")
             if node.states:
@@ -2084,7 +2098,14 @@ class MachineNode(StateNode[TContext]):
 
         build_puml_states(self, 0)
 
-        def build_puml_transitions(node: StateNode):
+        def build_puml_transitions(node: StateNode[Any]) -> None:
+            """Emit PlantUML transition lines for *node* and its descendants.
+
+            Transitions whose target cannot be resolved are skipped.
+
+            Args:
+                node: The state whose ``on`` and ``onDone`` edges are rendered.
+            """
             source_id = node.id.replace(".", "_")
             for event, transitions in node.on.items():
                 for t in transitions:
@@ -2130,7 +2151,13 @@ class MachineNode(StateNode[TContext]):
         """
         content = ["stateDiagram-v2"]
 
-        def build_mmd_states(node: StateNode, level: int):
+        def build_mmd_states(node: StateNode[Any], level: int) -> None:
+            """Emit Mermaid composite-state blocks for *node* and children.
+
+            Args:
+                node: The state to render.
+                level: Nesting depth used for indentation.
+            """
             indent = "    " * level
             if node.states:
                 content.append(f'{indent}state "{node.key}" as {node.key} {{')
@@ -2141,7 +2168,14 @@ class MachineNode(StateNode[TContext]):
                     build_mmd_states(child, level + 1)
                 content.append(f"{indent}}}")
 
-        def build_mmd_transitions(node: StateNode):
+        def build_mmd_transitions(node: StateNode[Any]) -> None:
+            """Emit Mermaid transition lines for *node* and its descendants.
+
+            Transitions whose target cannot be resolved are skipped.
+
+            Args:
+                node: The state whose ``on`` and ``onDone`` edges are rendered.
+            """
             for event, transitions in node.on.items():
                 for t in transitions:
                     if t.target_str:

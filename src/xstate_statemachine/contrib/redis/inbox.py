@@ -24,7 +24,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 import redis
 
@@ -180,11 +180,12 @@ class RedisInbox:
         self._purge = self.r.register_script(_PURGE)
         self._forget = self.r.register_script(_FORGET)
 
-    def _keys(self, scope: str) -> list:
+    def _keys(self, scope: str) -> List[str]:
         return [self.k.inbox(scope), self.k.inbox_exp]
 
     @redis_errors_typed
     def get(self, scope: str, key: str) -> Optional[InboxEntry]:
+        """`Inbox.get` on Redis: Lua HGET, returned only while unexpired."""
         raw = self._get(keys=[self.k.inbox(scope)], args=[key])
         if raw is None:
             return None
@@ -201,6 +202,9 @@ class RedisInbox:
     def claim(
         self, scope: str, key: str, fp: str, *, ttl_s: Optional[float]
     ) -> bool:
+        """`Inbox.claim` on Redis: Lua writes an in-flight entry unless one is
+        live.
+        """
         res = self._claim(
             keys=self._keys(scope), args=[key, fp, _ttl(ttl_s), scope]
         )

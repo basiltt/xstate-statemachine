@@ -33,6 +33,7 @@ import json
 import threading
 from dataclasses import dataclass, field
 from typing import (
+    cast,
     Any,
     Callable,
     Dict,
@@ -100,7 +101,7 @@ class Tool:
     def parameters(self) -> Dict[str, Any]:
         schema = self.args_model.model_json_schema()  # type: ignore[attr-defined]
         schema.pop("title", None)
-        return schema
+        return cast("dict[str, Any]", schema)
 
     def schema(self) -> Dict[str, Any]:
         """The provider-neutral descriptor ``{name, description,
@@ -168,9 +169,7 @@ def _args_model(fn: Callable[..., Any], name: str) -> type:
         ann = hints[pname]
         default = ... if p.default is inspect.Parameter.empty else p.default
         fields[pname] = (ann, default)
-    return create_model(  # type: ignore[call-overload,no-any-return]
-        f"{name}_args", __base__=_StrictArgs, **fields
-    )
+    return create_model(f"{name}_args", __base__=_StrictArgs, **fields)
 
 
 def tool(
@@ -202,6 +201,9 @@ class _PendingTool:
     description: Optional[str]
 
     def build(self, default_timeout: float, default_side: bool) -> Tool:
+        """Build the ``Tool``, applying the default timeout and side-effect
+        flag where unset.
+        """
         name = self.name or self.fn.__name__
         timeout = (
             self.timeout_s if self.timeout_s is not None else (default_timeout)
@@ -304,6 +306,9 @@ class ToolRegistry:
         return self.tools[call.name].validate(call.arguments)
 
     def truncate(self, value: Any) -> str:
+        """Render a result as text, cut to ``max_output_chars`` with a
+        truncation marker.
+        """
         text = value if isinstance(value, str) else _to_text(value)
         limit = self.max_output_chars
         if len(text) <= limit:

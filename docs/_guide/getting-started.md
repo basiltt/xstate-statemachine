@@ -64,7 +64,7 @@ options:
 
 | Requirement | Details |
 |-------------|---------|
-| **Python** | 3.9 – 3.14 (CI runs every version on Linux, macOS and Windows) |
+| **Python** | 3.9 – 3.15 (CI runs every version on Linux, macOS and Windows) |
 | **Dependencies** | None — zero external dependencies beyond the standard library |
 | **OS** | Windows, macOS, Linux |
 
@@ -268,7 +268,7 @@ Here's what XState-StateMachine supports — every feature you'd expect from a p
 - **Dual interpreters** — `Interpreter` (async) and `SyncInterpreter` (sync)
 
 ### Developer Tools
-- **CLI tool** — generate (8 templates), inspect, simulate, diagram and document machines from XState JSON; interactive launcher on a terminal
+- **CLI tool** — generate (10 templates), inspect, simulate, diagram and document machines from XState JSON; interactive launcher on a terminal
 - **Diagram export** — Mermaid, PlantUML
 - **LoggingInspector** plugin — built-in state transition logging
 - **Zero dependencies** — pure Python standard library

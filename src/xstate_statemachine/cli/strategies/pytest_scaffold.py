@@ -52,6 +52,7 @@ class PytestScaffoldStrategy(BaseStrategy):
         return ""
 
     def generate_logic(self, ctx: GenerationContext) -> str:
+        """Emit a pytest scaffold, with fixtures when requested."""
         if getattr(ctx, "fixtures", False):
             return self._generate_with_fixtures(ctx)
         config = ctx.configs[0]

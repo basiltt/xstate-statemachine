@@ -4,8 +4,6 @@ description: "An honest comparison of xstate-statemachine's [agents] extra and B
 permalink: /guide/vs-burr/
 ---
 
-# xstate-statemachine vs Burr
-
 Burr (Apache, incubating) models an application as actions and transitions over a state object, with persisters, a tracking UI and OpenTelemetry. It is the closest in spirit: explicit state machines for LLM apps.
 
 {% assign c = site.data.comparisons.competitors.burr %}

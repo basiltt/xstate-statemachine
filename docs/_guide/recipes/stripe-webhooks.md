@@ -4,8 +4,6 @@ permalink: /guide/stripe-webhooks/
 description: "A Stripe subscription lifecycle as a persisted statechart. The webhook endpoint (FastAPI or Flask) verifies Stripe-Signature with constant-time HMAC and a timestamp window, maps event.type to machine events, and uses event.id as the idempotency key."
 ---
 
-# Recipe: Stripe webhooks
-
 Stripe tells you about a subscription through webhooks. They arrive **at least once**, **out of order under retries**, and from **anyone who knows your URL**. So the endpoint has three jobs before the business logic runs: prove the request came from Stripe, drop duplicates, and make sure a late `invoice.payment_failed` cannot resurrect a canceled subscription. The chart handles the last job. The rest of this page covers the other two.
 
 Files: [`examples/recipes/stripe_webhooks/`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/recipes/stripe_webhooks). The chart is `machine.json`, the logic is `stripe_webhooks.py`, and the two endpoints are `app_fastapi.py` and `app_flask.py`. Recorded payloads are in `fixtures/`.
@@ -60,11 +58,24 @@ def verify(body: bytes, header: str, now: float) -> dict:
         raise ValueError("forged")
     return json.loads(body)
 
-chart = {"id": "subscription", "initial": "incomplete", "context": {"failures": 0}, "states": {
-    "incomplete": {"on": {"PAYMENT_SUCCEEDED": "active"}},
-    "active": {"on": {"PAYMENT_FAILED": {"target": "past_due", "actions": "fail"}, "CANCELED": "canceled"}},
-    "past_due": {"on": {"PAYMENT_SUCCEEDED": "active", "CANCELED": "canceled"}},
-    "canceled": {}}}
+chart = {
+    "id": "subscription",
+    "initial": "incomplete",
+    "context": {"failures": 0},
+    "states": {
+        "incomplete": {"on": {"PAYMENT_SUCCEEDED": "active"}},
+        "active": {
+            "on": {
+                "PAYMENT_FAILED": {"target": "past_due", "actions": "fail"},
+                "CANCELED": "canceled",
+            },
+        },
+        "past_due": {
+            "on": {"PAYMENT_SUCCEEDED": "active", "CANCELED": "canceled"},
+        },
+        "canceled": {},
+    },
+}
 def fail(i, ctx, e, a): ctx["failures"] += 1
 machine = create_machine(chart, logic=MachineLogic(actions={"fail": fail}))
 store, inbox = MemoryStore(), MemoryInbox()

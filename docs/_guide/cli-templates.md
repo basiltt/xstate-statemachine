@@ -3,8 +3,6 @@ title: "CLI Templates Deep Dive"
 description: "All 5 primary templates and 3 companion templates explained with complete generated output."
 ---
 
-# CLI Templates Deep Dive
-
 The `xsm` CLI offers five **primary** code generation templates, each producing a different code structure and API style, plus three **companion** templates (`pytest`, `typed`, `plugin`) that add a test module, a typed-context module or a plugin skeleton alongside any of them. This guide shows the **complete generated output** for each template using the same input JSON, so you can compare them side-by-side and choose the best fit for your project.
 
 ## 🧩 Template Overview

@@ -102,6 +102,13 @@ def create_statechart_blueprint(
         return xsm.registry()
 
     def guard(key: Optional[str], event: Optional[str]) -> None:
+        """Authorize the request; 404 an unknown key unless creating is on.
+
+        Raises:
+            ForbiddenError: If the authorizer refuses.
+            KeyNotFoundError: If *key* has no stored instance and
+                ``create_if_missing`` is false.
+        """
         r = reg()
         r.authorize(flask_request, name, key, event)
         if key is not None and not create_if_missing:
@@ -109,12 +116,29 @@ def create_statechart_blueprint(
                 raise KeyNotFoundError(key)
 
     def principal() -> Optional[str]:
+        """Return the validated caller identity, or ``None`` without an inbox.
+
+        Raises:
+            UnauthenticatedError: If the principal callable gives no caller.
+        """
         r = reg()
         if r.inbox is None:
             return None
         return principal_or_401(r.principal(flask_request))
 
     def send(key: str, etype: str, payload: Dict[str, Any]) -> Any:
+        """Send *etype* to instance *key* and build the receipt response.
+
+        Args:
+            key: Instance key.
+            etype: Event type.
+            payload: Event payload (``type`` is dropped; reserved keys
+                refused).
+
+        Returns:
+            The JSON receipt response, or a problem for an idempotency
+            refusal.
+        """
         r = reg()
         guard(key, etype)
         payload = dict(payload)
@@ -149,6 +173,15 @@ def create_statechart_blueprint(
         )
 
     def mapped(fn: Any) -> Any:
+        """Wrap view *fn* so any exception becomes a problem response.
+
+        Args:
+            fn: The view function.
+
+        Returns:
+            The wrapped view, keeping *fn*'s name.
+        """
+
         def view(*a: Any, **kw: Any) -> Any:
             try:
                 return fn(*a, **kw)
@@ -161,6 +194,7 @@ def create_statechart_blueprint(
     @bp.get("/<key>")
     @mapped
     def get_state(key: str) -> Any:
+        """``GET /<key>`` -- the instance's state as JSON."""
         guard(key, None)
         body = xsm.peek(name, key)
         body["machine_version"] = reg().reg(name).machine.version or None
@@ -169,6 +203,7 @@ def create_statechart_blueprint(
     @bp.post("/<key>/send")
     @mapped
     def send_event(key: str) -> Any:
+        """``POST /<key>/send`` -- send the event named by the body's type."""
         body = _json_body(reg().max_body_bytes)
         etype = body.get("type")
         if not isinstance(etype, str) or not etype:
@@ -183,6 +218,7 @@ def create_statechart_blueprint(
     # 🔐 A GET to a write path is an explicit 405 problem (with ``Allow``),
     #    never a silent read and never Flask's HTML error page.
     def refuse_get(**_: Any) -> Any:
+        """Answer ``GET`` on a write path with a 405 problem (Allow: POST)."""
         resp = problem_response(MethodNotAllowedError())
         resp.headers["Allow"] = "POST"
         return resp
@@ -193,6 +229,7 @@ def create_statechart_blueprint(
     @bp.get("/<key>/events")
     @mapped
     def list_events(key: str) -> Any:
+        """``GET /<key>/events`` -- available and declared events."""
         guard(key, None)
         machine = reg().reg(name).machine
         return {
@@ -209,6 +246,7 @@ def create_statechart_blueprint(
     @bp.get("/<key>/stream")
     @mapped
     def stream(key: str) -> Any:
+        """``GET /<key>/stream`` -- SSE: snapshot, then each transition."""
         r = reg()
         origin = flask_request.headers.get("Origin")
         if not r.origin_allowed(origin, flask_request.host):
@@ -310,6 +348,15 @@ def _add_event_routes(
     for etype in declared_events(declared.machine):
 
         def make(e: str) -> Any:
+            """Build the POST view for event *e*.
+
+            Args:
+                e: The declared event type the view sends.
+
+            Returns:
+                The wrapped view function.
+            """
+
             def handler(key: str) -> Any:
                 return send(key, e, _json_body(xsm.registry().max_body_bytes))
 

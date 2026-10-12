@@ -81,6 +81,12 @@ TEMPLATES = (
 
 
 def catalogue() -> List[Dict[str, Any]]:
+    """List the code generation templates as dictionaries.
+
+    Returns:
+        One dict per template with id, style, description, kind and how
+        the machine is built and verified.
+    """
     out = []
     for tid, style, desc, kind in TEMPLATES:
         inline = builds_machine_inline(tid)
@@ -107,6 +113,11 @@ def catalogue() -> List[Dict[str, Any]]:
 
 
 def run_list_templates(as_json: bool = False) -> None:
+    """Implement ``xsm list-templates``.
+
+    Args:
+        as_json: Print JSON instead of grouped text.
+    """
     c = get_console()
     rows = catalogue()
     if as_json:

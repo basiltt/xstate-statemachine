@@ -317,6 +317,16 @@ class SagaBuilder:
             )
 
             def failing(reason: str, _s: SagaStep = s) -> Dict[str, Any]:
+                """Build the failure transition for a step.
+
+                Args:
+                    reason: Failure reason passed to ``sagaFail``.
+                    _s: The step (bound at definition time).
+
+                Returns:
+                    A transition dict to the fail target with a ``sagaFail`` action
+                    (preceded by the retry bump when the step retries).
+                """
                 acts: List[Any] = [
                     {
                         "type": "sagaFail",
@@ -402,7 +412,7 @@ class SagaBuilder:
         return out
 
     # -- logic ----------------------------------------------------------------------
-    def logic(self) -> MachineLogic:
+    def logic(self) -> MachineLogic[Any]:
         """The generic actions (and per-step retry logic) the JSON names.
 
         Merge your services into it: ``saga.logic().merge(MachineLogic(

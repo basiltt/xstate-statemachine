@@ -3,8 +3,6 @@ title: "Plugins & Observability"
 description: "Observe every event, transition, action, guard, and service with pluggable hooks."
 ---
 
-# Plugins & Observability
-
 Plugins are **observers** that watch machine execution without modifying behavior. They hook into the interpreter's lifecycle to add cross-cutting concerns like logging, metrics, debugging, auditing, and performance monitoring.
 
 ## 🔌 What are Plugins?
@@ -566,8 +564,6 @@ SyncInterpreter(create_machine(cfg)).start().stop()
 assert counter.count == 2                # not attached to the later one
 ```
 
-<div class="stately" data-machine="5d970f17c3" data-height="320" data-title="m"></div>
-
 Rules of the registry:
 
 - **Opt-in only.** The library never registers anything on import; the default process has an empty registry and a constructor pays one list read.
@@ -603,8 +599,6 @@ attached = attach_discovered(interp, allow=["acme-audit"])  # opt in by name
 interp.start().stop()
 ```
 
-<div class="stately" data-machine="5d970f17c3" data-height="320" data-title="m"></div>
-
 - **`allow=`** takes entry-point names **or** distribution names. An entry point that is not allowed is never imported.
 - **A broken plugin does not take you down.** A loader that raises is logged at `WARNING` with its traceback and skipped; it is recorded in `xstate_statemachine.plugin_discovery.last_skipped` (a list of `SkippedPlugin(name, distribution, version, group, error)`, reset by every `discover()` call). In `attach_discovered`, a constructor that raises, or an entry point whose object is **not a `PluginBase`**, is skipped the same way and never `.use()`d. Pass `strict=True` to re-raise instead (a `TypeError` for a non-`PluginBase`), which is what a CI check that "every plugin loads" wants.
 - **`XSM_DISABLE_PLUGIN_DISCOVERY=1`** turns discovery off for the whole process: `discover()` returns `[]` and logs that once. Use it in locked-down deployments where the environment may contain packages you did not vet.
@@ -622,8 +616,6 @@ interp = SyncInterpreter(machine)
 attached = instrument_all(interp, discovered=True, allow=["acme-audit"])
 interp.start().stop()
 ```
-
-<div class="stately" data-machine="5d970f17c3" data-height="320" data-title="m"></div>
 
 ### `xsm plugins`
 

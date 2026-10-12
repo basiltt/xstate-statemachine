@@ -12,7 +12,7 @@ raises ``from None`` so the original is not chained into a traceback.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, FrozenSet, List
 
 from pydantic import ValidationError
 
@@ -103,7 +103,7 @@ def scrub(exc: ValidationError) -> ValidationError:
         )
 
 
-def _known_types() -> frozenset:
+def _known_types() -> FrozenSet[Any]:
     try:
         from pydantic_core import core_schema  # noqa: F401
         from pydantic_core import ErrorType  # type: ignore[attr-defined]
@@ -116,4 +116,4 @@ def _known_types() -> frozenset:
 _KNOWN_TYPES_RAW = _known_types()
 #: Empty when pydantic-core does not expose `ErrorType` -- then every
 #: non-free-text type is kept (with ctx still allow-listed).
-_KNOWN_TYPES = _KNOWN_TYPES_RAW if _KNOWN_TYPES_RAW else None  # type: ignore[assignment]
+_KNOWN_TYPES = _KNOWN_TYPES_RAW if _KNOWN_TYPES_RAW else None

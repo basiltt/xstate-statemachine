@@ -4,8 +4,6 @@ permalink: /guide/form-wizard/
 description: "A multi-step form whose steps, back/forward navigation and validation live in a statechart. Only its JSON snapshot is kept in st.session_state or gr.State. The diagram is embedded in the app."
 ---
 
-# Recipe: Streamlit / Gradio wizard
-
 Multi-step forms in Streamlit and Gradio usually end up as a `step` integer and a thicket of `if`s: which step comes after which, when *Next* is allowed, and what *Back* keeps. Put those rules in a chart instead. **Back** and **Next** are events, validation is a guard on `NEXT`, and the UI only renders whichever step is active.
 
 Both frameworks rerun your code on every click, so the wizard keeps **only the snapshot**, a JSON string. It lives in `st.session_state` or in a `gr.State` dict. Each click is *restore → send → snapshot*.
@@ -23,14 +21,46 @@ xsm diagram examples/recipes/form_wizard/machine.json      # the Mermaid the app
 ```python
 from xstate_statemachine import MachineLogic, SyncInterpreter, create_machine
 
-chart = {"id": "signup", "initial": "account", "context": {"email": "", "plan": ""}, "states": {
-    "account": {"on": {"NEXT": {"target": "plan", "guard": "accountValid", "actions": "save"}}},
-    "plan": {"on": {"BACK": "account", "NEXT": {"target": "done", "guard": "planChosen", "actions": "save"}}},
-    "done": {"type": "final"}}}
+chart = {
+    "id": "signup",
+    "initial": "account",
+    "context": {"email": "", "plan": ""},
+    "states": {
+        "account": {
+            "on": {
+                "NEXT": {
+                    "target": "plan",
+                    "guard": "accountValid",
+                    "actions": "save",
+                },
+            },
+        },
+        "plan": {
+            "on": {
+                "BACK": "account",
+                "NEXT": {
+                    "target": "done",
+                    "guard": "planChosen",
+                    "actions": "save",
+                },
+            },
+        },
+        "done": {"type": "final"},
+    },
+}
 def save(i, ctx, e, a): ctx.update({k: v for k, v in e.payload.items() if k in ctx})
-machine = create_machine(chart, logic=MachineLogic(actions={"save": save}, guards={
-    "accountValid": lambda ctx, e: "@" in e.payload.get("email", ""),
-    "planChosen": lambda ctx, e: e.payload.get("plan") in ("free", "pro")}))
+machine = create_machine(
+    chart,
+    logic=MachineLogic(
+        actions={"save": save},
+        guards={
+            "accountValid": lambda ctx, e: "@" in e.payload.get("email", ""),
+            "planChosen": lambda ctx, e: (
+                e.payload.get("plan") in ("free", "pro")
+            ),
+        },
+    ),
+)
 
 def click(session: dict, event: str, **fields) -> bool:
     """One UI interaction: restore -> send -> snapshot. False = input refused."""

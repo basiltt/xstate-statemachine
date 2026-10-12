@@ -69,10 +69,7 @@ from typing import (
 )
 from collections import deque
 
-try:  # pragma: no cover
-    from typing import Protocol, runtime_checkable
-except ImportError:  # pragma: no cover
-    from typing_extensions import Protocol, runtime_checkable  # type: ignore
+from typing import Protocol, runtime_checkable
 
 from ..events import Receipt
 from ..exceptions import StoreError
@@ -322,6 +319,7 @@ class MemoryInbox:
         )
 
     def get(self, scope: str, key: str) -> Optional[InboxEntry]:
+        """`Inbox.get` in memory: the entry if present and not expired."""
         now = time.time()
         with self._lock:
             e = self._rows.get((scope, key))
@@ -330,6 +328,9 @@ class MemoryInbox:
     def claim(
         self, scope: str, key: str, fp: str, *, ttl_s: Optional[float]
     ) -> bool:
+        """`Inbox.claim` in memory: insert an in-flight entry unless one is
+        live.
+        """
         now = time.time()
         with self._lock:
             e = self._rows.get((scope, key))
@@ -348,6 +349,9 @@ class MemoryInbox:
         *,
         ttl_s: Optional[float],
     ) -> None:
+        """`Inbox.mark` in memory: store the receipt JSON, keeping the
+        fingerprint.
+        """
         now = time.time()
         with self._lock:
             e = self._rows.get((scope, key))
@@ -363,6 +367,7 @@ class MemoryInbox:
                 del self._rows[(scope, key)]
 
     def purge_expired(self, *, now: Optional[float] = None) -> int:
+        """`Inbox.purge_expired` in memory: drop entries expired at *now*."""
         now = time.time() if now is None else now
         with self._lock:
             dead = [k for k, e in self._rows.items() if not self._live(e, now)]
@@ -371,6 +376,7 @@ class MemoryInbox:
         return len(dead)
 
     def forget(self, scope: str) -> int:
+        """`Inbox.forget` in memory: drop every entry of *scope*."""
         with self._lock:
             dead = [k for k in self._rows if k[0] == scope]
             for k in dead:
@@ -433,6 +439,9 @@ class SQLiteInbox:
         return self._store._conn()
 
     def get(self, scope: str, key: str) -> Optional[InboxEntry]:
+        """`Inbox.get` on SQLite: the unexpired row for ``(scope, key)``, or
+        None.
+        """
         row = (
             self._conn()
             .execute(
@@ -447,6 +456,7 @@ class SQLiteInbox:
     def claim(
         self, scope: str, key: str, fp: str, *, ttl_s: Optional[float]
     ) -> bool:
+        """`Inbox.claim` on SQLite: INSERT OR REPLACE unless a live row exists."""
         now = time.time()
         conn = self._conn()
         assert self._store is not None
@@ -473,6 +483,7 @@ class SQLiteInbox:
         *,
         ttl_s: Optional[float],
     ) -> None:
+        """`Inbox.mark` on SQLite: UPDATE the row's receipt and expiry."""
         conn = self._conn()
         assert self._store is not None
         with self._store._tx(conn, immediate=True):
@@ -482,6 +493,9 @@ class SQLiteInbox:
             )
 
     def release(self, scope: str, key: str) -> None:
+        """`Inbox.release` on SQLite: DELETE the row only while it has no
+        receipt.
+        """
         conn = self._conn()
         assert self._store is not None
         with self._store._tx(conn, immediate=True):
@@ -491,6 +505,7 @@ class SQLiteInbox:
             )
 
     def purge_expired(self, *, now: Optional[float] = None) -> int:
+        """`Inbox.purge_expired` on SQLite: DELETE rows expired at *now*."""
         now = time.time() if now is None else now
         conn = self._conn()
         assert self._store is not None
@@ -501,6 +516,7 @@ class SQLiteInbox:
             ).rowcount
 
     def forget(self, scope: str) -> int:
+        """`Inbox.forget` on SQLite: DELETE every row of *scope*."""
         conn = self._conn()
         assert self._store is not None
         with self._store._tx(conn, immediate=True):
@@ -622,6 +638,19 @@ class IdempotencyPlugin(PluginBase[Any]):
 
     # -- scope --------------------------------------------------------------------
     def scope_for(self, interpreter: Any, event: Any) -> str:
+        """Build the inbox scope for an event.
+
+        Args:
+            interpreter: The interpreter receiving the event.
+            event: The event being deduplicated.
+
+        Returns:
+            ``principal/machine-id/instance-key`` with each part escaped so the
+            join is injective.
+
+        Raises:
+            ValueError: If the principal fails `validate_principal`.
+        """
         # 🔐 #303 battle (X0.1/X0.2): closed by default. A principal of
         #    None / "" / "None" used to become a shared scope -- every
         #    unauthenticated caller pooled into one tenant's receipts.
@@ -721,6 +750,16 @@ class IdempotencyPlugin(PluginBase[Any]):
     def on_before_send(
         self, interpreter: Any, event: Any
     ) -> Optional[Receipt]:
+        """Claim the event's idempotency key, or refuse/short-circuit a repeat.
+
+        Args:
+            interpreter: The interpreter receiving the event.
+            event: The event about to be sent.
+
+        Returns:
+            ``None`` to admit the event (also when it has no key); otherwise a
+            `Receipt` that refuses or answers it instead.
+        """
         key = self.key_fn(event)
         if key is None:
             return None
@@ -919,6 +958,7 @@ class IdempotencyPlugin(PluginBase[Any]):
     def on_event_processed(
         self, interpreter: Any, event: Any, receipt: Receipt
     ) -> None:
+        """Settle the claim: release it on failure, else store the receipt."""
         with self._lock:
             claim = self._pending.pop(id(event), None)
         if claim is None:
@@ -947,6 +987,7 @@ class IdempotencyPlugin(PluginBase[Any]):
         self._mark(scope, key, fp, payload)
 
     def on_interpreter_stop(self, interpreter: Any) -> None:
+        """Release claims this interpreter still holds for unfinished events."""
         # Claims whose event never finished (stopped mid-flight): release.
         # 🐛 Battle #261: only THIS interpreter's -- the plugin may be
         #    shared by concurrent blocks, and stopping one used to release

@@ -12,7 +12,7 @@ from ..django.permissions import has_event_permission
 __all__ = ["StatechartEventPermission", "StatechartHistoryPermission"]
 
 
-class StatechartEventPermission(BasePermission):
+class StatechartEventPermission(BasePermission):  # type: ignore[misc]  # BasePermission is untyped (Any base)
     """Object permission for a transition: the event the view is about to
     send (``view.xsm_event``) must pass `has_event_permission` for
     ``request.user``. Reads (no event) require an authenticated user."""
@@ -20,21 +20,24 @@ class StatechartEventPermission(BasePermission):
     message = "You may not send this event to this object now."
 
     def has_permission(self, request: Any, view: Any) -> bool:
+        """Require an authenticated user."""
         user = getattr(request, "user", None)
         return bool(user is not None and user.is_authenticated)
 
     def has_object_permission(self, request: Any, view: Any, obj: Any) -> bool:
+        """Reads pass; a send must pass ``has_event_permission``."""
         event = getattr(view, "xsm_event", None)
         if event is None:
             return True
         return has_event_permission(request.user, obj, event)
 
 
-class StatechartHistoryPermission(BasePermission):
+class StatechartHistoryPermission(BasePermission):  # type: ignore[misc]  # BasePermission is untyped (Any base)
     """Who may read ``history/``: the model's ``view`` permission (history
     carries actors and reasons -- a separate grant from sending)."""
 
     def has_object_permission(self, request: Any, view: Any, obj: Any) -> bool:
+        """Require the model's ``view`` permission."""
         opts = obj._meta
         return bool(
             request.user.has_perm(f"{opts.app_label}.view_{opts.model_name}")

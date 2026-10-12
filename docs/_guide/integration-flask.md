@@ -3,8 +3,6 @@ title: "Flask integration"
 description: "An init_app extension, a statechart blueprint, session-keyed wizards and a flask xsm CLI — plus a Quart shim — over any StateStore."
 ---
 
-# Flask
-
 Flask has a very large install base, and (as of October 2026) PyPI has no Flask extension for statecharts -- no `flask-fsm`, `flask-statemachine` or `flask-transitions`. This extra follows the canonical `init_app` pattern. You get an `XState` extension that keeps its state in `app.extensions`, so the application-factory pattern is safe. `act()` gives you *create → act → persist → discard* on any `StateStore`. There is a blueprint with the same route table as the FastAPI router, a cookie-backed `SessionStore` for small multi-step wizards, and `flask xsm` commands for the machines your app registers. Quart, Flask's async twin, is served by a shim built on the same core.
 
 ## Install

@@ -32,6 +32,7 @@ import threading
 import time
 from collections import OrderedDict
 from typing import (
+    cast,
     Any,
     AsyncIterator,
     Awaitable,
@@ -343,7 +344,7 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
         *,
         principal: Optional[str] = None,
         idempotency_key: Optional[str] = None,
-    ) -> AsyncIterator[Interpreter]:
+    ) -> AsyncIterator[Interpreter[Any]]:
         """Yield a started async `Interpreter` for *key*; save on exit.
 
         Built by `persistence.apersisted` over `as_async(store)`: one
@@ -601,7 +602,7 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
     def residents(self) -> int:
         return len(self._residents)
 
-    async def resident(self, name: str, key: str) -> Interpreter:
+    async def resident(self, name: str, key: str) -> Interpreter[Any]:
         """A long-lived in-process actor for *key* (opt-in).
 
         Loaded from the store on first use, LRU/TTL-evicted, and saved
@@ -618,7 +619,7 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
             if res is not None:
                 res.last_used = now
                 self._residents.move_to_end(topic)
-                return res.interp
+                return cast("Interpreter[Any]", res.interp)
             if self.draining:
                 raise ShuttingDownError("registry is shutting down")
             skey = self.store_key(name, key)
@@ -711,6 +712,16 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
 
     # -- connection accounting (SSE + WS) --------------------------------------
     def try_open_connection(self, name: str, key: str) -> bool:
+        """Reserve a stream slot for an instance.
+
+        Args:
+            name: Machine name.
+            key: Instance key.
+
+        Returns:
+            ``True`` if reserved; ``False`` if the per-key limit is reached
+            or the registry is draining.
+        """
         topic = (name, str(key))
         n = self._connections.get(topic, 0)
         if n >= self.max_connections_per_key or self.draining:
@@ -719,6 +730,7 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
         return True
 
     def close_connection(self, name: str, key: str) -> None:
+        """Release one stream slot previously reserved for an instance."""
         topic = (name, str(key))
         n = self._connections.get(topic, 0) - 1
         if n <= 0:
@@ -727,6 +739,15 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
             self._connections[topic] = n
 
     def connections(self, name: Optional[str] = None, key: Any = None) -> int:
+        """Count open stream connections.
+
+        Args:
+            name: Machine name; ``None`` counts all connections.
+            key: Instance key, used with *name*.
+
+        Returns:
+            The number of open connections.
+        """
         if name is None:
             return sum(self._connections.values())
         return self._connections.get((name, str(key)), 0)
@@ -789,6 +810,14 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
 
 
 def receipt_to_status_is_server_error(exc: BaseException) -> bool:
+    """Return whether *exc* maps to an HTTP status of 500 or above.
+
+    Args:
+        exc: The exception to classify.
+
+    Returns:
+        ``True`` for a server-error status.
+    """
     from ._http import status_for_exception
 
     return status_for_exception(exc) >= 500

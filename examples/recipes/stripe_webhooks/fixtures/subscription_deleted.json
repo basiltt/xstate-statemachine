@@ -1,1 +1,15 @@
-{"id": "evt_3DelC", "object": "event", "type": "customer.subscription.deleted", "created": 1735696800, "livemode": false, "data": {"object": {"id": "sub_123", "object": "subscription", "customer": "cus_9", "status": "canceled"}}}
+{
+  "id": "evt_3DelC",
+  "object": "event",
+  "type": "customer.subscription.deleted",
+  "created": 1735696800,
+  "livemode": false,
+  "data": {
+    "object": {
+      "id": "sub_123",
+      "object": "subscription",
+      "customer": "cus_9",
+      "status": "canceled"
+    }
+  }
+}

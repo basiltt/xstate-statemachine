@@ -70,6 +70,10 @@ class _Loose(BaseModel):
 
 
 class TransitionConfig(_Loose):
+    """Validated shape of one XState transition (target, actions, guard,
+    metadata).
+    """
+
     # 📝 #266 battle: a LIST target (XState v5 multi-target) is not
     #    implemented by the parser -- it crashed with AttributeError. The
     #    gate refuses it with a path instead of passing it through.
@@ -92,6 +96,10 @@ Transition = Union[
 
 
 class InvokeConfig(_Loose):
+    """Validated shape of an ``invoke`` entry (source, id, input,
+    ``onDone``/``onError``).
+    """
+
     src: Optional[str] = None
     id: Optional[str] = None
     input: Optional[Any] = None
@@ -104,6 +112,8 @@ class InvokeConfig(_Loose):
 
 
 class StateConfig(_Loose):
+    """Validated shape of one state node: child states, transitions, invokes."""
+
     id: Optional[str] = None
     type: Optional[
         Literal["atomic", "compound", "parallel", "final", "history"]
@@ -230,6 +240,9 @@ class MachineConfig(StateConfig):
                     walk_t(item, f"{path}[{i}]")
 
         def walk(node: StateConfig, path: str) -> None:
+            """Collect unknown-key paths for a state and, recursively, its
+            transitions, invokes and children.
+            """
             found.extend(f"{path}.{k}" for k in node.unknown_keys())
             for ev, t in (node.on or {}).items():
                 walk_t(t, f"{path}.on.{ev}")

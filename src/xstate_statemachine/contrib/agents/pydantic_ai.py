@@ -195,6 +195,9 @@ def pydantic_ai_service(
     if not stream:
 
         async def run_pydantic_agent(i: Any, ctx: Any, e: Any) -> Any:
+            """Run the pydantic-ai agent to completion and return its output
+            and usage.
+            """
             res = await agent.run(prompt_from(ctx, e), **_args(ctx, e))
             return {"output": await _output(res), "usage": _usage(res)}
 
@@ -214,7 +217,7 @@ def pydantic_ai_service(
     return stream_pydantic_agent
 
 
-def usage_logic(name: str = "recordAgentUsage") -> MachineLogic:
+def usage_logic(name: str = "recordAgentUsage") -> MachineLogic[Any]:
     """An action that adds an ``onDone`` usage block to ``tokens_in`` /
     ``tokens_out`` and counts one ``turns`` -- the keys `budget_guards`
     read.
@@ -231,6 +234,9 @@ def usage_logic(name: str = "recordAgentUsage") -> MachineLogic:
     """
 
     def record(i: Any, ctx: Dict[str, Any], e: Any, a: Any) -> None:
+        """Add the result's token usage to context (clamped, never refunding)
+        and store its output.
+        """
         # 🛡️ #289 battle (A): onDone data is untrusted (a hand-written
         #    service, a hostile provider): non-dict data / usage, None,
         #    negative, NaN or "junk" counts must neither raise (a stopped
@@ -282,6 +288,9 @@ def agent_tool_from_machine(
     from pydantic_ai import Tool
 
     async def run_statechart(prompt: str) -> Dict[str, Any]:
+        """Run the wrapped statechart runner (off the event loop if sync) and
+        return its result.
+        """
         # 🔥 #289 review (5): a SYNC runner (`run_agent_sync`) called
         #    inline blocked the outer agent's event loop -- concurrent tool
         #    calls serialised and timeouts stalled. Off-loop on a daemon

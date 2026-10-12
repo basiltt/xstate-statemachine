@@ -154,12 +154,6 @@ Source: [`examples/async/super_complex/functional_approach/with_logic_loader/col
 
 <div class="stately" data-machine="cf5d577650" data-height="520" data-title="collaborativeEditor"></div>
 
-### collaboratorCursor
-
-Source: [`examples/async/super_complex/functional_approach/with_logic_loader/collaborator_cursor_actor.json`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/super_complex/functional_approach/with_logic_loader/collaborator_cursor_actor.json)
-
-<div class="stately" data-machine="994d9caa00" data-height="320" data-title="collaboratorCursor"></div>
-
 ### ancillaryServiceActor
 
 Source: [`examples/async/super_complex/functional_approach/without_logic_loader/flight_booking/ancillary_service_actor.json`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/super_complex/functional_approach/without_logic_loader/flight_booking/ancillary_service_actor.json)
@@ -425,12 +419,6 @@ Source: [`examples/sync/features/history_shallow_deep/history_shallow_deep_runne
 Source: [`examples/sync/features/pure_api/pure_api_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/pure_api/pure_api_runner.py)
 
 <div class="stately" data-machine="1477e29fb6" data-height="320" data-title="toggle"></div>
-
-### m
-
-Source: [`examples/sync/features/snapshot_drift/snapshot_drift_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/snapshot_drift/snapshot_drift_runner.py)
-
-<div class="stately" data-machine="5d970f17c3" data-height="320" data-title="m"></div>
 
 ### light
 

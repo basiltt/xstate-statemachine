@@ -44,6 +44,9 @@ _DEFAULT_FILES = {"json": "xsm-coverage.json", "html": "xsm-coverage.html"}
 
 
 def add_coverage_options(group: Any) -> None:
+    """Register the ``--xsm-coverage`` and ``--xsm-coverage-report`` pytest
+    options on ``group``.
+    """
     group.addoption(
         "--xsm-coverage",
         action="store_true",
@@ -156,6 +159,9 @@ class CoverageSession:
     # ------------------------------------------------------------ lifecycle
     @classmethod
     def configure(cls, config: Any) -> None:
+        """Start a coverage session and register its collector if ``--xsm-
+        coverage`` is set; else refuse orphan options.
+        """
         if not config.getoption("--xsm-coverage", default=False):
             _refuse_orphan_options(config)
             return
@@ -170,6 +176,9 @@ class CoverageSession:
 
     @classmethod
     def unconfigure(cls, config: Any) -> None:
+        """Unregister the session's collector and plugin and remove it from
+        ``config``.
+        """
         session = cls.get(config)
         if session is not None:
             plugins.unregister_global(session.collector)
@@ -269,6 +278,9 @@ class CoverageSession:
         self.written.append(target)
 
     def summary(self, terminalreporter: Any) -> None:
+        """Write the terminal coverage report, notes and written paths (skipped
+        on xdist workers).
+        """
         if self.is_worker:
             return
         reports: List[CoverageReport] = self.merged_reports()

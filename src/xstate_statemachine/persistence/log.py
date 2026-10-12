@@ -58,10 +58,7 @@ from typing import (
     Tuple,
 )
 
-try:  # pragma: no cover
-    from typing import Protocol, runtime_checkable
-except ImportError:  # pragma: no cover
-    from typing_extensions import Protocol, runtime_checkable  # type: ignore
+from typing import Protocol, runtime_checkable
 
 from ..events import AfterEvent, DoneEvent, ErrorEvent, event_kind
 from ..exceptions import StoreError, XStateMachineError
@@ -177,6 +174,12 @@ class TransitionRecord:
     origin: str = "external"
 
     def to_dict(self) -> Dict[str, Any]:
+        """Serialise the record to a JSON-ready dict.
+
+        Returns:
+            The dataclass fields as a dict, with ``from_states``,
+            ``to_states`` and ``actions`` converted to plain lists.
+        """
         d = asdict(self)
         d["from_states"] = list(self.from_states)
         d["to_states"] = list(self.to_states)
@@ -266,6 +269,12 @@ class TransitionLogStore(Protocol):
 # 🧠 MemoryLog
 # -----------------------------------------------------------------------------
 class MemoryLog:
+    """In-memory `TransitionLogStore`: per-machine lists behind a lock.
+
+    Records live only as long as the object; intended for tests and
+    single-process use.
+    """
+
     def __init__(self) -> None:
         self._rows: Dict[str, List[TransitionRecord]] = {}
         self._lock = threading.Lock()
@@ -293,6 +302,9 @@ class MemoryLog:
     def read(
         self, machine_id: str, *, after_seq: int = 0, limit: int = 1000
     ) -> List[TransitionRecord]:
+        """`Log.read` in memory: records with ``seq > after_seq``, up to
+        *limit*.
+        """
         _check_read(after_seq, limit)
         with self._lock:
             rows = [
@@ -301,6 +313,9 @@ class MemoryLog:
         return rows[:limit]
 
     def purge_older_than(self, cutoff_ts: float) -> int:
+        """`Log.purge_older_than` in memory: drops records with ``ts <
+        cutoff_ts``.
+        """
         cutoff_ts = _check_cutoff(cutoff_ts)
         n = 0
         with self._lock:
@@ -379,6 +394,9 @@ class JSONLinesLog:
                 raise StoreError(f"JSONLinesLog({self.path}): {exc}") from exc
 
     def append(self, rec: TransitionRecord, *, connection: Any = None) -> None:
+        """`Log.append` on JSONL: one sorted-key JSON line appended to the
+        file.
+        """
         _check_append(rec)
         line = json.dumps(rec.to_dict(), sort_keys=True, default=str) + "\n"
         with self._lock:
@@ -459,6 +477,9 @@ class JSONLinesLog:
     def read(
         self, machine_id: str, *, after_seq: int = 0, limit: int = 1000
     ) -> List[TransitionRecord]:
+        """`Log.read` on JSONL: scans the file, filters by machine, sorts by
+        seq.
+        """
         _check_read(after_seq, limit)
         with self._lock:
             rows = [
@@ -500,6 +521,9 @@ class JSONLinesLog:
         return len(rows) - len(kept)
 
     def purge_older_than(self, cutoff_ts: float) -> int:
+        """`Log.purge_older_than` on JSONL: rewrites the file without old
+        records.
+        """
         cutoff_ts = _check_cutoff(cutoff_ts)
         return self._rewrite(lambda r: r.ts >= cutoff_ts)
 
@@ -565,6 +589,9 @@ class SQLiteLog:
         return self._store._conn()
 
     def append(self, rec: TransitionRecord, *, connection: Any = None) -> None:
+        """`Log.append` on SQLite: INSERT into ``transitions`` in an IMMEDIATE
+        tx.
+        """
         _check_append(rec)
         conn = (
             connection
@@ -618,6 +645,9 @@ class SQLiteLog:
         return out
 
     def next_seq(self, machine_id: str) -> int:
+        """`Log.next_seq` on SQLite: ``MAX(seq) + 1`` for the machine (1 if
+        none).
+        """
         row = (
             self._conn()
             .execute(
@@ -631,6 +661,9 @@ class SQLiteLog:
     def read(
         self, machine_id: str, *, after_seq: int = 0, limit: int = 1000
     ) -> List[TransitionRecord]:
+        """`Log.read` on SQLite: ordered SELECT; corrupt rows raise
+        `LogCorruptError`.
+        """
         _check_read(after_seq, limit)
         try:
             rows = (
@@ -677,6 +710,9 @@ class SQLiteLog:
         return out
 
     def purge_older_than(self, cutoff_ts: float) -> int:
+        """`Log.purge_older_than` on SQLite: DELETE rows with ``ts <
+        cutoff_ts``.
+        """
         cutoff_ts = _check_cutoff(cutoff_ts)
         conn = self._conn()
         with self._store._tx(conn, immediate=True):
@@ -685,6 +721,7 @@ class SQLiteLog:
             ).rowcount
 
     def forget(self, machine_id: str) -> int:
+        """`Log.forget` on SQLite: DELETE the machine's rows, return the count."""
         conn = self._conn()
         with self._store._tx(conn, immediate=True):
             return conn.execute(
@@ -903,6 +940,9 @@ class TransitionLogPlugin(PluginBase[Any]):
 
     # -- collection ----------------------------------------------------------------
     def on_before_send(self, interpreter: Any, event: Any) -> None:
+        """Remember events sent by a caller (not by an in-flight step), by
+        identity.
+        """
         # 🐛 Battle #262: a `raise` chain and an action's own `send()` were
         #    logged indistinguishably from caller traffic, so `replay()`
         #    re-sent them AND the replayed actions produced them again --
@@ -948,6 +988,7 @@ class TransitionLogPlugin(PluginBase[Any]):
     def on_event_processed(
         self, interpreter: Any, event: Any, receipt: Any
     ) -> None:
+        """Build and append the `TransitionRecord` for the settled event."""
         with self._lock:
             before = self._before.pop(id(interpreter), None)
             actions = tuple(self._actions.pop(id(interpreter), []))
@@ -1126,6 +1167,7 @@ class _Tracer(PluginBase[Any]):
     def on_event_processed(
         self, interpreter: Any, event: Any, receipt: Any
     ) -> None:
+        """Record the event's disposition and the actions that ran for it."""
         self.actions.append(tuple(self._acts))
         self._acts = []
         if receipt.error is not None:
@@ -1243,6 +1285,18 @@ def replay(
             outcomes.setdefault(str(p.get("src")), []).append(p)
 
     def stub_service(src_name: str) -> Callable[..., Any]:
+        """Build a service stub that replays the recorded outcome for *src_name*.
+
+        Args:
+            src_name: The invoke ``src`` the stub stands in for.
+
+        Returns:
+            A service callable that pops the next recorded done/error outcome
+            for an active invocation of *src_name*: it returns the recorded data,
+            raises `_RecordedError` for a recorded error, or returns ``None``
+            when nothing is queued.
+        """
+
         def _svc(i: Any, c: Any, e: Any) -> Any:
             for inv_id, queue in outcomes.items():
                 if not queue:

@@ -42,7 +42,7 @@ Example:
 # -----------------------------------------------------------------------------
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
-from typing import Iterable, Optional
+from typing import Any, Iterable, Optional, Tuple
 
 # 📝 #258 battle: the public exception surface, pinned by a test so a new
 #    class cannot be added without being exported here.
@@ -538,7 +538,7 @@ class RunawayChainError(XStateMachineError):
         #    persisted MESSAGE only -- JSON kept no limit / dropped count.
         self.limit: Optional[int] = limit
         self.dropped: Optional[int] = dropped
-        self.stranded: tuple = tuple(stranded or ())
+        self.stranded: Tuple[Any, ...] = tuple(stranded or ())
         tail = (
             f" The cut stranded invocation(s) {list(self.stranded)}: their "
             f"state is still active with no service running, and no "
@@ -570,7 +570,7 @@ class RestoredChainError(RestoredError, RunawayChainError):
 
     limit: Optional[int] = None
     dropped: Optional[int] = None
-    stranded: tuple = ()
+    stranded: Tuple[Any, ...] = ()
 
     def __init__(self, message: str):
         # 🧭 Bypass `RunawayChainError.__init__` (it composes its message

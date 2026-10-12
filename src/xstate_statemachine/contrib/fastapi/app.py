@@ -85,6 +85,7 @@ def instrument_app(
     if exception_handlers:
 
         async def handle(request: Request, exc: Exception) -> Response:
+            """Map an `XStateMachineError` to a problem response (logging 5xx)."""
             if status_for_exception(exc) >= 500:
                 import logging
 
@@ -107,6 +108,7 @@ def instrument_app(
         async def handle_validation(
             request: Request, exc: Exception
         ) -> Response:
+            """Map a `RequestValidationError` to a value-free 422 problem."""
             if not isinstance(exc, RequestValidationError):  # pragma: no cover
                 return problem_for_exception(exc)
             return _validation_problem(exc)

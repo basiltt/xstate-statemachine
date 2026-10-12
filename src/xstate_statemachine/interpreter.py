@@ -166,6 +166,7 @@ class _PreStartQueue:
         return not self._items
 
     def drain(self) -> List[AnyEvent]:
+        """Remove and return all queued events, leaving the queue empty."""
         items, self._items = self._items, []
         return items
 
@@ -944,7 +945,7 @@ class Interpreter(BaseInterpreter[TContext]):
         **payload: Any,
     ) -> Awaitable[Optional[Receipt]]: ...
 
-    def send(  # type: ignore[override, misc]
+    def send(
         self,
         event_or_type: Union[
             str, Dict[str, Any], Event, DoneEvent, AfterEvent, ErrorEvent
@@ -2688,7 +2689,7 @@ class Interpreter(BaseInterpreter[TContext]):
         actor_machine_key = spawn_service_key(action_def.type)
 
         actor_source = self.machine.logic.services.get(actor_machine_key)
-        actor_machine: Optional[MachineNode] = None
+        actor_machine: Optional[MachineNode[Any]] = None
 
         # 🏭 The actor source can be a direct machine node or a factory function.
         if isinstance(actor_source, MachineNode):
@@ -2780,7 +2781,7 @@ class Interpreter(BaseInterpreter[TContext]):
             self.id,
         )
 
-    async def _cancel_state_tasks(self, state: StateNode) -> None:
+    async def _cancel_state_tasks(self, state: StateNode[Any]) -> None:
         """Cancels all background tasks associated with an exited state.
 
         When a state is exited, this method ensures that any running timers
@@ -3027,7 +3028,7 @@ class Interpreter(BaseInterpreter[TContext]):
         return True
 
     def _invocation_is_live(
-        self, state: StateNode, invocation: InvokeDefinition
+        self, state: StateNode[Any], invocation: InvokeDefinition
     ) -> bool:
         # A service invoke runs as a task owned by the state; a machine
         # invoke as a child actor addressed `<self.id>:<invoke id>` (or a
@@ -3588,7 +3589,7 @@ class Interpreter(BaseInterpreter[TContext]):
     async def _start_invoked_actor(
         self,
         invocation: InvokeDefinition,
-        actor_machine: MachineNode,
+        actor_machine: MachineNode[Any],
         owner_id: str,
     ) -> None:
         """Create and start an invoked child; wire completion as a PUSH.

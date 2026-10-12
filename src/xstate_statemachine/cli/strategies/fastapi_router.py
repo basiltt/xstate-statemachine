@@ -76,6 +76,7 @@ class FastAPIRouterStrategy(BaseStrategy):
         return ""
 
     def generate_logic(self, ctx: GenerationContext) -> str:
+        """Emit a FastAPI router exposing the machine events."""
         config = ctx.configs[0]
         events = collect_events(config)
         typed = MODELS_TEMPLATE in ctx.companions

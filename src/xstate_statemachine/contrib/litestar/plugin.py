@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, AsyncGenerator, Callable, Optional
+from typing import Any, AsyncGenerator, Callable, Optional, cast
 
 from litestar import Request, Response, get
 from litestar.config.app import AppConfig
@@ -58,6 +58,15 @@ def get_interpreter(
     async def interpreter_dependency(
         request: Request,  # type: ignore[type-arg]
     ) -> AsyncGenerator[Any, None]:
+        """Authorize the request and yield a started interpreter for its key.
+
+        Args:
+            request: The incoming request.
+
+        Returns:
+            An async generator yielding the interpreter; state is saved
+            when the handler finishes without error.
+        """
         conn = to_starlette(request)
         k = str(key_of(request))
         await registry.authorize(conn, name, k, None)
@@ -168,6 +177,11 @@ class _ActOwner:
             raise
 
     async def start(self) -> Any:
+        """Launch the `act()` task and wait until the interpreter is ready.
+
+        Returns:
+            The ready interpreter.
+        """
         self.task = asyncio.ensure_future(self._run())
         try:
             return await asyncio.shield(self.ready)
@@ -178,6 +192,11 @@ class _ActOwner:
             raise
 
     async def finish(self, failure: Optional[BaseException]) -> None:
+        """Signal the end of the handler and wait for the save to land.
+
+        Args:
+            failure: The handler's exception, or ``None`` on success.
+        """
         if not self.done.done():
             self.done.set_result(failure)
         if self.task is None:  # review L2: not an `assert`
@@ -240,6 +259,7 @@ class XStatePlugin(InitPluginProtocol, OpenAPISchemaPluginProtocol):
     def to_openapi_schema(
         self, field_definition: Any, schema_creator: Any
     ) -> Any:
+        """Build the OpenAPI schema for an event union (oneOf on ``type``)."""
         from litestar.openapi.spec import Discriminator, Schema
         from litestar.typing import FieldDefinition
 
@@ -257,6 +277,12 @@ class XStatePlugin(InitPluginProtocol, OpenAPISchemaPluginProtocol):
         )
 
     def on_app_init(self, app_config: AppConfig) -> AppConfig:
+        """Install the lifespan, error handler, dependencies and probe routes.
+
+        Raises:
+            ValueError: If an app dependency named like an interpreter one
+                already exists.
+        """
         reg = self.registry
         # 🔥 battle #278-a: a second `XStatePlugin` over the same registry
         #    (one per controller module) ran the lifespan twice -- two
@@ -284,7 +310,10 @@ class XStatePlugin(InitPluginProtocol, OpenAPISchemaPluginProtocol):
 
             @get(self.health_path, include_in_schema=False)
             async def xsm_health(request: Request) -> Response:  # type: ignore[type-arg]
-                return to_litestar(await health(to_starlette(request)))
+                return cast(
+                    "Response[Any]",
+                    to_litestar(await health(to_starlette(request))),
+                )
 
             app_config.route_handlers.append(xsm_health)
         if self.ready_path:
@@ -292,7 +321,10 @@ class XStatePlugin(InitPluginProtocol, OpenAPISchemaPluginProtocol):
 
             @get(self.ready_path, include_in_schema=False)
             async def xsm_ready(request: Request) -> Response:  # type: ignore[type-arg]
-                return to_litestar(await ready(to_starlette(request)))
+                return cast(
+                    "Response[Any]",
+                    to_litestar(await ready(to_starlette(request))),
+                )
 
             app_config.route_handlers.append(xsm_ready)
         return app_config

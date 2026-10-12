@@ -221,8 +221,6 @@ except InvalidConfigError as e:
     assert "b.a: on 'GO' -> target 'nowhere' does not resolve" in str(e)
 ```
 
-<div class="stately" data-machine="8bff32c3ca" data-height="320" data-title="b"></div>
-
 ---
 
 ## 5. Unbounded inbox — `max_queue_size` + `OverflowPolicy`
@@ -369,8 +367,6 @@ interp = Interpreter(
     overflow_policy=OverflowPolicy.BLOCK,
 )
 ```
-
-<div class="stately" data-machine="ad5b3bb3c5" data-height="320" data-title="orders"></div>
 
 Then in every test: inject a `SimulatedClock`, assert on `Receipt`s, and register a `PluginBase` that fails the test on any `on_*_error` hook.
 

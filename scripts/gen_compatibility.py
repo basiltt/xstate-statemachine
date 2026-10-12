@@ -64,7 +64,7 @@ tested version as the practical minimum.
 
 FOOTER = """
 The core library has **no runtime dependencies** and supports **Python 3.9 to
-3.14**. Extras not listed here are placeholders that install nothing yet. See
+3.15**. Extras not listed here are placeholders that install nothing yet. See
 [Integrations & extras](../integrations-extras/). How versions and
 deprecations are managed is on the [Deprecation Policy](../deprecation-policy/)
 page. `contrib` APIs are provisional.

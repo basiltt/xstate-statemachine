@@ -154,7 +154,7 @@ class StreamEvent(Event):
     """
 
     @property
-    def data(self) -> Any:  # type: ignore[override]
+    def data(self) -> Any:
         return self.payload.get("data")
 
 
@@ -738,6 +738,7 @@ def _deprecated_mint(
     """#235: one-release shim for the pre-0.9.0 unprefixed helper names."""
 
     def shim(*args: Any, **kwargs: Any) -> Any:
+        """Warn that the old name is deprecated, then call the target."""
         from .deprecations import deprecated
 
         deprecated(

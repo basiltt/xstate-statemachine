@@ -3,8 +3,6 @@ title: "Persistence Stores"
 description: "StateStore protocol with Memory, File and SQLite backends — the create → act → persist → discard model for web workers, Celery and multi-process apps."
 ---
 
-# Persistence Stores
-
 An interpreter is process memory. Under gunicorn or uvicorn workers, in a Celery task, or when two requests arrive for the same order, "keep it in RAM" is wrong. Every durable system converges on the same four-step loop:
 
 ```mermaid
@@ -83,8 +81,6 @@ assert (record.key, record.version, record.machine_version) == ("m-1", 1, "3")
 assert record.deadlines == ()          # durable timers land here (#264)
 interp.stop()
 ```
-
-<div class="stately" data-machine="c84e05cf80" data-height="320" data-title="m"></div>
 
 | Field | Meaning |
 |:--|:--|

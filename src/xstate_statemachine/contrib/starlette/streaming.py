@@ -92,6 +92,7 @@ async def transition_stream(
         #    raises `ClientDisconnect` out of a failed `send` without ever
         #    closing the generator, so the slot and the subscriber leaked
         #    until GC (`max_connections_per_key` exhausted by dead clients).
+        """Cancel the watchers and free the stream's subscriber and slot, once."""
         for t in watcher:
             t.cancel()
         if released:
@@ -276,9 +277,12 @@ def websocket_endpoint(
     """
 
     class StatechartWebSocketEndpoint(WebSocketEndpoint):
+        """The WebSocket endpoint for one machine's instance stream."""
+
         encoding = "json"
 
         async def on_connect(self, websocket: WebSocket) -> None:
+            """Authorize, check limits, accept, and send the snapshot frame."""
             key = str(websocket.path_params[key_param])
             self._key = key
             self._sub: Any = None
@@ -331,6 +335,7 @@ def websocket_endpoint(
             await _push_loop(registry, websocket, self._sub, self._key)
 
         async def on_receive(self, websocket: WebSocket, data: Any) -> None:
+            """Send a client frame as an event; reply with a receipt or error frame."""
             if data is _TOO_BIG:
                 await websocket.close(code=WS_MESSAGE_TOO_BIG)
                 return
@@ -375,6 +380,7 @@ def websocket_endpoint(
         async def on_disconnect(
             self, websocket: WebSocket, close_code: int
         ) -> None:
+            """Stop the push task, drop the subscriber and release the slot."""
             if self._pump is not None:
                 self._pump.cancel()
                 try:

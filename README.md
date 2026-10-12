@@ -132,7 +132,7 @@ when things fail.
 ## 🚀 Install
 
 ```bash
-pip install xstate-statemachine          # the core: zero runtime dependencies, Python 3.9 → 3.14
+pip install xstate-statemachine          # the core: zero runtime dependencies, Python 3.9 → 3.15
 xsm info                                 # verify the install
 xsm update                               # later: upgrade with the installer that installed you
 ```
@@ -1405,6 +1405,7 @@ hook is optional:
 |:--|:--|
 | `on_interpreter_start` / `on_interpreter_stop` | Lifecycle boundaries (`restored_from_snapshot` tells a resume from a bring-up) |
 | `on_before_send` / `on_event_received` / `on_event_processed` | An event is offered (and may be refused), arrives, and has run its macrostep |
+| `on_event_refused` / `on_event_sent` / `on_resolve_error` | A later plugin refused an event you had already approved (release your claim); this actor addressed an event to another actor (`sendTo` / `sendParent` / `forwardTo`); a transition target failed to resolve |
 | `on_transition` | A transition settles |
 | `on_guard_evaluated` / `on_guard_error` | A guard returns — "why didn't it fire?" — or raised |
 | `on_action_execute` / `on_action_error` | Before each action runs; an action raised. **Failures are contained**, so without this hook they are invisible |
@@ -1482,22 +1483,22 @@ instead of patterns you assemble yourself.
 ### Speed
 
 Same machine shape, each library through its own idiomatic API, all measured in one session
-on 0.11.0 (2026-10-02, Python 3.14, median of 7 runs, GC disabled, setup excluded). Events per second;
+on 0.11.0 (2026-10-11, Python 3.14, median of 7 runs, GC disabled, setup excluded). Events per second;
 **bold** is fastest in the row.
 
-| Scenario | **xstate-statemachine** (sync) | transitions 0.9.3 | python-statemachine 3.2.1 | sismic 1.6.11 |
+| Scenario | **xstate-statemachine** (sync) | transitions 0.9.3 | python-statemachine 3.2.1 | sismic 1.6.14 |
 |:--|--:|--:|--:|--:|
-| Flat toggle | 77,354 | **165,649** | 11,413 | 15,630 |
-| 3-level nested | **31,762** | 10,107 | 4,554 | 6,048 |
-| Parallel regions | **26,960** | 7,166 | 4,602 | 5,692 |
-| Delayed transitions (timers/s) | **9,151** | 71 | 4,735 | 6,654 |
-| Construction (machines/s) | **9,600** | **9,850** | 1,802 | 349 |
-| 1,000 instances (inst/s) | **43,836** | **44,658** | 4,730 | 9,096 |
+| Flat toggle | 71,210 | **124,773** | 7,365 | 12,153 |
+| 3-level nested | **28,502** | 7,806 | 2,901 | 4,669 |
+| Parallel regions | **25,349** | 5,654 | 2,537 | 4,333 |
+| Delayed transitions (timers/s) | **7,706** | 79 | 2,077 | 5,037 |
+| Construction (machines/s) | **8,684** | 7,649 | 854 | 220 |
+| 1,000 instances (inst/s) | **33,213** | 30,215 | 2,221 | 7,109 |
 
 `transitions` is a transition table, not a statechart engine, and wins the *flat* scenario
-by ~2.1×. The moment states nest or run in parallel it has to emulate the SCXML algorithm and
-this library is 3.1–3.8× faster than the next library. Construction and fanning out to
-1,000 instances are a **tie** with `transitions` (within ±3 % across six interleaved runs) —
+by ~1.8×. The moment states nest or run in parallel it has to emulate the SCXML algorithm and
+this library is 3.7–4.5× faster than the next library. Construction and fanning out to
+1,000 instances are **14 % and 10 % ahead** of `transitions` (stable across two full runs) —
 while still running the full build-time validator on every `create_machine()`. Full table, method and caveats:
 [`benchmarks/competitors/`](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/competitors/README.md). The production numbers (throughput budget, `after` lateness under load) come from [`benchmarks/production_characteristics.py`](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/production_characteristics.py); run it with `--json` on your own hardware to gate CI on your figures.
 
@@ -1926,7 +1927,7 @@ xsm asyncapi checkout.json -o asyncapi.json
 | Command | Alias | Does |
 |:--|:--|:--|
 | `generate-template` | `gt` | Generate Python from a machine JSON — plus `--with-tests`, `--with-types`, `--with-plugin` companions; `--check` for CI drift |
-| `list-templates` | `lt` | The 8 templates, grouped |
+| `list-templates` | `lt` | The 10 templates, grouped |
 | `validate` | `val` | Build each file with the real library; list every finding (`--lenient`, `--json`) |
 | `inspect` | `ins` | State tree, transitions table, logic to implement, failure policies; `--live` streams to the Stately Inspector |
 | `simulate` | `sim` | Run a machine on a simulated clock — interactively or from `--events` / `--script`; `--record` writes a JSONL session |
@@ -2581,7 +2582,7 @@ Invoked **services** are different — their failures *are* routed back into the
 
 <br>
 
-8,596 tests (93% coverage, 90% is the CI gate), run on Python 3.9–3.14 across Linux, macOS and
+8,601 tests (93% coverage, 90% is the CI gate), run on Python 3.9–3.15 across Linux, macOS and
 Windows on every PR, plus an `[all]`-extras wheel smoke on all three OSes and a compatibility
 matrix that installs each framework version the docs claim. Every integration and recipe has
 been through an adversarial "battle" pass — a scenario test written from the user's point of
@@ -2655,7 +2656,7 @@ Guides · API reference · [What's new and the upgrade notes](https://basiltt.gi
 
 **Install everything:** `pip install "xstate-statemachine[all]"` pulls every shipped extra (each is also installable alone; see [Integrations & extras](https://basiltt.github.io/xstate-statemachine/guide/integrations-extras/)).
 
-**Supported Python: 3.9 – 3.14** (CPython), tested on Linux, plus Windows and macOS spot-checks, on every PR.
+**Supported Python: 3.9 – 3.15** (CPython), tested on Linux, plus Windows and macOS spot-checks, on every PR.
 
 <br>
 

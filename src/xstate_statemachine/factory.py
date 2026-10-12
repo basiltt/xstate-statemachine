@@ -33,6 +33,7 @@ from typing import (
     Dict,
     List,
     Optional,
+    Set,
     Type,
     Union,
     overload,
@@ -60,7 +61,7 @@ from .validation import validate_machine, validate_top_level_keys
 
 #: ⚡ Placeholder handed to `MachineNode` during an auto-discovery build;
 #: replaced before the machine is returned, never mutated.
-_EMPTY_LOGIC: MachineLogic = MachineLogic()
+_EMPTY_LOGIC: MachineLogic[Any] = MachineLogic()
 
 
 @overload
@@ -200,7 +201,7 @@ def create_machine(
     # ⚡ Perf: five INFO records per build were measurable at 10k
     #    machines/s; emit them only when INFO is actually enabled.
     _info = logger.isEnabledFor(logging.INFO)
-    final_logic: Optional[MachineLogic] = None
+    final_logic: Optional[MachineLogic[Any]] = None
     if logic:
         # ✅ Path 1: Use the explicitly provided logic instance.
         if _info:
@@ -387,7 +388,7 @@ def _alias_logic_names(machine: MachineNode[Any]) -> None:
 
 
 def _warn_collapsed_config_names(
-    kind: str, required: set, registry: Dict[str, Any]
+    kind: str, required: Set[Any], registry: Dict[str, Any]
 ) -> None:
     """#91 (config side): two distinct names the CONFIG asks for that
     normalise equal and resolve to ONE callable almost certainly mean a

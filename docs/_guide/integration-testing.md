@@ -3,8 +3,6 @@ title: "pytest integration"
 description: "A pytest plugin that turns a JSON chart into fixtures: a started interpreter on a simulated clock, stub logic that records what ran, and snapshot assertions — for both engines."
 ---
 
-# pytest
-
 Testing a statechart is always the same setup: build the machine with stub logic, start a `SyncInterpreter` on a `SimulatedClock`, send events, advance the clock, assert on the configuration. Our own `xsm gt -t pytest` template emits exactly that boilerplate. The `[testing]` extra makes it declarative instead: put one marker on the test, name the fixtures you need, and the plugin builds the machine, starts it, and stops it at teardown — for the sync **and** the async engine. It also gives you a snapshot assertion that records to a file, fails with a unified diff, and never writes unless you ask it to.
 
 ## Install
@@ -29,9 +27,19 @@ TEST = '''
 import pytest
 
 CHECKOUT = {
-    "id": "checkout", "initial": "cart", "context": {"items": 0},
+    "id": "checkout",
+    "initial": "cart",
+    "context": {"items": 0},
     "states": {
-        "cart":      {"on": {"PAY": {"target": "paying", "guard": "hasItems", "actions": "charge"}}},
+        "cart": {
+            "on": {
+                "PAY": {
+                    "target": "paying",
+                    "guard": "hasItems",
+                    "actions": "charge",
+                },
+            },
+        },
         "paying":    {"after": {"3000": "confirmed"}},
         "confirmed": {"type": "final"},
     },

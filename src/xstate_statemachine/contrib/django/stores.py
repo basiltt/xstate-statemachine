@@ -28,6 +28,7 @@ import threading
 import time
 import uuid
 from typing import (
+    cast,
     Any,
     ContextManager,
     Dict,
@@ -410,7 +411,7 @@ class DjangoModelStore(BaseStore):
         row = self._mgr().filter(pk=self._pk(key)).first()
         if row is None:
             return {"snapshots": 0, "deadlines": 0}
-        return row.forget_statechart(using=self.using)
+        return cast("dict[str, int]", row.forget_statechart(using=self.using))
 
     def _list_keys_raw(self, prefix: str, limit: int) -> List[str]:
         pks = (

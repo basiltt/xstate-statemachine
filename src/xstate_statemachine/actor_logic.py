@@ -235,6 +235,17 @@ def _send_back_for(
     """
 
     def send_back(event_or_type: Any, **payload: Any) -> None:
+        """Deliver an event to the interpreter from any thread.
+
+        Args:
+            event_or_type: An event object, dict or type string.
+            **payload: Payload for a string event type.
+
+        Raises:
+            TypeError: If a payload key collides with a reserved `send`
+                control argument.
+            InvalidEventError: If the event is malformed.
+        """
         # 📝 #267 battle (B): `send_back("X", internal=True)` would reach
         #    the async engine's `send_threadsafe(internal=...)` as a
         #    CONTROL argument, not payload -- and silently differ per
@@ -418,6 +429,11 @@ def from_iterator(
         send_back = _send_back_for(interp, handle)
 
         def run() -> None:
+            """Drain the iterator, forwarding each item as a stream event.
+
+            Completes the invocation with the last item, or fails it if the
+            iterator raises. Stops early once the state has exited.
+            """
             last: Any = None
             try:
                 for item in gen:
@@ -442,6 +458,10 @@ def from_iterator(
         )
 
         def cleanup() -> None:
+            """Stop the producer thread and wait briefly for it to finish.
+
+            Logs a warning if the iterator is still blocked inside `next()`.
+            """
             stop.set()
             # 📝 #267 battle: `stop` is seen only BETWEEN items; an iterator
             #    blocked inside `next()` (a socket read) kept the thread

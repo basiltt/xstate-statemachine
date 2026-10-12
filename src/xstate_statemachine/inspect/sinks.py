@@ -112,6 +112,14 @@ class JsonLinesSink:
         self._lock = threading.Lock()
 
     def send(self, message: Dict[str, Any]) -> None:
+        """Append *message* as one compact JSON line and flush.
+
+        Args:
+            message: The inspector message; non-JSON values use `str()`.
+
+        Raises:
+            ValueError: If the sink was already closed.
+        """
         line = json.dumps(
             message, default=str, separators=(",", ":"), ensure_ascii=True
         )
@@ -133,7 +141,9 @@ class JsonLinesSink:
         self.close()
 
 
-def read_jsonl(path: Union[str, "os.PathLike[str]"]) -> Iterator[Dict]:
+def read_jsonl(
+    path: Union[str, "os.PathLike[str]"],
+) -> Iterator[Dict[str, Any]]:
     """Yield the messages of a `JsonLinesSink` recording (blank lines and
     non-object lines are skipped)."""
     with open(path, encoding="utf-8") as fh:
@@ -235,6 +245,11 @@ class SseSink:
 
     # -- lifecycle --------------------------------------------------------
     def start(self) -> "SseSink":
+        """Start the HTTP server thread (idempotent) and return ``self``.
+
+        Returns:
+            This sink, so ``SseSink(...).start()`` chains.
+        """
         if self._thread is None:
             self._thread = threading.Thread(
                 target=self._server.serve_forever,
@@ -245,6 +260,7 @@ class SseSink:
         return self
 
     def close(self) -> None:
+        """Disconnect clients, stop the server thread, free the socket."""
         with self._lock:
             clients, self._clients = self._clients, []
         for q in clients:
@@ -269,6 +285,13 @@ class SseSink:
 
     # -- sink -------------------------------------------------------------
     def send(self, message: Dict[str, Any]) -> None:
+        """Record *message* and push it as an SSE frame to every client.
+
+        Slow clients whose queue is full are disconnected, not waited on.
+
+        Args:
+            message: The inspector message to publish.
+        """
         with self._lock:
             self._seq += 1
             self._history.append(message)
@@ -313,6 +336,14 @@ class SseSink:
 
     # -- security checks --------------------------------------------------
     def token_ok(self, candidate: Optional[str]) -> bool:
+        """Return whether *candidate* equals the sink token (constant time).
+
+        Args:
+            candidate: The token presented by the client, if any.
+
+        Returns:
+            ``True`` only for a non-empty, matching token.
+        """
         if not candidate:
             return False
         return hmac.compare_digest(
@@ -320,6 +351,15 @@ class SseSink:
         )
 
     def host_ok(self, host_header: Optional[str]) -> bool:
+        """Validate the ``Host`` header against DNS-rebinding attacks.
+
+        Args:
+            host_header: The raw ``Host`` header value, if any.
+
+        Returns:
+            ``True`` for any host on a non-loopback bind (the token is the
+            control there); on a loopback bind only a loopback host name.
+        """
         if not _is_loopback(self.host):
             return True  # the token is the control on a public bind
         if not host_header:
@@ -342,6 +382,16 @@ class SseSink:
         return _is_loopback(name)
 
     def origin_ok(self, origin: Optional[str], host: Optional[str]) -> bool:
+        """Apply the cross-origin policy to an ``Origin`` header.
+
+        Args:
+            origin: The ``Origin`` header value, or ``None``.
+            host: The request ``Host`` header value, if any.
+
+        Returns:
+            ``True`` for non-browser clients, allow-listed origins and
+            same-origin requests.
+        """
         if origin is None:
             return True  # non-browser client (curl, http.client)
         if origin in self.allowed_origins:
@@ -353,6 +403,8 @@ class SseSink:
         sink = self
 
         class Handler(BaseHTTPRequestHandler):
+            """Request handler for the inspector page, messages and SSE."""
+
             server_version = "xsm-inspector"
             sys_version = ""
 
@@ -387,6 +439,7 @@ class SseSink:
                 return None
 
             def do_GET(self) -> None:  # noqa: N802 -- stdlib name
+                """Serve ``GET`` after Host, Origin and token checks."""
                 host = self.headers.get("Host")
                 if not sink.host_ok(host):
                     return self._deny(421, "misdirected request (Host)")

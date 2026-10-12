@@ -4,8 +4,6 @@ description: "An honest comparison with python-statemachine: its declarative cla
 permalink: /guide/vs-python-statemachine/
 ---
 
-# xstate-statemachine vs python-statemachine
-
 [python-statemachine](https://github.com/fgmacedo/python-statemachine) has a clean, declarative, very Pythonic API: states and transitions are class attributes, and callbacks are found by naming convention. Since version 3 its `StateChart` supports compound, parallel and history states and `invoke`, and it has excellent diagram and documentation tooling. It is a real alternative, and on ergonomics it is ahead of us.
 
 {% assign c = site.data.comparisons.python_statemachine %}

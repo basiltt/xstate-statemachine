@@ -30,6 +30,7 @@
     },
     "InvokeConfig": {
       "additionalProperties": true,
+      "description": "Validated shape of an ``invoke`` entry (source, id, input,\n``onDone``/``onError``).",
       "properties": {
         "description": {
           "anyOf": [
@@ -182,6 +183,7 @@
     },
     "StateConfig": {
       "additionalProperties": true,
+      "description": "Validated shape of one state node: child states, transitions, invokes.",
       "properties": {
         "after": {
           "anyOf": [
@@ -534,6 +536,7 @@
     },
     "TransitionConfig": {
       "additionalProperties": true,
+      "description": "Validated shape of one XState transition (target, actions, guard,\nmetadata).",
       "properties": {
         "actions": {
           "anyOf": [

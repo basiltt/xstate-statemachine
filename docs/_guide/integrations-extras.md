@@ -3,8 +3,6 @@ title: "Integration extras"
 description: "Every optional pip extra — pydantic, redis, starlette, fastapi, litestar, flask, sqlalchemy, django, drf, channels, agents, observability, cloudevents, celery, the brokers (redis streams, kafka, rabbitmq, nats, sqs) and testing — with its status, issue and the point at which a missing dependency is reported."
 ---
 
-# Integration extras
-
 The core library has **zero runtime dependencies**, and that never changes. Everything that talks to a framework — Django models, FastAPI routers, SQLAlchemy types, Celery tasks, Kafka consumers, OpenTelemetry spans — lives in optional packages under `xstate_statemachine.contrib`, installed one **pip extra** at a time:
 
 ```bash

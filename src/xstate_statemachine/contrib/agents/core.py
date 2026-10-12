@@ -307,6 +307,21 @@ class _AgentLogic:
         return data
 
     def call_model_sync(self, i: Any, ctx: Dict[str, Any], e: Any) -> Any:
+        """Call the model synchronously and return its bounded response data.
+
+        Args:
+            i: The running interpreter (used for tracing).
+            ctx: The machine context holding the transcript.
+            e: The triggering event.
+
+        Returns:
+            The normalised response dict (text, tool calls, usage), with
+            reused tool-call ids flagged.
+
+        Raises:
+            TypeError: If the model returned an awaitable under a sync
+            engine.
+        """
         messages, schemas, extra = self._model_request(i, ctx, e)
         resp = self.model(messages, schemas)
         if inspect.isawaitable(resp):
@@ -324,6 +339,20 @@ class _AgentLogic:
     async def call_model_async(
         self, i: Any, ctx: Dict[str, Any], e: Any
     ) -> Any:
+        """Call the model under the async engine and return its response data.
+
+        A sync model runs on a daemon worker thread so a hung call cannot
+        freeze the event loop; an async model is awaited directly.
+
+        Args:
+            i: The running interpreter (used for tracing).
+            ctx: The machine context holding the transcript.
+            e: The triggering event.
+
+        Returns:
+            The normalised response dict (text, tool calls, usage), with
+            reused tool-call ids flagged.
+        """
         messages, schemas, extra = self._model_request(i, ctx, e)
         if _is_async_model(self.model):
             resp = self.model(messages, schemas)
@@ -381,12 +410,34 @@ class _AgentLogic:
         }
 
     def run_tool_sync(self, i: Any, ctx: Dict[str, Any], e: Any) -> Any:
+        """Execute the authorised pending tool calls one by one, synchronously.
+
+        Args:
+            i: The running interpreter.
+            ctx: The machine context holding the pending tool calls.
+            e: The triggering event.
+
+        Returns:
+            A list of tool-result messages (``tool_call_id``, ``name``,
+            truncated ``content``), one per call.
+        """
         out = []
         for call, args in self._authorise_all(i, ctx, e):
             out.append(self._result(i, call, self.tools.call_sync(call, args)))
         return out
 
     async def run_tool_async(self, i: Any, ctx: Dict[str, Any], e: Any) -> Any:
+        """Execute the authorised pending tool calls one by one, awaiting each.
+
+        Args:
+            i: The running interpreter.
+            ctx: The machine context holding the pending tool calls.
+            e: The triggering event.
+
+        Returns:
+            A list of tool-result messages (``tool_call_id``, ``name``,
+            truncated ``content``), one per call.
+        """
         out = []
         for call, args in self._authorise_all(i, ctx, e):
             value = await self.tools.call_async(call, args)
@@ -400,6 +451,17 @@ class _AgentLogic:
         return data if isinstance(data, dict) else {}
 
     def g_tool_allowed(self, ctx: Dict[str, Any], e: Any) -> bool:
+        """Guard: every proposed tool call is permitted and well-formed.
+
+        Args:
+            ctx: The machine context.
+            e: The model-response event.
+
+        Returns:
+            ``False`` if there are too many calls, duplicate call ids, an
+            unknown or not-allowed tool, or schema-invalid arguments;
+            otherwise ``True``.
+        """
         d = self._data(e)
         if d.get("too_many_tool_calls") or d.get("duplicate_call_ids"):
             return False
@@ -422,6 +484,16 @@ class _AgentLogic:
         return True
 
     def g_needs_human(self, ctx: Dict[str, Any], e: Any) -> bool:
+        """Guard: some proposed tool call has side effects.
+
+        Args:
+            ctx: The machine context.
+            e: The model-response event.
+
+        Returns:
+            ``True`` if any proposed tool is flagged ``side_effect``, so a
+            human must approve the batch.
+        """
         for c in calls_from(self._data(e).get("tool_calls") or []):
             t = self.tools.get(c.name)
             if t is not None and t.side_effect:
@@ -439,6 +511,15 @@ class _AgentLogic:
         return isinstance(getattr(e, "error", None), ToolDeniedError)
 
     def g_output_valid(self, ctx: Dict[str, Any], e: Any) -> bool:
+        """Guard: the model's text output passes output validation.
+
+        Args:
+            ctx: The machine context.
+            e: The model-response event.
+
+        Returns:
+            ``True`` if the text validates against the output model/parser.
+        """
         model = self._output_model_for(e)
         ok, _ = _validate_output(
             model, str(self._data(e).get("text", "")), self.output_parser
@@ -453,6 +534,17 @@ class _AgentLogic:
     def a_append_user(
         self, i: Any, ctx: Dict[str, Any], e: Any, a: Any
     ) -> None:
+        """Append the user's prompt to the transcript.
+
+        The prompt comes from the event payload, falling back to the task in
+        context; nothing is appended if neither exists.
+
+        Args:
+            i: The running interpreter.
+            ctx: The machine context (mutated).
+            e: The triggering event.
+            a: The action definition.
+        """
         payload = getattr(e, "payload", None) or {}
         prompt = payload.get("prompt")
         if prompt is None:
@@ -463,6 +555,18 @@ class _AgentLogic:
     def a_record_response(
         self, i: Any, ctx: Dict[str, Any], e: Any, a: Any
     ) -> None:
+        """Record a model response: usage, turn count and transcript.
+
+        Updates the token, cost and turn counters, resets the retry counter
+        and approvals, remembers the proposed tool calls as pending, and
+        appends the assistant message.
+
+        Args:
+            i: The running interpreter.
+            ctx: The machine context (mutated).
+            e: The model-response event.
+            a: The action definition.
+        """
         ring = list(ctx.get("spent_call_ids") or ())
         for call in self._data(e).get("tool_calls") or []:
             if isinstance(call, Mapping) and call.get("id") is not None:
@@ -492,6 +596,14 @@ class _AgentLogic:
     def a_append_tool_results(
         self, i: Any, ctx: Dict[str, Any], e: Any, a: Any
     ) -> None:
+        """Append tool results to the transcript and clear the pending batch.
+
+        Args:
+            i: The running interpreter.
+            ctx: The machine context (mutated).
+            e: The event whose data is the list of tool results.
+            a: The action definition.
+        """
         results = getattr(e, "data", None) or []
         self._append(ctx, *({"role": "tool", **r} for r in results))
         ctx["pending_tool_calls"] = []
@@ -509,6 +621,14 @@ class _AgentLogic:
         ) == sorted(map(str, pending))
 
     def a_approve(self, i: Any, ctx: Dict[str, Any], e: Any, a: Any) -> None:
+        """Approve every currently pending tool call by id.
+
+        Args:
+            i: The running interpreter.
+            ctx: The machine context (mutated).
+            e: The triggering event.
+            a: The action definition.
+        """
         # 📝 Approval is per CALL ID of what is pending right now (checked
         #    by `approvalMatches`) -- it cannot pre-approve a call the
         #    model has not proposed yet.
@@ -518,6 +638,18 @@ class _AgentLogic:
         ctx["human_approved"] = True
 
     def a_reject(self, i: Any, ctx: Dict[str, Any], e: Any, a: Any) -> None:
+        """Reject the pending tool calls on a human reviewer's behalf.
+
+        Appends a "rejected" tool message (with the optional reason) for
+        each
+        pending call, then clears the pending and approved sets.
+
+        Args:
+            i: The running interpreter.
+            ctx: The machine context (mutated).
+            e: The event whose payload may carry a ``reason``.
+            a: The action definition.
+        """
         reason = (getattr(e, "payload", None) or {}).get("reason", "")
         self._append(
             ctx,
@@ -538,6 +670,15 @@ class _AgentLogic:
     def a_store_result(
         self, i: Any, ctx: Dict[str, Any], e: Any, a: Any
     ) -> None:
+        """Validate the model text and store the value as
+        ``context["result"]``.
+
+        Args:
+            i: The running interpreter.
+            ctx: The machine context (mutated).
+            e: The model-response event.
+            a: The action definition.
+        """
         model = self._output_model_for(e)
         _, value = _validate_output(
             model, str(self._data(e).get("text", "")), self.output_parser
@@ -547,6 +688,17 @@ class _AgentLogic:
     def a_retry_output(
         self, i: Any, ctx: Dict[str, Any], e: Any, a: Any
     ) -> None:
+        """Re-prompt the model with the output validation errors.
+
+        Increments ``output_retries`` and appends a retry prompt listing
+        field names and messages only.
+
+        Args:
+            i: The running interpreter.
+            ctx: The machine context (mutated).
+            e: The model-response event.
+            a: The action definition.
+        """
         # 🔁 RETRY_OUTPUT: re-prompt with the validation errors (field
         #    names and messages only). The retry costs a model turn, so it
         #    counts against every budget like any other turn.
@@ -578,12 +730,35 @@ class _AgentLogic:
         ctx["error"] = {"kind": kind, "message": message}
 
     def a_fail(self, kind: str, message: str) -> Callable[..., None]:
+        """Build an action that records a failure of a fixed kind.
+
+        Args:
+            kind: The ``context["error"]["kind"]`` to record.
+            message: The ``context["error"]["message"]`` to record.
+
+        Returns:
+            An action setting ``context["error"]`` to that kind and message.
+        """
+
         def _action(i: Any, ctx: Dict[str, Any], e: Any, a: Any) -> None:
             self._fail(ctx, kind, message)
 
         return _action
 
     def a_deny(self, i: Any, ctx: Dict[str, Any], e: Any, a: Any) -> None:
+        """Record why a tool batch was denied and clear the pending calls.
+
+        Handles a ``ToolDeniedError``, too many calls, duplicate ids, a tool
+        not allowed here, and schema-invalid arguments, in that order,
+        setting
+        ``context["error"]`` with kind ``tool_denied``.
+
+        Args:
+            i: The running interpreter.
+            ctx: The machine context (mutated).
+            e: The denial event.
+            a: The action definition.
+        """
         err = getattr(e, "error", None)
         if isinstance(err, ToolDeniedError):
             self._fail(ctx, "tool_denied", str(err))
@@ -635,6 +810,17 @@ class _AgentLogic:
     def a_record_failure(
         self, i: Any, ctx: Dict[str, Any], e: Any, a: Any
     ) -> None:
+        """Record the failed model call's exception class name; reset
+        approvals.
+
+        Only the class name is kept, since a message may quote the prompt.
+
+        Args:
+            i: The running interpreter.
+            ctx: The machine context (mutated).
+            e: The error event.
+            a: The action definition.
+        """
         err = getattr(e, "error", None)
         # 📝 Class name only -- an exception message may quote the prompt.
         ctx["last_failure"] = type(err).__name__ if err else "unknown"
@@ -643,6 +829,17 @@ class _AgentLogic:
     def a_notify_parent(
         self, i: Any, ctx: Dict[str, Any], e: Any, a: Any
     ) -> None:
+        """Report the agent's outcome to its parent interpreter, if any.
+
+        Sends ``AGENT_DONE`` or ``AGENT_FAILED`` with the agent id, usage
+        totals, result and error; does nothing without a parent.
+
+        Args:
+            i: The running interpreter.
+            ctx: The machine context (mutated).
+            e: The triggering event.
+            a: The action definition.
+        """
         parent = getattr(i, "parent", None)
         if parent is None:
             return
@@ -673,7 +870,7 @@ def agent_logic(
     tracer: Any = None,
     max_tool_calls: int = 8,
     output_parser: Optional[Callable[[str], Any]] = None,
-) -> MachineLogic:
+) -> MachineLogic[Any]:
     """The `MachineLogic` for `TOOL_LOOP` (and charts that reuse its names).
 
     Args:
@@ -733,6 +930,16 @@ def agent_logic(
     policy = retry or RetryPolicy(max_attempts=3, base_ms=1000, jitter="none")
 
     def tool_ms(ctx: Dict[str, Any], e: Any) -> float:
+        """Return the invoke timeout for the pending tool batch, in ms.
+
+        Args:
+            ctx: The machine context holding the pending tool calls.
+            e: The triggering event.
+
+        Returns:
+            One second plus the sum of the pending tools' timeouts, in
+            milliseconds.
+        """
         # ⏱️ The whole batch runs sequentially inside one invoke, so the
         #    state-level bound is the SUM of the pending calls' timeouts.
         total = 0.0

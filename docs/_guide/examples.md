@@ -3,8 +3,6 @@ title: "Advanced Patterns"
 description: "Real-world architecture patterns — retry, wizard, e-commerce, and more."
 ---
 
-# Advanced Patterns
-
 This guide presents production-ready state machine patterns that solve common architectural challenges. Each pattern includes complete, runnable code.
 
 ---
@@ -1199,11 +1197,11 @@ from its own directory, exits `0`):
 - [`examples/sync/features/history_shallow_deep/history_shallow_deep_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/history_shallow_deep/history_shallow_deep_runner.py)
 - [`examples/sync/features/strict_mode/strict_mode_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/strict_mode/strict_mode_runner.py) — `strict=True`: an undeclared event raises `UnknownEventError` at the call site
 - [`examples/sync/features/action_error_policy/action_error_policy_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/action_error_policy/action_error_policy_runner.py) — `continue` / `rollback` / `fail` side by side
-- [`examples/sync/features/simulated_clock/simulated_clock_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/simulated_clock/simulated_clock_runner.py) — fire a 30 s `after` in microseconds
+- [`examples/sync/features/simulated_clock/simulated_clock_test_demo.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/simulated_clock/simulated_clock_test_demo.py) — fire a 30 s `after` in microseconds
 - [`examples/async/features/bounded_inbox/bounded_inbox_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/features/bounded_inbox/bounded_inbox_runner.py) — `max_queue_size` + `OverflowPolicy`
-- [`examples/async/features/deferred_unhandled_events/deferred_unhandled_events_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/features/deferred_unhandled_events/deferred_unhandled_events_runner.py) — `onUnhandled: "defer"` and `Receipt.deferred`
+- [`examples/async/features/deferred_unhandled_events/deferred_unhandled_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/features/deferred_unhandled_events/deferred_unhandled_runner.py) — `onUnhandled: "defer"` and `Receipt.deferred`
 - [`examples/async/features/restart_services/restart_services_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/features/restart_services/restart_services_runner.py) — `from_snapshot(restart_services=True)` and `pending_invocations()`
-- [`examples/async/features/wait_for_receipt/wait_for_receipt_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/features/wait_for_receipt/wait_for_receipt_runner.py) — `send(wait=True)` on the async engine
+- [`examples/async/features/wait_for_receipt/send_wait_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/async/features/wait_for_receipt/send_wait_runner.py) — `send(wait=True)` on the async engine
 - [`examples/sync/features/strict_config/strict_config_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/strict_config/strict_config_runner.py) — **0.9.0**: a misspelled key at any level is warned with its path, or refused under `strict_config=True`
 - [`examples/sync/features/chain_trips/chain_trips_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/chain_trips/chain_trips_runner.py) — **0.9.0**: `maxIterations` cuts a runaway chain; `chain_trips` / `last_chain_error` / `on_chain_budget_exceeded` keep the record, across a snapshot — `history: "shallow"` vs. `"deep"` pseudostates.
 - [`examples/sync/features/tags_and_meta/tags_and_meta_runner.py`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/features/tags_and_meta/tags_and_meta_runner.py) — `tags`, `meta`, `has_tag()`, and `get_meta()`.

@@ -39,6 +39,7 @@ from typing import (
     List,
     Optional,
     Sequence,
+    Set,
     Tuple,
 )
 
@@ -251,7 +252,7 @@ class SQLAlchemyStore(BaseStore):
     def _lock_raw(self, key: str, timeout: float) -> ContextManager[None]:
         return self._lease(key, timeout)
 
-    def _held(self) -> set:
+    def _held(self) -> Set[str]:
         held = getattr(self._local, "held", None)
         if held is None:
             held = self._local.held = set()
@@ -419,6 +420,9 @@ class AsyncSQLAlchemyStore:
             raise SnapshotTooLargeError(key, size, self.max_snapshot_bytes)
 
     async def load(self, key: str) -> Optional[StoredSnapshot]:
+        """`StateStore.load` on SQLAlchemy (async): load raw, size-check,
+        decode.
+        """
         validate_key(key)
         raw = await self._call(lambda c: _ops.load_raw(c, self.tables, key))
         if raw is None:
@@ -443,6 +447,9 @@ class AsyncSQLAlchemyStore:
         machine_version: str = "",
         deadlines: Sequence[Deadline] = (),
     ) -> int:
+        """`StateStore.save` on SQLAlchemy (async): validate, encode, versioned
+        save.
+        """
         validate_key(key)
         # 📝 #263 battle: the sync stores ran these checks; async did not.
         expected_version, machine_version, deadlines = check_save_args(
@@ -486,6 +493,9 @@ class AsyncSQLAlchemyStore:
     async def list_keys(
         self, *, prefix: str = "", limit: int = 1000
     ) -> List[str]:
+        """`StateStore.list_keys` on SQLAlchemy (async): ordered keys by
+        prefix.
+        """
         if limit < 0:
             raise ValueError("limit must be >= 0")
         return list(
@@ -497,6 +507,15 @@ class AsyncSQLAlchemyStore:
     async def due_keys(
         self, until_wall: float, *, limit: int = 1000
     ) -> List[Tuple[str, float]]:
+        """List keys with a matured deadline.
+
+        Args:
+            until_wall: Wall-clock cutoff.
+            limit: Maximum number of keys.
+
+        Returns:
+            ``(key, earliest_due_at)`` pairs, soonest first.
+        """
         src = self.tables.snapshots.name
         return list(
             await self._call(
@@ -507,6 +526,7 @@ class AsyncSQLAlchemyStore:
         )
 
     def lock(self, key: str, *, timeout: float = 10.0) -> Any:
+        """`StateStore.lock` on SQLAlchemy: validate, then an async lease lock."""
         validate_key(key)
         if timeout < 0:
             raise ValueError("timeout must be >= 0")

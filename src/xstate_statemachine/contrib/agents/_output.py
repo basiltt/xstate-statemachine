@@ -124,7 +124,9 @@ def _field_names(model: Any) -> "set[str]":
         if m in seen or not (isinstance(m, type) and issubclass(m, BaseModel)):
             continue
         seen.add(m)
-        for name, field in m.model_fields.items():  # type: ignore[attr-defined]
+        # 📝 `model_fields` exists once `issubclass(m, BaseModel)` held above;
+        #    pydantic is a soft import, so the checker may see `type`.
+        for name, field in getattr(m, "model_fields", {}).items():
             names.add(name)
             if field.alias:
                 names.add(field.alias)

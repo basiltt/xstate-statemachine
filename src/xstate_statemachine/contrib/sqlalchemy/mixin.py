@@ -29,6 +29,7 @@ import copy
 import json
 import time
 from typing import (
+    cast,
     Any,
     Callable,
     ClassVar,
@@ -96,6 +97,7 @@ class _BufferLog:
         self._first = first_seq
 
     def next_seq(self, machine_id: str) -> int:
+        """Return the next seq: after buffered records, else the table's first."""
         mine = [r for r in self.records if r.machine_id == machine_id]
         return (mine[-1].seq + 1) if mine else self._first(machine_id)
 
@@ -251,7 +253,7 @@ class StatechartMixin:
                 logic = logic(self)
             m = copy.copy(m)
             m.logic = logic
-        return m
+        return cast("MachineNode[Any]", m)
 
     def _xsm_key(self) -> str:
         ident = _identity(self)
@@ -387,7 +389,7 @@ class StatechartMixin:
         event_type: str,
         payload: Dict[str, Any],
         plugins: Iterable[Any],
-    ) -> Tuple[Receipt, Dict[str, Any], Sequence[Deadline], list]:
+    ) -> Tuple[Receipt, Dict[str, Any], Sequence[Deadline], List[Any]]:
         from ...sync_interpreter import SyncInterpreter
 
         m = self._xsm_machine()
@@ -404,6 +406,9 @@ class StatechartMixin:
             t = tables.transitions
 
             def first(mid: str) -> int:
+                """Return ``MAX(seq) + 1`` for *mid* from the transitions
+                table.
+                """
                 from sqlalchemy import func, select
 
                 q = select(func.coalesce(func.max(t.c.seq), 0)).where(
@@ -493,7 +498,10 @@ def send_with_retry(
     while True:
         attempt += 1
         try:
-            return row.send(event_type, session=session, lock=lock, **payload)
+            return cast(
+                "Receipt",
+                row.send(event_type, session=session, lock=lock, **payload),
+            )
         except (ConflictError, LockTimeoutError) as exc:
             if attempt > retries:
                 setattr(exc, "attempts", attempt)

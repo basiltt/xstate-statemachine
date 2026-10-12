@@ -18,12 +18,29 @@ from xstate_statemachine import create_machine  # noqa: E402
 FENCE = re.compile(r"```(\w*)[^\n]*\n(.*?)```", re.S)
 
 
+def _is_whole_machine(v) -> bool:
+    """A chart worth drawing on its own: a root ``id`` plus either an
+    ``initial`` state or ``type: parallel``.
+
+    📝 Guide pages often show a *fragment* -- one compound state lifted out
+    of a machine to explain a point (``{"loggedIn": {...}}``). Stately
+    renders a fragment as a cloud of disconnected nodes because the
+    transitions point outside it, so fragments are never inventoried.
+    """
+    return (
+        isinstance(v, dict)
+        and isinstance(v.get("id"), str)
+        and "states" in v
+        and ("initial" in v or v.get("type") == "parallel")
+    )
+
+
 def try_parse(text: str):
     text = text.strip()
     for loader in (json.loads, ast.literal_eval):
         try:
             v = loader(text)
-            if isinstance(v, dict) and "states" in v:
+            if _is_whole_machine(v):
                 return v
         except Exception:  # noqa: BLE001
             pass
@@ -38,11 +55,7 @@ def try_parse(text: str):
                 v = ast.literal_eval(node)
             except Exception:  # noqa: BLE001
                 continue
-            if (
-                isinstance(v, dict)
-                and "states" in v
-                and ("initial" in v or v.get("type") == "parallel")
-            ):
+            if _is_whole_machine(v):
                 return v
     return None
 
@@ -95,7 +108,7 @@ def scan():
             cfg = json.loads(jf.read_text(encoding="utf-8"))
         except Exception:  # noqa: BLE001
             continue
-        if isinstance(cfg, dict) and "states" in cfg:
+        if _is_whole_machine(cfg):
             add(cfg, jf.relative_to(ROOT).as_posix())
     for py in sorted((ROOT / "examples").rglob("*.py")):
         cfg = try_parse(py.read_text(encoding="utf-8"))

@@ -170,7 +170,7 @@ class LogicLoader:
 
     @staticmethod
     def _extract_logic_from_node(
-        node: StateNode,
+        node: StateNode[Any],
         actions: Set[str],
         guards: Set[str],
         services: Set[str],
@@ -288,7 +288,7 @@ class LogicLoader:
         logic_providers: Optional[List[Any]] = None,
         *,
         machine: Optional[MachineNode[Any]] = None,
-    ) -> MachineLogic:
+    ) -> MachineLogic[Any]:
         """Discovers implementations and builds a `MachineLogic` instance.
 
         This is the main orchestration method. It performs a three-step process:

@@ -10,7 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import threading
-from typing import Any
+from typing import Any, Dict
 
 from ._fanout import TimerPublisher
 from ._http import receipt_body
@@ -59,7 +59,10 @@ class _ScannerMixin:
             loop = None
         if loop is not None:
 
-            def body_of(interp: Any, receipt: Any, name: str):
+            def body_of(
+                interp: Any, receipt: Any, name: str
+            ) -> Dict[str, Any]:
+                """Build the response body for a timer-fired receipt of machine *name*."""
                 reg = self._reg(name)
                 return receipt_body(
                     interp, receipt, context_serializer=reg.context_serializer

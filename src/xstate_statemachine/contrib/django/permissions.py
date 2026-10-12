@@ -96,6 +96,7 @@ class PermissionGuard(_PermissionGuardBase):
         self.fallback_global = fallback_global
 
     def check(self, user: Any, obj: Any) -> bool:
+        """Require every named permission, at object level when configured."""
         for perm in self.perms:
             ok = False
             if self.object_level and obj is not None:
@@ -121,6 +122,7 @@ class RoleGuard(_PermissionGuardBase):
         self.allow_superuser = allow_superuser
 
     def check(self, user: Any, obj: Any) -> bool:
+        """Pass for superusers (if allowed) or members of any listed group."""
         if self.allow_superuser and getattr(user, "is_superuser", False):
             return True
         return bool(user.groups.filter(name__in=self.groups).exists())
@@ -288,6 +290,7 @@ class StatechartPermission:
     def has_event_permission(
         self, user: Any, instance: Any, event: Optional[str]
     ) -> bool:
+        """Default policy: reads need authentication, events use the guards."""
         if event is None:  # a read
             return bool(
                 user is not None and getattr(user, "is_authenticated", False)

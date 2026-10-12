@@ -210,6 +210,12 @@ def _default_namespace(files: List[str]) -> argparse.Namespace:
 def generate_wizard(
     parser: argparse.ArgumentParser, *, source: Optional[K.KeySource] = None
 ) -> None:
+    """Run the interactive wizard that builds a ``generate-template`` call.
+
+    Args:
+        parser: CLI parser used to run the generation.
+        source: Key source; defaults to the real terminal keys.
+    """
     from ..strategies import GenerationContext, get_strategy
     from ..extractor import extract_logic_names
     from ..utils import camel_to_snake
@@ -357,6 +363,13 @@ def run_launcher(
     source: Optional[K.KeySource] = None,
     once: bool = False,
 ) -> None:
+    """Show the interactive launcher menu and run the chosen command.
+
+    Args:
+        parser: CLI parser passed to the commands.
+        source: Key source; defaults to the real terminal keys.
+        once: Return after a single selection.
+    """
     from ... import __version__
 
     c = get_console()

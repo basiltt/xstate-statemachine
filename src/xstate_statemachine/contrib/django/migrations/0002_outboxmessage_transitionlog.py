@@ -5,7 +5,7 @@ from django.conf import settings
 from django.db import migrations, models
 
 
-class Migration(migrations.Migration):
+class Migration(migrations.Migration):  # type: ignore[misc]  # Migration is untyped (Any base)
 
     dependencies = [
         ("contenttypes", "0002_remove_content_type_name"),

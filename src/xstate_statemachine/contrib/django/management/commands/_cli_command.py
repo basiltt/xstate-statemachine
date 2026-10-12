@@ -28,12 +28,13 @@ from ._resolve import (
 __all__ = ["CLICommand"]
 
 
-class CLICommand(BaseCommand):
+class CLICommand(BaseCommand):  # type: ignore[misc]  # BaseCommand is untyped (Any base)
     """Subclasses implement `run(path, **options)`."""
 
     requires_system_checks: Any = []
 
     def add_arguments(self, parser: Any) -> None:
+        """Add the model label and console flags, then the subclass flags."""
         parser.add_argument("model", metavar="app.Model")
         add_console_flags(parser)
         self.add_cli_arguments(parser)
@@ -45,6 +46,7 @@ class CLICommand(BaseCommand):
         raise NotImplementedError
 
     def handle(self, *args: Any, **options: Any) -> None:
+        """Resolve the model's chart to a JSON path and run the CLI function."""
         model = model_from_label(options["model"])
         with machine_json_path(model) as path:
             console(options, self.stdout)

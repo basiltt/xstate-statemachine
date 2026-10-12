@@ -16,7 +16,7 @@ import json
 import os
 import pathlib
 import tempfile
-from typing import Any, Dict, Mapping, Tuple, Union
+from typing import Any, Dict, Mapping, Tuple, Union, cast
 
 import pytest
 
@@ -194,7 +194,7 @@ def _written_this_session(item: Any, target: pathlib.Path) -> bool:
     started = getattr(item.session, "_xsm_started_at", None)
     if started is None:
         return False
-    return mtime >= started
+    return cast("bool", mtime >= started)
 
 
 def _assert_snapshot(

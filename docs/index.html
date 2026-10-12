@@ -46,8 +46,8 @@ title: Home
         </button>
       </div>
       <ul class="hero-trust" aria-label="At a glance">
-        <li><strong>3,735</strong> tests</li>
-        <li><strong>3.9&ndash;3.14</strong> Python</li>
+        <li><strong>8,600+</strong> tests</li>
+        <li><strong>3.9&ndash;3.15</strong> Python</li>
         <li><strong>0</strong> dependencies</li>
         <li><strong>MIT</strong> licensed</li>
       </ul>
@@ -367,25 +367,25 @@ interp.stop()</code></pre>
         </tr>
       </thead>
       <tbody>
-        <tr><td>Flat toggle <span class="perf-unit">events/s</span></td><td>77,354</td><td class="perf-best">165,649</td><td>11,413</td><td>15,630</td></tr>
-        <tr><td>Guard + action <span class="perf-unit">events/s</span></td><td>66,677</td><td class="perf-best">139,134</td><td>9,877</td><td>14,545</td></tr>
-        <tr><td>3-level nested <span class="perf-unit">events/s</span></td><td class="perf-best">31,762</td><td>10,107</td><td>4,554</td><td>6,048</td></tr>
-        <tr><td>Parallel regions <span class="perf-unit">events/s</span></td><td class="perf-best">26,960</td><td>7,166</td><td>4,602</td><td>5,692</td></tr>
-        <tr><td>Delayed transitions <span class="perf-unit">timers/s</span></td><td class="perf-best">9,151</td><td>71</td><td>4,735</td><td>6,654</td></tr>
-        <tr><td>1,000 instances <span class="perf-unit">instances/s</span></td><td class="perf-best">43,836</td><td class="perf-best">44,658</td><td>4,730</td><td>9,096</td></tr>
-        <tr><td>Construction <span class="perf-unit">machines/s</span></td><td class="perf-best">9,600</td><td class="perf-best">9,850</td><td>1,802</td><td>349</td></tr>
-        <tr><td>Native asyncio <span class="perf-unit">events/s</span></td><td>27,581</td><td class="perf-best">45,177</td><td>8,215</td><td>&mdash;</td></tr>
+        <tr><td>Flat toggle <span class="perf-unit">events/s</span></td><td>71,210</td><td class="perf-best">124,773</td><td>7,365</td><td>12,153</td></tr>
+        <tr><td>Guard + action <span class="perf-unit">events/s</span></td><td>61,777</td><td class="perf-best">105,978</td><td>6,410</td><td>10,935</td></tr>
+        <tr><td>3-level nested <span class="perf-unit">events/s</span></td><td class="perf-best">28,502</td><td>7,806</td><td>2,901</td><td>4,669</td></tr>
+        <tr><td>Parallel regions <span class="perf-unit">events/s</span></td><td class="perf-best">25,349</td><td>5,654</td><td>2,537</td><td>4,333</td></tr>
+        <tr><td>Delayed transitions <span class="perf-unit">timers/s</span></td><td class="perf-best">7,706</td><td>79</td><td>2,077</td><td>5,037</td></tr>
+        <tr><td>1,000 instances <span class="perf-unit">instances/s</span></td><td class="perf-best">33,213</td><td>30,215</td><td>2,221</td><td>7,109</td></tr>
+        <tr><td>Construction <span class="perf-unit">machines/s</span></td><td class="perf-best">8,684</td><td>7,649</td><td>854</td><td>220</td></tr>
+        <tr><td>Native asyncio <span class="perf-unit">events/s</span></td><td>23,609</td><td class="perf-best">30,926</td><td>5,355</td><td>&mdash;</td></tr>
       </tbody>
     </table>
   </div>
   <p class="perf-note">
     <code>transitions</code> is faster on <em>flat</em> machines because it is a transition table, not a statechart
     engine &mdash; no configuration set, no entry/exit ordering, no internal queue. The moment states nest or run in
-    parallel, that algorithm is what the others have to emulate, and XState-StateMachine is 3.1&ndash;3.8&times; faster
-    than the next library. <em>Construction</em> and fanning out to 1,000 instances are a <strong>tie</strong> with
-    <code>transitions</code> (within &plusmn;3&nbsp;% across six interleaved runs, either order) &mdash; while still running the
-    full build-time validator on every <code>create_machine()</code>, and 5&ndash;27&times; ahead of the other two.
-    Measured 2026-10-02 on 0.11.0, all libraries in one session:
+    parallel, that algorithm is what the others have to emulate, and XState-StateMachine is 3.7&ndash;4.5&times; faster
+    than the next library. <em>Construction</em> and fanning out to 1,000 instances are <strong>14&nbsp;% and 10&nbsp;% ahead</strong> of
+    <code>transitions</code> (stable across two full runs) &mdash; while still running the
+    full build-time validator on every <code>create_machine()</code>, and 15&ndash;39&times; ahead of the other two.
+    Measured 2026-10-11 on 0.11.0, all libraries in one session:
     Python 3.14, median of 7 runs, GC disabled, setup excluded. Reproduce with <code>benchmarks/competitors/run.py</code>;
     full table and caveats in the
     <a href="https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/competitors/README.md">benchmark README</a>,

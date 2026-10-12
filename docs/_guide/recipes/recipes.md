@@ -4,8 +4,6 @@ permalink: /guide/recipes/
 description: "Worked, tested recipes: Stripe webhooks, APScheduler durable timers, RQ/arq/Dramatiq workers, a Streamlit/Gradio wizard, chatbot slot filling, feature-flag rollout, WebSocket reconnect, circuit breaker & retry, and a comparison with AWS Step Functions."
 ---
 
-# Recipes
-
 Each recipe answers a real problem with a chart and the code around it. None needs a plugin. The chart JSON imports into the Stately editor unchanged. The Python is 30–60 lines. Each page includes an `xsm simulate --events …` line that replays the flow from a shell, and each recipe has a test under [`tests/recipes/`](https://github.com/basiltt/xstate-statemachine/tree/main/tests/recipes). The code lives in [`examples/recipes/`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/recipes). Every Python block on these pages runs in CI. Recipes that need a third-party library import it softly and are skipped with a reason when it is missing. No recipe adds a dependency to the package.
 
 | Recipe | The problem | Library pieces | Persistence |

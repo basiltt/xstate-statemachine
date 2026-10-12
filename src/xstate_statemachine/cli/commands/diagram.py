@@ -9,7 +9,7 @@ inspect tree plus an arrow list, for a README or a terminal."""
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from ...models import MachineNode
 from . import get_console
@@ -19,7 +19,16 @@ from .inspect import state_tree
 FORMATS = ("mermaid", "plantuml", "ascii")
 
 
-def ascii_diagram(machine: MachineNode, *, unicode: bool) -> str:
+def ascii_diagram(machine: MachineNode[Any], *, unicode: bool) -> str:
+    """Render the machine as an ASCII tree plus a transition list.
+
+    Args:
+        machine: Machine to draw.
+        unicode: Use unicode glyphs instead of plain ASCII.
+
+    Returns:
+        The diagram text.
+    """
     from ..ui.term import PLAIN, Capabilities
     from ..ui.tree import render as render_tree
 
@@ -39,8 +48,21 @@ def ascii_diagram(machine: MachineNode, *, unicode: bool) -> str:
 
 
 def render_diagram(
-    machine: MachineNode, fmt: str, *, unicode: bool = True
+    machine: MachineNode[Any], fmt: str, *, unicode: bool = True
 ) -> str:
+    """Render the machine in the requested diagram format.
+
+    Args:
+        machine: Machine to draw.
+        fmt: One of ``mermaid``, ``plantuml`` or ``ascii``.
+        unicode: Use unicode glyphs for the ASCII format.
+
+    Returns:
+        The diagram text.
+
+    Raises:
+        ValueError: If *fmt* is not a known format.
+    """
     if fmt == "mermaid":
         return machine.to_mermaid()
     if fmt == "plantuml":
@@ -53,6 +75,16 @@ def render_diagram(
 def run_diagram(
     path: str, *, fmt: str = "mermaid", output: Optional[str] = None
 ) -> None:
+    """Implement ``xsm diagram``: print or write a machine diagram.
+
+    Args:
+        path: Machine JSON file.
+        fmt: Diagram format.
+        output: File or directory to write to instead of printing.
+
+    Raises:
+        SystemExit: If the machine cannot be loaded.
+    """
     c = get_console()
     facts = analyse(Path(path), strict_config=False)
     if facts.machine is None:

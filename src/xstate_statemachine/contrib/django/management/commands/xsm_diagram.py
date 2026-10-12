@@ -10,6 +10,8 @@ from ._cli_command import CLICommand
 
 
 class Command(CLICommand):
+    """Management command exporting a model's chart as a diagram."""
+
     help = "Export a statechart model's chart as Mermaid, PlantUML or ASCII."
 
     def add_cli_arguments(self, parser: Any) -> None:

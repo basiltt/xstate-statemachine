@@ -3,8 +3,6 @@ title: "FastAPI integration"
 description: "Generate a typed REST API and its OpenAPI document from a statechart: StatechartRouter, Depends(get_interpreter), discriminated-union event bodies, RFC 9457 problems, SSE and WebSocket."
 ---
 
-# FastAPI
-
 A chart already declares its public surface: its events, their payload models and its states. The `[fastapi]` extra turns that into a whole REST API — a typed `APIRouter` whose OpenAPI document lists every event as a member of a discriminated union, returns RFC 9457 problems for every failure, and streams transitions over SSE and WebSocket. Everything stateful is the `[starlette]` [`StatechartRegistry`](../integration-starlette/) (re-exported here), so the multi-worker model, `Idempotency-Key` handling and `Receipt → HTTP` mapping are exactly the ones documented there. This extra adds only what is specific to FastAPI: typed bodies, `Depends` and the schema.
 
 ## Install

@@ -89,6 +89,7 @@ class WebSocketSink:
         self._lock = threading.Lock()
 
     def send(self, message: Dict[str, Any]) -> None:
+        """Record *message* in the history and queue it for every client."""
         with self._lock:
             self._history.append(message)
             clients = list(self._clients)
@@ -123,6 +124,10 @@ class WebSocketSink:
             return list(self._history)
 
     def token_ok(self, candidate: Optional[str]) -> bool:
+        """Return whether *candidate* equals the inspector token.
+
+        The comparison is constant-time; an empty candidate is never valid.
+        """
         if not candidate:
             return False
         return hmac.compare_digest(
@@ -130,6 +135,11 @@ class WebSocketSink:
         )
 
     def presented_token(self, conn: HTTPConnection) -> Optional[str]:
+        """Return the token a connection presented, if any.
+
+        Checked in order: ``Authorization: Bearer``, ``X-XSM-Token``, then
+        the inspector cookie.
+        """
         auth = conn.headers.get("authorization", "")
         if auth.lower().startswith("bearer "):
             return auth[7:].strip()
@@ -215,6 +225,7 @@ def mount_inspector(
         return _host_name(conn.headers.get("host", "")) in _LOOPBACK
 
     async def http_view(request: Request) -> Response:
+        """``GET`` inspector path: redeem ``?token=`` for a cookie, else list."""
         if not _host_ok(request):
             return problem(421, "Misdirected Request", "loopback only")
         if not registry.origin_allowed(request):
@@ -241,6 +252,7 @@ def mount_inspector(
         )
 
     async def ws_view(websocket: WebSocket) -> None:
+        """WebSocket inspector feed; closes with a policy violation if refused."""
         if (
             not _host_ok(websocket)
             or not registry.origin_allowed(websocket)

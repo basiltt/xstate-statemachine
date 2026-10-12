@@ -1,3 +1,14 @@
+"""⛓️ The synchronous state-machine engine.
+
+`SyncInterpreter` runs a `MachineNode` on the caller's thread: `send()`
+processes the event to completion -- transitions, actions, invoked services,
+spawned children -- before it returns, so there is no event loop to own and
+no awaiting. `after` timers are a thread-free deadline list drained by
+`tick()` / `send()` (or a `SimulatedClock`), and `send_threadsafe()` is the
+one cross-thread entry point. Every statechart semantic lives in
+`BaseInterpreter`; this module supplies the blocking delivery mechanics.
+"""
+
 # /src/xstate_statemachine/sync_interpreter.py
 # -----------------------------------------------------------------------------
 # ⛓️ Synchronous State Machine Interpreter
@@ -647,7 +658,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         **payload: Any,
     ) -> Optional[Receipt]: ...
 
-    def send(  # type: ignore[override, misc]
+    def send(
         self,
         event_or_type: Union[
             str, Dict[str, Any], Event, DoneEvent, AfterEvent, ErrorEvent
@@ -743,7 +754,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #    Interpreter._run_event_loop: no actions -> context is fixed) and
         #    the per-step bookkeeping flags are read by nobody when no
         #    receipt is returned.
-        config_before: Optional[FrozenSet[StateNode]] = None
+        config_before: Optional[FrozenSet[StateNode[Any]]] = None
         context_before: Optional[Any] = None
         # 🧹 #188: the per-step scopes are reset on EVERY step, not only
         #    when a receipt will read them. `_deferred_this_step` is a list
@@ -939,7 +950,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
     def _emit_event_processed(
         self,
         event: Any,
-        config_before: FrozenSet[StateNode],
+        config_before: FrozenSet[StateNode[Any]],
         context_before: Optional[Any],
         error: Optional[BaseException],
     ) -> None:
@@ -1806,7 +1817,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             target=_runner_recording, daemon=True, name=f"actor-{actor_id}"
         ).start()
 
-    def _wait_for_child_terminal(self, child: "SyncInterpreter") -> None:
+    def _wait_for_child_terminal(self, child: "SyncInterpreter[Any]") -> None:
         """Block until *child* is done/error, or `spawnBlockingTimeout` lapses.
 
         Uses the shared terminal-listener hook (#43) rather than polling
@@ -1836,7 +1847,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             )
 
     def _queue_actor_done(
-        self, child: "SyncInterpreter", invoke_id: str
+        self, child: "SyncInterpreter[Any]", invoke_id: str
     ) -> None:
         """Queues `done.invoke.<id>` for a completed child machine.
 
@@ -1895,16 +1906,14 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         logger.info("🏁 Child actor '%s' completed; firing onDone.", child.id)
         self.send(done_event)
 
-    def _cancel_state_tasks(  # type: ignore[override]
-        self, state: StateNode
-    ) -> "_Done[None]":
+    def _cancel_state_tasks(self, state: StateNode[Any]) -> "_Done[None]":
         """Leaf: cancel a state's timers; finished awaitable (#60)."""
         # 🧹 Fire-and-forget: helper returns None, no value to thread
         # through `_Done` (#60 mypy func-returns-value cleanup).
         self._cancel_state_tasks_sync(state)
         return _Done(None)
 
-    def _cancel_state_tasks_sync(self, state: StateNode) -> None:
+    def _cancel_state_tasks_sync(self, state: StateNode[Any]) -> None:
         """Cancel every clock timer (`after`, delayed send) a state owns,
         and stop every child actor its `invoke` started (SCXML 3.9)."""
         handles = self._timer_handles.pop(state.id, [])
@@ -1977,7 +1986,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         self._timer_handles.setdefault(owner_id, []).append(handle)
 
     def _invocation_is_live(
-        self, state: StateNode, invocation: InvokeDefinition
+        self, state: StateNode[Any], invocation: InvokeDefinition
     ) -> bool:
         # Sync services complete inline, so the only long-lived invoke is a
         # child ACTOR; a callable service is never "live" between sends.

@@ -4,8 +4,6 @@ description: "An honest comparison of xstate-statemachine's [agents] extra and @
 permalink: /guide/vs-statelyai-agent/
 ---
 
-# xstate-statemachine vs @statelyai/agent
-
 `@statelyai/agent` is Stately's TypeScript library for agents built on XState and the Vercel AI SDK. Same chart model, different runtime.
 
 {% assign c = site.data.comparisons.competitors.statelyai_agent %}

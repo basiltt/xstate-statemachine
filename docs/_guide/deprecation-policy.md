@@ -3,8 +3,6 @@ title: "Deprecation Policy"
 description: "What SemVer covers, how long a deprecation warns before removal, and every current deprecation."
 ---
 
-# Deprecation Policy
-
 `xstate-statemachine` follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). This page says exactly what that promise covers and how a public API is retired.
 
 ## What is covered

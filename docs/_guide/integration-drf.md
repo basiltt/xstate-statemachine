@@ -3,8 +3,6 @@ title: "DRF & Channels integration"
 description: "Django REST framework actions generated from the chart, receipt-to-status like FastAPI, drf-spectacular schemas, and a Channels WebSocket consumer with auth on connect."
 ---
 
-# Django REST framework & Channels
-
 The DRF convention for a state machine is one hand-written `@action` per transition, each wrapping `can_proceed`. `StatechartViewSetMixin` generates those actions from the chart. It maps each `Receipt` to an HTTP status with the same core table FastAPI and Flask use, gates every event with the [Django](../integration-django/) permission guards, and describes all of it to drf-spectacular. `StatechartConsumer` is the Channels version of the Starlette WebSocket bridge: you get the current state on connect, and every committed transition is pushed to each connection watching that row.
 
 ## Install

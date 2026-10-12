@@ -548,8 +548,18 @@ Before 0.8.0, a fired async timer's continuation had to queue behind every exter
 `raise` (or `send` to the machine itself) with a `delay` is a timer with exactly the standing of `after` (0.9.0, #212): arming it ends the current step's self-generated chain, its firing is a clock event, and it is **never** counted against `maxIterations`. A self-paced heartbeat or poller written either way runs indefinitely:
 
 ```json
-"up":   { "entry": [{ "type": "raise", "params": { "event": "BEAT", "delay": 1000 } }], "on": { "BEAT": "down" } },
-"down": { "entry": [{ "type": "raise", "params": { "event": "BEAT", "delay": 1000 } }], "on": { "BEAT": "up" } }
+"up": {
+  "entry": [
+    { "type": "raise", "params": { "event": "BEAT", "delay": 1000 } }
+  ],
+  "on": { "BEAT": "down" }
+},
+"down": {
+  "entry": [
+    { "type": "raise", "params": { "event": "BEAT", "delay": 1000 } }
+  ],
+  "on": { "BEAT": "up" }
+}
 ```
 
 Only a **zero-delay** self-`raise` cycle is charged to the budget and cut with `RunawayChainError`. Give the send an `id` and `cancel` it to disarm; exiting the arming state disarms it too, and the clock handle is released either way (#218).

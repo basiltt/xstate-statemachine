@@ -40,6 +40,9 @@ def _non_negative_int(text: str) -> int:
 
 
 def add_path_options(group: Any) -> None:
+    """Register the ``--xsm-full-paths`` and ``--xsm-max-paths`` pytest options
+    on ``group``.
+    """
     group.addoption(
         "--xsm-full-paths",
         action="store_true",
@@ -92,7 +95,8 @@ def generate_path_tests(metafunc: Any) -> None:
     if PATH_FIXTURE not in metafunc.fixturenames:
         return
     # 📝 Late import: `pytest_plugin` imports this module.
-    from .pytest_plugin import _build, parse_marker
+    from ._marker import _build
+    from .pytest_plugin import parse_marker
 
     item = metafunc.definition
     spec = parse_marker(item)

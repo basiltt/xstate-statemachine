@@ -23,7 +23,17 @@ from __future__ import annotations
 
 import warnings
 import logging
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    cast,
+    Dict,
+    FrozenSet,
+    Iterator,
+    List,
+    Optional,
+    Tuple,
+)
 
 from .actions import RAISE, resolve_builtin
 from .exceptions import (
@@ -44,7 +54,7 @@ if TYPE_CHECKING:  # pragma: no cover
 logger = logging.getLogger(__name__)
 
 
-def walk(node: "StateNode") -> Iterator["StateNode"]:
+def walk(node: "StateNode[Any]") -> Iterator["StateNode[Any]"]:
     """Yield *node* and every descendant, depth-first."""
     yield node
     for child in node.states.values():
@@ -52,7 +62,7 @@ def walk(node: "StateNode") -> Iterator["StateNode"]:
 
 
 def transitions_of(
-    node: "StateNode",
+    node: "StateNode[Any]",
 ) -> Iterator[Tuple[str, "TransitionDefinition"]]:
     """Yield ``(label, transition)`` for every transition owned by *node*.
 
@@ -75,9 +85,39 @@ def transitions_of(
             yield f"invoke '{inv.src}' onError", t
 
 
+def _targeted_transitions(
+    node: "StateNode[Any]",
+) -> Iterator[Tuple[str, "TransitionDefinition"]]:
+    """`transitions_of`, restricted to transitions that HAVE a target.
+
+    ⚡ Build-time hot path (#307 benchmark): `transitions_of` formats a
+    label string for every transition, but the validator only reads the
+    label when a target fails to resolve. Targetless transitions (pure
+    action handlers) are skipped before any string is built, and the
+    common ``on`` case avoids the generic dispatch.
+    """
+    for event, group in node.on.items():
+        for t in group:
+            if t.target_str:
+                yield ("always" if event == "" else f"on '{event}'"), t
+    if node.on_done is not None and node.on_done.target_str:
+        yield "onDone", node.on_done
+    for delay, group in node.after.items():
+        for t in group:
+            if t.target_str:
+                yield f"after {delay!r}", t
+    for inv in node.invoke:
+        for t in inv.on_done:
+            if t.target_str:
+                yield f"invoke '{inv.src}' onDone", t
+        for t in inv.on_error:
+            if t.target_str:
+                yield f"invoke '{inv.src}' onError", t
+
+
 def resolve_strict(
-    target_str: str, source: "StateNode", machine: "MachineNode"
-) -> "Optional[StateNode]":
+    target_str: str, source: "StateNode[Any]", machine: "MachineNode[Any]"
+) -> "Optional[StateNode[Any]]":
     """Resolve *target_str* using only UNAMBIGUOUS strategies.
 
     🏛️ Architecture decision: this is the resolution the runtime SHOULD do,
@@ -119,7 +159,7 @@ def resolve_strict(
     return machine.states.get(target_str)
 
 
-def _suggest(target_str: str, machine: "MachineNode") -> str:
+def _suggest(target_str: str, machine: "MachineNode[Any]") -> str:
     """Name the absolute form(s) of any NESTED state matching *target_str*.
 
     🏛️ Architecture decision: before 0.8.0 a bare ``"up"`` written from a
@@ -137,7 +177,7 @@ def _suggest(target_str: str, machine: "MachineNode") -> str:
 
 
 def _is_dead_always_loop(
-    label: str, t: "TransitionDefinition", target: "StateNode"
+    label: str, t: "TransitionDefinition", target: "StateNode[Any]"
 ) -> bool:
     """True when an ``always`` transition can never make progress (#29).
 
@@ -158,7 +198,7 @@ def _is_dead_always_loop(
 
 
 def _collect_findings(
-    machine: "MachineNode",
+    machine: "MachineNode[Any]",
 ) -> Tuple[List[str], List[str], List[str]]:
     """Walk the tree once; gather ``(unresolved, dead_loops, root_targets)``.
 
@@ -172,20 +212,20 @@ def _collect_findings(
     root_targets: List[str] = []
 
     for node in walk(machine):
-        for label, t in transitions_of(node):
-            if not t.target_str:
-                continue
+        for label, t in _targeted_transitions(node):
+            target_str = t.target_str
+            assert target_str is not None  # narrowed by _targeted_transitions
             # 🎯 #30: every target must resolve at build time. Uses the
             #    resolver's standard strategies only -- NOT the interpreter's
             #    last-segment fallbacks, which are what let a typo bind to an
             #    unrelated state (#34).
-            target = resolve_strict(t.target_str, t.source, machine)
+            target = resolve_strict(target_str, t.source, machine)
             # ⚡ Memoise for the runtime (see TransitionDefinition.resolved_target).
             t.resolved_target = target
             if target is None:
                 unresolved.append(
-                    f"  {node.id}: {label} -> target {t.target_str!r} "
-                    f"does not resolve{_suggest(t.target_str, machine)}"
+                    f"  {node.id}: {label} -> target {target_str!r} "
+                    f"does not resolve{_suggest(target_str, machine)}"
                 )
             elif target is machine:
                 # 🛑 #108: entering the ROOT enters nothing below it; the
@@ -222,11 +262,12 @@ def _static_raise_event_type(action: "ActionDefinition") -> Optional[str]:
     if isinstance(event, str):
         return event
     if isinstance(event, dict) and isinstance(event.get("type"), str):
-        return event["type"]
+        # 📝 isinstance above proved `type` is a str.
+        return cast(str, event["type"])
     return None  # callable / dynamic -- checked at runtime by _check_strict
 
 
-def _collect_unknown_raises(machine: "MachineNode") -> List[str]:
+def _collect_unknown_raises(machine: "MachineNode[Any]") -> List[str]:
     """`strict` machines: every STATIC `raise` must name a declared event
     (#51 follow-up).
 
@@ -240,7 +281,7 @@ def _collect_unknown_raises(machine: "MachineNode") -> List[str]:
     """
     findings: List[str] = []
 
-    def check(actions, where: str) -> None:
+    def check(actions: Any, where: str) -> None:
         for action in actions:
             event_type = _static_raise_event_type(action)
             # #190: a `raise` is DISPATCHED, so a wildcard handler does
@@ -262,7 +303,7 @@ def _collect_unknown_raises(machine: "MachineNode") -> List[str]:
     return findings
 
 
-def _suggest_event(event_type: str, machine: "MachineNode") -> str:
+def _suggest_event(event_type: str, machine: "MachineNode[Any]") -> str:
     import difflib
 
     close = difflib.get_close_matches(
@@ -272,7 +313,7 @@ def _suggest_event(event_type: str, machine: "MachineNode") -> str:
 
 
 #: 🏷️ Metadata keys: never behavioural, accepted at every level.
-_METADATA_KEYS: frozenset = frozenset({"meta", "description", "tags"})
+_METADATA_KEYS: FrozenSet[str] = frozenset({"meta", "description", "tags"})
 
 #: 🗝️ #216 / #220: every key a STATE node reads (`StateNode.__init__`,
 #: `_prefetch_node_keys`). A key not in this set (and not `x-`-prefixed)
@@ -280,7 +321,7 @@ _METADATA_KEYS: frozenset = frozenset({"meta", "description", "tags"})
 #: that never runs, a misspelled `on` a transition that does not exist,
 #: a misspelled `after` a deadline that never fires. Kept next to the
 #: validator so adding a key to the parser means adding it here.
-KNOWN_STATE_KEYS: frozenset = frozenset(
+KNOWN_STATE_KEYS: FrozenSet[str] = frozenset(
     {
         "id",
         "initial",
@@ -303,7 +344,7 @@ KNOWN_STATE_KEYS: frozenset = frozenset(
 #: 🗝️ Every key the ROOT reads: the state keys plus `context`, the 0.8.0
 #: policies and `version`. Policies are read from the root only, so a
 #: policy key under a state is reported there too (it would be inert).
-KNOWN_ROOT_KEYS: frozenset = KNOWN_STATE_KEYS | frozenset(
+KNOWN_ROOT_KEYS: FrozenSet[str] = KNOWN_STATE_KEYS | frozenset(
     {
         "context",
         "version",
@@ -320,23 +361,30 @@ KNOWN_ROOT_KEYS: frozenset = KNOWN_STATE_KEYS | frozenset(
 )
 
 #: Back-compat alias for the 0.9.0 (#216) name.
-KNOWN_MACHINE_KEYS: frozenset = KNOWN_ROOT_KEYS
+KNOWN_MACHINE_KEYS: FrozenSet[str] = KNOWN_ROOT_KEYS
 
 #: 🗝️ #220: keys `TransitionDefinition` / `_create_transition` read.
-KNOWN_TRANSITION_KEYS: frozenset = (
+KNOWN_TRANSITION_KEYS: FrozenSet[str] = (
     frozenset({"target", "actions", "guard", "cond", "internal", "reenter"})
     | _METADATA_KEYS
 )
 
 #: 🗝️ #220: keys `InvokeDefinition` / `_parse_invoke` read.
-KNOWN_INVOKE_KEYS: frozenset = (
+KNOWN_INVOKE_KEYS: FrozenSet[str] = (
     frozenset({"id", "src", "input", "systemId", "onDone", "onError"})
     | _METADATA_KEYS
 )
 
 
-def _unknown_keys(config: Dict[str, Any], known: frozenset) -> List[str]:
+def _unknown_keys(config: Dict[str, Any], known: FrozenSet[str]) -> List[str]:
     """Human-readable hints for the keys of *config* not in *known*."""
+    # ⚡ Hot path (#307 benchmark): every state and transition of every
+    #    build passes through here, and almost all of them have only known
+    #    keys. One set subtraction answers that case; the sort, the
+    #    ``x-`` filter, the difflib import and the hint strings are paid
+    #    only by a config that actually has an offending key.
+    if config.keys() <= known:
+        return []
     import difflib
 
     unknown = sorted(
@@ -363,7 +411,7 @@ def _transition_dicts(raw: Any) -> Iterator[Dict[str, Any]]:
 
 
 def _collect_unknown_keys(
-    config: Dict[str, Any], path: str, known: frozenset, out: List[str]
+    config: Dict[str, Any], path: str, known: FrozenSet[str], out: List[str]
 ) -> None:
     """#220: walk one state node (root included) and its transitions and
     invokes, appending one line per offending config object to *out*."""
@@ -374,6 +422,9 @@ def _collect_unknown_keys(
     on = config.get("on")
     if isinstance(on, dict):
         for event, raw in on.items():
+            # ⚡ String shorthand ("EVENT": "target") carries no keys.
+            if isinstance(raw, str):
+                continue
             for t in _transition_dicts(raw):
                 h = _unknown_keys(t, KNOWN_TRANSITION_KEYS)
                 if h:
@@ -456,7 +507,9 @@ def validate_top_level_keys(
     logger.warning("⚠️ %s", msg)
 
 
-def validate_machine(machine: "MachineNode", *, strict_targets: bool) -> None:
+def validate_machine(
+    machine: "MachineNode[Any]", *, strict_targets: bool
+) -> None:
     """Run every build-time check and raise once with all findings.
 
     Args:

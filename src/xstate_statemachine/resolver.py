@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import logging
 import warnings
-from typing import TYPE_CHECKING, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, List, Optional, Set, Tuple
 
 # -----------------------------------------------------------------------------
 # 📥 Project-Specific Imports
@@ -76,9 +76,9 @@ def _validate_segments(
         raise StateNotFoundError(target, reference_id)
 
 
-def _machine_of(node: "StateNode") -> Optional["StateNode"]:
+def _machine_of(node: "StateNode[Any]") -> Optional["StateNode[Any]"]:
     """Walk to the root of *node*'s tree."""
-    current: Optional["StateNode"] = node
+    current: Optional["StateNode[Any]"] = node
     while current is not None and current.parent is not None:
         current = current.parent
     return current
@@ -94,7 +94,7 @@ _SIBLING_FALLBACKS_WARNED_MAX = 1024
 
 
 def _warn_sibling_fallback(
-    target: str, source: "StateNode", resolved: "StateNode"
+    target: str, source: "StateNode[Any]", resolved: "StateNode[Any]"
 ) -> None:
     key = (source.id, target)
     if key in _SIBLING_FALLBACKS_WARNED:
@@ -119,7 +119,9 @@ def _warn_sibling_fallback(
     )
 
 
-def _find_descendant(start_node: "StateNode", path: List[str]) -> "StateNode":
+def _find_descendant(
+    start_node: "StateNode[Any]", path: List[str]
+) -> "StateNode[Any]":
     """Traverses down the state tree to find a descendant node.
 
     Args:
@@ -147,8 +149,8 @@ def _find_descendant(start_node: "StateNode", path: List[str]) -> "StateNode":
 
 
 def resolve_target_state(
-    target: str, reference_state: "StateNode"
-) -> "StateNode":
+    target: str, reference_state: "StateNode[Any]"
+) -> "StateNode[Any]":
     """Resolves a target string to a specific `StateNode` in the machine.
 
     This function implements the XState resolution algorithm, which provides
@@ -186,7 +188,7 @@ def resolve_target_state(
     if not target:
         raise StateNotFoundError(target, reference_state.id)
 
-    machine: "MachineNode" = reference_state.machine
+    machine: "MachineNode[Any]" = reference_state.machine
     # ⚡ Perf: this runs for every transition of every build (and at
     #    runtime for live-resolved targets); five gated DEBUG calls per
     #    resolution were ~10% of validation. One level check instead.
@@ -300,7 +302,7 @@ def resolve_target_state(
     segments = target.split(".")
     _validate_segments(segments, target, reference_state.id)
 
-    current: Optional["StateNode"] = reference_state
+    current: Optional["StateNode[Any]"] = reference_state
     while current:
         # 4a. Is it a descendant of the current node?
         try:

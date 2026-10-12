@@ -67,6 +67,8 @@ class ReceiptModel(StateModel):
 
 
 class DeclaredEvent(BaseModel):
+    """One declared event type with its optional JSON schema."""
+
     type: str
     json_schema: Optional[Dict[str, Any]] = Field(None, alias="schema")
 
@@ -98,9 +100,9 @@ def send_body_type(
             return models[0]
         # 💡 The router passes `Body(discriminator="type")`: FastAPI drops
         #    an `Annotated[..., Field(discriminator=)]` next to `Body()`.
-        return Union[tuple(models)]  # type: ignore[valid-type]
+        return Union[tuple(models)]
     events = user_events(machine)
-    etype: Any = Literal[tuple(events)] if events else str  # type: ignore
+    etype: Any = Literal[tuple(events)] if events else str
     # 🔥 battle #276-b: `"".join(capitalised "_" parts)` mapped `a_b` and
     #    `aB` to the same `ABEvent`; pydantic then emitted two schemas
     #    named `xstate_statemachine__contrib__...__ABEvent__1/__2` -- an

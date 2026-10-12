@@ -3,8 +3,6 @@ title: "Celery integration"
 description: "A Celery task as an invoke service, a worker-side persisted act-loop, Celery Beat as the durable after-timer scheduler, and an outbox relay task."
 ---
 
-# Celery
-
 Celery has no notion of state: long flows get stitched together with `chain` / `chord`, and a retry, a timeout or a cancellation all end up as ad-hoc bookkeeping. With the `[celery]` extra, the statechart holds the flow and Celery does the work. A task becomes an **`invoke` service** (its result drives `onDone`, its failure or timeout drives `onError`, and leaving the state revokes it). A worker task runs the **load → send → persist** act-loop, with Celery retrying optimistic conflicts. **Celery Beat** is the durable `after` scheduler, and the transactional outbox drains through an ordinary Celery task.
 
 ## Install
@@ -138,8 +136,6 @@ eu = DurableTimerScheduler(app, MemoryStore(), m,
                            name="eu.deadlines.scan", fire_name="eu.deadlines.fire")
 assert eu.task.name == "eu.deadlines.scan"
 ```
-
-<div class="stately" data-machine="32950f227a" data-height="320" data-title="t"></div>
 
 ### `assert_json_serializer(app)`
 

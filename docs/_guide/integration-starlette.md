@@ -3,8 +3,6 @@ title: "Starlette integration"
 description: "A store-backed statechart registry for Starlette (and everything built on it): Receipt → HTTP status, Idempotency-Key, SSE and WebSocket transition streams, timers under lifespan."
 ---
 
-# Starlette
-
 A web app that drives a statechart has to answer the same questions every time: where does the instance live between requests, how does "the guard refused" become an HTTP status, what happens when a client retries a POST, and how does a browser hear about a transition another request made? The `[starlette]` extra answers all four once, framework-neutrally — FastAPI and Litestar integrations reuse it. Each request loads the snapshot, runs one async `Interpreter`, saves with an optimistic version check and discards it (**create → act → persist → discard**), which is the only model that is honest under several workers.
 
 ## Install

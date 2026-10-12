@@ -81,6 +81,17 @@ def is_newer(candidate: str, current: str) -> bool:
 # =============================================================================
 @dataclass
 class InstallInfo:
+    """What was detected about how the package is installed.
+
+    Attributes:
+        kind: Install kind (pip, pipx, uv-tool, editable, conda, unknown).
+        installer: Installer name.
+        location: Install location.
+        python: Interpreter path.
+        command: Upgrade command; empty when upgrading is refused.
+        reason: Why upgrading was refused.
+    """
+
     kind: str  # pip | pipx | uv-tool | editable | conda | unknown
     installer: str
     location: str
@@ -245,6 +256,16 @@ def _installed_version(python: str) -> Optional[str]:
 def run_update(
     *, check: bool = False, yes: bool = False, as_json: bool = False
 ) -> None:
+    """Implement ``xsm update``: check PyPI and upgrade if newer.
+
+    Args:
+        check: Only report, do not upgrade.
+        yes: Skip the confirmation prompt.
+        as_json: Print JSON output.
+
+    Raises:
+        SystemExit: If PyPI cannot be reached.
+    """
     c = get_console()
     info = detect_install()
     try:

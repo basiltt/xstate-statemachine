@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 import re
 from importlib import resources
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, cast
 
 from .outbox import publish_specs
 
@@ -58,7 +58,8 @@ def load_asyncapi_schema() -> Dict[str, Any]:
         .joinpath(_SCHEMA_FILE)
         .read_text(encoding="utf-8")
     )
-    return json.loads(text)
+    # 📝 the vendored schema file is a JSON object.
+    return cast(Dict[str, Any], json.loads(text))
 
 
 def validate_asyncapi(document: Dict[str, Any]) -> None:
@@ -68,7 +69,7 @@ def validate_asyncapi(document: Dict[str, Any]) -> None:
     `MissingExtraError` when ``jsonschema`` is not installed.
     """
     try:
-        import jsonschema  # type: ignore[import-untyped]
+        import jsonschema
     except ImportError as exc:  # pragma: no cover - depends on env
         from ..exceptions import MissingExtraError
 

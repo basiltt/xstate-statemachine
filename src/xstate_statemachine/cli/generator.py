@@ -21,6 +21,10 @@
 # -----------------------------------------------------------------------------
 # 📦 Standard Library Imports
 # -----------------------------------------------------------------------------
+"""Generates Python source for logic and runner files from extracted
+machine data.
+"""
+
 import logging
 from typing import Any, Dict, List, Set
 

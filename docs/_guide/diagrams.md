@@ -3,8 +3,6 @@ title: "Diagram Export"
 description: "Generate PlantUML and Mermaid diagrams from any machine definition."
 ---
 
-# Diagram Export
-
 Every `MachineNode` can export its structure as a **PlantUML** or **Mermaid** diagram. This lets you visualize your state machines, generate documentation, and keep diagrams in sync with your code automatically.
 
 ## 🖼️ Overview

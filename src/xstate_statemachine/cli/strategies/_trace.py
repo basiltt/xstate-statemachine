@@ -43,6 +43,8 @@ class Step:
 
 @dataclass
 class Trace:
+    """A recorded walk of a machine: steps, final state and logic names."""
+
     initial_state_ids: List[str]
     steps: List[Step]
     final_reached: bool

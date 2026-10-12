@@ -77,7 +77,7 @@ def _state_schema(cls: Any) -> Any:
 
 
 @_state_schema
-class StatechartSerializerField(serializers.Field):
+class StatechartSerializerField(serializers.Field):  # type: ignore[misc]  # Field is untyped (Any base)
     """Read-only: the statechart of the instance as the FastAPI state body.
 
     Args:
@@ -101,6 +101,9 @@ class StatechartSerializerField(serializers.Field):
         self.per_user = per_user
 
     def to_representation(self, instance: Any) -> Dict[str, Any]:
+        """Render the instance's state body, using the request user if per-
+        user.
+        """
         request = self.context.get("request") if self.context else None
         user = getattr(request, "user", None) if self.per_user else None
         if user is not None and not getattr(user, "is_authenticated", False):

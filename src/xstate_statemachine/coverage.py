@@ -291,6 +291,11 @@ class CoverageCollector(PluginBase[Any]):
         me = weakref.ref(self)
 
         def cb(ref: "weakref.ref[Machine]") -> None:
+            """Forget a machine whose weak reference has been collected.
+
+            Args:
+                ref: The dead weak reference to the machine.
+            """
             col = me()
             if col is not None:
                 col._forget(ref)
@@ -338,6 +343,7 @@ class CoverageCollector(PluginBase[Any]):
         to_states: Any,
         transition: Any,
     ) -> None:
+        """Record the entered configuration and the taken transition."""
         machine = getattr(interpreter, "machine", None)
         if not isinstance(machine, MachineNode):
             return
@@ -450,6 +456,15 @@ def _fmt_pct(p: float) -> str:
 
 
 def format_edge(triple: Triple, machine_id: str) -> str:
+    """Render a coverage edge as ``source --event--> target``.
+
+    Args:
+        triple: The ``(source, label, target)`` edge.
+        machine_id: Machine id used to shorten the state ids.
+
+    Returns:
+        The human-readable edge text.
+    """
     f, lbl, t = triple
     return (
         f"{_short(f, machine_id)} --{_edge_label(lbl)}--> "

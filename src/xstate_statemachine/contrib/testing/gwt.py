@@ -15,7 +15,7 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Dict, Iterable, List, Optional, Union
+from typing import Any, Dict, Iterable, List, Optional, Union, cast
 
 from ...clock import SimulatedClock
 from ...events import Event, Receipt
@@ -113,6 +113,7 @@ class Scenario:
         return self
 
     def then_not_state(self, *state_ids: str) -> "Scenario":
+        """Assert none of the given states is active; returns the scenario."""
         interp = self._ensure()
         active = set(interp.current_state_ids)
         present = [
@@ -128,6 +129,7 @@ class Scenario:
         return self
 
     def then_context(self, **expected: Any) -> "Scenario":
+        """Assert each keyword equals the context value; returns the scenario."""
         interp = self._ensure()
         bad = {
             k: (v, interp.context.get(k, "<missing>"))
@@ -142,6 +144,9 @@ class Scenario:
         return self
 
     def then_changed(self, changed: bool = True) -> "Scenario":
+        """Assert the last receipt's ``changed`` equals ``changed``; returns
+        the scenario.
+        """
         r = self._last_receipt("then_changed")
         if bool(r.changed) != changed:
             self._fail(
@@ -151,12 +156,16 @@ class Scenario:
         return self
 
     def then_denied(self) -> "Scenario":
+        """Assert the last receipt was denied; returns the scenario."""
         r = self._last_receipt("then_denied")
         if not r.denied:
             self._fail(f"expected the event to be denied; receipt={r!r}")
         return self
 
     def then_error(self, error_type: Optional[type] = None) -> "Scenario":
+        """Assert the last receipt has an error (of ``error_type`` if given);
+        returns the scenario.
+        """
         r = self._last_receipt("then_error")
         if r.error is None:
             self._fail("expected an action/validator error on the receipt")
@@ -168,12 +177,14 @@ class Scenario:
         return self
 
     def then_no_error(self) -> "Scenario":
+        """Assert the last receipt has no error; returns the scenario."""
         r = self._last_receipt("then_no_error")
         if r.error is not None:
             self._fail(f"unexpected error on the receipt: {r.error!r}")
         return self
 
     def then_done(self) -> "Scenario":
+        """Assert the interpreter's status is ``done``; returns the scenario."""
         interp = self._ensure()
         if interp.status != "done":
             self._fail(f"expected status 'done', got {interp.status!r}")
@@ -280,7 +291,7 @@ class Scenario:
             if n is not self.machine and n.id.rsplit(".", 1)[-1] == state
         ]
         if len(matches) == 1:
-            return matches[0]
+            return cast("str", matches[0])
         if not matches:
             raise ValueError(
                 f"given/then: no state named {state!r} in machine "

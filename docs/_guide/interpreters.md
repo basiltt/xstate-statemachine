@@ -1051,8 +1051,6 @@ Per XState, an event that selects no transition in any active state is silently 
 }
 ```
 
-<div class="stately" data-machine="80b7bbff60" data-height="320" data-title="m"></div>
-
 `"defer"` is library-owned: a still-unhandled event is re-deferred, the buffer survives `get_snapshot()` / `from_snapshot()`, and it is bounded by `Interpreter.DEFER_MAX` — once full, the oldest entry is evicted. `interpreter.deferred_count` reports how many events are currently buffered.
 
 Whatever the policy, every unhandled event fires the `on_unhandled_event(interpreter, event, active_state_ids, disposition)` plugin hook, with `disposition` one of `"ignored"`, `"deferred"`, `"errored"`, or `"dropped"` (buffer was full). See [Plugins](../plugins/#plugin-hooks-reference).

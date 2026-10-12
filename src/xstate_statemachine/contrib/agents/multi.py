@@ -93,7 +93,7 @@ def _check_subset(child: Set[str], parent: Set[str], where: str) -> None:
 
 
 def spawn_agent(
-    child_chart: Union[Mapping[str, Any], MachineNode, None],
+    child_chart: Union[Mapping[str, Any], MachineNode[Any], None],
     model: Any,
     tools: Optional[ToolRegistry] = None,
     *,
@@ -103,7 +103,7 @@ def spawn_agent(
     task_key: str = "task",
     tracer: Any = None,
     **logic_kw: Any,
-) -> MachineLogic:
+) -> MachineLogic[Any]:
     """A `MachineLogic` providing the action ``spawn<Name>`` (and the
     service it spawns) -- merge it into the parent's logic.
 
@@ -292,6 +292,17 @@ class BudgetPlugin(PluginBase[Any]):
         self._lock = threading.Lock()
 
     def exceeded(self, totals: Mapping[str, Any]) -> bool:
+        """Return whether the rolled-up totals reach a global budget.
+
+        Args:
+            totals: Usage totals with ``input_tokens``, ``output_tokens``
+            and
+                ``cost_usd``.
+
+        Returns:
+            ``True`` if tokens reach ``max_total_tokens`` or cost reaches
+            ``max_total_usd``.
+        """
         tokens = _num(totals.get("input_tokens", 0)) + _num(
             totals.get("output_tokens", 0)
         )
@@ -303,7 +314,11 @@ class BudgetPlugin(PluginBase[Any]):
             _num(totals.get("cost_usd", 0.0)) >= self.max_total_usd
         )
 
-    def guards(self) -> MachineLogic:
+    def guards(self) -> MachineLogic[Any]:
+        """Return a ``MachineLogic`` with the ``underGlobalBudget`` guard
+        (false once ``budget_exceeded`` is set).
+        """
+
         def under(ctx: Dict[str, Any], e: Any) -> bool:
             return not ctx.get("budget_exceeded", False)
 
@@ -323,6 +338,9 @@ class BudgetPlugin(PluginBase[Any]):
             raise
 
     def on_before_send(self, interpreter: Any, event: Any) -> Optional[Any]:
+        """Roll a child's report into the global totals when it is sent; never
+        blocks the event.
+        """
         # 🔥 #290 battle: the rollup ran in `on_event_received`, i.e. when
         #    the parent DEQUEUED the child's report. A planner that hands
         #    off a batch (`handOffTasks` sends N HANDOFFs in one action)
@@ -343,6 +361,9 @@ class BudgetPlugin(PluginBase[Any]):
         return None
 
     def on_event_received(self, interpreter: Any, event: Any) -> None:
+        """Count reports that bypassed ``send`` once, release de-dup entries
+        and raise ``BUDGET_EXCEEDED`` if tripped.
+        """
         # 📝 Reports that bypassed `send()` (a restored queue, a direct
         #    `_process_event`) are still counted exactly once: `_rollup`
         #    remembers the events it has already seen.
@@ -434,7 +455,7 @@ def _check_limit(name: str, v: Any, int_only: bool) -> None:
         )
 
 
-def _require_reporting(machine: MachineNode) -> None:
+def _require_reporting(machine: MachineNode[Any]) -> None:
     """🔥 #290 battle (A): a child chart with no ``notifyParent`` entry
     never reports, so the parent waited for AGENT_DONE forever (and the
     BudgetPlugin never saw its spend). Refused at construction."""
@@ -497,7 +518,7 @@ def _num(value: Any) -> Any:
 # -----------------------------------------------------------------------------
 def handoff_guard(
     allowed: Mapping[str, Iterable[str]], *, name: str = "handoffAllowed"
-) -> MachineLogic:
+) -> MachineLogic[Any]:
     """Guard ``handoffAllowed``: ``event.to in allowed[event.from]``.
 
     Anything not listed is refused -- closed by default. Use it on the

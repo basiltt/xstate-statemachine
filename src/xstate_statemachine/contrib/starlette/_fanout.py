@@ -43,11 +43,21 @@ class _Subscribers:
         self._seq: Dict[Topic, int] = {}
 
     def subscribe(self, name: str, key: str) -> _Subscriber:
+        """Add a subscriber for one instance.
+
+        Args:
+            name: Machine name.
+            key: Instance key.
+
+        Returns:
+            The new subscriber, owning its bounded queue.
+        """
         sub = _Subscriber((name, key))
         self._subs.setdefault(sub.topic, set()).add(sub)
         return sub
 
     def unsubscribe(self, sub: _Subscriber) -> None:
+        """Remove *sub*; the topic's sequence counter goes with the last one."""
         subs = self._subs.get(sub.topic)
         if subs is None:
             return
@@ -65,6 +75,15 @@ class _Subscribers:
     def count(
         self, name: Optional[str] = None, key: Optional[str] = None
     ) -> int:
+        """Count subscribers.
+
+        Args:
+            name: Machine name; ``None`` counts every subscriber.
+            key: Instance key, used with *name*.
+
+        Returns:
+            The number of matching subscribers.
+        """
         if name is None:
             return sum(len(s) for s in self._subs.values())
         return len(self._subs.get((name, str(key)), ()))
@@ -93,6 +112,7 @@ class _Subscribers:
                 sub.queue.put_nowait(item)
 
     def close_all(self) -> None:
+        """Send the ``CLOSED`` sentinel to every subscriber that has room."""
         for subs in list(self._subs.values()):
             for sub in list(subs):
                 with_room = sub.queue.qsize() <= MAX_BACKLOG
@@ -139,6 +159,7 @@ class TimerPublisher:
     def on_event_processed(
         self, interpreter: Any, event: Any, receipt: Any
     ) -> None:
+        """Buffer the body of a changed event for `flush_marks`."""
         if not getattr(receipt, "changed", False):
             return
         skey = str(getattr(interpreter, "store_key", "") or "")
@@ -153,6 +174,7 @@ class TimerPublisher:
         self._buf().append((name, key, body))
 
     def flush_marks(self) -> None:
+        """Publish the buffered bodies onto the event loop, then clear them."""
         items, self._pending.items = self._buf(), []
         for name, key, body in items:
             try:

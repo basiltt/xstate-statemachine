@@ -3,8 +3,6 @@ title: "Guarantees"
 description: "What the persistence layer promises — the order of side effects, snapshot save, inbox mark and timer fire; what is at-least-once and what is exactly-once; how crashes at each point are handled."
 ---
 
-# Guarantees
-
 This page is the **crash-consistency specification** for everything under `xstate_statemachine.persistence` and `patterns`. It is item 3 of the programme-wide security and operability baseline ([#303](https://github.com/basiltt/xstate-statemachine/issues/303), "X0.3"); every integration inherits it, and the tests named here enforce it. If a behaviour is not on this page, it is not promised.
 
 ## The order of operations

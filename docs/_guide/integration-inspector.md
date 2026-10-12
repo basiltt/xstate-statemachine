@@ -3,8 +3,6 @@ title: "Live inspector"
 description: "Watch a running Python machine live in the Stately Inspector (or the built-in page): the @statelyai/inspect protocol over SSE, JSON Lines recording and replay, WebSocket under Starlette."
 ---
 
-# Live inspector
-
 `@xstate/inspect` and the **Stately Inspector** let JavaScript developers watch a running machine in the browser: actors appear, events flow between them, the state highlights as it changes. This module speaks the same wire protocol from Python, so the existing Stately UI — or a small page we ship as a fallback — can follow a Python process. It is also a flight recorder: record a session to JSON Lines, replay it later.
 
 ## Install

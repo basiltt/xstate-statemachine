@@ -354,6 +354,7 @@ def model_test(
             self.interp.stop()
 
     def check(self: Any) -> None:
+        """Run every invariant, and each state assertion whose state is active."""
         for name, fn in invariants.items():
             _run_check(self, f"invariant {name!r}", fn)
         for state, fn in state_assertions.items():

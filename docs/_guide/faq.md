@@ -3,8 +3,6 @@ title: "FAQ"
 description: "Frequently asked questions about XState-StateMachine for Python."
 ---
 
-# Frequently Asked Questions
-
 Short answers with links to the deep dive. If your question isn't here, [open a discussion](https://github.com/basiltt/xstate-statemachine/discussions) — the good ones end up on this page.
 
 ```mermaid
@@ -413,7 +411,7 @@ def test_guard_blocks_transition():
 
 ### What Python versions are supported?
 
-Python **3.9** through **3.14**, with full test coverage across all versions. The library uses no features beyond Python 3.9, ensuring broad compatibility.
+Python **3.9** through **3.15**, with full test coverage across all versions. The library uses no features beyond Python 3.9, ensuring broad compatibility.
 
 ---
 

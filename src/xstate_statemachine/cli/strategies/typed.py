@@ -67,6 +67,7 @@ class TypedStrategy(BaseStrategy):
         return ""
 
     def generate_logic(self, ctx: GenerationContext) -> str:
+        """Emit typed context, event and state-id types plus logic stubs."""
         config = ctx.configs[0]
         actions, guards, services = extract_logic_names(config)
         # Build once to read the real declared events / state ids.

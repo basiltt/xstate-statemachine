@@ -47,6 +47,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Typing :: Typed",
@@ -238,20 +239,31 @@ exclude = [
 "src/xstate_statemachine/py.typed" = "xstate_statemachine/py.typed"
 
 [tool.mypy]
-# 🧷 The library ships `py.typed`; these are the settings under which its
-#    own source is kept at zero errors (enforced by tests/test_type_safety.py
-#    and the CI lint job). `strict` is the goal for 1.0; the incremental
-#    flags below are the ones already satisfied.
+# 🧷 The library ships `py.typed`; its own source is kept at ZERO errors
+#    under `strict` (enforced by tests/test_type_safety.py and the CI lint
+#    job). Reached in the 0.11.0 release audit: every generic is
+#    parametrised, every def annotated, every `# type: ignore` carries a
+#    code and a reason.
 # 🐍 No `python_version` pin: mypy 2.x refuses 3.9 (it is past EOL for the
 #    checker) while our runtime floor is still 3.9. The 3.9 CI test job
 #    IS the compatibility gate; here we check against the checker's own
 #    default, which is the interpreter running it.
 files = ["src/xstate_statemachine"]
+strict = true
 ignore_missing_imports = true
-warn_redundant_casts = true
+
+# 🧩 The extras wrap third-party frameworks. Whether `BaseModel`, `@app.route`
+#    or `declarative_base()` is a typed symbol or `Any` depends on which
+#    extra happens to be installed where mypy runs (the lint job installs
+#    none; the dev environment installs all), so the verdicts that hinge on
+#    that -- "subclassing Any", "untyped decorator", "returning Any from a
+#    framework call", and the ignores that silence them in one environment
+#    but are unused in the other -- cannot be stable. They are the ONLY
+#    strict checks relaxed, and only for contrib; the core is fully strict.
+[[tool.mypy.overrides]]
+module = "xstate_statemachine.contrib.*"
+disable_error_code = ["misc", "untyped-decorator", "no-any-return", "unused-ignore"]
 warn_unused_ignores = false
-no_implicit_optional = true
-check_untyped_defs = true
 
 [tool.black]
 line-length = 79

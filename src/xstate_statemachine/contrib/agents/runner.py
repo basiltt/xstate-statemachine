@@ -80,7 +80,7 @@ class AgentResult:
         }
 
 
-ChartLike = Union[MachineNode, Mapping[str, Any], str, Path, None]
+ChartLike = Union[MachineNode[Any], Mapping[str, Any], str, Path, None]
 
 
 def _looks_like_chart(obj: Any) -> bool:
@@ -93,7 +93,7 @@ def _build(
     model: Any,
     tools: Any,
     logic_kw: Dict[str, Any],
-) -> MachineNode:
+) -> MachineNode[Any]:
     if not _looks_like_chart(machine_or_chart):
         # 📝 `run_agent(model, tools=..., prompt=...)` -- the issue's
         #    one-liner: the first argument is the model, chart = TOOL_LOOP.

@@ -21,6 +21,14 @@ def _md_escape(s: str) -> str:
 
 
 def render_markdown(facts: Facts) -> str:
+    """Render a Markdown page documenting a machine.
+
+    Args:
+        facts: Analysis result with a loaded machine.
+
+    Returns:
+        The Markdown text.
+    """
     m = facts.machine
     assert m is not None
     total = facts.state_count(all_levels=True)
@@ -132,6 +140,15 @@ def _integration_events(m: Any) -> List[str]:
 
 
 def run_docs(paths: List[str], *, output: Optional[str] = None) -> None:
+    """Implement ``xsm docs``: document each machine file.
+
+    Args:
+        paths: Machine JSON files.
+        output: Directory for ``<id>.md`` pages; print if None.
+
+    Raises:
+        SystemExit: If any file failed to load.
+    """
     c = get_console()
     written = 0
     failed = 0

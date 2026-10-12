@@ -3,8 +3,6 @@ title: "Pydantic integration"
 description: "Typed, validated context and events for statecharts with Pydantic v2 — plus static config validation and JSON Schema for your frontend."
 ---
 
-# Pydantic
-
 Modern Python expects typed, validated data at every boundary. `python-statemachine` and `transitions` are stringly typed; XState v5's `setup()` gives TypeScript users typed context and events. The Python equivalent is Pydantic v2 — and it is the validation layer the FastAPI, DRF and agents integrations reuse. *Silent acceptance is a bug*: a typo'd context key or a malformed payload should fail **at the boundary**, not deep inside an action. This extra makes that the default, through seams core already has — core never imports pydantic.
 
 ## Install

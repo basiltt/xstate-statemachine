@@ -49,9 +49,10 @@ def is_stdlib(root):
     # 3.10+: the frozen name set. 3.9: resolve with the DEFAULT path finder
     # and accept built-ins, frozen modules and anything living under the
     # stdlib directory (but not its site-packages).
-    if STDLIB:
-        return root in STDLIB
-    if root in sys.builtin_module_names:
+    # 3.15 ships private stdlib helpers (``_missing_stdlib_info``) that the
+    # frozen set does not list, so it is an accept-list, not a reject-list.
+    # 🐍 3.15 private stdlib helper, absent from stdlib_module_names
+    if root in STDLIB or root in sys.builtin_module_names or root == "_missing_stdlib_info":
         return True
     spec = importlib.machinery.PathFinder.find_spec(root, None)
     if spec is None:
@@ -65,7 +66,7 @@ def is_stdlib(root):
 ALLOWED_ROOTS = {"xstate_statemachine", "_distutils_hack", "__editable__"}
 # Platform-specific stdlib modules do not exist on the other OS, so the
 # 3.9 origin probe cannot see them; they are stdlib everywhere they exist.
-PLATFORM_STDLIB = {"msvcrt", "winreg", "_winapi", "termios", "tty", "fcntl", "pwd", "grp", "resource", "readline", "_posixsubprocess", "nt", "posix"}
+PLATFORM_STDLIB = {"_missing_stdlib_info", "msvcrt", "winreg", "_winapi", "termios", "tty", "fcntl", "pwd", "grp", "resource", "readline", "_posixsubprocess", "nt", "posix"}
 OPTIONAL = %(optional)r
 violations = []
 

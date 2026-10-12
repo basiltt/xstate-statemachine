@@ -134,7 +134,7 @@
                 "type": "connect"
               },
               "on": {
-                "\ud83d\udd34 wsConnectError": [
+                "🔴 wsConnectError": [
                   {
                     "actions": [],
                     "guard": "session_expired",
@@ -145,7 +145,7 @@
                     "target": "abandonned"
                   }
                 ],
-                "\ud83d\udfe2 wsConnectSuccess": [
+                "🟢 wsConnectSuccess": [
                   {
                     "actions": [],
                     "target": "#Audio recording with websocket.websocket.connected.Send"
@@ -155,13 +155,13 @@
             },
             "submitting": {
               "on": {
-                "\ud83d\udd34 sessionSubmitError": [
+                "🔴 sessionSubmitError": [
                   {
                     "actions": [],
                     "target": "abandonned"
                   }
                 ],
-                "\ud83d\udfe2 sessionSubmitSuccess": [
+                "🟢 sessionSubmitSuccess": [
                   {
                     "actions": [
                       "update_token"

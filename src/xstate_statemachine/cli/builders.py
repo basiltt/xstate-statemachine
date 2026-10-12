@@ -152,6 +152,11 @@ def render_functional_build(
 
     def emit_state(state: StateIR) -> None:
         # 📝 Children first: a parent's states=[...] needs their bindings.
+        """Emit the ``State(...)`` binding for *state*, children first.
+
+        Args:
+            state: State to emit.
+        """
         for child in state.children:
             emit_state(child)
 
@@ -404,6 +409,14 @@ def _class_state_lines(
     module_lines: List[str] = []
 
     def render(state: StateIR) -> str:
+        """Render one state as a ``State(...)`` assignment line.
+
+        Args:
+            state: State to render.
+
+        Returns:
+            The assignment source line.
+        """
         kwargs = _state_kwargs(
             state, machine, include_initial=_is_initial(state, machine)
         )

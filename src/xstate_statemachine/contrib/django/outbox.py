@@ -45,6 +45,7 @@ class DjangoOutboxStore:
         )
 
     def pending(self, *, limit: int = 100) -> List[OutboxRecord]:
+        """Return up to *limit* unsent records, oldest first."""
         rows = (
             self._model.objects.using(self.using)
             .filter(sent_at__isnull=True)
@@ -56,6 +57,7 @@ class DjangoOutboxStore:
         ]
 
     def mark_sent(self, seqs: List[int]) -> int:
+        """Stamp the given unsent ``seq`` values as sent and return how many."""
         if not seqs:
             return 0
         return int(
@@ -65,12 +67,16 @@ class DjangoOutboxStore:
         )
 
     def count(self, *, pending_only: bool = False) -> int:
+        """Count all rows, or only unsent ones with *pending_only*."""
         qs = self._model.objects.using(self.using).all()
         if pending_only:
             qs = qs.filter(sent_at__isnull=True)
         return int(qs.count())
 
     def purge_sent(self, *, older_than_s: float = 86400.0) -> int:
+        """Delete rows sent more than *older_than_s* seconds ago; return the
+        count.
+        """
         n, _ = (
             self._model.objects.using(self.using)
             .filter(sent_at__lt=time.time() - float(older_than_s))
