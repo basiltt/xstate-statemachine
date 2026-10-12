@@ -13,6 +13,13 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ## [Unreleased]
 
+### Changed
+
+- Redesigned the README with responsive SVG branding, clearer onboarding and
+  navigation, an expanded event-driven architecture introduction, and scoped
+  competitor comparisons. Preserved the technical guide, examples, diagrams
+  and API reference while clarifying operational guarantees and limitations.
+
 ## [0.11.0] - 2026-10-12
 
 ### Release polish (Changed)

@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="540" viewBox="0 0 640 540" role="img" aria-labelledby="title description">
+  <title id="title">xstate-statemachine — Make every event count.</title>
+  <desc id="description">Visual statecharts. Native Python. An order moves from placed to paid to fulfilled as events arrive.</desc>
+  <defs>
+    <linearGradient id="background" x1="0" y1="0" x2="1" y2="1">
+      <stop stop-color="#071512"/>
+      <stop offset="1" stop-color="#102D29"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop stop-color="#6EE7B7"/>
+      <stop offset="1" stop-color="#5EEAD4"/>
+    </linearGradient>
+  </defs>
+  <rect width="640" height="540" rx="18" fill="url(#background)"/>
+  <g font-family="Segoe UI, Inter, Arial, sans-serif">
+    <circle cx="44" cy="48" r="5" fill="#6EE7B7"/>
+    <text x="64" y="56" fill="#D5E9E1" font-size="24" font-weight="600">xstate-statemachine</text>
+    <text x="38" y="157" fill="#F3FBF7" font-size="76" font-weight="700" letter-spacing="-3">Make every</text>
+    <text x="38" y="239" fill="url(#accent)" font-size="76" font-weight="700" letter-spacing="-3">event count.</text>
+    <text x="42" y="292" fill="#B5CFC6" font-size="27">Visual statecharts. Native Python.</text>
+    <g transform="translate(40 336)">
+      <rect width="560" height="126" rx="14" fill="#0A1D18" stroke="#315D4B"/>
+      <text x="24" y="34" fill="#96B7A8" font-size="17" letter-spacing="1">EVENT IN. NEXT STATE OUT.</text>
+      <path d="M170 80H211M351 80H391" fill="none" stroke="#6EE7B7" stroke-width="2"/>
+      <path d="M203 74L211 80L203 86M383 74L391 80L383 86" fill="none" stroke="#6EE7B7" stroke-width="2"/>
+      <rect x="24" y="56" width="146" height="48" rx="8" fill="#122D23" stroke="#315D4B"/>
+      <text x="97" y="87" fill="#C4DDD0" font-size="23" text-anchor="middle">placed</text>
+      <rect x="212" y="56" width="139" height="48" rx="8" fill="#6EE7B7"/>
+      <text x="281" y="87" fill="#073724" font-size="23" font-weight="700" text-anchor="middle">paid</text>
+      <rect x="392" y="56" width="144" height="48" rx="8" fill="#122D23" stroke="#315D4B"/>
+      <text x="464" y="87" fill="#C4DDD0" font-size="23" text-anchor="middle">fulfilled</text>
+    </g>
+    <text x="42" y="505" fill="#86B5A3" font-size="17" font-weight="600" letter-spacing="1.8">PYTHON · XSTATE · OPEN SOURCE</text>
+  </g>
+</svg>
