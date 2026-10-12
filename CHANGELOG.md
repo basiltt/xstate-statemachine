@@ -29,8 +29,9 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
 - Removed the obsolete `VIDEO_DIAGRAMS.md` and `VIDEO_SCRIPT.md` production
   drafts, the standalone `.release-notes-0.8.0.md` draft, and the unused
   root-level `e2e.py` scratch script that depended on a missing `mc.json`.
-  Release history, regression evidence, examples and maintained tooling remain
-  available.
+  Use the maintained user guide and runnable `examples/` instead of the video
+  drafts and scratch runner; use the versioned changelog below for release
+  history. Regression evidence and maintained tooling remain available.
 
 ### Fixed
 
