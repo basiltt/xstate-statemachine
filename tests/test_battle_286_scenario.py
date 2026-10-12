@@ -208,17 +208,23 @@ def test_example_runs_from_a_fresh_venv_on_its_readme_extras(
             "-o",
             "addopts=",
             "-x",
+            # 📝 Plain output: on the Windows runners the inner pytest
+            #    colourises, and the ANSI prefix hid the FAILED line from
+            #    the diagnostics below (battle #286 follow-up).
+            "--color=no",
+            "-rA",
         ],
         cwd=copy,
         env=env,
         timeout=1500,
     )
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", r.stdout)
     heads = [
         ln
-        for ln in r.stdout.splitlines()
-        if ln.startswith(("FAILED", "ERROR", "E   ")) or " failed" in ln
+        for ln in plain.splitlines()
+        if ln.startswith(("FAILED", "ERROR", "E   ", "_ ")) or " failed" in ln
     ]
-    tail = "\n".join(heads[-25:]) + "\n...\n" + r.stderr[-1500:]
+    tail = "\n".join(heads[-40:]) + "\n...\n" + r.stderr[-1500:]
     assert r.returncode in (0, 5), (name, tail)  # 5 = nothing collected
     assert "ModuleNotFoundError" not in tail, (name, tail)
     assert "passed" in r.stdout or r.returncode == 5, (name, tail)
