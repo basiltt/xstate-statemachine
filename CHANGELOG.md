@@ -26,6 +26,11 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
 
 ### Fixed
 
+- Stabilized the Litestar streaming regression under coverage by allowing
+  valid SSE heartbeat comments before transitions. Deterministic tests keep
+  strict event ordering, bounded waits, slow-subscriber cutoff and connection
+  cleanup checks without changing runtime behavior or the coverage gate.
+
 - Eliminated a timing-dependent false positive in the EDA example telemetry
   privacy checks by checking metric labels separately from numeric samples.
   Python 3.9 adoption failures now include complete nested test diagnostics.

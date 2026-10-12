@@ -390,8 +390,18 @@ def test_fifty_concurrent_pays_charge_once(tmp_path: Path) -> None:
 # -----------------------------------------------------------------------------
 # 6. streams
 # -----------------------------------------------------------------------------
+async def _next_sse_data_event(
+    stream: RawSSE,
+) -> Tuple[Optional[int], str, Any]:
+    """Ignore SSE keepalives without hiding other data event kinds."""
+    while True:
+        event = await stream.next_event()
+        if event[1] != "comment":
+            return event
+
+
 def test_sse_snapshot_first_stalled_cut_and_slot_released(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     reg = _registry(tmp_path)
     app = _app(reg)
@@ -401,6 +411,20 @@ def test_sse_snapshot_first_stalled_cut_and_slot_released(
             s = RawSSE(
                 app, "/orders/o1/stream", headers=[("x-customer", "ann")]
             )
+            send = s._send
+            injected_comments = 0
+
+            async def send_with_heartbeats(message: Dict[str, Any]) -> None:
+                nonlocal injected_comments
+                # 📡 A slow commit can let legal keepalives precede a
+                #    transition. Reproduce that ordering without sleeps.
+                if b"\nevent: transition\n" in message.get("body", b""):
+                    for _ in range(2):
+                        await send({**message, "body": b": heartbeat\n\n"})
+                        injected_comments += 1
+                await send(message)
+
+            monkeypatch.setattr(s, "_send", send_with_heartbeats)
             assert await s.open() == 200
             seq, kind, body = await bounded(s.next_event())
             assert kind == "snapshot" and body["state"] == "cart"
@@ -410,12 +434,14 @@ def test_sse_snapshot_first_stalled_cut_and_slot_released(
                 async with reg.act("order", "o1", principal="ann") as i:
                     r = await i.send("ADD_ITEM", sku="tea", qty=1, wait=True)
                     assert r.changed
-                seq, kind, body = await bounded(s.next_event())
+                # 📡 Heartbeats are comments, not state transitions. Bound
+                #    the entire read so keepalives cannot reset its deadline.
+                seq, kind, body = await bounded(_next_sse_data_event(s))
                 assert kind == "transition" and seq == k + 1
+            assert injected_comments == 2 * (_fanout.MAX_BACKLOG + 5)
             assert reg.subscribers.count("order", "o1") == 1  # stalled cut
             assert stalled.queue.get_nowait() is not None
             await s.close()
-            await asyncio.sleep(0.05)
             assert reg.subscribers.count() == 0
             assert reg.connections() == 0
 
