@@ -8,12 +8,12 @@
 ### Event-driven Python, with the diagram as the source of truth.
 
 [![PyPI](https://img.shields.io/pypi/v/xstate-statemachine?style=flat-square&cacheSeconds=3600&logo=pypi&logoColor=white&color=3775A9)](https://pypi.org/project/xstate-statemachine/)
-[![Python](https://img.shields.io/pypi/pyversions/xstate-statemachine?style=flat-square&logo=python&logoColor=white&color=3776AB)](https://pypi.org/project/xstate-statemachine/)
+[![Python](https://img.shields.io/badge/python-3.9_%7C_3.10_%7C_3.11_%7C_3.12_%7C_3.13_%7C_3.14_%7C_3.15-3776AB?style=flat-square&logo=python&logoColor=white)](https://pypi.org/project/xstate-statemachine/)
 [![CI](https://img.shields.io/github/actions/workflow/status/basiltt/xstate-statemachine/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI)](https://github.com/basiltt/xstate-statemachine/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-8%2C596_passing-3fb950?style=flat-square&logo=pytest&logoColor=white)](https://github.com/basiltt/xstate-statemachine/tree/main/tests/)
+[![Tests](https://img.shields.io/badge/tests-8%2C601_passing-3fb950?style=flat-square&logo=pytest&logoColor=white)](https://github.com/basiltt/xstate-statemachine/tree/main/tests/)
 [![Coverage](https://img.shields.io/badge/coverage-93%25-3fb950?style=flat-square&logo=codecov&logoColor=white)](.github/workflows/ci.yml)
 [![Dependencies](https://img.shields.io/badge/dependencies-0-ff8c00?style=flat-square)](pyproject.toml)
-[![Typed](https://img.shields.io/badge/typing-py.typed-3776AB?style=flat-square)](src/xstate_statemachine/py.typed)
+[![Typed](https://img.shields.io/badge/typing-py.typed_%C2%B7_mypy_--strict-3776AB?style=flat-square)](src/xstate_statemachine/py.typed)
 [![License](https://img.shields.io/pypi/l/xstate-statemachine?style=flat-square&color=yellow)](https://github.com/basiltt/xstate-statemachine/blob/main/LICENSE)
 
 <br>
