@@ -6,28 +6,28 @@ description: "The production-hardening surface in one place: error policies, str
 Version 0.8.0 closed 34 defects with a single theme: **the library failed silently by default**. A dropped event, a half-applied transition, a guard that raised and was treated as `False` — each looked like normal operation. This page is the map of every knob that turns those into signals you can see, with a runnable example for each.
 
 ```mermaid
-stateDiagram-v2
-    direction TB
-    state "an event arrives" as ev
-    state "known event?" as known <<choice>>
-    state "queue has room?" as room <<choice>>
-    state "guard evaluated" as guard
-    state "actions run" as act
-    state "transition committed" as done
-    state "UnknownEventError" as unk
-    state "OverflowPolicy" as ovf
-    state "guardErrorPolicy" as gep
-    state "actionErrorPolicy" as aep
+flowchart TB
+    ev["an event arrives"]
+    known{"known event?"}
+    room{"queue has room?"}
+    guard["guard evaluated"]
+    act["actions run"]
+    done["transition committed"]
+    unk["UnknownEventError"]
+    ovf["OverflowPolicy"]
+    gep["guardErrorPolicy"]
+    aep["actionErrorPolicy"]
+    finish((Complete))
     ev --> known
-    known --> unk : no · strict=True
-    known --> room : yes
-    room --> ovf : no · RAISE / BLOCK / DROP_NEWEST
-    room --> guard : yes
-    guard --> gep : guard raised
-    guard --> act : passed
-    act --> aep : action raised
-    act --> done : ok
-    done --> [*] : Receipt(changed=True)
+    known -->|"no · strict=True"| unk
+    known -->|"yes"| room
+    room -->|"no · RAISE / BLOCK / DROP_NEWEST"| ovf
+    room -->|"yes"| guard
+    guard -->|"guard raised"| gep
+    guard -->|"passed"| act
+    act -->|"action raised"| aep
+    act -->|"ok"| done
+    done -->|"Receipt(changed=True)"| finish
 ```
 
 Every policy below is **per machine** and its default preserves 0.7.x behaviour. Set them explicitly in anything that handles money or safety.
