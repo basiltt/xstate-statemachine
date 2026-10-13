@@ -45,6 +45,14 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ### Fixed
 
+- Made SQLite store scaling checks independent of short disk/WAL timing
+  samples that could fail on shared Windows runners. The original 1, 100,
+  and 2,000-record workloads and timing reports remain, with fixed SQL
+  instruction budgets enforcing bounded save/load/delete and limited-list
+  work. Regressions reject missing deadline indexes and unbounded listings,
+  preserve operation results, and verify instrumentation cleanup. Runtime
+  behavior and the 90% coverage minimum are unchanged.
+
 - Made the 100,000-record deadline-scanner regression independent of CI
   runner speed by checking bounded metadata/SQL work instead of a fixed
   half-second duration. Preserved exact due-key ordering and zero snapshot
