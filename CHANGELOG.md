@@ -9,7 +9,13 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-13
+
 ### Changed
+
+- Aligned the development lockfile with version 0.11.0, its declared extras,
+  and development dependency groups. Clarified the release checklist and
+  publishing workflow documentation without changing the publishing gates.
 
 - Made the GitHub Pages documentation responsive across phones, tablets and
   desktops, with accessible mobile menus, persistent search/theme controls,
@@ -49,8 +55,6 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
 - Eliminated a timing-dependent false positive in the EDA example telemetry
   privacy checks by checking metric labels separately from numeric samples.
   Python 3.9 adoption failures now include complete nested test diagnostics.
-
-## [0.11.0] - 2026-10-12
 
 ### Release polish (Changed)
 

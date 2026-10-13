@@ -50,8 +50,13 @@ Coverage is a repository rule: the suite must keep **at least 90%** line and bra
 ## 🏷️ Cutting a release (maintainers)
 
 1. Move the `## [Unreleased]` entries in **both** `CHANGELOG.md` and `docs/_guide/changelog.md` under the new version heading (the two copies must stay identical).
-2. Bump `__version__` in `src/xstate_statemachine/__init__.py` (and `pyproject.toml`).
-3. Tag and push **`v<version>`** — `git tag v0.11.0 && git push origin v0.11.0`. The `xsm-check` GitHub Action (`uses: basiltt/xstate-statemachine@v<version>`) and the pre-commit hooks (`rev: v<version>`) documented in the CLI guide resolve through this tag; `tests/test_battle_309_docs_truth.py` keeps the documented pins equal to `__version__`, so a release without its tag leaves every copy-paste snippet dead.
-4. `python -m build && twine check dist/*`, then publish and create the GitHub release from the tag.
+   Use the actual release date and leave an empty Unreleased section for future changes.
+2. Align `__version__` in `src/xstate_statemachine/__init__.py`, `pyproject.toml`, `docs/_config.yml`, and the documented action/hook pins. Regenerate `uv.lock` with `uv lock` (without `--upgrade`), then verify it with `uv lock --check`; this does not require syncing or changing the working environment.
+3. Run the full tests and formatting checks, wait for the intended release revision's CI checks to pass, and merge the release changes to `main`. Verify the merged revision's CI and GitHub Pages deployment. The Publish workflow validates distributions but does **not** replace the full test, lint, and coverage gates.
+4. Build and validate the distributions with `python -m build` and `twine check dist/*`, and smoke-test the installed wheel in a clean environment. Confirm that the target version is not already published on PyPI and that its tag does not already point elsewhere.
+5. Tag and push **`v<version>`** on the verified main commit — `git tag v0.11.0 <verified-main-sha> && git push origin v0.11.0`. The `xsm-check` GitHub Action (`uses: basiltt/xstate-statemachine@v<version>`) and the pre-commit hooks (`rev: v<version>`) documented in the CLI guide resolve through this tag; `tests/test_battle_309_docs_truth.py` keeps the documented pins equal to `__version__`, so a release without its tag leaves every copy-paste snippet dead.
+6. Publish one non-prerelease GitHub release from that existing tag. The `release: published` event starts `.github/workflows/publish.yml`, which rebuilds and publishes to PyPI through Trusted Publishing. Do **not** also dispatch a manual PyPI upload for the same version.
+7. Watch Publish through success. Compare the uploaded wheel and source archive's SHA-256 hashes with PyPI's version metadata; use the Publish run's `dist` artifact if attaching those files to the GitHub release. Independently rebuilt artifacts need not have identical bytes.
+8. Install the exact released version from PyPI in a clean environment outside the checkout, verify the runtime/metadata version and CLI, and check the live site's version, release notes, and representative desktop/mobile pages.
 
 Thank you for your contribution!

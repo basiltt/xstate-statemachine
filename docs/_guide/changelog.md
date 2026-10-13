@@ -13,7 +13,13 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-13
+
 ### Changed
+
+- Aligned the development lockfile with version 0.11.0, its declared extras,
+  and development dependency groups. Clarified the release checklist and
+  publishing workflow documentation without changing the publishing gates.
 
 - Made the GitHub Pages documentation responsive across phones, tablets and
   desktops, with accessible mobile menus, persistent search/theme controls,
@@ -53,8 +59,6 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 - Eliminated a timing-dependent false positive in the EDA example telemetry
   privacy checks by checking metric labels separately from numeric samples.
   Python 3.9 adoption failures now include complete nested test diagnostics.
-
-## [0.11.0] - 2026-10-12
 
 ### Release polish (Changed)
 
@@ -5041,7 +5045,7 @@ unaffected.
 
 ---
 
-## [0.8.0] — 2026-09-17 — Fortify *(Current Release)*
+## [0.8.0] — 2026-09-17 — Fortify
 
 **Adoption-readiness, parts 1–3.**
 

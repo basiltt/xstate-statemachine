@@ -11,9 +11,11 @@
 # PyPI verifies against a publisher this repository has been registered for.
 #
 # The artifacts are REBUILT here rather than downloaded from the release, so
-# what reaches PyPI is provably the tagged source. Every gate the CI workflow
-# applies is re-applied before upload, because a PyPI upload is irreversible:
-# a filename can never be reused, even after deletion.
+# what reaches PyPI is provably the tagged source. This workflow rechecks the
+# distribution, tag/version agreement, and installed-wheel API/CLI smoke tests;
+# it does not rerun the CI test matrix, lint, or coverage. Release only a
+# revision whose CI has passed: a PyPI upload is irreversible, and a filename
+# can never be reused, even after deletion.
 # -----------------------------------------------------------------------------
 name: Publish
 
