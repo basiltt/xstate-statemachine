@@ -513,6 +513,25 @@ class TestHardeningPages(unittest.TestCase):
             "../compatibility/", _read(GUIDE / "integrations-extras.md")
         )
 
+    def test_footer_links_compatibility_without_stale_release_counts(
+        self,
+    ) -> None:
+        """The shared footer must not freeze a release's test inventory."""
+        layout = _read(ROOT / "docs" / "_layouts" / "default.html")
+        footers = re.findall(r"<footer\b[^>]*>(.*?)</footer>", layout, re.S)
+        self.assertEqual(len(footers), 1)
+        footer = footers[0]
+        self.assertRegex(
+            footer,
+            r"<a\s+href=\"\{\{\s*'/guide/compatibility/'"
+            r"\s*\|\s*relative_url\s*\}\}\">"
+            r"compatibility</a>",
+        )
+        self.assertNotRegex(footer, r"\b[\d,]+\s+tests\b")
+        self.assertNotRegex(footer, r"\bpython\s+\d+\.\d+")
+        for platform in ("linux", "macos", "windows"):
+            self.assertIn(platform, footer)
+
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
