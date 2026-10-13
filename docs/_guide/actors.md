@@ -8,7 +8,7 @@ The **Actor Model** lets you spawn independent child state machines from a paren
 ## 🎭 What is the Actor Model?
 
 ```mermaid
-flowchart TB
+flowchart LR
     P["👑 parent machine<br/><small>orchestrates</small>"]
     P -- "spawn_worker" --> A["🧵 worker #1<br/><small>own state · own context</small>"]
     P -- "spawn_worker" --> B["🧵 worker #2<br/><small>own state · own context</small>"]

@@ -23,6 +23,7 @@ Two rules make the layers compose:
 
 ```mermaid
 stateDiagram-v2
+  direction LR
   [*] --> idle
   idle --> attempting: GET(url)
   attempting --> succeeded: done / retryReset

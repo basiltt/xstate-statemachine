@@ -45,6 +45,13 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ### Fixed
 
+- Preserved leaf-state containment and machine-level entry arrows in Mermaid
+  exports, including non-initial and unconnected states. Regenerated the
+  documentation examples and documented the existing local-key alias
+  limitation. Corrected deep-link diagram containment and separated actor,
+  retry, and slot-filling transition labels without changing interpreter
+  behavior or the represented events, guards, and actions.
+
 - Corrected the Guards and Reliability guide diagrams so decision diamonds
   remain connected and display their question labels. Preserved every
   condition and branch, with source regression checks and visual verification

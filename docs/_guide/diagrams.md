@@ -145,16 +145,21 @@ print(mermaid)
 
 ```
 stateDiagram-v2
-[*] --> red
+[*] --> trafficLight
 state "trafficLight" as trafficLight {
     [*] --> red
+    state "red" as red
+    state "green" as green
+    state "yellow" as yellow
 }
 red --> green : TIMER
 green --> yellow : TIMER
 yellow --> red : TIMER
 ```
 
-The top-level machine is always wrapped in its own `state "<id>" as <id> { [*] --> ... }` block (the same is true for any nested compound state), alongside a leading `[*] --> red` line for the overall diagram.
+The top-level machine is wrapped in its own `state "<id>" as <id> { ... }` block. The overall entry arrow points to that wrapper, and its inner entry arrow points to the initial child. Every leaf state is declared inside its parent before transitions are emitted, so non-initial and unconnected states retain their correct containment. Nested compound states follow the same pattern.
+
+> **Mermaid alias limitation:** The exporter uses local state keys as diagram IDs. Use distinct keys across the whole chart, including the machine ID. Repeated local keys in different parents are ambiguous in this format; use the PlantUML exporter or Stately for those charts. This visualization limitation does not affect interpreter state resolution.
 
 ### Embedding in GitHub README
 
@@ -163,9 +168,12 @@ Mermaid diagrams render natively in GitHub Markdown. Wrap the output in a fenced
 ````markdown
 ```mermaid
 stateDiagram-v2
-[*] --> red
+[*] --> trafficLight
 state "trafficLight" as trafficLight {
     [*] --> red
+    state "red" as red
+    state "green" as green
+    state "yellow" as yellow
 }
 red --> green : TIMER
 green --> yellow : TIMER
@@ -229,9 +237,11 @@ print(machine.to_mermaid())
 
 ```
 stateDiagram-v2
-[*] --> locked
+[*] --> doorLock
 state "doorLock" as doorLock {
     [*] --> locked
+    state "locked" as locked
+    state "unlocked" as unlocked
 }
 locked --> unlocked : UNLOCK
 unlocked --> locked : LOCK
@@ -272,9 +282,11 @@ Both produce:
 
 ```
 stateDiagram-v2
-[*] --> idle
+[*] --> switch
 state "switch" as switch {
     [*] --> idle
+    state "idle" as idle
+    state "running" as running
 }
 idle --> running : START
 ```
@@ -418,17 +430,22 @@ print(machine.to_mermaid())
 
 ```
 stateDiagram-v2
-[*] --> playing
+[*] --> player
 state "player" as player {
     [*] --> playing
     state "playing" as playing {
         state "video" as video {
             [*] --> loading
+            state "loading" as loading
+            state "streaming" as streaming
         }
         state "audio" as audio {
             [*] --> muted
+            state "muted" as muted
+            state "audible" as audible
         }
     }
+    state "stopped" as stopped
 }
 playing --> stopped : STOP
 loading --> streaming : VIDEO_READY
