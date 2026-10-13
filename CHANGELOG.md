@@ -50,6 +50,12 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
 
 ### Fixed
 
+- Gave the 16-worker SQLite audit-log stress tests an explicit contention
+  budget while preserving their 1,600-write workload, error reporting,
+  commit counts, and gap-free sequence assertions. Production lock-wait
+  defaults are unchanged; regressions retain timeout propagation even
+  when a snapshot has committed before its separate audit-log append.
+
 - Replaced the documentation footer's outdated test count and Python range
   with a link to the maintained compatibility guide.
 
