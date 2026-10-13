@@ -9,7 +9,14 @@ A booking bot needs a date, a party size and a name, and users give them in any 
 Files: [`examples/recipes/slot_filling/`](https://github.com/basiltt/xstate-statemachine/tree/main/examples/recipes/slot_filling).
 
 ```mermaid
+---
+config:
+  state:
+    nodeSpacing: 80
+    rankSpacing: 120
+---
 stateDiagram-v2
+  direction LR
   [*] --> collecting
   collecting --> collecting: USER_SAID / fillSlots (re-enter)
   collecting --> confirming: always [allSlotsFilled]

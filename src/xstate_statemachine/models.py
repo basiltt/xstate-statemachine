@@ -2146,13 +2146,17 @@ class MachineNode(StateNode[TContext]):
         This can be used to automatically generate diagrams in markdown files
         (e.g., on GitHub, or with tools like MkDocs).
 
+        Aliases remain local state keys for compatibility. Repeated keys in
+        the state tree can collide in Mermaid; use distinct keys for an
+        unambiguous diagram.
+
         Returns:
             A string formatted for rendering with Mermaid.js.
         """
         content = ["stateDiagram-v2"]
 
         def build_mmd_states(node: StateNode[Any], level: int) -> None:
-            """Emit Mermaid composite-state blocks for *node* and children.
+            """Emit Mermaid state declarations for *node* and children.
 
             Args:
                 node: The state to render.
@@ -2167,6 +2171,8 @@ class MachineNode(StateNode[TContext]):
                 for child in node.states.values():
                     build_mmd_states(child, level + 1)
                 content.append(f"{indent}}}")
+            else:
+                content.append(f'{indent}state "{node.key}" as {node.key}')
 
         def build_mmd_transitions(node: StateNode[Any]) -> None:
             """Emit Mermaid transition lines for *node* and its descendants.
@@ -2202,7 +2208,7 @@ class MachineNode(StateNode[TContext]):
                 build_mmd_transitions(child)
 
         if self.initial and self.states.get(self.initial):
-            content.append(f"[*] --> {self.states[self.initial].key}")
+            content.append(f"[*] --> {self.key}")
         build_mmd_states(self, 0)
         build_mmd_transitions(self)
 

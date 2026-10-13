@@ -158,16 +158,17 @@ When the machine transitions to `loggedIn`, it automatically enters `dashboard` 
 ## 🔀 Nested Transitions
 
 ```mermaid
-stateDiagram-v2
-    state app {
-        state loggedIn {
-            [*] --> dashboard
-            dashboard --> profile : GO_PROFILE
-            profile --> dashboard : BACK
-        }
-        loggedIn --> loggedOut : LOGOUT
-        loggedOut --> loggedIn.profile : DEEP_LINK
-    }
+flowchart TB
+    subgraph app["app"]
+        subgraph loggedIn["loggedIn"]
+            start((Start)) --> dashboard
+            dashboard -->|"GO_PROFILE"| profile
+            profile -->|"BACK"| dashboard
+        end
+        loggedOut["loggedOut"]
+        loggedIn -->|"LOGOUT"| loggedOut
+        loggedOut -->|"DEEP_LINK"| profile
+    end
 ```
 
 Three kinds of edge above: **child → child** (`GO_PROFILE`), **parent-level** (`LOGOUT`, caught from any child), and **deep target** (`DEEP_LINK` lands directly on a grandchild).

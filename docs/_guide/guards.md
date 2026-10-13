@@ -10,13 +10,13 @@ Guards are **boolean functions** that control whether a transition is allowed to
 A guard is a pure, synchronous function that answers one question: *"Should this transition happen right now?"* Guards inspect the machine's context and the incoming event data to make that decision.
 
 ```mermaid
-stateDiagram-v2
-    direction LR
-    state "guard: canCheckout?" as g <<choice>>
-    [*] --> cart
-    cart --> g : CHECKOUT
-    g --> payment : ✅ items > 0
-    g --> cart : ❌ empty (stays put)
+flowchart LR
+    start((Start))
+    g{"guard: canCheckout?"}
+    start --> cart
+    cart -->|"CHECKOUT"| g
+    g -->|"✅ items > 0"| payment
+    g -->|"❌ empty (stays put)"| cart
 ```
 
 Key characteristics:
