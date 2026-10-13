@@ -22,6 +22,34 @@ The library provides two export methods on every `MachineNode`:
 
 Both methods return a string that you can print, save to a file, or embed in documentation.
 
+## Viewing diagrams in these docs
+
+The documentation includes both exported Mermaid illustrations and live Stately
+embeds. You can enlarge either without leaving the guide:
+
+- **Stately diagrams:** choose **Fullscreen** below the chart to open a
+  page-sized viewer in the current tab. The same public diagram gets the full
+  available canvas, including on phones and tablets. Use Stately's pan, zoom,
+  and **Center in view** controls to explore larger machines. **Close** returns
+  to your place in the guide; **Open in Stately** remains a separate link to the
+  editor in a new tab.
+- **Mermaid illustrations:** choose **Full screen** on the figure, then use
+  **+**, **−**, or **Fit**. A fitted overview can make a large chart's labels
+  small; zoom in for detailed reading.
+
+The Stately viewer follows the site theme and opens a separate embedded view,
+so reopening it resets that view's pan and zoom without moving the inline
+chart. Its toolbar stays outside the embed and keeps **Close** accessible.
+**Escape** closes the viewer when its toolbar has keyboard focus; Stately can
+handle the key itself when focus is inside the embedded editor. After tabbing
+through its controls, activate **Back to viewer controls** to return to Close;
+this shortcut appears when focused. **Shift+Tab** also moves back toward the
+toolbar, and you can select **Close** directly at any time.
+
+Live Stately diagrams need a network connection to Stately. If an embed does
+not load, the guide and its code remain available, and **Open in Stately** gives
+you a direct editor link. Enlarging a diagram does not edit the machine.
+
 ## 🌿 PlantUML Export
 
 ### Basic Example
