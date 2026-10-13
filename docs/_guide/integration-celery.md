@@ -25,17 +25,44 @@ from xstate_statemachine.contrib.celery import celery_service
 from xstate_statemachine.persistence import MemoryStore, persisted
 
 app = Celery(broker="memory://", backend="cache+memory://")
-app.conf.task_always_eager = True          # a docs run needs no worker
+app.conf.task_always_eager = True  # a docs run needs no worker
+
 
 @app.task
 def charge(amount):
-    return {"ok": True, "amount": amount}
+    return {
+        "ok": True,
+        "amount": amount,
+    }
 
-cfg = {"id": "o", "initial": "paying", "states": {
-    "paying": {"invoke": {"src": "charge", "onDone": "paid", "onError": "failed"}},
-    "paid": {"type": "final"}, "failed": {}}}
-machine = create_machine(cfg, logic=MachineLogic(services={
-    "charge": celery_service(charge, args_from=lambda ctx, e: ((42,), {}))}))
+
+cfg = {
+    "id": "o",
+    "initial": "paying",
+    "states": {
+        "paying": {
+            "invoke": {
+                "src": "charge",
+                "onDone": "paid",
+                "onError": "failed",
+            },
+        },
+        "paid": {
+            "type": "final",
+        },
+        "failed": {},
+    },
+}
+machine = create_machine(
+    cfg,
+    logic=MachineLogic(
+        services={
+            "charge": celery_service(
+                charge, args_from=lambda ctx, e: ((42,), {})
+            ),
+        }
+    ),
+)
 
 store = MemoryStore()
 with persisted(store, "o1", machine):
@@ -123,7 +150,15 @@ from xstate_statemachine.contrib.celery import DurableTimerScheduler
 from xstate_statemachine.exceptions import InvalidConfigError
 from xstate_statemachine.persistence import MemoryStore
 
-m = create_machine({"id": "t", "initial": "a", "states": {"a": {}}})
+m = create_machine(
+    {
+        "id": "t",
+        "initial": "a",
+        "states": {
+            "a": {},
+        },
+    }
+)
 app = Celery("one", broker="memory://", backend="cache+memory://")
 DurableTimerScheduler(app, MemoryStore(), m)
 try:
@@ -132,8 +167,13 @@ except InvalidConfigError as exc:
     assert "already registered" in str(exc)
 else:
     raise AssertionError("a taken name was accepted")
-eu = DurableTimerScheduler(app, MemoryStore(), m,
-                           name="eu.deadlines.scan", fire_name="eu.deadlines.fire")
+eu = DurableTimerScheduler(
+    app,
+    MemoryStore(),
+    m,
+    name="eu.deadlines.scan",
+    fire_name="eu.deadlines.fire",
+)
 assert eu.task.name == "eu.deadlines.scan"
 ```
 

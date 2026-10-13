@@ -46,35 +46,61 @@ print([policy.delay_ms(attempt) for attempt in range(1, 6)])
 The loop is four states. `policy.logic()` provides `retryDelay`, `retryCanRetry`, `retryBump` and `retryReset`; merge it with your own logic via `MachineLogic.merge()`.
 
 ```python
-from xstate_statemachine import MachineLogic, SimulatedClock, SyncInterpreter, create_machine
+from xstate_statemachine import (
+    MachineLogic,
+    SimulatedClock,
+    SyncInterpreter,
+    create_machine,
+)
 from xstate_statemachine.patterns import RetryPolicy
 
 RETRY_CFG = {
     "id": "job",
     "initial": "attempting",
-    "context": {"attempt": 0},
+    "context": {
+        "attempt": 0,
+    },
     "states": {
         "attempting": {
             "invoke": {
                 "src": "work",
-                "onDone": {"target": "done", "actions": "retryReset"},
-                "onError": {"target": "retrying", "actions": "retryBump"},
-            }
+                "onDone": {
+                    "target": "done",
+                    "actions": "retryReset",
+                },
+                "onError": {
+                    "target": "retrying",
+                    "actions": "retryBump",
+                },
+            },
         },
         "retrying": {
             "after": {
                 "retryDelay": [
-                    {"guard": "retryCanRetry", "target": "attempting"},
-                    {"target": "deadLettered"},
-                ]
-            }
+                    {
+                        "guard": "retryCanRetry",
+                        "target": "attempting",
+                    },
+                    {
+                        "target": "deadLettered",
+                    },
+                ],
+            },
         },
-        "done": {"type": "final"},
-        "deadLettered": {"type": "final", "tags": ["dead-letter"]},
+        "done": {
+            "type": "final",
+        },
+        "deadLettered": {
+            "type": "final",
+            "tags": ["dead-letter"],
+        },
     },
 }
 
-calls = {"n": 0}
+calls = {
+    "n": 0,
+}
+
 
 def work(interp, ctx, event):
     calls["n"] += 1
@@ -82,13 +108,23 @@ def work(interp, ctx, event):
         raise ConnectionError(f"boom #{calls['n']}")
     return "ok"
 
+
 policy = RetryPolicy(max_attempts=5, base_ms=100, jitter="none")
-machine = create_machine(RETRY_CFG, logic=policy.logic().merge(MachineLogic(services={"work": work})))
+machine = create_machine(
+    RETRY_CFG,
+    logic=policy.logic().merge(
+        MachineLogic(
+            services={
+                "work": work,
+            }
+        )
+    ),
+)
 
 clock = SimulatedClock()
 interp = SyncInterpreter(machine, clock=clock).start()
 for _ in range(5):
-    clock.increment(10_000)          # each retry delay is well under 10 s
+    clock.increment(10_000)  # each retry delay is well under 10 s
 
 assert interp.matches("job.done") and calls["n"] == 4
 assert interp.context["attempt"] == 0  # retryReset ran on success
@@ -107,33 +143,84 @@ Three failures, then success on the fourth attempt — driven entirely by the ch
 When the loop gives up, the chart enters a state tagged `dead-letter`. `DeadLetterPlugin` watches for that and writes **one record** with everything an operator needs to triage or replay: the machine id, the event being handled, the attempt count, the **chain of errors** collected since the last clean step, and a snapshot.
 
 ```python
-from xstate_statemachine import MachineLogic, SimulatedClock, SyncInterpreter, create_machine
-from xstate_statemachine.patterns import DeadLetterPlugin, DeadLetterStore, RetryPolicy
+from xstate_statemachine import (
+    MachineLogic,
+    SimulatedClock,
+    SyncInterpreter,
+    create_machine,
+)
+from xstate_statemachine.patterns import (
+    DeadLetterPlugin,
+    DeadLetterStore,
+    RetryPolicy,
+)
 
 RETRY_CFG = {
-    "id": "job", "initial": "attempting",
-    "context": {"attempt": 0, "api_key": "sk-live-…"},
+    "id": "job",
+    "initial": "attempting",
+    "context": {
+        "attempt": 0,
+        "api_key": "sk-live-…",
+    },
     "states": {
-        "attempting": {"invoke": {"src": "work",
-            "onDone": {"target": "done", "actions": "retryReset"},
-            "onError": {"target": "retrying", "actions": "retryBump"}}},
-        "retrying": {"after": {"retryDelay": [
-            {"guard": "retryCanRetry", "target": "attempting"},
-            {"target": "deadLettered"}]}},
-        "done": {"type": "final"},
-        "deadLettered": {"type": "final", "tags": ["dead-letter"]},
+        "attempting": {
+            "invoke": {
+                "src": "work",
+                "onDone": {
+                    "target": "done",
+                    "actions": "retryReset",
+                },
+                "onError": {
+                    "target": "retrying",
+                    "actions": "retryBump",
+                },
+            },
+        },
+        "retrying": {
+            "after": {
+                "retryDelay": [
+                    {
+                        "guard": "retryCanRetry",
+                        "target": "attempting",
+                    },
+                    {
+                        "target": "deadLettered",
+                    },
+                ],
+            },
+        },
+        "done": {
+            "type": "final",
+        },
+        "deadLettered": {
+            "type": "final",
+            "tags": ["dead-letter"],
+        },
     },
 }
+
 
 def work(interp, ctx, event):
     raise ConnectionError(f"upstream 503 (attempt {ctx['attempt'] + 1})")
 
-policy = RetryPolicy(max_attempts=3, base_ms=100, jitter="none")
-machine = create_machine(RETRY_CFG, logic=policy.logic().merge(MachineLogic(services={"work": work})))
 
-store = DeadLetterStore()                     # any callable(DeadLetter) is a sink
+policy = RetryPolicy(max_attempts=3, base_ms=100, jitter="none")
+machine = create_machine(
+    RETRY_CFG,
+    logic=policy.logic().merge(
+        MachineLogic(
+            services={
+                "work": work,
+            }
+        )
+    ),
+)
+
+store = DeadLetterStore()  # any callable(DeadLetter) is a sink
 clock = SimulatedClock()
-interp = SyncInterpreter(machine, clock=clock).use(DeadLetterPlugin(store)).start()
+interp = (
+    SyncInterpreter(machine, clock=clock).use(DeadLetterPlugin(store)).start()
+)
 for _ in range(4):
     clock.increment(10_000)
 
@@ -141,8 +228,13 @@ assert interp.matches("job.deadLettered")
 record = store.all()[0]
 assert record.attempts == 3
 assert [e["message"] for e in record.errors] == [
-    "upstream 503 (attempt 1)", "upstream 503 (attempt 2)", "upstream 503 (attempt 3)"]
-assert record.snapshot["context"]["api_key"] == "***"     # redacted before it reached the sink
+    "upstream 503 (attempt 1)",
+    "upstream 503 (attempt 2)",
+    "upstream 503 (attempt 3)",
+]
+assert (
+    record.snapshot["context"]["api_key"] == "***"
+)  # redacted before it reached the sink
 print(record.to_json()[:80], "…")
 ```
 

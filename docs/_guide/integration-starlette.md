@@ -25,34 +25,64 @@ from xstate_statemachine import create_machine
 from xstate_statemachine.contrib.starlette import StatechartRegistry
 from xstate_statemachine.persistence import MemoryStore
 
-machine = create_machine({
-    "id": "door", "initial": "closed",
-    "states": {"closed": {"on": {"OPEN": "open"}},
-               "open": {"on": {"CLOSE": "closed"}}},
-})
+machine = create_machine(
+    {
+        "id": "door",
+        "initial": "closed",
+        "states": {
+            "closed": {
+                "on": {
+                    "OPEN": "open",
+                },
+            },
+            "open": {
+                "on": {
+                    "CLOSE": "closed",
+                },
+            },
+        },
+    }
+)
+
 
 def authorize(request, *, name, key, event):
-    return request.headers.get("x-user") is not None   # your auth here
+    return request.headers.get("x-user") is not None  # your auth here
+
 
 registry = StatechartRegistry(MemoryStore())
 registry.register("door", machine, authorize=authorize, strict=True)
+
 
 async def send(request):
     p = request.path_params
     return await registry.send_event(request, "door", p["id"], p["event"])
 
+
 app = Starlette(
-    routes=[Route("/doors/{id}/events/{event}", send, methods=["POST"]),
-            registry.health_route(), registry.ready_route()],
+    routes=[
+        Route("/doors/{id}/events/{event}", send, methods=["POST"]),
+        registry.health_route(),
+        registry.ready_route(),
+    ],
     lifespan=registry.lifespan,
 )
 
 with TestClient(app) as client:
-    ok = client.post("/doors/1/events/OPEN", headers={"x-user": "ann"})
+    ok = client.post(
+        "/doors/1/events/OPEN",
+        headers={
+            "x-user": "ann",
+        },
+    )
     assert ok.status_code == 200 and ok.json()["state"] == "open"
     assert client.post("/doors/1/events/OPEN").status_code == 403
-    typo = client.post("/doors/1/events/OPNE", headers={"x-user": "ann"})
-    assert typo.status_code == 422     # strict: undeclared event
+    typo = client.post(
+        "/doors/1/events/OPNE",
+        headers={
+            "x-user": "ann",
+        },
+    )
+    assert typo.status_code == 422  # strict: undeclared event
     assert client.get("/_xsm/ready").json()["status"] == "ready"
 ```
 
@@ -157,7 +187,12 @@ The plain `dict` that `ReceiptResponse` serialises (the WebSocket endpoint reuse
 async with registry.act("order", key) as interp:
     receipt = await interp.send("PAY")
     body = receipt_body(interp, receipt)
-return JSONResponse({"result": body}, status_code=receipt_to_status(receipt))
+return JSONResponse(
+    {
+        "result": body,
+    },
+    status_code=receipt_to_status(receipt),
+)
 ```
 ### `idempotency_key_from(conn)` / `await json_body(request, *, max_body_bytes=DEFAULT_MAX_SNAPSHOT_BYTES)`
 

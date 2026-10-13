@@ -44,7 +44,10 @@ The library ships with `LoggingInspector`, a ready-to-use plugin that emits deta
 ```python
 import logging
 from xstate_statemachine import (
-    create_machine, SyncInterpreter, MachineLogic, LoggingInspector
+    create_machine,
+    SyncInterpreter,
+    MachineLogic,
+    LoggingInspector,
 )
 
 # Configure Python logging to see the output
@@ -53,26 +56,37 @@ logging.basicConfig(level=logging.INFO)
 config = {
     "id": "demo",
     "initial": "idle",
-    "context": {"count": 0},
+    "context": {
+        "count": 0,
+    },
     "states": {
         "idle": {
             "on": {
-                "START": {"target": "running", "actions": "increment"}
-            }
+                "START": {
+                    "target": "running",
+                    "actions": "increment",
+                },
+            },
         },
         "running": {
             "on": {
                 "STOP": "idle",
-                "FINISH": "done"
-            }
+                "FINISH": "done",
+            },
         },
-        "done": {"type": "final"}
-    }
+        "done": {
+            "type": "final",
+        },
+    },
 }
 
 logic = MachineLogic(
     actions={
-        "increment": lambda i, ctx, e, a: ctx.update({"count": ctx["count"] + 1})
+        "increment": lambda i, ctx, e, a: ctx.update(
+            {
+                "count": ctx["count"] + 1,
+            }
+        ),
     }
 )
 
@@ -249,8 +263,13 @@ This is how the idempotency inbox answers a redelivered webhook with the *origin
 
 ```python
 from xstate_statemachine import (
-    PluginBase, Receipt, SyncInterpreter, create_machine, stub_logic,
+    PluginBase,
+    Receipt,
+    SyncInterpreter,
+    create_machine,
+    stub_logic,
 )
+
 
 class MaintenanceMode(PluginBase):
     """Refuse every user event while enabled; the machine stays untouched."""
@@ -268,16 +287,32 @@ class MaintenanceMode(PluginBase):
             denied=True,  # "a rule refused it", not "does not apply"
         )
 
-cfg = {"id": "m", "initial": "a", "states": {"a": {"on": {"GO": "b"}}, "b": {}}}
+
+cfg = {
+    "id": "m",
+    "initial": "a",
+    "states": {
+        "a": {
+            "on": {
+                "GO": "b",
+            },
+        },
+        "b": {},
+    },
+}
 gate = MaintenanceMode()
-interp = SyncInterpreter(create_machine(cfg, logic=stub_logic(cfg))).use(gate).start()
+interp = (
+    SyncInterpreter(create_machine(cfg, logic=stub_logic(cfg)))
+    .use(gate)
+    .start()
+)
 
 gate.enabled = True
 receipt = interp.send("GO", wait=True)
-assert receipt.denied and interp.current_state_ids == {"m.a"}   # never queued
+assert receipt.denied and interp.current_state_ids == {"m.a"}  # never queued
 
 gate.enabled = False
-assert interp.send("GO", wait=True).changed                      # normal path
+assert interp.send("GO", wait=True).changed  # normal path
 ```
 
 <div class="stately" data-machine="207017cf4f" data-height="320" data-title="m"></div>
@@ -296,7 +331,13 @@ assert interp.send("GO", wait=True).changed                      # normal path
 Fires **exactly once per event that entered the machine** — user events and engine-minted ones alike — after its macrostep has settled, or after it was denied, unhandled, deferred or dropped. `receipt` is the same `Receipt` a `send(wait=True)` caller gets, so this is the hook that knows the *outcome*: `on_transition` fires per transition and carries no event, and a guard-denied or unhandled event fires no transition at all. Audit logs, state-coverage collectors, tracing spans and the idempotency inbox's "mark" all attach here.
 
 ```python
-from xstate_statemachine import PluginBase, SyncInterpreter, create_machine, stub_logic
+from xstate_statemachine import (
+    PluginBase,
+    SyncInterpreter,
+    create_machine,
+    stub_logic,
+)
+
 
 class Outcomes(PluginBase):
     def __init__(self):
@@ -304,24 +345,46 @@ class Outcomes(PluginBase):
 
     def on_event_processed(self, interpreter, event, receipt):
         kind = (
-            "error" if receipt.error else
-            "deferred" if receipt.deferred else
-            "denied" if receipt.denied else
-            "changed" if receipt.changed else "no-op"
+            "error"
+            if receipt.error
+            else (
+                "deferred"
+                if receipt.deferred
+                else (
+                    "denied"
+                    if receipt.denied
+                    else "changed" if receipt.changed else "no-op"
+                )
+            )
         )
         self.seen.append((event.type, kind))
 
+
 cfg = {
-    "id": "o", "initial": "a",
-    "states": {"a": {"on": {"GO": "b", "LOCKED": {"target": "b", "guard": "never"}}}, "b": {}},
+    "id": "o",
+    "initial": "a",
+    "states": {
+        "a": {
+            "on": {
+                "GO": "b",
+                "LOCKED": {
+                    "target": "b",
+                    "guard": "never",
+                },
+            },
+        },
+        "b": {},
+    },
 }
 out = Outcomes()
-interp = SyncInterpreter(
-    create_machine(cfg, logic=stub_logic(cfg, guards=False))
-).use(out).start()
-interp.send("LOCKED")   # guard says no
-interp.send("NOPE")     # nothing handles it
-interp.send("GO")       # transitions
+interp = (
+    SyncInterpreter(create_machine(cfg, logic=stub_logic(cfg, guards=False)))
+    .use(out)
+    .start()
+)
+interp.send("LOCKED")  # guard says no
+interp.send("NOPE")  # nothing handles it
+interp.send("GO")  # transitions
 assert out.seen == [("LOCKED", "denied"), ("NOPE", "no-op"), ("GO", "changed")]
 ```
 
@@ -440,8 +503,15 @@ Use this — or poll `interpreter.chain_trips` (a monotonic counter) / `interpre
 
 ```python
 def on_chain_budget_exceeded(self, interpreter, error, event):
-    metrics.increment("chain_trips", tags={"machine": interpreter.id})
-    alert(f"{interpreter.id} cut {error.dropped} event(s) at {error.limit}; first: {event.type}")
+    metrics.increment(
+        "chain_trips",
+        tags={
+            "machine": interpreter.id,
+        },
+    )
+    alert(
+        f"{interpreter.id} cut {error.dropped} event(s) at {error.limit}; first: {event.type}"
+    )
 ```
 
 #### `on_event_dropped(interpreter, event, reason)`
@@ -540,28 +610,41 @@ interp.start()
 
 ```python
 from xstate_statemachine import (
-    SyncInterpreter, create_machine, PluginBase,
-    register_global, unregister_global, global_plugins,
+    SyncInterpreter,
+    create_machine,
+    PluginBase,
+    register_global,
+    unregister_global,
+    global_plugins,
 )
+
 
 class CountStarts(PluginBase):
     def __init__(self):
         self.count = 0
+
     def on_interpreter_start(self, interpreter):
         self.count += 1
 
-counter = CountStarts()
-register_global(counter)                 # from now on...
 
-cfg = {"id": "m", "initial": "a", "states": {"a": {}}}
+counter = CountStarts()
+register_global(counter)  # from now on...
+
+cfg = {
+    "id": "m",
+    "initial": "a",
+    "states": {
+        "a": {},
+    },
+}
 SyncInterpreter(create_machine(cfg)).start().stop()
 SyncInterpreter(create_machine(cfg)).start().stop()
 assert counter.count == 2
 assert global_plugins() == [counter]
 
-unregister_global(counter)               # ...until here
+unregister_global(counter)  # ...until here
 SyncInterpreter(create_machine(cfg)).start().stop()
-assert counter.count == 2                # not attached to the later one
+assert counter.count == 2  # not attached to the later one
 ```
 
 Rules of the registry:
@@ -590,10 +673,18 @@ Other packages can ship plugins, stores and brokers **without a core change** by
 from xstate_statemachine import SyncInterpreter, create_machine
 from xstate_statemachine.plugins import attach_discovered, discover
 
-for p in discover():                      # [] when nothing is installed
+for p in discover():  # [] when nothing is installed
     print(p.name, p.distribution, p.version, p.hooks)
 
-machine = create_machine({"id": "m", "initial": "a", "states": {"a": {}}})
+machine = create_machine(
+    {
+        "id": "m",
+        "initial": "a",
+        "states": {
+            "a": {},
+        },
+    }
+)
 interp = SyncInterpreter(machine)
 attached = attach_discovered(interp, allow=["acme-audit"])  # opt in by name
 interp.start().stop()
@@ -611,7 +702,15 @@ interp.start().stop()
 from xstate_statemachine import SyncInterpreter, create_machine
 from xstate_statemachine.contrib.observability import instrument_all
 
-machine = create_machine({"id": "m", "initial": "a", "states": {"a": {}}})
+machine = create_machine(
+    {
+        "id": "m",
+        "initial": "a",
+        "states": {
+            "a": {},
+        },
+    }
+)
 interp = SyncInterpreter(machine)
 attached = instrument_all(interp, discovered=True, allow=["acme-audit"])
 interp.start().stop()
@@ -642,14 +741,22 @@ A loaded entry point is `name  distribution version  [group]`, followed by its h
 {
   "disabled": false,
   "plugins": [
-    {"name": "thirdparty_audit", "distribution": "xsm-thirdparty-plugin",
-     "version": "1.2.3", "group": "xstate_statemachine.plugins",
-     "hooks": ["on_interpreter_start", "on_transition"]}
+    {
+      "name": "thirdparty_audit",
+      "distribution": "xsm-thirdparty-plugin",
+      "version": "1.2.3",
+      "group": "xstate_statemachine.plugins",
+      "hooks": ["on_interpreter_start", "on_transition"]
+    }
   ],
   "skipped": [
-    {"name": "thirdparty_broken", "distribution": "xsm-thirdparty-plugin",
-     "version": "1.2.3", "group": "xstate_statemachine.plugins",
-     "error": "RuntimeError: xsm_thirdparty_plugin.broken: import-time failure"}
+    {
+      "name": "thirdparty_broken",
+      "distribution": "xsm-thirdparty-plugin",
+      "version": "1.2.3",
+      "group": "xstate_statemachine.plugins",
+      "error": "RuntimeError: xsm_thirdparty_plugin.broken: import-time failure"
+    }
   ]
 }
 ```
@@ -740,8 +847,12 @@ acme_broker = "acme_audit:Broker"
 import json
 from datetime import datetime
 from xstate_statemachine import (
-    create_machine, SyncInterpreter, MachineLogic, PluginBase
+    create_machine,
+    SyncInterpreter,
+    MachineLogic,
+    PluginBase,
 )
+
 
 class AuditLogPlugin(PluginBase):
     """Records a detailed audit trail of all machine activity."""
@@ -753,52 +864,87 @@ class AuditLogPlugin(PluginBase):
         entry = {
             "timestamp": datetime.now().isoformat(),
             "event_type": event_type,
-            **details
+            **details,
         }
         self.log.append(entry)
 
     def on_interpreter_start(self, interpreter):
-        self._record("MACHINE_START", {"machine_id": interpreter.id})
+        self._record(
+            "MACHINE_START",
+            {
+                "machine_id": interpreter.id,
+            },
+        )
 
     def on_interpreter_stop(self, interpreter):
-        self._record("MACHINE_STOP", {
-            "machine_id": interpreter.id,
-            "final_context": dict(interpreter.context)
-        })
+        self._record(
+            "MACHINE_STOP",
+            {
+                "machine_id": interpreter.id,
+                "final_context": dict(interpreter.context),
+            },
+        )
 
     def on_event_received(self, interpreter, event):
-        self._record("EVENT_RECEIVED", {"event": event.type})
+        self._record(
+            "EVENT_RECEIVED",
+            {
+                "event": event.type,
+            },
+        )
 
     def on_transition(self, interpreter, from_states, to_states, transition):
-        from_ids = sorted(s.id for s in from_states if s.is_atomic or s.is_final)
+        from_ids = sorted(
+            s.id for s in from_states if s.is_atomic or s.is_final
+        )
         to_ids = sorted(s.id for s in to_states if s.is_atomic or s.is_final)
         if from_ids != to_ids:
-            self._record("TRANSITION", {
-                "from": from_ids,
-                "to": to_ids,
-                "event": transition.event
-            })
+            self._record(
+                "TRANSITION",
+                {
+                    "from": from_ids,
+                    "to": to_ids,
+                    "event": transition.event,
+                },
+            )
 
     def on_guard_evaluated(self, interpreter, guard_name, event, result):
-        self._record("GUARD_EVALUATED", {
-            "guard": guard_name,
-            "event": event.type,
-            "result": result
-        })
+        self._record(
+            "GUARD_EVALUATED",
+            {
+                "guard": guard_name,
+                "event": event.type,
+                "result": result,
+            },
+        )
 
     def export_json(self):
         return json.dumps(self.log, indent=2)
+
 
 # Usage
 config = {
     "id": "auditDemo",
     "initial": "draft",
-    "context": {"author": "alice"},
+    "context": {
+        "author": "alice",
+    },
     "states": {
-        "draft": {"on": {"SUBMIT": "review"}},
-        "review": {"on": {"APPROVE": "published", "REJECT": "draft"}},
-        "published": {"type": "final"}
-    }
+        "draft": {
+            "on": {
+                "SUBMIT": "review",
+            },
+        },
+        "review": {
+            "on": {
+                "APPROVE": "published",
+                "REJECT": "draft",
+            },
+        },
+        "published": {
+            "type": "final",
+        },
+    },
 }
 
 machine = create_machine(config)
@@ -904,6 +1050,7 @@ interp.stop()
 ```python
 from xstate_statemachine import PluginBase
 
+
 class StateHistoryPlugin(PluginBase):
     """Maintains a complete history of state transitions."""
 
@@ -912,19 +1059,21 @@ class StateHistoryPlugin(PluginBase):
         self.max_history = max_history
 
     def on_transition(self, interpreter, from_states, to_states, transition):
-        from_ids = sorted(s.id for s in from_states if s.is_atomic or s.is_final)
+        from_ids = sorted(
+            s.id for s in from_states if s.is_atomic or s.is_final
+        )
         to_ids = sorted(s.id for s in to_states if s.is_atomic or s.is_final)
         if from_ids != to_ids:
             entry = {
                 "from": from_ids,
                 "to": to_ids,
                 "event": transition.event,
-                "context_snapshot": dict(interpreter.context)
+                "context_snapshot": dict(interpreter.context),
             }
             self.history.append(entry)
             # Prevent unbounded memory growth
             if len(self.history) > self.max_history:
-                self.history = self.history[-self.max_history:]
+                self.history = self.history[-self.max_history :]
 
     @property
     def current_state(self):
@@ -964,10 +1113,25 @@ config = {
     "id": "nav",
     "initial": "home",
     "states": {
-        "home": {"on": {"GO_ABOUT": "about", "GO_CONTACT": "contact"}},
-        "about": {"on": {"GO_HOME": "home", "GO_CONTACT": "contact"}},
-        "contact": {"on": {"GO_HOME": "home", "GO_ABOUT": "about"}}
-    }
+        "home": {
+            "on": {
+                "GO_ABOUT": "about",
+                "GO_CONTACT": "contact",
+            },
+        },
+        "about": {
+            "on": {
+                "GO_HOME": "home",
+                "GO_CONTACT": "contact",
+            },
+        },
+        "contact": {
+            "on": {
+                "GO_HOME": "home",
+                "GO_ABOUT": "about",
+            },
+        },
+    },
 }
 
 machine = create_machine(config)
@@ -1000,14 +1164,21 @@ Plugins work identically with both `SyncInterpreter` and `Interpreter`. The hook
 import asyncio
 from xstate_statemachine import create_machine, Interpreter, LoggingInspector
 
+
 async def main():
     config = {
         "id": "asyncDemo",
         "initial": "idle",
         "states": {
-            "idle": {"on": {"GO": "active"}},
-            "active": {"type": "final"}
-        }
+            "idle": {
+                "on": {
+                    "GO": "active",
+                },
+            },
+            "active": {
+                "type": "final",
+            },
+        },
     }
 
     machine = create_machine(config)
@@ -1018,6 +1189,7 @@ async def main():
     await interp.send("GO")
     await asyncio.sleep(0.1)
     await interp.stop()
+
 
 asyncio.run(main())
 ```

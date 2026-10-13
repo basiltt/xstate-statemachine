@@ -172,10 +172,12 @@ config = {
     "initial": "idle",
     "states": {
         "idle": {
-            "on": { "START": "running" }
+            "on": {
+                "START": "running",
+            },
         },
-        "running": {}
-    }
+        "running": {},
+    },
 }
 machine = create_machine(config)
 ```
@@ -209,7 +211,10 @@ For JSON configs, ensure the root-level `"initial"` key is present:
 {
   "id": "myMachine",
   "initial": "idle",
-  "states": { "idle": {}, "running": {} }
+  "states": {
+    "idle": {},
+    "running": {}
+  }
 }
 ```
 
@@ -238,20 +243,30 @@ xstate_statemachine.exceptions.StateNotFoundError: Could not resolve target stat
 ```python
 # Wrong - typo in target
 config = {
-    "id": "test", "initial": "idle",
+    "id": "test",
+    "initial": "idle",
     "states": {
-        "idle": { "on": { "GO": "runing" } },  # Typo!
-        "running": {}
-    }
+        "idle": {
+            "on": {
+                "GO": "runing",
+            },
+        },  # Typo!
+        "running": {},
+    },
 }
 
 # Correct
 config = {
-    "id": "test", "initial": "idle",
+    "id": "test",
+    "initial": "idle",
     "states": {
-        "idle": { "on": { "GO": "running" } },  # Fixed
-        "running": {}
-    }
+        "idle": {
+            "on": {
+                "GO": "running",
+            },
+        },  # Fixed
+        "running": {},
+    },
 }
 ```
 
@@ -306,13 +321,27 @@ xstate_statemachine.exceptions.InvalidConfigError: Built-in action 'sendTo' is m
 **How to fix it:**
 
 ```json
-{ "type": "sendTo", "params": { "to": "someActor", "event": {"type": "PING"} } }
+{
+  "type": "sendTo",
+  "params": {
+    "to": "someActor",
+    "event": {
+      "type": "PING"
+    }
+  }
+}
 ```
 
 not
 
 ```json
-{ "type": "sendTo", "to": "someActor", "event": {"type": "PING"} }
+{
+  "type": "sendTo",
+  "to": "someActor",
+  "event": {
+    "type": "PING"
+  }
+}
 ```
 
 ---
@@ -330,8 +359,20 @@ xstate_statemachine.exceptions.InvalidConfigError: State 'm.a' invoke 'kid': 'sr
 **How to fix it:**
 
 ```python
-child = create_machine({"id": "kid", "initial": "k", "states": {"k": {}}})
-logic = MachineLogic(services={"kid": child})
+child = create_machine(
+    {
+        "id": "kid",
+        "initial": "k",
+        "states": {
+            "k": {},
+        },
+    }
+)
+logic = MachineLogic(
+    services={
+        "kid": child,
+    }
+)
 # and in the config: "invoke": {"id": "kid", "src": "kid"}
 ```
 
@@ -413,12 +454,30 @@ xstate_statemachine.exceptions.QueueOverflowError: Interpreter 'm' inbox is full
 
 ```python
 import asyncio
-from xstate_statemachine import create_machine, Interpreter, QueueOverflowError, OverflowPolicy
+from xstate_statemachine import (
+    create_machine,
+    Interpreter,
+    QueueOverflowError,
+    OverflowPolicy,
+)
+
 
 async def main():
-    config = {"id": "m", "initial": "a", "states": {"a": {"on": {"GO": "a"}}}}
+    config = {
+        "id": "m",
+        "initial": "a",
+        "states": {
+            "a": {
+                "on": {
+                    "GO": "a",
+                },
+            },
+        },
+    }
     machine = create_machine(config)
-    interp = Interpreter(machine, max_queue_size=1, overflow_policy=OverflowPolicy.RAISE)
+    interp = Interpreter(
+        machine, max_queue_size=1, overflow_policy=OverflowPolicy.RAISE
+    )
     await interp.start()
     try:
         for _ in range(5):
@@ -426,6 +485,7 @@ async def main():
     except QueueOverflowError as e:
         print(f"Dropped event: {e}")  # e.interpreter_id, e.depth, e.maxsize
     await interp.stop()
+
 
 asyncio.run(main())
 ```
@@ -444,10 +504,26 @@ An exception on the `Future`/awaitable returned by `send(..., wait=True)`, raise
 
 ```python
 import asyncio
-from xstate_statemachine import create_machine, Interpreter, InterpreterStoppedError
+from xstate_statemachine import (
+    create_machine,
+    Interpreter,
+    InterpreterStoppedError,
+)
+
 
 async def main():
-    config = {"id": "m", "initial": "a", "states": {"a": {"on": {"GO": "b"}}, "b": {}}}
+    config = {
+        "id": "m",
+        "initial": "a",
+        "states": {
+            "a": {
+                "on": {
+                    "GO": "b",
+                },
+            },
+            "b": {},
+        },
+    }
     machine = create_machine(config)
     interp = Interpreter(machine)
     await interp.start()
@@ -457,6 +533,7 @@ async def main():
         await receipt
     except InterpreterStoppedError as e:
         print(f"Send never completed: {e}")
+
 
 asyncio.run(main())
 ```
@@ -478,9 +555,23 @@ xstate_statemachine.exceptions.UnknownEventError: Event 'GOO' is not declared by
 **How to fix it:** Fix the typo, or add the event to the machine's `on` handlers if it's genuinely new:
 
 ```python
-from xstate_statemachine import create_machine, SyncInterpreter, UnknownEventError
+from xstate_statemachine import (
+    create_machine,
+    SyncInterpreter,
+    UnknownEventError,
+)
 
-config = {"id": "m", "initial": "a", "states": {"a": {"on": {"GO": "a"}}}}
+config = {
+    "id": "m",
+    "initial": "a",
+    "states": {
+        "a": {
+            "on": {
+                "GO": "a",
+            },
+        },
+    },
+}
 machine = create_machine(config)
 interp = SyncInterpreter(machine, strict=True).start()
 
@@ -505,21 +596,47 @@ xstate_statemachine.exceptions.InvalidEventPayloadError: payload for 'GO' failed
 **How to fix it:** Fix the payload at the call site, or relax/correct the validator:
 
 ```python
-from xstate_statemachine import create_machine, SyncInterpreter, InvalidEventPayloadError
+from xstate_statemachine import (
+    create_machine,
+    SyncInterpreter,
+    InvalidEventPayloadError,
+)
+
 
 def validate_go(payload):
     if not isinstance(payload.get("amount"), int):
         raise ValueError("amount must be int")
 
-config = {"id": "m", "initial": "a", "states": {"a": {"on": {"GO": "a"}}}}
-machine = create_machine(config, event_schemas={"GO": validate_go})
+
+config = {
+    "id": "m",
+    "initial": "a",
+    "states": {
+        "a": {
+            "on": {
+                "GO": "a",
+            },
+        },
+    },
+}
+machine = create_machine(
+    config,
+    event_schemas={
+        "GO": validate_go,
+    },
+)
 interp = SyncInterpreter(machine).start()
 
 try:
-    interp.send({"type": "GO", "amount": "oops"})
+    interp.send(
+        {
+            "type": "GO",
+            "amount": "oops",
+        }
+    )
 except InvalidEventPayloadError as e:
-    print(e)          # payload for 'GO' failed validation: amount must be int
-    print(e.cause)     # the original ValueError
+    print(e)  # payload for 'GO' failed validation: amount must be int
+    print(e.cause)  # the original ValueError
 ```
 
 ---
@@ -707,18 +824,32 @@ xstate_statemachine.exceptions.ImplementationMissingError: Guard 'userIsAdmin' n
 from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 
 config = {
-    "id": "test", "initial": "s1",
+    "id": "test",
+    "initial": "s1",
     "states": {
-        "s1": { "on": { "EVENT": { "target": "s2", "guard": "userIsAdmin" } } },
-        "s2": {}
-    }
+        "s1": {
+            "on": {
+                "EVENT": {
+                    "target": "s2",
+                    "guard": "userIsAdmin",
+                },
+            },
+        },
+        "s2": {},
+    },
 }
+
 
 # Provide the missing guard implementation
 def user_is_admin(context, event):
     return context.get("role") == "admin"
 
-logic = MachineLogic(guards={"user_is_admin": user_is_admin})
+
+logic = MachineLogic(
+    guards={
+        "user_is_admin": user_is_admin,
+    }
+)
 machine = create_machine(config, logic=logic)
 ```
 
@@ -768,16 +899,34 @@ xstate_statemachine.exceptions.NotSupportedError: Async action 'async_action' no
 **How to fix it:** Use a synchronous function for actions run under `SyncInterpreter`, or switch to the async `Interpreter` if you need async actions/services:
 
 ```python
-from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic, NotSupportedError
+from xstate_statemachine import (
+    create_machine,
+    SyncInterpreter,
+    MachineLogic,
+    NotSupportedError,
+)
 
-async def async_action(interpreter, context, event, action_def):
-    ...
+
+async def async_action(interpreter, context, event, action_def): ...
+
 
 config = {
-    "id": "m", "initial": "a",
-    "states": {"a": {"entry": "async_action"}}
+    "id": "m",
+    "initial": "a",
+    "states": {
+        "a": {
+            "entry": "async_action",
+        },
+    },
 }
-machine = create_machine(config, logic=MachineLogic(actions={"async_action": async_action}))
+machine = create_machine(
+    config,
+    logic=MachineLogic(
+        actions={
+            "async_action": async_action,
+        }
+    ),
+)
 
 try:
     SyncInterpreter(machine).start()  # Raises NotSupportedError
@@ -798,18 +947,23 @@ import time
 from xstate_statemachine import create_machine, SyncInterpreter
 
 config = {
-    "id": "timer", "initial": "idle",
+    "id": "timer",
+    "initial": "idle",
     "states": {
-        "idle": {"after": {"200": "timeout"}},
-        "timeout": {}
-    }
+        "idle": {
+            "after": {
+                "200": "timeout",
+            },
+        },
+        "timeout": {},
+    },
 }
 machine = create_machine(config)
 interp = SyncInterpreter(machine).start()
 print(interp.current_state_ids)  # {'timer.idle'}
 
 time.sleep(0.3)
-interp.tick()                    # Pumps the clock and fires due timers
+interp.tick()  # Pumps the clock and fires due timers
 print(interp.current_state_ids)  # {'timer.timeout'}
 ```
 
@@ -848,10 +1002,14 @@ xstate_statemachine.exceptions.ActorSpawningError: Failed to spawn actor: ...
 ```python
 from xstate_statemachine import create_machine
 
+
 def my_actor_service(interpreter, context, event):
     child_config = {
-        "id": "child", "initial": "active",
-        "states": { "active": {} }
+        "id": "child",
+        "initial": "active",
+        "states": {
+            "active": {},
+        },
     }
     return create_machine(child_config)  # Must return a MachineNode
 ```
@@ -991,13 +1149,17 @@ Action functions receive `(interpreter, context, event, action_def)` — four pa
 def my_action(interpreter, context, event, action_def):
     context["count"] += 1
 
+
 # Guard: 2 params (3 with self in a class)
 def my_guard(context, event):
     return context["count"] > 0
 
+
 # Service: 3 params (4 with self in a class)
 def my_service(interpreter, context, event):
-    return {"result": "done"}
+    return {
+        "result": "done",
+    }
 ```
 
 ### Context Is Shared (Not Per-State)
@@ -1006,16 +1168,19 @@ The context dict is a single object shared across all states. Any action in any 
 
 ```python
 config = {
-    "id": "test", "initial": "a",
+    "id": "test",
+    "initial": "a",
     "states": {
         "a": {
             "entry": "setFlagA",
-            "on": { "GO": "b" }
+            "on": {
+                "GO": "b",
+            },
         },
         "b": {
-            "entry": "readFlagA"  # Can access context["flagA"] set by state "a"
-        }
-    }
+            "entry": "readFlagA",  # Can access context["flagA"] set by state "a"
+        },
+    },
 }
 ```
 
@@ -1061,7 +1226,11 @@ print(f"After event: {interp.current_state_ids}")
 
 ```python
 # Verify your action is discoverable
-logic = MachineLogic(actions={"calculateTotal": my_action_fn})
+logic = MachineLogic(
+    actions={
+        "calculateTotal": my_action_fn,
+    }
+)
 machine = create_machine(config, logic=logic)
 ```
 

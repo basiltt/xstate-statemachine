@@ -29,7 +29,9 @@ import pytest
 CHECKOUT = {
     "id": "checkout",
     "initial": "cart",
-    "context": {"items": 0},
+    "context": {
+        "items": 0,
+    },
     "states": {
         "cart": {
             "on": {
@@ -40,29 +42,42 @@ CHECKOUT = {
                 },
             },
         },
-        "paying":    {"after": {"3000": "confirmed"}},
-        "confirmed": {"type": "final"},
+        "paying": {
+            "after": {
+                "3000": "confirmed",
+            },
+        },
+        "confirmed": {
+            "type": "final",
+        },
     },
 }
 
-@pytest.mark.xstate_machine(CHECKOUT)                    # a dict, a JSON path, or a MachineNode
+
+@pytest.mark.xstate_machine(CHECKOUT)  # a dict, a JSON path, or a MachineNode
 def test_pay_then_confirm(xsm_interp, xsm_clock, xsm_ran, xsm_send_all):
-    xsm_send_all(xsm_interp, "PAY", "+3000")             # the `xsm simulate --events` grammar
+    xsm_send_all(
+        xsm_interp, "PAY", "+3000"
+    )  # the `xsm simulate --events` grammar
     assert xsm_interp.matches("checkout.confirmed")
-    assert xsm_ran == ["charge"]                         # stub actions record their names
+    assert xsm_ran == ["charge"]  # stub actions record their names
+
 
 @pytest.mark.xstate_machine(CHECKOUT)
-@pytest.mark.xstate_guards_false("hasItems")             # stub guard forced False...
+@pytest.mark.xstate_guards_false("hasItems")  # stub guard forced False...
 def test_guard_blocks_payment(xsm_interp, xsm_guards):
     assert xsm_interp.send("PAY", wait=True).denied
-    xsm_guards["hasItems"] = True                        # ...and flipped live
+    xsm_guards["hasItems"] = True  # ...and flipped live
     xsm_interp.send("PAY")
     assert xsm_interp.matches("checkout.paying")
+
 
 @pytest.mark.xstate_machine(CHECKOUT)
 def test_snapshot(xsm_interp, xsm_snapshot):
     xsm_interp.send("PAY")
-    xsm_snapshot(xsm_interp, "snapshots/paying.json")    # --xsm-update-snapshots records it
+    xsm_snapshot(
+        xsm_interp, "snapshots/paying.json"
+    )  # --xsm-update-snapshots records it
 '''
 
 with tempfile.TemporaryDirectory() as tmp:
@@ -82,9 +97,7 @@ The recorded snapshot holds only what describes behaviour — `state_ids`, `valu
   "context": {
     "items": 0
   },
-  "state_ids": [
-    "checkout.paying"
-  ],
+  "state_ids": ["checkout.paying"],
   "status": "running",
   "value": "paying"
 }
@@ -212,13 +225,29 @@ The same collector works outside pytest:
 from xstate_statemachine import SyncInterpreter, create_machine
 from xstate_statemachine.coverage import CoverageCollector
 
-m = create_machine({"id": "t", "initial": "a", "states": {
-    "a": {"on": {"GO": "b"}}, "b": {"on": {"BACK": "a"}}}})
+m = create_machine(
+    {
+        "id": "t",
+        "initial": "a",
+        "states": {
+            "a": {
+                "on": {
+                    "GO": "b",
+                },
+            },
+            "b": {
+                "on": {
+                    "BACK": "a",
+                },
+            },
+        },
+    }
+)
 cov = CoverageCollector()
 SyncInterpreter(m).use(cov).start().send("GO")
 report = cov.report(m)
 assert (report.states_visited, report.transitions_hit) == (2, 1)
-print(report.to_text())      # also .to_json(), .to_html()
+print(report.to_text())  # also .to_json(), .to_html()
 ```
 
 <div class="stately" data-machine="c6c85df5ca" data-height="320" data-title="t"></div>
@@ -226,14 +255,34 @@ print(report.to_text())      # also .to_json(), .to_html()
 **JSON schema (`version: 1`, stable).** A reader must reject any other `version`.
 
 ```text
-{"version": 1,
- "machines": [{"machine": "checkout", "key": "checkout@<structure_hash>",
-               "states":      {"visited": 12, "total": 15, "percent": 80.0,
-                               "unvisited": ["checkout.timeout", ...]},
-               "transitions": {"hit": 18, "total": 22, "percent": 81.82,
-                               "unhit": [{"from": "checkout.paying",
-                                          "label": "on 'PAY_FAILED'",
-                                          "to": "checkout.failed"}, ...]}}]}
+{
+  "version": 1,
+  "machines": [
+    {
+      "machine": "checkout",
+      "key": "checkout@<structure_hash>",
+      "states": {
+        "visited": 12,
+        "total": 15,
+        "percent": 80.0,
+        "unvisited": ["checkout.timeout", ...]
+      },
+      "transitions": {
+        "hit": 18,
+        "total": 22,
+        "percent": 81.82,
+        "unhit": [
+          {
+            "from": "checkout.paying",
+            "label": "on 'PAY_FAILED'",
+            "to": "checkout.failed"
+          },
+          ...
+        ]
+      }
+    }
+  ]
+}
 ```
 
 `xsm coverage xsm-coverage.json [--fail-under N] [--plain] [--json]` renders it in CI logs and exits 1 when any machine is under `N` % (state or transition). A CI job:
@@ -256,30 +305,86 @@ from hypothesis import settings
 from hypothesis.stateful import run_state_machine_as_test
 from xstate_statemachine.contrib.testing import model_test
 
-chart = {"id": "refund", "initial": "empty", "context": {"total": 0},
-         "states": {
-    "empty": {"on": {"ADD": {"target": "cart", "actions": {
-        "type": "xstate.assign", "params": {"assignment": {"total": 10}}}}}},
-    "cart": {"on": {"PAY": "paid"}},
-    "paid": {"on": {"REFUND": {"target": "refunded", "actions": {
-        "type": "xstate.assign", "params": {"assignment": {"total": 0}}}}}},
-    # 🐛 the seeded bug: a second REFUND drives the total negative
-    "refunded": {"on": {"REFUND": {"actions": {
-        "type": "xstate.assign", "params": {"assignment": {"total": -10}}}}}},
-}}
+chart = {
+    "id": "refund",
+    "initial": "empty",
+    "context": {
+        "total": 0,
+    },
+    "states": {
+        "empty": {
+            "on": {
+                "ADD": {
+                    "target": "cart",
+                    "actions": {
+                        "type": "xstate.assign",
+                        "params": {
+                            "assignment": {
+                                "total": 10,
+                            },
+                        },
+                    },
+                },
+            },
+        },
+        "cart": {
+            "on": {
+                "PAY": "paid",
+            },
+        },
+        "paid": {
+            "on": {
+                "REFUND": {
+                    "target": "refunded",
+                    "actions": {
+                        "type": "xstate.assign",
+                        "params": {
+                            "assignment": {
+                                "total": 0,
+                            },
+                        },
+                    },
+                },
+            },
+        },
+        # 🐛 the seeded bug: a second REFUND drives the total negative
+        "refunded": {
+            "on": {
+                "REFUND": {
+                    "actions": {
+                        "type": "xstate.assign",
+                        "params": {
+                            "assignment": {
+                                "total": -10,
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    },
+}
 out = pathlib.Path(tempfile.mkdtemp()) / "failing.json"
-TestRefund = model_test(                       # in a test module, pytest collects this
+TestRefund = model_test(  # in a test module, pytest collects this
     chart,
-    invariants={"total never negative": lambda i: i.context["total"] >= 0},
+    invariants={
+        "total never negative": lambda i: i.context["total"] >= 0,
+    },
     settings=settings(max_examples=200, database=None, derandomize=True),
     failing_path=out,
 )
 try:
-    run_state_machine_as_test(TestRefund, settings=TestRefund.TestCase.settings)
+    run_state_machine_as_test(
+        TestRefund, settings=TestRefund.TestCase.settings
+    )
 except AssertionError as exc:
     assert "invariant 'total never negative' violated" in str(exc)
 assert [c["send"] for c in json.loads(out.read_text())] == [
-    "ADD", "PAY", "REFUND", "REFUND"]           # shrunk to the minimal 4 events
+    "ADD",
+    "PAY",
+    "REFUND",
+    "REFUND",
+]  # shrunk to the minimal 4 events
 ```
 
 <div class="stately" data-machine="7806ba49ee" data-height="420" data-title="refund"></div>
@@ -364,12 +469,27 @@ Both fakes are thread-safe (one lock around the queues); `drain()` runs handlers
 from xstate_statemachine import create_machine
 from xstate_statemachine.contrib.testing import given
 
-machine = create_machine({
-    "id": "order", "initial": "pending",
-    "states": {"pending": {"on": {"PAY": "paid"}},
-               "paid": {"after": {"1000": "expired"}},
-               "expired": {"type": "final"}},
-})
+machine = create_machine(
+    {
+        "id": "order",
+        "initial": "pending",
+        "states": {
+            "pending": {
+                "on": {
+                    "PAY": "paid",
+                },
+            },
+            "paid": {
+                "after": {
+                    "1000": "expired",
+                },
+            },
+            "expired": {
+                "type": "final",
+            },
+        },
+    }
+)
 given(machine).in_state("pending").when("PAY").then_state("paid")
 given(machine).in_state("paid").after(1000).then_done()
 ```

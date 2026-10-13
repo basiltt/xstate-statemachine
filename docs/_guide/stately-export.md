@@ -19,7 +19,14 @@ The export is plain XState JSON: `id`, `initial`, `context`, `states`, `on`, `af
 Add a root `"version"` whenever the chart changes shape:
 
 ```json
-{ "id": "order", "version": "3", "initial": "cart", "states": { "cart": {} } }
+{
+  "id": "order",
+  "version": "3",
+  "initial": "cart",
+  "states": {
+    "cart": {}
+  }
+}
 ```
 
 The engine never interprets it, but it travels with every snapshot as `machine_version`, and loading a snapshot written by a different `version` is detected so an in-flight instance can be migrated instead of resumed against the wrong chart (see [Versioning in-flight instances](../persistence/#versioning-in-flight-instances)). The HTTP integrations also return it in every response body.
@@ -27,9 +34,17 @@ The engine never interprets it, but it travels with every snapshot as `machine_v
 ```python
 from xstate_statemachine import create_machine
 
-machine = create_machine({"id": "order", "version": 3, "initial": "cart",
-                          "states": {"cart": {}}})
-assert machine.version == "3"          # coerced to str; None when absent
+machine = create_machine(
+    {
+        "id": "order",
+        "version": 3,
+        "initial": "cart",
+        "states": {
+            "cart": {},
+        },
+    }
+)
+assert machine.version == "3"  # coerced to str; None when absent
 ```
 
 ## `meta`, `description` and `x-` keys

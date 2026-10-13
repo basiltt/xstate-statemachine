@@ -50,9 +50,19 @@ A simple checkout that progresses through three stages:
   "id": "checkout",
   "initial": "cart",
   "states": {
-    "cart":         {"on": {"CHECKOUT": "payment"}},
-    "payment":      {"on": {"PAY": "confirmation"}},
-    "confirmation": {"type": "final"}
+    "cart": {
+      "on": {
+        "CHECKOUT": "payment"
+      }
+    },
+    "payment": {
+      "on": {
+        "PAY": "confirmation"
+      }
+    },
+    "confirmation": {
+      "type": "final"
+    }
   }
 }
 ```
@@ -66,10 +76,20 @@ config = {
     "id": "checkout",
     "initial": "cart",
     "states": {
-        "cart":         {"on": {"CHECKOUT": "payment"}},
-        "payment":      {"on": {"PAY": "confirmation"}},
-        "confirmation": {"type": "final"}
-    }
+        "cart": {
+            "on": {
+                "CHECKOUT": "payment",
+            },
+        },
+        "payment": {
+            "on": {
+                "PAY": "confirmation",
+            },
+        },
+        "confirmation": {
+            "type": "final",
+        },
+    },
 }
 
 machine = create_machine(config)
@@ -138,13 +158,19 @@ The most powerful use of final states is inside **compound (hierarchical) states
       "initial": "step1",
       "states": {
         "step1": {
-          "on": {"NEXT": "step2"}
+          "on": {
+            "NEXT": "step2"
+          }
         },
         "step2": {
-          "on": {"NEXT": "step3"}
+          "on": {
+            "NEXT": "step3"
+          }
         },
         "step3": {
-          "on": {"FINISH": "complete"}
+          "on": {
+            "FINISH": "complete"
+          }
         },
         "complete": {
           "type": "final"
@@ -171,15 +197,31 @@ config = {
         "processing": {
             "initial": "step1",
             "states": {
-                "step1": {"on": {"NEXT": "step2"}},
-                "step2": {"on": {"NEXT": "step3"}},
-                "step3": {"on": {"FINISH": "complete"}},
-                "complete": {"type": "final"}
+                "step1": {
+                    "on": {
+                        "NEXT": "step2",
+                    },
+                },
+                "step2": {
+                    "on": {
+                        "NEXT": "step3",
+                    },
+                },
+                "step3": {
+                    "on": {
+                        "FINISH": "complete",
+                    },
+                },
+                "complete": {
+                    "type": "final",
+                },
             },
-            "onDone": "finished"
+            "onDone": "finished",
         },
-        "finished": {"type": "final"}
-    }
+        "finished": {
+            "type": "final",
+        },
+    },
 }
 
 machine = create_machine(config)
@@ -188,10 +230,10 @@ interp = SyncInterpreter(machine).start()
 print(interp.active_state_ids)
 # {'workflow.processing.step1'}
 
-interp.send("NEXT")   # step1 → step2
-interp.send("NEXT")   # step2 → step3
-interp.send("FINISH") # step3 → complete (final)
-                       # → triggers onDone → processing exits → finished
+interp.send("NEXT")  # step1 → step2
+interp.send("NEXT")  # step2 → step3
+interp.send("FINISH")  # step3 → complete (final)
+# → triggers onDone → processing exits → finished
 
 print(interp.active_state_ids)
 # {'workflow.finished'}
@@ -220,9 +262,13 @@ The `onDone` transition can include actions, just like any other transition:
     "initial": "validating",
     "states": {
       "validating": {
-        "on": {"VALID": "complete"}
+        "on": {
+          "VALID": "complete"
+        }
       },
-      "complete": {"type": "final"}
+      "complete": {
+        "type": "final"
+      }
     },
     "onDone": {
       "target": "finished",
@@ -242,21 +288,31 @@ config = {
         "processing": {
             "initial": "validating",
             "states": {
-                "validating": {"on": {"VALID": "complete"}},
-                "complete": {"type": "final"}
+                "validating": {
+                    "on": {
+                        "VALID": "complete",
+                    },
+                },
+                "complete": {
+                    "type": "final",
+                },
             },
             "onDone": {
                 "target": "finished",
-                "actions": "logCompletion"
-            }
+                "actions": "logCompletion",
+            },
         },
-        "finished": {"type": "final"}
-    }
+        "finished": {
+            "type": "final",
+        },
+    },
 }
+
 
 class CompletionLogic(MachineLogic):
     def log_completion(self, interpreter, context, event, action_def):
         print("Processing complete! Moving to finished state.")
+
 
 machine = create_machine(config, logic=CompletionLogic())
 interp = SyncInterpreter(machine).start()
@@ -290,15 +346,27 @@ In a parallel state, each region can have its own final state. Important rules:
         "upload": {
           "initial": "uploading",
           "states": {
-            "uploading": {"on": {"UPLOAD_DONE": "complete"}},
-            "complete": {"type": "final"}
+            "uploading": {
+              "on": {
+                "UPLOAD_DONE": "complete"
+              }
+            },
+            "complete": {
+              "type": "final"
+            }
           }
         },
         "validate": {
           "initial": "checking",
           "states": {
-            "checking": {"on": {"VALID": "complete"}},
-            "complete": {"type": "final"}
+            "checking": {
+              "on": {
+                "VALID": "complete"
+              }
+            },
+            "complete": {
+              "type": "final"
+            }
           }
         }
       },
@@ -326,22 +394,36 @@ config = {
                 "upload": {
                     "initial": "uploading",
                     "states": {
-                        "uploading": {"on": {"UPLOAD_DONE": "complete"}},
-                        "complete": {"type": "final"}
-                    }
+                        "uploading": {
+                            "on": {
+                                "UPLOAD_DONE": "complete",
+                            },
+                        },
+                        "complete": {
+                            "type": "final",
+                        },
+                    },
                 },
                 "validate": {
                     "initial": "checking",
                     "states": {
-                        "checking": {"on": {"VALID": "complete"}},
-                        "complete": {"type": "final"}
-                    }
-                }
+                        "checking": {
+                            "on": {
+                                "VALID": "complete",
+                            },
+                        },
+                        "complete": {
+                            "type": "final",
+                        },
+                    },
+                },
             },
-            "onDone": "finished"
+            "onDone": "finished",
         },
-        "finished": {"type": "final"}
-    }
+        "finished": {
+            "type": "final",
+        },
+    },
 }
 
 machine = create_machine(config)
@@ -385,8 +467,12 @@ A machine can have **multiple** final states to represent different outcomes:
         "onError": "failed"
       }
     },
-    "success": {"type": "final"},
-    "failed":  {"type": "final"}
+    "success": {
+      "type": "final"
+    },
+    "failed": {
+      "type": "final"
+    }
   }
 }
 ```
@@ -404,18 +490,26 @@ config = {
             "invoke": {
                 "src": "chargeCard",
                 "onDone": "success",
-                "onError": "failed"
-            }
+                "onError": "failed",
+            },
         },
-        "success": {"type": "final"},
-        "failed":  {"type": "final"}
-    }
+        "success": {
+            "type": "final",
+        },
+        "failed": {
+            "type": "final",
+        },
+    },
 }
+
 
 class PaymentLogic(MachineLogic):
     def charge_card(self, interpreter, context, event):
         # Simulate successful payment
-        return {"transactionId": "TXN-9876"}
+        return {
+            "transactionId": "TXN-9876",
+        }
+
 
 machine = create_machine(config, logic=PaymentLogic())
 interp = SyncInterpreter(machine).start()
@@ -451,8 +545,12 @@ This pattern is useful when a parent needs to distinguish between different comp
               "onError": "failed"
             }
           },
-          "success": {"type": "final"},
-          "failed":  {"type": "final"}
+          "success": {
+            "type": "final"
+          },
+          "failed": {
+            "type": "final"
+          }
         },
         "onDone": "confirmation"
       }
@@ -559,7 +657,7 @@ config = {
     "context": {
         "orderId": None,
         "reason": None,
-        "refundAmount": 0
+        "refundAmount": 0,
     },
     "states": {
         "received": {
@@ -568,9 +666,9 @@ config = {
                 "APPROVE": "fulfilling",
                 "REJECT": {
                     "target": "cancelled",
-                    "actions": "setRejectionReason"
-                }
-            }
+                    "actions": "setRejectionReason",
+                },
+            },
         },
         "fulfilling": {
             "initial": "picking",
@@ -580,12 +678,14 @@ config = {
                         "PICKED": "packing",
                         "OUT_OF_STOCK": {
                             "target": "stockFailed",
-                            "actions": "setStockFailure"
-                        }
-                    }
+                            "actions": "setStockFailure",
+                        },
+                    },
                 },
                 "packing": {
-                    "on": {"PACKED": "shipping"}
+                    "on": {
+                        "PACKED": "shipping",
+                    },
                 },
                 "shipping": {
                     "invoke": {
@@ -593,50 +693,56 @@ config = {
                         "onDone": "shipped",
                         "onError": {
                             "target": "shipFailed",
-                            "actions": "setShipFailure"
-                        }
-                    }
+                            "actions": "setShipFailure",
+                        },
+                    },
                 },
                 "shipped": {
-                    "type": "final"
+                    "type": "final",
                 },
                 "stockFailed": {
-                    "type": "final"
+                    "type": "final",
                 },
                 "shipFailed": {
-                    "type": "final"
-                }
+                    "type": "final",
+                },
             },
-            "onDone": "evaluating"
+            "onDone": "evaluating",
         },
         "evaluating": {
             "on": {
                 "": [
-                    {"target": "completed",
-                     "guard": "wasShipped"},
-                    {"target": "refunded",
-                     "actions": "calculateRefund"}
-                ]
-            }
+                    {
+                        "target": "completed",
+                        "guard": "wasShipped",
+                    },
+                    {
+                        "target": "refunded",
+                        "actions": "calculateRefund",
+                    },
+                ],
+            },
         },
         "completed": {
             "type": "final",
-            "entry": "sendConfirmationEmail"
+            "entry": "sendConfirmationEmail",
         },
         "cancelled": {
             "type": "final",
-            "entry": "sendCancellationEmail"
+            "entry": "sendCancellationEmail",
         },
         "refunded": {
             "type": "final",
-            "entry": "processRefund"
-        }
-    }
+            "entry": "processRefund",
+        },
+    },
 }
+
 
 class OrderLogic(MachineLogic):
     def assign_order_id(self, interpreter, context, event, action_def):
         import random
+
         context["orderId"] = f"ORD-{random.randint(10000, 99999)}"
         print(f"Order created: {context['orderId']}")
 
@@ -651,7 +757,9 @@ class OrderLogic(MachineLogic):
 
     def ship_order(self, interpreter, context, event):
         print(f"Shipping order {context['orderId']}...")
-        return {"trackingNumber": "TRACK-12345"}
+        return {
+            "trackingNumber": "TRACK-12345",
+        }
 
     def was_shipped(self, context, event):
         return context.get("reason") is None
@@ -667,7 +775,10 @@ class OrderLogic(MachineLogic):
         print(f"Order {context['orderId']} cancelled: {context['reason']}")
 
     def process_refund(self, interpreter, context, event, action_def):
-        print(f"Refund of ${context['refundAmount']} processed for {context['orderId']}")
+        print(
+            f"Refund of ${context['refundAmount']} processed for {context['orderId']}"
+        )
+
 
 machine = create_machine(config, logic=OrderLogic())
 
@@ -691,7 +802,14 @@ interp.stop()
 A document approval process that requires multiple sign-offs:
 
 ```python
-from xstate_statemachine import State, StateMachine, SyncInterpreter, action, guard
+from xstate_statemachine import (
+    State,
+    StateMachine,
+    SyncInterpreter,
+    action,
+    guard,
+)
+
 
 class ApprovalWorkflow(StateMachine):
     machine_id = "approval"
@@ -701,62 +819,93 @@ class ApprovalWorkflow(StateMachine):
         "document": None,
         "managerApproved": False,
         "directorApproved": False,
-        "rejectedBy": None
+        "rejectedBy": None,
     }
 
     # States
-    draft = State("draft", initial=True, on={
-        "SUBMIT": {"target": "review", "guard": "hasDocument"}
-    })
-
-    review = State("review", states=[
-        State("managerReview", initial=True, on={
-            "MANAGER_APPROVE": {
-                "target": "directorReview",
-                "actions": "recordManagerApproval"
+    draft = State(
+        "draft",
+        initial=True,
+        on={
+            "SUBMIT": {
+                "target": "review",
+                "guard": "hasDocument",
             },
-            "MANAGER_REJECT": {
-                "target": "rejected",
-                "actions": "recordRejection"
-            }
-        }),
-        State("directorReview", on={
-            "DIRECTOR_APPROVE": {
-                "target": "approved",
-                "actions": "recordDirectorApproval"
-            },
-            "DIRECTOR_REJECT": {
-                "target": "rejected",
-                "actions": "recordRejection"
-            }
-        }),
-        State("approved", final=True),
-        State("rejected", final=True),
-    ], on_done="evaluating")
+        },
+    )
 
-    evaluating = State("evaluating", on={
-        "": [
-            {"target": "published", "guard": "wasApproved"},
-            {"target": "returned"}
-        ]
-    })
+    review = State(
+        "review",
+        states=[
+            State(
+                "managerReview",
+                initial=True,
+                on={
+                    "MANAGER_APPROVE": {
+                        "target": "directorReview",
+                        "actions": "recordManagerApproval",
+                    },
+                    "MANAGER_REJECT": {
+                        "target": "rejected",
+                        "actions": "recordRejection",
+                    },
+                },
+            ),
+            State(
+                "directorReview",
+                on={
+                    "DIRECTOR_APPROVE": {
+                        "target": "approved",
+                        "actions": "recordDirectorApproval",
+                    },
+                    "DIRECTOR_REJECT": {
+                        "target": "rejected",
+                        "actions": "recordRejection",
+                    },
+                },
+            ),
+            State("approved", final=True),
+            State("rejected", final=True),
+        ],
+        on_done="evaluating",
+    )
+
+    evaluating = State(
+        "evaluating",
+        on={
+            "": [
+                {
+                    "target": "published",
+                    "guard": "wasApproved",
+                },
+                {
+                    "target": "returned",
+                },
+            ],
+        },
+    )
 
     published = State("published", final=True)
-    returned  = State("returned", on={
-        "REVISE": "draft"
-    })
+    returned = State(
+        "returned",
+        on={
+            "REVISE": "draft",
+        },
+    )
 
     # Guards
     @guard
     def has_document(self, context, event):
-        return context.get("document") is not None or (
-            context.get("input") or {}
-        ).get("document") is not None
+        return (
+            context.get("document") is not None
+            or (context.get("input") or {}).get("document") is not None
+        )
 
     @guard
     def was_approved(self, context, event):
-        return (context.get("managerApproved")
-                and context.get("directorApproved"))
+        return context.get("managerApproved") and context.get(
+            "directorApproved"
+        )
 
     # Actions
     @action
@@ -765,7 +914,9 @@ class ApprovalWorkflow(StateMachine):
         print("Manager approved")
 
     @action
-    def record_director_approval(self, interpreter, context, event, action_def):
+    def record_director_approval(
+        self, interpreter, context, event, action_def
+    ):
         context["directorApproved"] = True
         print("Director approved")
 
@@ -774,11 +925,17 @@ class ApprovalWorkflow(StateMachine):
         context["rejectedBy"] = event.data.get("by", "unknown")
         print(f"Rejected by: {context['rejectedBy']}")
 
+
 machine = ApprovalWorkflow.create_machine()
 
 # Test the approval flow. Initial context comes from the class; per-run
 # data goes in through `input`, readable as `context["input"]`.
-interp = SyncInterpreter(machine, input={"document": "Q4 Report"}).start()
+interp = SyncInterpreter(
+    machine,
+    input={
+        "document": "Q4 Report",
+    },
+).start()
 
 print(interp.active_state_ids)
 # {'approval.draft'}
@@ -824,17 +981,21 @@ config = {
             "on": {
                 "SUCCEED": "success",
                 "FAIL": "failed",
-            }
+            },
         },
         "success": {
             "type": "final",
             # Callable output: resolved from context/event when entered.
-            "output": lambda ev: {"transactionId": "TXN-001"},
+            "output": lambda ev: {
+                "transactionId": "TXN-001",
+            },
         },
         "failed": {
             "type": "final",
             # Literal output also works.
-            "output": {"reason": "declined"},
+            "output": {
+                "reason": "declined",
+            },
         },
     },
 }
@@ -868,10 +1029,20 @@ config = {
     "id": "payment",
     "initial": "processing",
     "states": {
-        "processing": {"on": {"SUCCEED": "success"}},
-        "success": {"type": "final", "output": {"transactionId": "TXN-001"}},
+        "processing": {
+            "on": {
+                "SUCCEED": "success",
+            },
+        },
+        "success": {
+            "type": "final",
+            "output": {
+                "transactionId": "TXN-001",
+            },
+        },
     },
 }
+
 
 async def main():
     machine = create_machine(config)
@@ -881,6 +1052,7 @@ async def main():
     output = await to_promise(interp)
     print(interp.status, output)
     # done {'transactionId': 'TXN-001'}
+
 
 asyncio.run(main())
 ```

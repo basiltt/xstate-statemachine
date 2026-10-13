@@ -41,25 +41,45 @@ xsm simulate examples/recipes/circuit_breaker_retry/machine.json --events GET
 
 ```python
 import json, random
-from xstate_statemachine import MachineLogic, SimulatedClock, SyncInterpreter, create_machine
-from xstate_statemachine.patterns import CircuitBreaker, CircuitOpenError, RetryPolicy
+from xstate_statemachine import (
+    MachineLogic,
+    SimulatedClock,
+    SyncInterpreter,
+    create_machine,
+)
+from xstate_statemachine.patterns import (
+    CircuitBreaker,
+    CircuitOpenError,
+    RetryPolicy,
+)
+
 
 class HTTPStatusError(Exception):
-    def __init__(self, status): super().__init__(f"HTTP {status}"); self.status = status
+    def __init__(self, status):
+        super().__init__(f"HTTP {status}")
+        self.status = status
+
 
 def retryable(exc) -> bool:
     if isinstance(exc, CircuitOpenError):
-        return False                                   # upstream was not called; do not hammer
+        return False  # upstream was not called; do not hammer
     if isinstance(exc, HTTPStatusError):
         return exc.status >= 500 or exc.status == 429
     return isinstance(exc, (TimeoutError, ConnectionError))
 
+
 responses = [(503, b""), (503, b""), (200, b'{"px": 1.08}')]
-def transport(method, url):                            # urllib in production; a script here
+
+
+def transport(method, url):  # urllib in production; a script here
     return responses.pop(0)
 
+
 clock = SimulatedClock()
-breaker = CircuitBreaker(failure_threshold=5, cooldown_ms=30_000, clock=clock)   # shared per upstream
+breaker = CircuitBreaker(
+    failure_threshold=5, cooldown_ms=30_000, clock=clock
+)  # shared per upstream
+
 
 def http_get(i, ctx, e):
     def call():
@@ -67,32 +87,90 @@ def http_get(i, ctx, e):
         if status >= 400:
             raise HTTPStatusError(status)
         return json.loads(body)
+
     return breaker.call(call)
 
-chart = {"id": "fetch", "initial": "idle", "context": {"attempt": 0}, "states": {
-    "idle": {"on": {"GET": {"target": "attempting", "actions": "storeUrl"}}},
-    "attempting": {"invoke": {"src": "httpGet",
-        "onDone": {"target": "succeeded", "actions": ["retryReset", "storeResult"]},
-        "onError": [{"target": "failed", "guard": "notRetryable"},
-                    {"target": "retrying", "actions": "retryBump"}]}},
-    "retrying": {"after": {"retryDelay": [{"target": "attempting", "guard": "retryCanRetry"},
-                                          {"target": "failed"}]}},
-    "succeeded": {"type": "final"}, "failed": {"type": "final"}}}
 
-policy = RetryPolicy(max_attempts=4, base_ms=200, jitter="full", rng=random.Random(1).random)
+chart = {
+    "id": "fetch",
+    "initial": "idle",
+    "context": {
+        "attempt": 0,
+    },
+    "states": {
+        "idle": {
+            "on": {
+                "GET": {
+                    "target": "attempting",
+                    "actions": "storeUrl",
+                },
+            },
+        },
+        "attempting": {
+            "invoke": {
+                "src": "httpGet",
+                "onDone": {
+                    "target": "succeeded",
+                    "actions": ["retryReset", "storeResult"],
+                },
+                "onError": [
+                    {
+                        "target": "failed",
+                        "guard": "notRetryable",
+                    },
+                    {
+                        "target": "retrying",
+                        "actions": "retryBump",
+                    },
+                ],
+            },
+        },
+        "retrying": {
+            "after": {
+                "retryDelay": [
+                    {
+                        "target": "attempting",
+                        "guard": "retryCanRetry",
+                    },
+                    {
+                        "target": "failed",
+                    },
+                ],
+            },
+        },
+        "succeeded": {
+            "type": "final",
+        },
+        "failed": {
+            "type": "final",
+        },
+    },
+}
+
+policy = RetryPolicy(
+    max_attempts=4, base_ms=200, jitter="full", rng=random.Random(1).random
+)
 logic = MachineLogic(
-    services={"httpGet": http_get},
-    actions={"storeUrl": lambda i, ctx, e, a: ctx.update(url=e.payload["url"]),
-             "storeResult": lambda i, ctx, e, a: ctx.update(result=e.data)},
-    guards={"notRetryable": lambda ctx, e: not retryable(e.error)},
+    services={
+        "httpGet": http_get,
+    },
+    actions={
+        "storeUrl": lambda i, ctx, e, a: ctx.update(url=e.payload["url"]),
+        "storeResult": lambda i, ctx, e, a: ctx.update(result=e.data),
+    },
+    guards={
+        "notRetryable": lambda ctx, e: not retryable(e.error),
+    },
 ).merge(policy.logic())
 
 req = SyncInterpreter(create_machine(chart, logic=logic), clock=clock).start()
 req.send("GET", url="https://quotes.example/v1/eurusd")
 for _ in range(5):
-    clock.increment(1_000)                             # backoff elapses; no real sleeping
-assert req.value == "succeeded" and req.context["result"] == {"px": 1.08}
-assert breaker.state == "closed"                       # 2 failures < threshold of 5
+    clock.increment(1_000)  # backoff elapses; no real sleeping
+assert req.value == "succeeded" and req.context["result"] == {
+    "px": 1.08,
+}
+assert breaker.state == "closed"  # 2 failures < threshold of 5
 ```
 
 <div class="stately" data-machine="9281faa300" data-height="420" data-title="fetch"></div>

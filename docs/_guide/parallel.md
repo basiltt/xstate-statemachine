@@ -46,23 +46,51 @@ stateDiagram-v2
         "video": {
           "initial": "loading",
           "states": {
-            "loading":   {"on": {"VIDEO_LOADED": "showing"}},
-            "showing":   {"on": {"BUFFER": "buffering"}},
-            "buffering": {"on": {"VIDEO_LOADED": "showing"}}
+            "loading": {
+              "on": {
+                "VIDEO_LOADED": "showing"
+              }
+            },
+            "showing": {
+              "on": {
+                "BUFFER": "buffering"
+              }
+            },
+            "buffering": {
+              "on": {
+                "VIDEO_LOADED": "showing"
+              }
+            }
           }
         },
         "audio": {
           "initial": "muted",
           "states": {
-            "muted":   {"on": {"UNMUTE": "playing"}},
-            "playing": {"on": {"MUTE": "muted"}}
+            "muted": {
+              "on": {
+                "UNMUTE": "playing"
+              }
+            },
+            "playing": {
+              "on": {
+                "MUTE": "muted"
+              }
+            }
           }
         },
         "controls": {
           "initial": "visible",
           "states": {
-            "visible": {"after": {"3000": "hidden"}},
-            "hidden":  {"on": {"MOUSE_MOVE": "visible"}}
+            "visible": {
+              "after": {
+                "3000": "hidden"
+              }
+            },
+            "hidden": {
+              "on": {
+                "MOUSE_MOVE": "visible"
+              }
+            }
           }
         }
       }
@@ -88,28 +116,56 @@ config = {
                 "video": {
                     "initial": "loading",
                     "states": {
-                        "loading":   {"on": {"VIDEO_LOADED": "showing"}},
-                        "showing":   {"on": {"BUFFER": "buffering"}},
-                        "buffering": {"on": {"VIDEO_LOADED": "showing"}}
-                    }
+                        "loading": {
+                            "on": {
+                                "VIDEO_LOADED": "showing",
+                            },
+                        },
+                        "showing": {
+                            "on": {
+                                "BUFFER": "buffering",
+                            },
+                        },
+                        "buffering": {
+                            "on": {
+                                "VIDEO_LOADED": "showing",
+                            },
+                        },
+                    },
                 },
                 "audio": {
                     "initial": "muted",
                     "states": {
-                        "muted":   {"on": {"UNMUTE": "playing"}},
-                        "playing": {"on": {"MUTE": "muted"}}
-                    }
+                        "muted": {
+                            "on": {
+                                "UNMUTE": "playing",
+                            },
+                        },
+                        "playing": {
+                            "on": {
+                                "MUTE": "muted",
+                            },
+                        },
+                    },
                 },
                 "controls": {
                     "initial": "visible",
                     "states": {
-                        "visible": {"after": {"3000": "hidden"}},
-                        "hidden":  {"on": {"MOUSE_MOVE": "visible"}}
-                    }
-                }
-            }
-        }
-    }
+                        "visible": {
+                            "after": {
+                                "3000": "hidden",
+                            },
+                        },
+                        "hidden": {
+                            "on": {
+                                "MOUSE_MOVE": "visible",
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    },
 }
 
 machine = create_machine(config)
@@ -169,15 +225,31 @@ When the machine enters a parallel state:
       "regionA": {
         "initial": "idle",
         "states": {
-          "idle": {"on": {"START_A": "running"}},
-          "running": {"on": {"STOP_A": "idle"}}
+          "idle": {
+            "on": {
+              "START_A": "running"
+            }
+          },
+          "running": {
+            "on": {
+              "STOP_A": "idle"
+            }
+          }
         }
       },
       "regionB": {
         "initial": "idle",
         "states": {
-          "idle": {"on": {"START_B": "running"}},
-          "running": {"on": {"STOP_B": "idle"}}
+          "idle": {
+            "on": {
+              "START_B": "running"
+            }
+          },
+          "running": {
+            "on": {
+              "STOP_B": "idle"
+            }
+          }
         }
       }
     }
@@ -190,19 +262,49 @@ When the machine enters a parallel state:
 ```python
 from xstate_statemachine import State, StateMachine, SyncInterpreter
 
+
 class PlayerMachine(StateMachine):
     machine_id = "player"
 
-    playing = State("playing", initial=True, parallel=True, states=[
-        State("video", states=[
-            State("loading", initial=True, on={"VIDEO_LOADED": "showing"}),
-            State("showing"),
-        ]),
-        State("audio", states=[
-            State("muted", initial=True, on={"UNMUTE": "playing"}),
-            State("playing", on={"MUTE": "muted"}),
-        ]),
-    ])
+    playing = State(
+        "playing",
+        initial=True,
+        parallel=True,
+        states=[
+            State(
+                "video",
+                states=[
+                    State(
+                        "loading",
+                        initial=True,
+                        on={
+                            "VIDEO_LOADED": "showing",
+                        },
+                    ),
+                    State("showing"),
+                ],
+            ),
+            State(
+                "audio",
+                states=[
+                    State(
+                        "muted",
+                        initial=True,
+                        on={
+                            "UNMUTE": "playing",
+                        },
+                    ),
+                    State(
+                        "playing",
+                        on={
+                            "MUTE": "muted",
+                        },
+                    ),
+                ],
+            ),
+        ],
+    )
+
 
 machine = PlayerMachine.create_machine()
 interp = SyncInterpreter(machine).start()
@@ -228,22 +330,38 @@ from xstate_statemachine import MachineBuilder, SyncInterpreter
 machine = (
     MachineBuilder("player")
     .state("playing", initial=True)
-    .child_states("playing", parallel=True, states={
-        "video": {
-            "initial": "loading",
-            "states": {
-                "loading": {"on": {"VIDEO_LOADED": "showing"}},
-                "showing": {}
-            }
+    .child_states(
+        "playing",
+        parallel=True,
+        states={
+            "video": {
+                "initial": "loading",
+                "states": {
+                    "loading": {
+                        "on": {
+                            "VIDEO_LOADED": "showing",
+                        },
+                    },
+                    "showing": {},
+                },
+            },
+            "audio": {
+                "initial": "muted",
+                "states": {
+                    "muted": {
+                        "on": {
+                            "UNMUTE": "playing",
+                        },
+                    },
+                    "playing": {
+                        "on": {
+                            "MUTE": "muted",
+                        },
+                    },
+                },
+            },
         },
-        "audio": {
-            "initial": "muted",
-            "states": {
-                "muted":   {"on": {"UNMUTE": "playing"}},
-                "playing": {"on": {"MUTE": "muted"}}
-            }
-        }
-    })
+    )
     .build()
 )
 
@@ -260,16 +378,44 @@ interp.stop()
 ```python
 from xstate_statemachine import State, build_machine, SyncInterpreter
 
-playing = State("playing", initial=True, parallel=True, states=[
-    State("video", states=[
-        State("loading", initial=True, on={"VIDEO_LOADED": "showing"}),
-        State("showing"),
-    ]),
-    State("audio", states=[
-        State("muted", initial=True, on={"UNMUTE": "playing"}),
-        State("playing", on={"MUTE": "muted"}),
-    ]),
-])
+playing = State(
+    "playing",
+    initial=True,
+    parallel=True,
+    states=[
+        State(
+            "video",
+            states=[
+                State(
+                    "loading",
+                    initial=True,
+                    on={
+                        "VIDEO_LOADED": "showing",
+                    },
+                ),
+                State("showing"),
+            ],
+        ),
+        State(
+            "audio",
+            states=[
+                State(
+                    "muted",
+                    initial=True,
+                    on={
+                        "UNMUTE": "playing",
+                    },
+                ),
+                State(
+                    "playing",
+                    on={
+                        "MUTE": "muted",
+                    },
+                ),
+            ],
+        ),
+    ],
+)
 
 machine = build_machine(id="player", states=[playing])
 interp = SyncInterpreter(machine).start()
@@ -297,33 +443,57 @@ config = {
                 "physics": {
                     "initial": "simulating",
                     "states": {
-                        "simulating": {"on": {"PAUSE_PHYSICS": "paused"}},
-                        "paused": {"on": {"RESUME_PHYSICS": "simulating"}}
-                    }
+                        "simulating": {
+                            "on": {
+                                "PAUSE_PHYSICS": "paused",
+                            },
+                        },
+                        "paused": {
+                            "on": {
+                                "RESUME_PHYSICS": "simulating",
+                            },
+                        },
+                    },
                 },
                 "ai": {
                     "initial": "thinking",
                     "states": {
-                        "thinking": {"on": {"AI_DECIDED": "executing"}},
-                        "executing": {"on": {"AI_DONE": "thinking"}}
-                    }
+                        "thinking": {
+                            "on": {
+                                "AI_DECIDED": "executing",
+                            },
+                        },
+                        "executing": {
+                            "on": {
+                                "AI_DONE": "thinking",
+                            },
+                        },
+                    },
                 },
                 "rendering": {
                     "initial": "drawing",
                     "states": {
-                        "drawing": {"on": {"FRAME_DONE": "waiting"}},
-                        "waiting": {"on": {"VSYNC": "drawing"}}
-                    }
-                }
+                        "drawing": {
+                            "on": {
+                                "FRAME_DONE": "waiting",
+                            },
+                        },
+                        "waiting": {
+                            "on": {
+                                "VSYNC": "drawing",
+                            },
+                        },
+                    },
+                },
             },
             "on": {
-                "QUIT": "gameOver"
-            }
+                "QUIT": "gameOver",
+            },
         },
         "gameOver": {
-            "type": "final"
-        }
-    }
+            "type": "final",
+        },
+    },
 }
 
 machine = create_machine(config)
@@ -369,30 +539,43 @@ config = {
         "active": {
             "type": "parallel",
             "entry": "logParallelEntry",
-            "exit":  "logParallelExit",
+            "exit": "logParallelExit",
             "states": {
                 "regionA": {
                     "initial": "idle",
                     "entry": "initRegionA",
                     "states": {
-                        "idle": {"on": {"GO_A": "running"}},
-                        "running": {}
-                    }
+                        "idle": {
+                            "on": {
+                                "GO_A": "running",
+                            },
+                        },
+                        "running": {},
+                    },
                 },
                 "regionB": {
                     "initial": "idle",
                     "entry": "initRegionB",
                     "states": {
-                        "idle": {"on": {"GO_B": "running"}},
-                        "running": {}
-                    }
-                }
+                        "idle": {
+                            "on": {
+                                "GO_B": "running",
+                            },
+                        },
+                        "running": {},
+                    },
+                },
             },
-            "on": {"SHUTDOWN": "stopped"}
+            "on": {
+                "SHUTDOWN": "stopped",
+            },
         },
-        "stopped": {"type": "final"}
-    }
+        "stopped": {
+            "type": "final",
+        },
+    },
 }
+
 
 class ParallelLogic(MachineLogic):
     def log_parallel_entry(self, interpreter, context, event, action_def):
@@ -406,6 +589,7 @@ class ParallelLogic(MachineLogic):
 
     def init_region_b(self, interpreter, context, event, action_def):
         print("Region B initialized")
+
 
 machine = create_machine(config, logic=ParallelLogic())
 interp = SyncInterpreter(machine).start()
@@ -438,13 +622,20 @@ Guards work within parallel regions just like in any other state:
           "live": {
             "on": {
               "REFRESH": [
-                {"target": "refreshing", "guard": "isOnline"},
-                {"actions": "showOfflineMessage"}
+                {
+                  "target": "refreshing",
+                  "guard": "isOnline"
+                },
+                {
+                  "actions": "showOfflineMessage"
+                }
               ]
             }
           },
           "refreshing": {
-            "on": {"DATA_LOADED": "live"}
+            "on": {
+              "DATA_LOADED": "live"
+            }
           }
         }
       },
@@ -452,7 +643,9 @@ Guards work within parallel regions just like in any other state:
         "initial": "checking",
         "states": {
           "checking": {
-            "on": {"ALERTS_LOADED": "displaying"}
+            "on": {
+              "ALERTS_LOADED": "displaying"
+            }
           },
           "displaying": {}
         }
@@ -482,26 +675,46 @@ config = {
                         "home": {
                             "initial": "feed",
                             "states": {
-                                "feed": {"on": {"VIEW_POST": "detail"}},
-                                "detail": {"on": {"BACK": "feed"}}
-                            }
+                                "feed": {
+                                    "on": {
+                                        "VIEW_POST": "detail",
+                                    },
+                                },
+                                "detail": {
+                                    "on": {
+                                        "BACK": "feed",
+                                    },
+                                },
+                            },
                         },
-                        "search": {"on": {"GO_HOME": "home"}}
+                        "search": {
+                            "on": {
+                                "GO_HOME": "home",
+                            },
+                        },
                     },
-                    "on": {"SEARCH": "search"}
+                    "on": {
+                        "SEARCH": "search",
+                    },
                 },
                 "notifications": {
                     "initial": "idle",
                     "states": {
-                        "idle": {"on": {"NEW_NOTIFICATION": "showing"}},
+                        "idle": {
+                            "on": {
+                                "NEW_NOTIFICATION": "showing",
+                            },
+                        },
                         "showing": {
-                            "after": {"5000": "idle"}
-                        }
-                    }
-                }
-            }
-        }
-    }
+                            "after": {
+                                "5000": "idle",
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    },
 }
 
 machine = create_machine(config)
@@ -572,7 +785,13 @@ print(interp.value)
 `matches()` also accepts a **partial** value dict, so you can check one region without building the whole structure:
 
 ```python
-interp.matches({"playing": {"video": "loading"}})  # True — ignores the audio region
+interp.matches(
+    {
+        "playing": {
+            "video": "loading",
+        },
+    }
+)  # True — ignores the audio region
 ```
 
 This is generally a nicer way to introspect parallel regions than manually parsing `active_state_ids` strings.
@@ -580,7 +799,12 @@ This is generally a nicer way to introspect parallel regions than manually parsi
 ## Complete Example: Dashboard with Notifications, Data Feed, and User Activity
 
 ```python
-from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic, service
+from xstate_statemachine import (
+    create_machine,
+    SyncInterpreter,
+    MachineLogic,
+    service,
+)
 
 config = {
     "id": "dashboard",
@@ -588,7 +812,7 @@ config = {
     "context": {
         "notifications": [],
         "feedData": [],
-        "lastActivity": None
+        "lastActivity": None,
     },
     "states": {
         "active": {
@@ -602,22 +826,30 @@ config = {
                                 "src": "fetchNotifications",
                                 "onDone": {
                                     "target": "displaying",
-                                    "actions": "storeNotifications"
+                                    "actions": "storeNotifications",
                                 },
-                                "onError": "error"
-                            }
+                                "onError": "error",
+                            },
                         },
                         "displaying": {
-                            "after": {"30000": "polling"},
+                            "after": {
+                                "30000": "polling",
+                            },
                             "on": {
-                                "MARK_READ": {"actions": "markAsRead"},
-                                "DISMISS_ALL": {"actions": "clearNotifications"}
-                            }
+                                "MARK_READ": {
+                                    "actions": "markAsRead",
+                                },
+                                "DISMISS_ALL": {
+                                    "actions": "clearNotifications",
+                                },
+                            },
                         },
                         "error": {
-                            "after": {"60000": "polling"}
-                        }
-                    }
+                            "after": {
+                                "60000": "polling",
+                            },
+                        },
+                    },
                 },
                 "dataFeed": {
                     "initial": "loading",
@@ -627,58 +859,65 @@ config = {
                                 "src": "fetchFeedData",
                                 "onDone": {
                                     "target": "live",
-                                    "actions": "storeFeedData"
+                                    "actions": "storeFeedData",
                                 },
-                                "onError": "stale"
-                            }
+                                "onError": "stale",
+                            },
                         },
                         "live": {
-                            "after": {"15000": "loading"},
+                            "after": {
+                                "15000": "loading",
+                            },
                             "on": {
-                                "FORCE_REFRESH": "loading"
-                            }
+                                "FORCE_REFRESH": "loading",
+                            },
                         },
                         "stale": {
-                            "after": {"30000": "loading"},
+                            "after": {
+                                "30000": "loading",
+                            },
                             "on": {
-                                "FORCE_REFRESH": "loading"
-                            }
-                        }
-                    }
+                                "FORCE_REFRESH": "loading",
+                            },
+                        },
+                    },
                 },
                 "userActivity": {
                     "initial": "active",
                     "states": {
                         "active": {
-                            "after": {"300000": "idle"},
+                            "after": {
+                                "300000": "idle",
+                            },
                             "on": {
                                 "USER_ACTION": {
                                     "target": "active",
-                                    "actions": "recordActivity"
-                                }
-                            }
+                                    "actions": "recordActivity",
+                                },
+                            },
                         },
                         "idle": {
                             "entry": "dimDisplay",
                             "on": {
                                 "USER_ACTION": {
                                     "target": "active",
-                                    "actions": "recordActivity"
-                                }
-                            }
-                        }
-                    }
-                }
+                                    "actions": "recordActivity",
+                                },
+                            },
+                        },
+                    },
+                },
             },
             "on": {
-                "LOGOUT": "loggedOut"
-            }
+                "LOGOUT": "loggedOut",
+            },
         },
         "loggedOut": {
-            "type": "final"
-        }
-    }
+            "type": "final",
+        },
+    },
 }
+
 
 class DashboardLogic(MachineLogic):
     # As of 0.8.0, `@action` / `@guard` / `@service` markers win over
@@ -688,7 +927,16 @@ class DashboardLogic(MachineLogic):
     # invoked services, so they're decorated with `@service` explicitly.
     @service
     def fetch_notifications(self, interpreter, context, event):
-        return [{"id": 1, "msg": "New message"}, {"id": 2, "msg": "Update"}]
+        return [
+            {
+                "id": 1,
+                "msg": "New message",
+            },
+            {
+                "id": 2,
+                "msg": "Update",
+            },
+        ]
 
     def store_notifications(self, interpreter, context, event, action_def):
         context["notifications"] = event.data
@@ -705,7 +953,16 @@ class DashboardLogic(MachineLogic):
 
     @service
     def fetch_feed_data(self, interpreter, context, event):
-        return [{"metric": "cpu", "value": 42}, {"metric": "mem", "value": 78}]
+        return [
+            {
+                "metric": "cpu",
+                "value": 42,
+            },
+            {
+                "metric": "mem",
+                "value": 78,
+            },
+        ]
 
     def store_feed_data(self, interpreter, context, event, action_def):
         context["feedData"] = event.data
@@ -713,10 +970,12 @@ class DashboardLogic(MachineLogic):
 
     def record_activity(self, interpreter, context, event, action_def):
         import time
+
         context["lastActivity"] = time.time()
 
     def dim_display(self, interpreter, context, event, action_def):
         print("User idle — dimming display")
+
 
 machine = create_machine(config, logic=DashboardLogic())
 interp = SyncInterpreter(machine).start()

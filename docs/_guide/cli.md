@@ -335,7 +335,10 @@ Save this as `checkout.json`:
 {
   "id": "checkout",
   "initial": "cart",
-  "context": { "items": [], "total": 0 },
+  "context": {
+    "items": [],
+    "total": 0
+  },
   "states": {
     "cart": {
       "on": {
@@ -349,8 +352,14 @@ Save this as `checkout.json`:
     "payment": {
       "invoke": {
         "src": "processPayment",
-        "onDone": { "target": "confirmed", "actions": "clearCart" },
-        "onError": { "target": "cart", "actions": "showError" }
+        "onDone": {
+          "target": "confirmed",
+          "actions": "clearCart"
+        },
+        "onError": {
+          "target": "cart",
+          "actions": "showError"
+        }
       }
     },
     "confirmed": {
@@ -413,16 +422,21 @@ def cart_not_empty(self, context, event) -> bool:
     """Guard: cartNotEmpty — check if the cart has items."""
     return len(context.get("items", [])) > 0
 
+
 @action
 def calculate_total(self, interpreter, context, event, action_def) -> None:
     """Action: calculateTotal — sum up item prices."""
     context["total"] = sum(item["price"] for item in context["items"])
 
+
 @service
 def process_payment(self, interpreter, context, event) -> dict:
     """Service: processPayment — charge the customer."""
     # Call your payment gateway here
-    return {"result": "payment_success", "transaction_id": "txn_123"}
+    return {
+        "result": "payment_success",
+        "transaction_id": "txn_123",
+    }
 ```
 
 ### Step 5: Run the Machine

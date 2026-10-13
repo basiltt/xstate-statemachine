@@ -38,7 +38,9 @@ stateDiagram-v2
   },
   "states": {
     "idle": {
-      "on": { "START": "attempting" }
+      "on": {
+        "START": "attempting"
+      }
     },
     "attempting": {
       "invoke": {
@@ -61,10 +63,16 @@ stateDiagram-v2
       }
     },
     "waiting": {
-      "after": { "1000": "attempting" }
+      "after": {
+        "1000": "attempting"
+      }
     },
-    "success": { "type": "final" },
-    "failed":  { "type": "final" }
+    "success": {
+      "type": "final"
+    },
+    "failed": {
+      "type": "final"
+    }
   }
 }
 ```
@@ -76,9 +84,11 @@ stateDiagram-v2
 ```python
 from xstate_statemachine import create_machine, MachineLogic, SyncInterpreter
 
+
 def can_retry(context, event):
     """Guard: allow retry if under the max retry count."""
     return context["retries"] < context["maxRetries"]
+
 
 def increment_retry(interpreter, context, event, action_def):
     """Action: increment the retry counter and record the error."""
@@ -86,22 +96,30 @@ def increment_retry(interpreter, context, event, action_def):
     context["lastError"] = str(event.data) if hasattr(event, "data") else None
     print(f"Retry {context['retries']}/{context['maxRetries']}")
 
+
 def store_result(interpreter, context, event, action_def):
     """Action: store the successful result."""
     context["result"] = event.data if hasattr(event, "data") else None
     print(f"Success: {context['result']}")
+
 
 def store_error(interpreter, context, event, action_def):
     """Action: store the final error after all retries exhausted."""
     context["lastError"] = str(event.data) if hasattr(event, "data") else None
     print(f"Failed permanently: {context['lastError']}")
 
+
 def api_call(interpreter, context, event):
     """Service: simulates an API call that may fail."""
     import random
+
     if random.random() < 0.7:  # 70% chance of failure
         raise ConnectionError("Server unavailable")
-    return {"status": "ok", "data": [1, 2, 3]}
+    return {
+        "status": "ok",
+        "data": [1, 2, 3],
+    }
+
 
 logic = MachineLogic(
     actions={
@@ -109,8 +127,12 @@ logic = MachineLogic(
         "store_result": store_result,
         "store_error": store_error,
     },
-    guards={"can_retry": can_retry},
-    services={"api_call": api_call},
+    guards={
+        "can_retry": can_retry,
+    },
+    services={
+        "api_call": api_call,
+    },
 )
 ```
 
@@ -143,6 +165,7 @@ stateDiagram-v2
 ```python
 from xstate_statemachine import State, StateMachine, guard, action
 
+
 class FormWizard(StateMachine):
     machine_id = "wizard"
     initial_context = {
@@ -160,8 +183,12 @@ class FormWizard(StateMachine):
     submitted = State("submitted", final=True)
 
     # --- Forward transitions (guarded) ---
-    next_1_2 = step1.to(step2, event="NEXT", guard="isStep1Valid", actions=["saveStepData"])
-    next_2_3 = step2.to(step3, event="NEXT", guard="isStep2Valid", actions=["saveStepData"])
+    next_1_2 = step1.to(
+        step2, event="NEXT", guard="isStep1Valid", actions=["saveStepData"]
+    )
+    next_2_3 = step2.to(
+        step3, event="NEXT", guard="isStep2Valid", actions=["saveStepData"]
+    )
     next_3_r = step3.to(review, event="NEXT", actions=["saveStepData"])
     do_submit = review.to(submitted, event="SUBMIT")
 
@@ -266,9 +293,16 @@ stateDiagram-v2
   "states": {
     "browsing": {
       "on": {
-        "ADD_TO_CART": { "actions": "addItem" },
-        "REMOVE_FROM_CART": { "actions": "removeItem" },
-        "CHECKOUT": { "target": "checkout", "guard": "cartNotEmpty" }
+        "ADD_TO_CART": {
+          "actions": "addItem"
+        },
+        "REMOVE_FROM_CART": {
+          "actions": "removeItem"
+        },
+        "CHECKOUT": {
+          "target": "checkout",
+          "guard": "cartNotEmpty"
+        }
       }
     },
     "checkout": {
@@ -303,12 +337,18 @@ stateDiagram-v2
             }
           }
         },
-        "confirmation": { "type": "final" }
+        "confirmation": {
+          "type": "final"
+        }
       },
-      "on": { "CANCEL": "browsing" },
+      "on": {
+        "CANCEL": "browsing"
+      },
       "onDone": "orderComplete"
     },
-    "orderComplete": { "type": "final" }
+    "orderComplete": {
+      "type": "final"
+    }
   }
 }
 ```
@@ -321,30 +361,38 @@ stateDiagram-v2
 ```python
 from xstate_statemachine import create_machine, MachineLogic, SyncInterpreter
 
+
 def add_item(interpreter, context, event, action_def):
     item = event.payload.get("item", {})
     context["cart"].append(item)
     context["total"] += item.get("price", 0)
+
 
 def remove_item(interpreter, context, event, action_def):
     item_id = event.payload.get("id")
     context["cart"] = [i for i in context["cart"] if i.get("id") != item_id]
     context["total"] = sum(i.get("price", 0) for i in context["cart"])
 
+
 def save_address(interpreter, context, event, action_def):
     context["shippingAddress"] = event.payload.get("address")
+
 
 def save_payment_method(interpreter, context, event, action_def):
     context["paymentMethod"] = event.payload.get("method")
 
+
 def save_receipt(interpreter, context, event, action_def):
     context["receipt"] = event.data if hasattr(event, "data") else "OK"
+
 
 def show_payment_error(interpreter, context, event, action_def):
     context["error"] = str(event.data) if hasattr(event, "data") else "Unknown"
 
+
 def cart_not_empty(context, event):
     return len(context["cart"]) > 0
+
 
 def charge_card(interpreter, context, event):
     """Simulate payment processing."""
@@ -353,8 +401,9 @@ def charge_card(interpreter, context, event):
     return {
         "transaction_id": "txn_abc123",
         "amount": context["total"],
-        "status": "charged"
+        "status": "charged",
     }
+
 
 logic = MachineLogic(
     actions={
@@ -365,12 +414,17 @@ logic = MachineLogic(
         "save_receipt": save_receipt,
         "show_payment_error": show_payment_error,
     },
-    guards={"cart_not_empty": cart_not_empty},
-    services={"charge_card": charge_card},
+    guards={
+        "cart_not_empty": cart_not_empty,
+    },
+    services={
+        "charge_card": charge_card,
+    },
 )
 
 # Run the checkout flow
 import json
+
 with open("ecommerce.json") as f:
     config = json.load(f)
 
@@ -379,8 +433,22 @@ machine = create_machine(config, logic=logic)
 interp = SyncInterpreter(machine).start()
 
 # Add items
-interp.send("ADD_TO_CART", item={"id": "w1", "name": "Widget", "price": 29.99})
-interp.send("ADD_TO_CART", item={"id": "g1", "name": "Gadget", "price": 49.99})
+interp.send(
+    "ADD_TO_CART",
+    item={
+        "id": "w1",
+        "name": "Widget",
+        "price": 29.99,
+    },
+)
+interp.send(
+    "ADD_TO_CART",
+    item={
+        "id": "g1",
+        "name": "Gadget",
+        "price": 49.99,
+    },
+)
 
 # Start checkout
 interp.send("CHECKOUT")
@@ -492,7 +560,9 @@ stateDiagram-v2
             }
           }
         },
-        "sessionExpired": { "type": "final" }
+        "sessionExpired": {
+          "type": "final"
+        }
       },
       "on": {
         "LOGOUT": "loggedOut",
@@ -515,27 +585,47 @@ import time
 
 logic = MachineLogic(
     actions={
-        "storeCredentials": lambda i, ctx, e, a: ctx.update({
-            "user": e.data.get("user") if hasattr(e, "data") and isinstance(e.data, dict) else None,
-            "token": e.data.get("token") if hasattr(e, "data") and isinstance(e.data, dict) else None,
-        }),
-        "storeAuthError": lambda i, ctx, e, a: ctx.update({
-            "error": str(e.data) if hasattr(e, "data") else "Auth failed"
-        }),
-        "recordSessionStart": lambda i, ctx, e, a: ctx.update({
-            "sessionStart": time.time()
-        }),
-        "updateToken": lambda i, ctx, e, a: ctx.update({
-            "token": e.data.get("token") if hasattr(e, "data") and isinstance(e.data, dict) else ctx["token"]
-        }),
+        "storeCredentials": lambda i, ctx, e, a: ctx.update(
+            {
+                "user": (
+                    e.data.get("user")
+                    if hasattr(e, "data") and isinstance(e.data, dict)
+                    else None
+                ),
+                "token": (
+                    e.data.get("token")
+                    if hasattr(e, "data") and isinstance(e.data, dict)
+                    else None
+                ),
+            }
+        ),
+        "storeAuthError": lambda i, ctx, e, a: ctx.update(
+            {
+                "error": str(e.data) if hasattr(e, "data") else "Auth failed",
+            }
+        ),
+        "recordSessionStart": lambda i, ctx, e, a: ctx.update(
+            {
+                "sessionStart": time.time(),
+            }
+        ),
+        "updateToken": lambda i, ctx, e, a: ctx.update(
+            {
+                "token": (
+                    e.data.get("token")
+                    if hasattr(e, "data") and isinstance(e.data, dict)
+                    else ctx["token"]
+                ),
+            }
+        ),
     },
     services={
         "authenticate": lambda i, ctx, e: {
             "user": "alice",
-            "token": "jwt_token_abc"
+            "token": "jwt_token_abc",
         },
         "refreshToken": lambda i, ctx, e: {
-            "token": f"jwt_refreshed_{int(time.time())}"
+            "token": f"jwt_refreshed_{int(time.time())}",
         },
     },
 )
@@ -583,53 +673,84 @@ config = {
         "build_artifact": None,
         "test_results": None,
         "deploy_url": None,
-        "errors": []
+        "errors": [],
     },
     "states": {
         "checkout": {
             "invoke": {
                 "src": "gitCheckout",
-                "onDone": {"target": "build", "actions": "logStage"},
-                "onError": {"target": "failed", "actions": "recordError"}
-            }
+                "onDone": {
+                    "target": "build",
+                    "actions": "logStage",
+                },
+                "onError": {
+                    "target": "failed",
+                    "actions": "recordError",
+                },
+            },
         },
         "build": {
             "invoke": {
                 "src": "buildProject",
-                "onDone": {"target": "test", "actions": ["saveBuildArtifact", "logStage"]},
-                "onError": {"target": "failed", "actions": "recordError"}
-            }
+                "onDone": {
+                    "target": "test",
+                    "actions": ["saveBuildArtifact", "logStage"],
+                },
+                "onError": {
+                    "target": "failed",
+                    "actions": "recordError",
+                },
+            },
         },
         "test": {
             "invoke": {
                 "src": "runTests",
-                "onDone": {"target": "approvalGate", "actions": ["saveTestResults", "logStage"]},
-                "onError": {"target": "failed", "actions": "recordError"}
-            }
+                "onDone": {
+                    "target": "approvalGate",
+                    "actions": ["saveTestResults", "logStage"],
+                },
+                "onError": {
+                    "target": "failed",
+                    "actions": "recordError",
+                },
+            },
         },
         "approvalGate": {
             "on": {
-                "APPROVE": {"target": "deploy", "guard": "isApprover"},
-                "REJECT": "failed"
-            }
+                "APPROVE": {
+                    "target": "deploy",
+                    "guard": "isApprover",
+                },
+                "REJECT": "failed",
+            },
         },
         "deploy": {
             "invoke": {
                 "src": "deployToProduction",
-                "onDone": {"target": "success", "actions": ["saveDeployUrl", "logStage"]},
-                "onError": {"target": "rollback", "actions": "recordError"}
-            }
+                "onDone": {
+                    "target": "success",
+                    "actions": ["saveDeployUrl", "logStage"],
+                },
+                "onError": {
+                    "target": "rollback",
+                    "actions": "recordError",
+                },
+            },
         },
         "rollback": {
             "invoke": {
                 "src": "rollbackDeploy",
                 "onDone": "failed",
-                "onError": "failed"
-            }
+                "onError": "failed",
+            },
         },
-        "success": {"type": "final"},
-        "failed": {"type": "final"}
-    }
+        "success": {
+            "type": "final",
+        },
+        "failed": {
+            "type": "final",
+        },
+    },
 }
 
 logic = MachineLogic(
@@ -638,29 +759,46 @@ logic = MachineLogic(
             f"Stage complete: {list(i.current_state_ids)}"
         ),
         "saveBuildArtifact": lambda i, ctx, e, a: ctx.update(
-            {"build_artifact": e.data if hasattr(e, "data") else None}
+            {
+                "build_artifact": e.data if hasattr(e, "data") else None,
+            }
         ),
         "saveTestResults": lambda i, ctx, e, a: ctx.update(
-            {"test_results": e.data if hasattr(e, "data") else None}
+            {
+                "test_results": e.data if hasattr(e, "data") else None,
+            }
         ),
         "saveDeployUrl": lambda i, ctx, e, a: ctx.update(
-            {"deploy_url": e.data if hasattr(e, "data") else None}
+            {
+                "deploy_url": e.data if hasattr(e, "data") else None,
+            }
         ),
         "recordError": lambda i, ctx, e, a: ctx["errors"].append(
             str(e.data) if hasattr(e, "data") else "unknown"
         ),
     },
     guards={
-        "isApprover": lambda ctx, e: e.payload.get("approver") in [
-            "alice", "bob", "charlie"
-        ],
+        "isApprover": lambda ctx, e: e.payload.get("approver")
+        in ["alice", "bob", "charlie"],
     },
     services={
-        "gitCheckout": lambda i, ctx, e: {"ref": ctx["commit_sha"]},
-        "buildProject": lambda i, ctx, e: {"artifact": "build-abc123.tar.gz"},
-        "runTests": lambda i, ctx, e: {"passed": 142, "failed": 0, "skipped": 3},
-        "deployToProduction": lambda i, ctx, e: {"url": "https://app.example.com"},
-        "rollbackDeploy": lambda i, ctx, e: {"status": "rolled_back"},
+        "gitCheckout": lambda i, ctx, e: {
+            "ref": ctx["commit_sha"],
+        },
+        "buildProject": lambda i, ctx, e: {
+            "artifact": "build-abc123.tar.gz",
+        },
+        "runTests": lambda i, ctx, e: {
+            "passed": 142,
+            "failed": 0,
+            "skipped": 3,
+        },
+        "deployToProduction": lambda i, ctx, e: {
+            "url": "https://app.example.com",
+        },
+        "rollbackDeploy": lambda i, ctx, e: {
+            "status": "rolled_back",
+        },
     },
 )
 
@@ -712,34 +850,46 @@ config = {
     "initial": "green",
     "context": {
         "mode": "normal",
-        "cycle_count": 0
+        "cycle_count": 0,
     },
     "states": {
         "green": {
             "entry": "logState",
-            "after": { "5000": "yellow" },
-            "on": { "EMERGENCY": "emergencyRed" }
+            "after": {
+                "5000": "yellow",
+            },
+            "on": {
+                "EMERGENCY": "emergencyRed",
+            },
         },
         "yellow": {
             "entry": "logState",
-            "after": { "2000": "red" },
-            "on": { "EMERGENCY": "emergencyRed" }
+            "after": {
+                "2000": "red",
+            },
+            "on": {
+                "EMERGENCY": "emergencyRed",
+            },
         },
         "red": {
             "entry": ["logState", "incrementCycle"],
-            "after": { "5000": "green" },
-            "on": { "EMERGENCY": "emergencyRed" }
+            "after": {
+                "5000": "green",
+            },
+            "on": {
+                "EMERGENCY": "emergencyRed",
+            },
         },
         "emergencyRed": {
             "entry": "activateEmergency",
             "on": {
                 "RESUME": {
                     "target": "red",
-                    "actions": "deactivateEmergency"
-                }
-            }
-        }
-    }
+                    "actions": "deactivateEmergency",
+                },
+            },
+        },
+    },
 }
 
 logic = MachineLogic(
@@ -748,15 +898,25 @@ logic = MachineLogic(
             f"Light: {list(i.current_state_ids)[0].split('.')[-1].upper()}"
         ),
         "incrementCycle": lambda i, ctx, e, a: ctx.update(
-            {"cycle_count": ctx["cycle_count"] + 1}
+            {
+                "cycle_count": ctx["cycle_count"] + 1,
+            }
         ),
         "activateEmergency": lambda i, ctx, e, a: (
-            ctx.update({"mode": "emergency"}),
-            print("EMERGENCY MODE ACTIVATED")
+            ctx.update(
+                {
+                    "mode": "emergency",
+                }
+            ),
+            print("EMERGENCY MODE ACTIVATED"),
         ),
         "deactivateEmergency": lambda i, ctx, e, a: (
-            ctx.update({"mode": "normal"}),
-            print("Returning to normal operation")
+            ctx.update(
+                {
+                    "mode": "normal",
+                }
+            ),
+            print("Returning to normal operation"),
         ),
     },
 )
@@ -793,38 +953,43 @@ State machines are highly testable because their behavior is fully deterministic
 import pytest
 from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 
+
 @pytest.fixture
 def toggle_machine():
     """Create a simple toggle machine for testing."""
     config = {
         "id": "toggle",
         "initial": "inactive",
-        "context": {"toggleCount": 0},
+        "context": {
+            "toggleCount": 0,
+        },
         "states": {
             "inactive": {
                 "on": {
                     "TOGGLE": {
                         "target": "active",
-                        "actions": "incrementCount"
-                    }
-                }
+                        "actions": "incrementCount",
+                    },
+                },
             },
             "active": {
                 "on": {
                     "TOGGLE": {
                         "target": "inactive",
-                        "actions": "incrementCount"
-                    }
-                }
-            }
-        }
+                        "actions": "incrementCount",
+                    },
+                },
+            },
+        },
     }
 
     logic = MachineLogic(
         actions={
             "incrementCount": lambda i, ctx, e, a: ctx.update(
-                {"toggleCount": ctx["toggleCount"] + 1}
-            )
+                {
+                    "toggleCount": ctx["toggleCount"] + 1,
+                }
+            ),
         }
     )
     return create_machine(config, logic=logic)
@@ -881,41 +1046,49 @@ class TestToggleMachine:
 import pytest
 from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 
+
 @pytest.fixture
 def guarded_machine():
     config = {
         "id": "guarded",
         "initial": "locked",
-        "context": {"pin": "1234", "attempts": 0},
+        "context": {
+            "pin": "1234",
+            "attempts": 0,
+        },
         "states": {
             "locked": {
                 "on": {
                     "ENTER_PIN": [
                         {
                             "target": "unlocked",
-                            "guard": "pinCorrect"
+                            "guard": "pinCorrect",
                         },
                         {
                             "target": "locked",
-                            "actions": "incrementAttempts"
-                        }
-                    ]
-                }
+                            "actions": "incrementAttempts",
+                        },
+                    ],
+                },
             },
             "unlocked": {
-                "on": {"LOCK": "locked"}
-            }
-        }
+                "on": {
+                    "LOCK": "locked",
+                },
+            },
+        },
     }
 
     logic = MachineLogic(
         guards={
-            "pinCorrect": lambda ctx, e: e.payload.get("pin") == ctx["pin"]
+            "pinCorrect": lambda ctx, e: e.payload.get("pin") == ctx["pin"],
         },
         actions={
             "incrementAttempts": lambda i, ctx, e, a: ctx.update(
-                {"attempts": ctx["attempts"] + 1}
-            )
+                {
+                    "attempts": ctx["attempts"] + 1,
+                }
+            ),
         },
     )
     return create_machine(config, logic=logic)
@@ -953,31 +1126,37 @@ class TestGuards:
 import pytest
 from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 
+
 def test_action_modifies_context():
     """Verify that actions correctly modify the context."""
     config = {
         "id": "cart",
         "initial": "empty",
-        "context": {"items": [], "total": 0},
+        "context": {
+            "items": [],
+            "total": 0,
+        },
         "states": {
             "empty": {
                 "on": {
                     "ADD_ITEM": {
                         "target": "hasItems",
-                        "actions": "addItem"
-                    }
-                }
+                        "actions": "addItem",
+                    },
+                },
             },
             "hasItems": {
                 "on": {
-                    "ADD_ITEM": {"actions": "addItem"},
+                    "ADD_ITEM": {
+                        "actions": "addItem",
+                    },
                     "CLEAR": {
                         "target": "empty",
-                        "actions": "clearCart"
-                    }
-                }
-            }
-        }
+                        "actions": "clearCart",
+                    },
+                },
+            },
+        },
     }
 
     def add_item(interpreter, context, event, action_def):
@@ -990,17 +1169,32 @@ def test_action_modifies_context():
         context["total"] = 0
 
     logic = MachineLogic(
-        actions={"add_item": add_item, "clear_cart": clear_cart}
+        actions={
+            "add_item": add_item,
+            "clear_cart": clear_cart,
+        }
     )
     machine = create_machine(config, logic=logic)
     interp = SyncInterpreter(machine).start()
 
     # Add items
-    interp.send("ADD_ITEM", item={"name": "Widget", "price": 10.0})
+    interp.send(
+        "ADD_ITEM",
+        item={
+            "name": "Widget",
+            "price": 10.0,
+        },
+    )
     assert len(interp.context["items"]) == 1
     assert interp.context["total"] == 10.0
 
-    interp.send("ADD_ITEM", item={"name": "Gadget", "price": 20.0})
+    interp.send(
+        "ADD_ITEM",
+        item={
+            "name": "Gadget",
+            "price": 20.0,
+        },
+    )
     assert len(interp.context["items"]) == 2
     assert interp.context["total"] == 30.0
 
@@ -1026,17 +1220,32 @@ config = {
     "id": "nav",
     "initial": "home",
     "states": {
-        "home": {"on": {"GO_ABOUT": "about", "GO_CONTACT": "contact"}},
-        "about": {"on": {"GO_HOME": "home"}},
-        "contact": {"on": {"GO_HOME": "home"}}
-    }
+        "home": {
+            "on": {
+                "GO_ABOUT": "about",
+                "GO_CONTACT": "contact",
+            },
+        },
+        "about": {
+            "on": {
+                "GO_HOME": "home",
+            },
+        },
+        "contact": {
+            "on": {
+                "GO_HOME": "home",
+            },
+        },
+    },
 }
 
 machine = create_machine(config)
 
 # Test transition targets without running an interpreter
 assert machine.get_next_state("nav.home", Event("GO_ABOUT")) == {"nav.about"}
-assert machine.get_next_state("nav.home", Event("GO_CONTACT")) == {"nav.contact"}
+assert machine.get_next_state("nav.home", Event("GO_CONTACT")) == {
+    "nav.contact"
+}
 assert machine.get_next_state("nav.about", Event("GO_HOME")) == {"nav.home"}
 assert machine.get_next_state("nav.home", Event("UNKNOWN")) is None
 ```
@@ -1053,34 +1262,59 @@ Use snapshots to jump to a specific state for targeted testing:
 import json
 from xstate_statemachine import create_machine, SyncInterpreter
 
+
 def test_checkout_from_payment():
     """Test the payment -> processing transition directly."""
     config = {
         "id": "shop",
         "initial": "browsing",
-        "context": {"cart": ["item1"], "paid": False},
+        "context": {
+            "cart": ["item1"],
+            "paid": False,
+        },
         "states": {
-            "browsing": {"on": {"CHECKOUT": "payment"}},
-            "payment": {
-                "on": {"PAY": {"target": "complete", "actions": "markPaid"}}
+            "browsing": {
+                "on": {
+                    "CHECKOUT": "payment",
+                },
             },
-            "complete": {"type": "final"}
-        }
+            "payment": {
+                "on": {
+                    "PAY": {
+                        "target": "complete",
+                        "actions": "markPaid",
+                    },
+                },
+            },
+            "complete": {
+                "type": "final",
+            },
+        },
     }
 
     from xstate_statemachine import MachineLogic
+
     logic = MachineLogic(
         actions={
-            "markPaid": lambda i, ctx, e, a: ctx.update({"paid": True})
+            "markPaid": lambda i, ctx, e, a: ctx.update(
+                {
+                    "paid": True,
+                }
+            ),
         }
     )
 
     # Jump directly to payment state
-    snapshot = json.dumps({
-        "status": "running",
-        "context": {"cart": ["item1", "item2"], "paid": False},
-        "state_ids": ["shop.payment"]
-    })
+    snapshot = json.dumps(
+        {
+            "status": "running",
+            "context": {
+                "cart": ["item1", "item2"],
+                "paid": False,
+            },
+            "state_ids": ["shop.payment"],
+        }
+    )
 
     machine = create_machine(config, logic=logic)
     interp = SyncInterpreter.from_snapshot(snapshot, machine)
@@ -1108,8 +1342,16 @@ config = {
     "id": "trafficTimer",
     "initial": "red",
     "states": {
-        "red": {"after": {"5000": "green"}},
-        "green": {"after": {"3000": "red"}},
+        "red": {
+            "after": {
+                "5000": "green",
+            },
+        },
+        "green": {
+            "after": {
+                "3000": "red",
+            },
+        },
     },
 }
 
@@ -1144,8 +1386,16 @@ config = {
     "id": "toggle",
     "initial": "off",
     "states": {
-        "off": {"on": {"FLIP": "on"}},
-        "on": {"on": {"FLIP": "off"}},
+        "off": {
+            "on": {
+                "FLIP": "on",
+            },
+        },
+        "on": {
+            "on": {
+                "FLIP": "off",
+            },
+        },
     },
 }
 machine = create_machine(config)

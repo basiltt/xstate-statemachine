@@ -24,26 +24,47 @@ from prometheus_client import CollectorRegistry, generate_latest
 
 from xstate_statemachine import SyncInterpreter, create_machine
 from xstate_statemachine.contrib.observability import (
-    PrometheusPlugin, instrument_all, uninstrument_all,
+    PrometheusPlugin,
+    instrument_all,
+    uninstrument_all,
 )
 
-machine = create_machine({
-    "id": "door", "initial": "closed",
-    "states": {"closed": {"on": {"OPEN": "open"}}, "open": {"on": {"CLOSE": "closed"}}},
-})
+machine = create_machine(
+    {
+        "id": "door",
+        "initial": "closed",
+        "states": {
+            "closed": {
+                "on": {
+                    "OPEN": "open",
+                },
+            },
+            "open": {
+                "on": {
+                    "CLOSE": "closed",
+                },
+            },
+        },
+    }
+)
 
 registry = CollectorRegistry()
-attached = instrument_all(otel=True, prometheus=PrometheusPlugin(registry=registry))
+attached = instrument_all(
+    otel=True, prometheus=PrometheusPlugin(registry=registry)
+)
 
-door = SyncInterpreter(machine).start()      # built AFTER the call -> instrumented
+door = SyncInterpreter(machine).start()  # built AFTER the call -> instrumented
 door.send("OPEN")
-door.send("KNOCK")                           # undeclared -> label "unknown"
+door.send("KNOCK")  # undeclared -> label "unknown"
 door.stop()
 
 text = generate_latest(registry).decode()
-assert 'xstatemachine_transitions_total{event="OPEN",from_state="door.closed"' in text
+assert (
+    'xstatemachine_transitions_total{event="OPEN",from_state="door.closed"'
+    in text
+)
 assert 'disposition="unhandled"' in text and "KNOCK" not in text
-uninstrument_all(attached)                   # tests: leave the process as found
+uninstrument_all(attached)  # tests: leave the process as found
 ```
 
 <div class="stately" data-machine="c00355f959" data-height="320" data-title="door"></div>

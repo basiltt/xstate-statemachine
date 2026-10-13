@@ -25,11 +25,23 @@ import django
 from django.conf import settings
 
 settings.configure(
-    INSTALLED_APPS=["django.contrib.contenttypes", "django.contrib.auth",
-                    "rest_framework", "xstate_statemachine.contrib.django"],
-    DATABASES={"default": {"ENGINE": "django.db.backends.sqlite3", "NAME": ":memory:"}},
-    DEFAULT_AUTO_FIELD="django.db.models.BigAutoField", ROOT_URLCONF=__name__,
-    REST_FRAMEWORK={"DEFAULT_AUTHENTICATION_CLASSES": []},
+    INSTALLED_APPS=[
+        "django.contrib.contenttypes",
+        "django.contrib.auth",
+        "rest_framework",
+        "xstate_statemachine.contrib.django",
+    ],
+    DATABASES={
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": ":memory:",
+        },
+    },
+    DEFAULT_AUTO_FIELD="django.db.models.BigAutoField",
+    ROOT_URLCONF=__name__,
+    REST_FRAMEWORK={
+        "DEFAULT_AUTHENTICATION_CLASSES": [],
+    },
 )
 django.setup()
 
@@ -41,29 +53,57 @@ from rest_framework import mixins, serializers, viewsets
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.routers import DefaultRouter
 from rest_framework.test import APIClient
-from xstate_statemachine.contrib.django import StatechartField, StatechartModelMixin
-from xstate_statemachine.contrib.drf import StatechartSerializerField, StatechartViewSetMixin
+from xstate_statemachine.contrib.django import (
+    StatechartField,
+    StatechartModelMixin,
+)
+from xstate_statemachine.contrib.drf import (
+    StatechartSerializerField,
+    StatechartViewSetMixin,
+)
+
 
 class Order(StatechartModelMixin, models.Model):
-    statechart_machine = {"id": "order", "initial": "cart", "states": {
-        "cart": {"on": {"CHECKOUT": "paying"}},
-        "paying": {"on": {"PAY": "paid", "CANCEL": "cart"}},
-        "paid": {"type": "final"}}}
+    statechart_machine = {
+        "id": "order",
+        "initial": "cart",
+        "states": {
+            "cart": {
+                "on": {
+                    "CHECKOUT": "paying",
+                },
+            },
+            "paying": {
+                "on": {
+                    "PAY": "paid",
+                    "CANCEL": "cart",
+                },
+            },
+            "paid": {
+                "type": "final",
+            },
+        },
+    }
     statechart = StatechartField()
 
     class Meta:
         app_label = "shop"
 
+
 class OrderSerializer(serializers.ModelSerializer):
     statechart = StatechartSerializerField()
+
     class Meta:
         model, fields = Order, ["id", "statechart"]
 
-class OrderViewSet(StatechartViewSetMixin, mixins.RetrieveModelMixin,
-                   viewsets.GenericViewSet):
+
+class OrderViewSet(
+    StatechartViewSetMixin, mixins.RetrieveModelMixin, viewsets.GenericViewSet
+):
     queryset = Order.objects.all()
     serializer_class = OrderSerializer
-    permission_classes = [IsAuthenticated]      # required: closed by default
+    permission_classes = [IsAuthenticated]  # required: closed by default
+
 
 router = DefaultRouter()
 router.register("orders", OrderViewSet)
@@ -78,11 +118,20 @@ client.force_authenticate(get_user_model().objects.create_user("alice"))
 order = Order.objects.create()
 r = client.post(f"/api/orders/{order.pk}/checkout/", {}, format="json")
 assert r.status_code == 200 and r.json()["state"] == "paying"
-r = client.post(f"/api/orders/{order.pk}/send/", {"type": "PAY"}, format="json")
+r = client.post(
+    f"/api/orders/{order.pk}/send/",
+    {
+        "type": "PAY",
+    },
+    format="json",
+)
 assert r.status_code == 200 and r.json()["changed"] is True
 r = client.post(f"/api/orders/{order.pk}/cancel/", {}, format="json")
-assert r.status_code == 409                       # finished: refused
-assert client.get(f"/api/orders/{order.pk}/").json()["statechart"]["state"] == "paid"
+assert r.status_code == 409  # finished: refused
+assert (
+    client.get(f"/api/orders/{order.pk}/").json()["statechart"]["state"]
+    == "paid"
+)
 ```
 
 <div class="stately" data-machine="1e721b2c3b" data-height="320" data-title="order"></div>

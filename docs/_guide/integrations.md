@@ -91,32 +91,57 @@ from xstate_statemachine.cli.__main__ import main as xsm
 
 os.chdir(tempfile.mkdtemp())
 chart = {
-    "id": "order", "version": "1", "initial": "cart",
+    "id": "order",
+    "version": "1",
+    "initial": "cart",
     "states": {
-        "cart": {"on": {"CHECKOUT": "awaitingPayment"}},
-        "awaitingPayment": {"on": {"PAY": "paid"},
-                            "after": {"900000": "expired"}},
-        "paid": {"type": "final"},
-        "expired": {"type": "final"},
+        "cart": {
+            "on": {
+                "CHECKOUT": "awaitingPayment",
+            },
+        },
+        "awaitingPayment": {
+            "on": {
+                "PAY": "paid",
+            },
+            "after": {
+                "900000": "expired",
+            },
+        },
+        "paid": {
+            "type": "final",
+        },
+        "expired": {
+            "type": "final",
+        },
     },
 }
 Path("order.machine.json").write_text(json.dumps(chart, indent=2))
 
-def run(*argv):                    # the same as typing `xsm ...` in a shell
+
+def run(*argv):  # the same as typing `xsm ...` in a shell
     sys.argv = ["xsm", "--plain", *argv]
     try:
         xsm()
     except SystemExit as exc:
         assert not exc.code, (argv, exc.code)
 
-run("validate", "order.machine.json")           # builds it with the real library
-run("inspect", "order.machine.json")            # state tree, events, timers
-flags = ["-t", "pythonic-class", "--with-api", "--with-models",
-         "--with-tests", "-o", "generated"]
+
+run("validate", "order.machine.json")  # builds it with the real library
+run("inspect", "order.machine.json")  # state tree, events, timers
+flags = [
+    "-t",
+    "pythonic-class",
+    "--with-api",
+    "--with-models",
+    "--with-tests",
+    "-o",
+    "generated",
+]
 run("gt", "order.machine.json", *flags, "-f")
 for name in ("order_api.py", "order_models.py", "test_order.py"):
-    assert Path("generated", name).is_file()    # router, event models, tests
-run("gt", "--check", "order.machine.json", *flags)   # CI: fails when stale
+    assert Path("generated", name).is_file()  # router, event models, tests
+run("gt", "--check", "order.machine.json", *flags)  # CI: fails when stale
 ```
 
 <div class="stately" data-machine="d74728ac8c" data-height="420" data-title="order"></div>
@@ -138,28 +163,51 @@ from fastapi.testclient import TestClient
 
 from xstate_statemachine import create_machine
 from xstate_statemachine.contrib.fastapi import (
-    StatechartRegistry, StatechartRouter, instrument_app,
+    StatechartRegistry,
+    StatechartRouter,
+    instrument_app,
 )
 from xstate_statemachine.contrib.pydantic import EventModel, events_union
 from xstate_statemachine.persistence import SQLiteStore
 
+
 class Checkout(EventModel):
     type: Literal["CHECKOUT"] = "CHECKOUT"
+
 
 class Pay(EventModel):
     type: Literal["PAY"] = "PAY"
     card_token: str
 
+
 order = create_machine(
-    {"id": "order", "version": "1", "initial": "cart",
-     "states": {"cart": {"on": {"CHECKOUT": "awaitingPayment"}},
-                "awaitingPayment": {"on": {"PAY": "paid"}},
-                "paid": {"type": "final"}}},
+    {
+        "id": "order",
+        "version": "1",
+        "initial": "cart",
+        "states": {
+            "cart": {
+                "on": {
+                    "CHECKOUT": "awaitingPayment",
+                },
+            },
+            "awaitingPayment": {
+                "on": {
+                    "PAY": "paid",
+                },
+            },
+            "paid": {
+                "type": "final",
+            },
+        },
+    },
     event_schemas=events_union(Checkout, Pay),
 )
 
+
 def authorize(conn, *, name, key, event):
-    return conn.headers.get("x-customer") is not None    # your auth here
+    return conn.headers.get("x-customer") is not None  # your auth here
+
 
 store = SQLiteStore(str(Path(tempfile.mkdtemp()) / "orders.db"))
 registry = StatechartRegistry(store)
@@ -169,13 +217,27 @@ app.include_router(StatechartRouter(registry, "order", prefix="/orders"))
 instrument_app(app, registry)
 
 with TestClient(app) as client:
-    ann = {"x-customer": "ann"}
-    client.post("/orders/o1/send", json={"type": "CHECKOUT"}, headers=ann)
-    r = client.post("/orders/o1/send", json={"type": "PAY", "card_token": "t"},
-                    headers=ann)
+    ann = {
+        "x-customer": "ann",
+    }
+    client.post(
+        "/orders/o1/send",
+        json={
+            "type": "CHECKOUT",
+        },
+        headers=ann,
+    )
+    r = client.post(
+        "/orders/o1/send",
+        json={
+            "type": "PAY",
+            "card_token": "t",
+        },
+        headers=ann,
+    )
     assert r.status_code == 200 and r.json()["state"] == "paid"
     assert client.get("/orders/o1", headers=ann).json()["state"] == "paid"
-assert store.load("order.o1").version == 2      # two committed changes
+assert store.load("order.o1").version == 2  # two committed changes
 ```
 
 <div class="stately" data-machine="a34c009588" data-height="320" data-title="order"></div>
@@ -194,33 +256,69 @@ from fastapi.testclient import TestClient
 
 from xstate_statemachine import MachineLogic, create_machine
 from xstate_statemachine.contrib.fastapi import (
-    StatechartRegistry, StatechartRouter, instrument_app,
+    StatechartRegistry,
+    StatechartRouter,
+    instrument_app,
 )
 from xstate_statemachine.persistence import SQLiteInbox, SQLiteStore
 
 order = create_machine(
-    {"id": "order", "initial": "open", "context": {"n": 0},
-     "states": {"open": {"on": {"ADD": {"actions": "add"}}}}},
-    logic=MachineLogic(actions={"add": lambda i, ctx, e, a: ctx.update(n=ctx["n"] + 1)}),
+    {
+        "id": "order",
+        "initial": "open",
+        "context": {
+            "n": 0,
+        },
+        "states": {
+            "open": {
+                "on": {
+                    "ADD": {
+                        "actions": "add",
+                    },
+                },
+            },
+        },
+    },
+    logic=MachineLogic(
+        actions={
+            "add": lambda i, ctx, e, a: ctx.update(n=ctx["n"] + 1),
+        }
+    ),
 )
 store = SQLiteStore(str(Path(tempfile.mkdtemp()) / "orders.db"))
 registry = StatechartRegistry(
     store,
-    inbox=SQLiteInbox(store),                           # ← the idempotency inbox
+    inbox=SQLiteInbox(store),  # ← the idempotency inbox
     principal=lambda conn: conn.headers["x-customer"],  # its scope (X0.2)
 )
-registry.register("order", order,
-                  authorize=lambda conn, **kw: "x-customer" in conn.headers)
+registry.register(
+    "order", order, authorize=lambda conn, **kw: "x-customer" in conn.headers
+)
 app = FastAPI()
 app.include_router(StatechartRouter(registry, "order", prefix="/orders"))
 instrument_app(app, registry)
 
 with TestClient(app) as client:
-    h = {"x-customer": "ann", "Idempotency-Key": "add-1"}
-    first = client.post("/orders/o1/send", json={"type": "ADD"}, headers=h)
-    again = client.post("/orders/o1/send", json={"type": "ADD"}, headers=h)
+    h = {
+        "x-customer": "ann",
+        "Idempotency-Key": "add-1",
+    }
+    first = client.post(
+        "/orders/o1/send",
+        json={
+            "type": "ADD",
+        },
+        headers=h,
+    )
+    again = client.post(
+        "/orders/o1/send",
+        json={
+            "type": "ADD",
+        },
+        headers=h,
+    )
     assert first.json()["changed"] and again.json()["duplicate"] is True
-assert store.load("order.o1").version == 1            # acted once
+assert store.load("order.o1").version == 1  # acted once
 ```
 
 <div class="stately" data-machine="f51fd79b79" data-height="320" data-title="order"></div>
@@ -237,31 +335,64 @@ from fastapi.testclient import TestClient
 
 from xstate_statemachine import MachineLogic, create_machine
 from xstate_statemachine.contrib.fastapi import (
-    StatechartRegistry, StatechartRouter, instrument_app,
+    StatechartRegistry,
+    StatechartRouter,
+    instrument_app,
 )
 from xstate_statemachine.contrib.redis import RedisInbox, RedisStore
 
 order = create_machine(
-    {"id": "order", "initial": "open", "context": {"n": 0},
-     "states": {"open": {"on": {"ADD": {"actions": "add"}}}}},
-    logic=MachineLogic(actions={"add": lambda i, ctx, e, a: ctx.update(n=ctx["n"] + 1)}),
+    {
+        "id": "order",
+        "initial": "open",
+        "context": {
+            "n": 0,
+        },
+        "states": {
+            "open": {
+                "on": {
+                    "ADD": {
+                        "actions": "add",
+                    },
+                },
+            },
+        },
+    },
+    logic=MachineLogic(
+        actions={
+            "add": lambda i, ctx, e, a: ctx.update(n=ctx["n"] + 1),
+        }
+    ),
 )
-r = fakeredis.FakeRedis()                       # redis.Redis.from_url(...) in production
+r = fakeredis.FakeRedis()  # redis.Redis.from_url(...) in production
 store = RedisStore(r, prefix="orders")
-registry = StatechartRegistry(store, inbox=RedisInbox(r, prefix="orders"),
-                              principal=lambda conn: conn.headers["x-customer"])
-registry.register("order", order,
-                  authorize=lambda conn, **kw: "x-customer" in conn.headers)
+registry = StatechartRegistry(
+    store,
+    inbox=RedisInbox(r, prefix="orders"),
+    principal=lambda conn: conn.headers["x-customer"],
+)
+registry.register(
+    "order", order, authorize=lambda conn, **kw: "x-customer" in conn.headers
+)
 app = FastAPI()
 app.include_router(StatechartRouter(registry, "order", prefix="/orders"))
 instrument_app(app, registry)
 
 with TestClient(app) as client:
-    h = {"x-customer": "ann", "Idempotency-Key": "add-1"}
+    h = {
+        "x-customer": "ann",
+        "Idempotency-Key": "add-1",
+    }
     for _ in range(3):
-        client.post("/orders/o1/send", json={"type": "ADD"}, headers=h)
+        client.post(
+            "/orders/o1/send",
+            json={
+                "type": "ADD",
+            },
+            headers=h,
+        )
 record = store.load("order.o1")
-assert record.version == 1                      # three deliveries, one change
+assert record.version == 1  # three deliveries, one change
 ```
 
 <div class="stately" data-machine="f51fd79b79" data-height="320" data-title="order"></div>

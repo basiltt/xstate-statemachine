@@ -9,14 +9,60 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-13
+
 ### Changed
+
+- Aligned the development lockfile with version 0.11.0, its declared extras,
+  and development dependency groups. Clarified the release checklist and
+  publishing workflow documentation without changing the publishing gates.
+
+- Made the GitHub Pages documentation responsive across phones, tablets and
+  desktops, with accessible mobile menus, persistent search/theme controls,
+  and contained code/table scrolling. Expanded statechart JSON and Python
+  dictionaries throughout the guides, API reference and homepage without
+  changing their behavior, and added formatting/layout regression checks.
+  Diagram fullscreen controls now fit small screens, preserve usable zoom
+  and keyboard focus, and follow the selected site theme.
 
 - Redesigned the README with responsive SVG branding, clearer onboarding and
   navigation, an expanded event-driven architecture introduction, and scoped
   competitor comparisons. Preserved the technical guide, examples, diagrams
   and API reference while clarifying operational guarantees and limitations.
 
-## [0.11.0] - 2026-10-12
+### Removed
+
+- Removed the obsolete `VIDEO_DIAGRAMS.md` and `VIDEO_SCRIPT.md` production
+  drafts, the standalone `.release-notes-0.8.0.md` draft, and the unused
+  root-level `e2e.py` scratch script that depended on a missing `mc.json`.
+  Use the maintained user guide and runnable `examples/` instead of the video
+  drafts and scratch runner; use the versioned changelog below for release
+  history. Regression evidence and maintained tooling remain available.
+
+### Fixed
+
+- Made SQLite store scaling checks independent of short disk/WAL timing
+  samples that could fail on shared Windows runners. The original 1, 100,
+  and 2,000-record workloads and timing reports remain, with fixed SQL
+  instruction budgets enforcing bounded save/load/delete and limited-list
+  work. Regressions reject missing deadline indexes and unbounded listings,
+  preserve operation results, and verify instrumentation cleanup. Runtime
+  behavior and the 90% coverage minimum are unchanged.
+
+- Made the 100,000-record deadline-scanner regression independent of CI
+  runner speed by checking bounded metadata/SQL work instead of a fixed
+  half-second duration. Preserved exact due-key ordering and zero snapshot
+  loads, with regressions for excessive work and probe cleanup. Runtime
+  behavior, CI workflows and the 90% coverage minimum remain unchanged.
+
+- Stabilized the Litestar streaming regression under coverage by allowing
+  valid SSE heartbeat comments before transitions. Deterministic tests keep
+  strict event ordering, bounded waits, slow-subscriber cutoff and connection
+  cleanup checks without changing runtime behavior or the coverage gate.
+
+- Eliminated a timing-dependent false positive in the EDA example telemetry
+  privacy checks by checking metric labels separately from numeric samples.
+  Python 3.9 adoption failures now include complete nested test diagnostics.
 
 ### Release polish (Changed)
 

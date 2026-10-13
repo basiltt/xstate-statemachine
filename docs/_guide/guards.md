@@ -45,10 +45,15 @@ The library accepts both `"guard"` and `"cond"` as the key for conditional trans
 
 ```json
 // Preferred (XState v5 style)
-{"target": "allowed", "guard": "isAdult"}
-
+{
+  "target": "allowed",
+  "guard": "isAdult"
+}
 // Also supported (XState v4 style)
-{"target": "allowed", "cond": "isAdult"}
+{
+  "target": "allowed",
+  "cond": "isAdult"
+}
 ```
 
 Both are functionally identical. The `cond` key exists for backward compatibility with XState v4 configs — the library normalizes it to `guard` internally. **Prefer `guard`** in new configs.
@@ -61,7 +66,9 @@ Attach a `guard` key to a transition object:
 {
   "id": "ageGate",
   "initial": "checking",
-  "context": { "age": 21 },
+  "context": {
+    "age": 21
+  },
   "states": {
     "checking": {
       "on": {
@@ -89,19 +96,29 @@ Use an **array** of transition objects to define multiple candidate transitions 
 {
   "id": "ageGate",
   "initial": "checking",
-  "context": { "age": 16 },
+  "context": {
+    "age": 16
+  },
   "states": {
     "checking": {
       "on": {
         "VERIFY": [
-          { "target": "allowed",  "guard": "isAdult" },
-          { "target": "teen",     "guard": "isTeen" },
-          { "target": "rejected" }
+          {
+            "target": "allowed",
+            "guard": "isAdult"
+          },
+          {
+            "target": "teen",
+            "guard": "isTeen"
+          },
+          {
+            "target": "rejected"
+          }
         ]
       }
     },
-    "allowed":  {},
-    "teen":     {},
+    "allowed": {},
+    "teen": {},
     "rejected": {}
   }
 }
@@ -115,8 +132,13 @@ The last transition in the array has no `guard` key — it acts as a **fallback*
 
 ```json
 "VERIFY": [
-  { "target": "allowed",  "guard": "isAdult" },
-  { "target": "rejected" }
+  {
+    "target": "allowed",
+    "guard": "isAdult"
+  },
+  {
+    "target": "rejected"
+  }
 ]
 ```
 
@@ -139,7 +161,9 @@ Guards can be composed from other guards using the built-in `and`, `or`, and `no
   "target": "allowed",
   "guard": {
     "type": "and",
-    "params": { "guards": ["isAdult", "hasFunds"] }
+    "params": {
+      "guards": ["isAdult", "hasFunds"]
+    }
   }
 }
 ```
@@ -149,12 +173,19 @@ Guards can be composed from other guards using the built-in `and`, `or`, and `no
 - **`not`** — inverts a single nested guard; it requires **exactly one** child guard.
 
 ```python
-from src.xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
+from src.xstate_statemachine import (
+    create_machine,
+    SyncInterpreter,
+    MachineLogic,
+)
 
 config = {
     "id": "checkout",
     "initial": "cart",
-    "context": {"age": 20, "has_funds": True},
+    "context": {
+        "age": 20,
+        "has_funds": True,
+    },
     "states": {
         "cart": {
             "on": {
@@ -163,12 +194,16 @@ config = {
                         "target": "allowed",
                         "guard": {
                             "type": "and",
-                            "params": {"guards": ["isAdult", "hasFunds"]},
+                            "params": {
+                                "guards": ["isAdult", "hasFunds"],
+                            },
                         },
                     },
-                    {"target": "denied"},
-                ]
-            }
+                    {
+                        "target": "denied",
+                    },
+                ],
+            },
         },
         "allowed": {},
         "denied": {},
@@ -211,11 +246,25 @@ config = {
     "id": "door",
     "initial": "closed",
     "states": {
-        "closed": {"on": {"OPEN": {"target": "open", "guard": "!isLocked"}}},
+        "closed": {
+            "on": {
+                "OPEN": {
+                    "target": "open",
+                    "guard": "!isLocked",
+                },
+            },
+        },
         "open": {},
     },
 }
-machine = create_machine(config, logic=MachineLogic(guards={"isLocked": lambda c, e: False}))
+machine = create_machine(
+    config,
+    logic=MachineLogic(
+        guards={
+            "isLocked": lambda c, e: False,
+        }
+    ),
+)
 interp = SyncInterpreter(machine).start()
 interp.send("OPEN")
 assert interp.matches("door.open")
@@ -232,7 +281,9 @@ assert interp.matches("door.open")
   "target": "step1",
   "guard": {
     "type": "stateIn",
-    "params": { "state": "#wizard.step2" }
+    "params": {
+      "state": "#wizard.step2"
+    }
   }
 }
 ```
@@ -245,7 +296,11 @@ config = {
     "initial": "step1",
     "context": {},
     "states": {
-        "step1": {"on": {"NEXT": "step2"}},
+        "step1": {
+            "on": {
+                "NEXT": "step2",
+            },
+        },
         "step2": {
             "on": {
                 "BACK_TO_ONE": [
@@ -253,12 +308,16 @@ config = {
                         "target": "step1",
                         "guard": {
                             "type": "stateIn",
-                            "params": {"state": "#wizard.step2"},
+                            "params": {
+                                "state": "#wizard.step2",
+                            },
                         },
                     },
-                    {"target": "step2"},
-                ]
-            }
+                    {
+                        "target": "step2",
+                    },
+                ],
+            },
         },
     },
 }
@@ -287,18 +346,27 @@ A guard can be given a `params` object, which the interpreter resolves and passe
   "target": "processing",
   "guard": {
     "type": "hasSufficientFunds",
-    "params": { "minAmount": 100 }
+    "params": {
+      "minAmount": 100
+    }
   }
 }
 ```
 
 ```python
-from src.xstate_statemachine import create_machine, SyncInterpreter, MachineLogic, guard
+from src.xstate_statemachine import (
+    create_machine,
+    SyncInterpreter,
+    MachineLogic,
+    guard,
+)
 
 config = {
     "id": "withdrawalMachine",
     "initial": "idle",
-    "context": {"balance": 500.00},
+    "context": {
+        "balance": 500.00,
+    },
     "states": {
         "idle": {
             "on": {
@@ -307,12 +375,16 @@ config = {
                         "target": "processing",
                         "guard": {
                             "type": "hasSufficientFunds",
-                            "params": {"minAmount": 100},
+                            "params": {
+                                "minAmount": 100,
+                            },
                         },
                     },
-                    {"target": "denied"},
-                ]
-            }
+                    {
+                        "target": "denied",
+                    },
+                ],
+            },
         },
         "processing": {},
         "denied": {},
@@ -336,7 +408,9 @@ interp.stop()
 
 interp2 = SyncInterpreter(machine).start()
 interp2.send("WITHDRAW", amount=50.00)
-print(interp2.current_state_ids)  # {"withdrawalMachine.denied"} — below minAmount
+print(
+    interp2.current_state_ids
+)  # {"withdrawalMachine.denied"} — below minAmount
 interp2.stop()
 ```
 
@@ -356,22 +430,33 @@ from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 config = {
     "id": "ageGate",
     "initial": "checking",
-    "context": {"age": 16},
+    "context": {
+        "age": 16,
+    },
     "states": {
         "checking": {
             "on": {
                 "VERIFY": [
-                    {"target": "allowed",  "guard": "isAdult"},
-                    {"target": "teen",     "guard": "isTeen"},
-                    {"target": "rejected"}
-                ]
-            }
+                    {
+                        "target": "allowed",
+                        "guard": "isAdult",
+                    },
+                    {
+                        "target": "teen",
+                        "guard": "isTeen",
+                    },
+                    {
+                        "target": "rejected",
+                    },
+                ],
+            },
         },
-        "allowed":  {},
-        "teen":     {},
-        "rejected": {}
-    }
+        "allowed": {},
+        "teen": {},
+        "rejected": {},
+    },
 }
+
 
 class AgeLogic(MachineLogic):
     def is_adult(self, context, event):
@@ -379,6 +464,7 @@ class AgeLogic(MachineLogic):
 
     def is_teen(self, context, event):
         return 13 <= context.get("age", 0) < 18
+
 
 machine = create_machine(config, logic=AgeLogic())
 interp = SyncInterpreter(machine).start()
@@ -433,23 +519,26 @@ In the class-based API, combine transitions using `|` to create guarded routing:
 ```python
 from xstate_statemachine import State, StateMachine, SyncInterpreter, guard
 
+
 class AgeGate(StateMachine):
     machine_id = "ageGate"
-    initial_context = {"age": 16}
+    initial_context = {
+        "age": 16,
+    }
 
     checking = State("checking", initial=True)
-    allowed  = State("allowed")
+    allowed = State("allowed")
     rejected = State("rejected")
 
     # First matching guard wins; last transition is the fallback
-    verify = (
-        checking.to(allowed,  event="VERIFY", guard="isAdult")
-        | checking.to(rejected, event="VERIFY")
-    )
+    verify = checking.to(
+        allowed, event="VERIFY", guard="isAdult"
+    ) | checking.to(rejected, event="VERIFY")
 
     @guard
     def is_adult(self, context, event):
         return context.get("age", 0) >= 18
+
 
 machine = AgeGate.create_machine()
 interp = SyncInterpreter(machine).start()
@@ -494,25 +583,34 @@ from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 config = {
     "id": "withdrawalMachine",
     "initial": "idle",
-    "context": {"balance": 500.00},
+    "context": {
+        "balance": 500.00,
+    },
     "states": {
         "idle": {
             "on": {
                 "WITHDRAW": [
-                    {"target": "processing", "guard": "hasSufficientFunds"},
-                    {"target": "denied"}
-                ]
-            }
+                    {
+                        "target": "processing",
+                        "guard": "hasSufficientFunds",
+                    },
+                    {
+                        "target": "denied",
+                    },
+                ],
+            },
         },
         "processing": {},
-        "denied": {}
-    }
+        "denied": {},
+    },
 }
+
 
 class BankLogic(MachineLogic):
     def has_sufficient_funds(self, context, event):
         amount = event.payload.get("amount", 0)
         return context["balance"] >= amount
+
 
 machine = create_machine(config, logic=BankLogic())
 interp = SyncInterpreter(machine).start()
@@ -560,9 +658,17 @@ class Logic(MachineLogic):
 
 ```json
 "BUY": [
-  { "target": "outOfStock",    "guard": "isOutOfStock" },
-  { "target": "insufficientFunds", "guard": "insufficientBalance" },
-  { "target": "purchased" }
+  {
+    "target": "outOfStock",
+    "guard": "isOutOfStock"
+  },
+  {
+    "target": "insufficientFunds",
+    "guard": "insufficientBalance"
+  },
+  {
+    "target": "purchased"
+  }
 ]
 ```
 
@@ -612,7 +718,9 @@ If a guard raises an exception, the interpreter treats *that candidate* as decid
   "id": "m",
   "guardErrorPolicy": "false",
   "initial": "a",
-  "states": { "a": {} }
+  "states": {
+    "a": {}
+  }
 }
 ```
 
@@ -652,21 +760,36 @@ config = {
         "verifying": {
             "on": {
                 "SUBMIT_AGE": [
-                    {"target": "senior",   "guard": "isSenior"},
-                    {"target": "adult",    "guard": "isAdult"},
-                    {"target": "teen",     "guard": "isTeen"},
-                    {"target": "child",    "guard": "isChild"},
-                    {"target": "invalid"}
-                ]
-            }
+                    {
+                        "target": "senior",
+                        "guard": "isSenior",
+                    },
+                    {
+                        "target": "adult",
+                        "guard": "isAdult",
+                    },
+                    {
+                        "target": "teen",
+                        "guard": "isTeen",
+                    },
+                    {
+                        "target": "child",
+                        "guard": "isChild",
+                    },
+                    {
+                        "target": "invalid",
+                    },
+                ],
+            },
         },
-        "senior":  {},
-        "adult":   {},
-        "teen":    {},
-        "child":   {},
-        "invalid": {}
-    }
+        "senior": {},
+        "adult": {},
+        "teen": {},
+        "child": {},
+        "invalid": {},
+    },
 }
+
 
 class AgeVerificationLogic(MachineLogic):
     def is_senior(self, context, event):
@@ -684,6 +807,7 @@ class AgeVerificationLogic(MachineLogic):
     def is_child(self, context, event):
         age = event.payload.get("age", -1)
         return 0 <= age < 13
+
 
 machine = create_machine(config, logic=AgeVerificationLogic())
 
@@ -711,22 +835,33 @@ A role-based access control machine using guards on event payload:
 
 ```python
 from xstate_statemachine import (
-    State, StateMachine, SyncInterpreter, guard, action
+    State,
+    StateMachine,
+    SyncInterpreter,
+    guard,
+    action,
 )
+
 
 class RoleRouter(StateMachine):
     machine_id = "roleRouter"
-    initial_context = {"auditLog": []}
+    initial_context = {
+        "auditLog": [],
+    }
 
-    gate       = State("gate", initial=True)
+    gate = State("gate", initial=True)
     admin_area = State("adminArea")
-    user_area  = State("userArea")
+    user_area = State("userArea")
     guest_area = State("guestArea")
 
     # Route based on role — first matching guard wins
     access = (
-        gate.to(admin_area, event="ACCESS", guard="isAdmin", actions=["logAccess"])
-        | gate.to(user_area, event="ACCESS", guard="isUser", actions=["logAccess"])
+        gate.to(
+            admin_area, event="ACCESS", guard="isAdmin", actions=["logAccess"]
+        )
+        | gate.to(
+            user_area, event="ACCESS", guard="isUser", actions=["logAccess"]
+        )
         | gate.to(guest_area, event="ACCESS", actions=["logAccess"])
     )
 
@@ -743,6 +878,7 @@ class RoleRouter(StateMachine):
         role = event.payload.get("role", "guest")
         name = event.payload.get("name", "anonymous")
         context["auditLog"].append(f"{name} ({role})")
+
 
 machine = RoleRouter.create_machine()
 

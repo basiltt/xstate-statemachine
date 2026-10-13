@@ -20,28 +20,61 @@ flowchart LR
 ```python
 from xstate_statemachine import MachineLogic, create_machine
 from xstate_statemachine.persistence import (
-    ConflictError, MemoryStore, load_interpreter, save_interpreter,
+    ConflictError,
+    MemoryStore,
+    load_interpreter,
+    save_interpreter,
 )
 
-cfg = {"id": "order", "initial": "cart", "context": {"items": 0},
-       "states": {"cart": {"on": {"ADD": {"actions": "add"}, "CHECKOUT": "paid"}},
-                  "paid": {"type": "final"}}}
+cfg = {
+    "id": "order",
+    "initial": "cart",
+    "context": {
+        "items": 0,
+    },
+    "states": {
+        "cart": {
+            "on": {
+                "ADD": {
+                    "actions": "add",
+                },
+                "CHECKOUT": "paid",
+            },
+        },
+        "paid": {
+            "type": "final",
+        },
+    },
+}
+
+
 def add(i, ctx, e, a):
     ctx["items"] += 1
-machine = create_machine(cfg, logic=MachineLogic(actions={"add": add}))
-store = MemoryStore()                         # swap for FileStore / SQLiteStore
+
+
+machine = create_machine(
+    cfg,
+    logic=MachineLogic(
+        actions={
+            "add": add,
+        }
+    ),
+)
+store = MemoryStore()  # swap for FileStore / SQLiteStore
+
 
 def handle(key: str, event: str) -> None:
-    while True:                               # the optimistic retry loop
-        interp, version = load_interpreter(store, key, machine)   # started
+    while True:  # the optimistic retry loop
+        interp, version = load_interpreter(store, key, machine)  # started
         try:
             interp.send(event)
             save_interpreter(store, key, interp, expected_version=version)
             return
         except ConflictError:
-            continue                          # someone saved first: reload, redo
+            continue  # someone saved first: reload, redo
         finally:
-            interp.stop()                     # discard
+            interp.stop()  # discard
+
 
 handle("order-42", "ADD")
 handle("order-42", "ADD")
@@ -70,15 +103,26 @@ Every backend passes the same contract test suite (`tests/persistence/test_store
 from xstate_statemachine import SyncInterpreter, create_machine
 from xstate_statemachine.persistence import MemoryStore, StoredSnapshot
 
-machine = create_machine({"id": "m", "version": "3", "initial": "a", "states": {"a": {}}})
+machine = create_machine(
+    {
+        "id": "m",
+        "version": "3",
+        "initial": "a",
+        "states": {
+            "a": {},
+        },
+    }
+)
 interp = SyncInterpreter(machine).start()
 store = MemoryStore()
 
-version = store.save("m-1", interp.get_snapshot(), machine_version=machine.version or "")
+version = store.save(
+    "m-1", interp.get_snapshot(), machine_version=machine.version or ""
+)
 record = store.load("m-1")
 assert isinstance(record, StoredSnapshot)
 assert (record.key, record.version, record.machine_version) == ("m-1", 1, "3")
-assert record.deadlines == ()          # durable timers land here (#264)
+assert record.deadlines == ()  # durable timers land here (#264)
 interp.stop()
 ```
 
@@ -119,16 +163,44 @@ The retry loop above is what every handler ends up writing. `persisted()` writes
 from xstate_statemachine import MachineLogic, create_machine
 from xstate_statemachine.persistence import MemoryStore, persisted
 
-cfg = {"id": "order", "initial": "cart", "context": {"items": 0},
-       "states": {"cart": {"on": {"ADD": {"actions": "add"}, "PAY": "paid"}},
-                  "paid": {"type": "final"}}}
+cfg = {
+    "id": "order",
+    "initial": "cart",
+    "context": {
+        "items": 0,
+    },
+    "states": {
+        "cart": {
+            "on": {
+                "ADD": {
+                    "actions": "add",
+                },
+                "PAY": "paid",
+            },
+        },
+        "paid": {
+            "type": "final",
+        },
+    },
+}
+
+
 def add(i, ctx, e, a):
     ctx["items"] += 1
-machine = create_machine(cfg, logic=MachineLogic(actions={"add": add}))
+
+
+machine = create_machine(
+    cfg,
+    logic=MachineLogic(
+        actions={
+            "add": add,
+        }
+    ),
+)
 store = MemoryStore()
 
-with persisted(store, "order:42", machine) as order:       # load (started)
-    order.send("ADD")                                        # act
+with persisted(store, "order:42", machine) as order:  # load (started)
+    order.send("ADD")  # act
     order.send("ADD")
 # persist on clean exit; the interpreter is stopped (discarded)
 
@@ -148,26 +220,62 @@ Two rules make the block predictable:
 
 ```python
 from xstate_statemachine import MachineLogic, create_machine
-from xstate_statemachine.persistence import ConflictError, MemoryStore, persisted, persisted_retry
+from xstate_statemachine.persistence import (
+    ConflictError,
+    MemoryStore,
+    persisted,
+    persisted_retry,
+)
 
-cfg = {"id": "c", "initial": "s", "context": {"n": 0},
-       "states": {"s": {"on": {"T": {"actions": "inc"}}}}}
+cfg = {
+    "id": "c",
+    "initial": "s",
+    "context": {
+        "n": 0,
+    },
+    "states": {
+        "s": {
+            "on": {
+                "T": {
+                    "actions": "inc",
+                },
+            },
+        },
+    },
+}
+
+
 def inc(i, ctx, e, a):
     ctx["n"] += 1
-machine = create_machine(cfg, logic=MachineLogic(actions={"inc": inc}))
+
+
+machine = create_machine(
+    cfg,
+    logic=MachineLogic(
+        actions={
+            "inc": inc,
+        }
+    ),
+)
 store = MemoryStore()
 
 with persisted(store, "k", machine):
-    pass                                   # create the record (version 1)
+    pass  # create the record (version 1)
 
 try:
     with persisted(store, "k", machine) as i:
-        persisted_retry(store, "k", machine, lambda x: x.send("T"))   # a concurrent writer
+        persisted_retry(
+            store, "k", machine, lambda x: x.send("T")
+        )  # a concurrent writer
         i.send("T")
 except ConflictError as exc:
-    print(f"conflict: expected v{exc.expected}, found v{exc.actual}")  # block's work discarded
+    print(
+        f"conflict: expected v{exc.expected}, found v{exc.actual}"
+    )  # block's work discarded
 
-persisted_retry(store, "k", machine, lambda i: i.send("T"))            # retries until it wins
+persisted_retry(
+    store, "k", machine, lambda i: i.send("T")
+)  # retries until it wins
 with persisted(store, "k", machine) as i:
     assert i.context["n"] == 2
 ```
@@ -239,24 +347,61 @@ Each `persisted()` block (and each call of the callable under `persisted_retry`)
 ```python
 import threading
 from xstate_statemachine import MachineLogic, create_machine
-from xstate_statemachine.persistence import MemoryStore, OptimisticLock, PessimisticLock, persisted, persisted_retry
+from xstate_statemachine.persistence import (
+    MemoryStore,
+    OptimisticLock,
+    PessimisticLock,
+    persisted,
+    persisted_retry,
+)
 
-cfg = {"id": "c", "initial": "s", "context": {"n": 0},
-       "states": {"s": {"on": {"T": {"actions": "inc"}}}}}
+cfg = {
+    "id": "c",
+    "initial": "s",
+    "context": {
+        "n": 0,
+    },
+    "states": {
+        "s": {
+            "on": {
+                "T": {
+                    "actions": "inc",
+                },
+            },
+        },
+    },
+}
+
+
 def inc(i, ctx, e, a):
     ctx["n"] += 1
-machine = create_machine(cfg, logic=MachineLogic(actions={"inc": inc}))
+
+
+machine = create_machine(
+    cfg,
+    logic=MachineLogic(
+        actions={
+            "inc": inc,
+        }
+    ),
+)
 
 for lock in (OptimisticLock(retries=100), PessimisticLock(timeout=30)):
     store = MemoryStore()
+
     def worker():
         for _ in range(25):
-            persisted_retry(store, "k", machine, lambda i: i.send("T"), lock=lock)
+            persisted_retry(
+                store, "k", machine, lambda i: i.send("T"), lock=lock
+            )
+
     threads = [threading.Thread(target=worker) for _ in range(8)]
-    for t in threads: t.start()
-    for t in threads: t.join()
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
     with persisted(store, "k", machine, lock=lock) as i:
-        assert i.context["n"] == 200, type(lock).__name__     # no lost updates
+        assert i.context["n"] == 200, type(lock).__name__  # no lost updates
 ```
 
 <div class="stately" data-machine="6c9e519757" data-height="320" data-title="c"></div>
@@ -320,13 +465,34 @@ The stdlib stores are synchronous (file and SQLite I/O block). `as_async(store)`
 ```python
 import asyncio
 from xstate_statemachine import create_machine
-from xstate_statemachine.persistence import MemoryStore, aload_interpreter, as_async, save_interpreter
+from xstate_statemachine.persistence import (
+    MemoryStore,
+    aload_interpreter,
+    as_async,
+    save_interpreter,
+)
 
-machine = create_machine({"id": "m", "initial": "a", "states": {"a": {"on": {"GO": "b"}}, "b": {}}})
+machine = create_machine(
+    {
+        "id": "m",
+        "initial": "a",
+        "states": {
+            "a": {
+                "on": {
+                    "GO": "b",
+                },
+            },
+            "b": {},
+        },
+    }
+)
 store = MemoryStore()
 
+
 async def main():
-    interp, version = await aload_interpreter(store, "m-1", machine)   # started Interpreter
+    interp, version = await aload_interpreter(
+        store, "m-1", machine
+    )  # started Interpreter
     await interp.send("GO", wait=True)
     save_interpreter(store, "m-1", interp, expected_version=version)
     await interp.stop()
@@ -336,6 +502,7 @@ async def main():
     assert record.version == 1
     async with astore.lock("m-1"):
         assert (await astore.list_keys(prefix="m-")) == ["m-1"]
+
 
 asyncio.run(main())
 ```
@@ -347,33 +514,88 @@ asyncio.run(main())
 Every broker, webhook provider (Stripe, GitHub, Twilio) and retrying HTTP client delivers **at least once**. Duplicate deliveries double-credit wallets and double-ship orders. The fix is deduplication at the consumer keyed by a stable event id — the *inbox* pattern — and `IdempotencyPlugin` makes it an attachable plugin: duplicates are answered from the inbox **before the machine sees them**, with the *same* receipt the first delivery got.
 
 ```python
-from xstate_statemachine import MachineLogic, SyncInterpreter, create_machine, receipt_to_status
+from xstate_statemachine import (
+    MachineLogic,
+    SyncInterpreter,
+    create_machine,
+    receipt_to_status,
+)
 from xstate_statemachine.persistence import IdempotencyPlugin, MemoryInbox
 
 # A Stripe-shaped webhook consumer: `event.id` ("evt_…") is the natural key.
-cfg = {"id": "wallet", "initial": "open", "context": {"balance": 0},
-       "states": {"open": {"on": {"payment_intent.succeeded": {"actions": "credit"}}}}}
+cfg = {
+    "id": "wallet",
+    "initial": "open",
+    "context": {
+        "balance": 0,
+    },
+    "states": {
+        "open": {
+            "on": {
+                "payment_intent.succeeded": {
+                    "actions": "credit",
+                },
+            },
+        },
+    },
+}
+
+
 def credit(i, ctx, e, a):
     ctx["balance"] += e.payload["amount"]
-machine = create_machine(cfg, logic=MachineLogic(actions={"credit": credit}))
 
-inbox = MemoryInbox()                                  # or SQLiteInbox(store)
+
+machine = create_machine(
+    cfg,
+    logic=MachineLogic(
+        actions={
+            "credit": credit,
+        }
+    ),
+)
+
+inbox = MemoryInbox()  # or SQLiteInbox(store)
 plugin = IdempotencyPlugin(
     inbox,
-    principal=lambda e: e.payload["account"],          # X0.2: scope by tenant, always
-    key=lambda e: e.payload.get("id"),                 # Stripe's event id
+    principal=lambda e: e.payload["account"],  # X0.2: scope by tenant, always
+    key=lambda e: e.payload.get("id"),  # Stripe's event id
 )
 wallet = SyncInterpreter(machine).use(plugin).start()
+
 
 def webhook(body: dict) -> int:
     receipt = wallet.send(body["type"], wait=True, **body)
     return receipt_to_status(receipt)
 
-first = {"type": "payment_intent.succeeded", "id": "evt_1", "account": "acct_A", "amount": 500}
+
+first = {
+    "type": "payment_intent.succeeded",
+    "id": "evt_1",
+    "account": "acct_A",
+    "amount": 500,
+}
 assert webhook(first) == 200 and wallet.context["balance"] == 500
-assert webhook(first) == 200 and wallet.context["balance"] == 500     # redelivery: same answer, credited once
-assert webhook({**first, "amount": 999}) == 422                        # same id, different payload: refused
-assert webhook({**first, "account": "acct_B"}) == 200                  # another tenant's evt_1 is a new event
+assert (
+    webhook(first) == 200 and wallet.context["balance"] == 500
+)  # redelivery: same answer, credited once
+assert (
+    webhook(
+        {
+            **first,
+            "amount": 999,
+        }
+    )
+    == 422
+)  # same id, different payload: refused
+assert (
+    webhook(
+        {
+            **first,
+            "account": "acct_B",
+        }
+    )
+    == 200
+)  # another tenant's evt_1 is a new event
 assert wallet.context["balance"] == 1000
 ```
 
@@ -437,26 +659,56 @@ Three fault-injection tests pin this: crash before save (no mark, retry is a fir
 
 ```python
 from xstate_statemachine import MachineLogic, create_machine
-from xstate_statemachine.persistence import IdempotencyPlugin, SQLiteInbox, SQLiteStore, persisted
+from xstate_statemachine.persistence import (
+    IdempotencyPlugin,
+    SQLiteInbox,
+    SQLiteStore,
+    persisted,
+)
 import tempfile, pathlib
 
-cfg = {"id": "wallet", "initial": "open", "context": {"balance": 0},
-       "states": {"open": {"on": {"CREDIT": {"actions": "credit"}}}}}
+cfg = {
+    "id": "wallet",
+    "initial": "open",
+    "context": {
+        "balance": 0,
+    },
+    "states": {
+        "open": {
+            "on": {
+                "CREDIT": {
+                    "actions": "credit",
+                },
+            },
+        },
+    },
+}
+
+
 def credit(i, ctx, e, a):
     ctx["balance"] += e.payload["amount"]
-machine = create_machine(cfg, logic=MachineLogic(actions={"credit": credit}))
+
+
+machine = create_machine(
+    cfg,
+    logic=MachineLogic(
+        actions={
+            "credit": credit,
+        }
+    ),
+)
 
 db = pathlib.Path(tempfile.mkdtemp()) / "app.db"
 store = SQLiteStore(db)
-inbox = SQLiteInbox(store)                       # shares the file AND the transaction
+inbox = SQLiteInbox(store)  # shares the file AND the transaction
 dedupe = IdempotencyPlugin(inbox, principal=lambda e: "acct_A")
 
-for _ in range(3):                               # the same webhook, delivered three times
+for _ in range(3):  # the same webhook, delivered three times
     with persisted(store, "wallet:acct_A", machine, plugins=[dedupe]) as w:
         w.send("CREDIT", idempotency_key="evt_1", amount=500)
 
 with persisted(store, "wallet:acct_A", machine, plugins=[dedupe]) as w:
-    assert w.context["balance"] == 500           # credited exactly once
+    assert w.context["balance"] == 500  # credited exactly once
 store.close()
 ```
 
@@ -471,29 +723,75 @@ from xstate_statemachine import MachineLogic, SyncInterpreter, create_machine
 from xstate_statemachine.persistence import AuditPlugin, MemoryLog, replay
 
 # An approval workflow: every decision carries who made it and why.
-cfg = {"id": "expense", "initial": "submitted", "context": {"amount": 1200},
-       "states": {
-           "submitted": {"on": {"APPROVE": {"target": "approved", "guard": "underLimit"},
-                                "ESCALATE": "escalated", "REJECT": "rejected"}},
-           "escalated": {"on": {"APPROVE": "approved", "REJECT": "rejected"}},
-           "approved": {"type": "final"}, "rejected": {"type": "final"}}}
-logic = MachineLogic(guards={"underLimit": lambda ctx, e: ctx["amount"] <= 1000})
+cfg = {
+    "id": "expense",
+    "initial": "submitted",
+    "context": {
+        "amount": 1200,
+    },
+    "states": {
+        "submitted": {
+            "on": {
+                "APPROVE": {
+                    "target": "approved",
+                    "guard": "underLimit",
+                },
+                "ESCALATE": "escalated",
+                "REJECT": "rejected",
+            },
+        },
+        "escalated": {
+            "on": {
+                "APPROVE": "approved",
+                "REJECT": "rejected",
+            },
+        },
+        "approved": {
+            "type": "final",
+        },
+        "rejected": {
+            "type": "final",
+        },
+    },
+}
+logic = MachineLogic(
+    guards={
+        "underLimit": lambda ctx, e: ctx["amount"] <= 1000,
+    }
+)
 machine = create_machine(cfg, logic=logic)
 
-log = MemoryLog()                       # or JSONLinesLog(path) / SQLiteLog(store)
+log = MemoryLog()  # or JSONLinesLog(path) / SQLiteLog(store)
 expense = SyncInterpreter(machine).use(AuditPlugin(log)).start()
 
-expense.send("APPROVE", actor="alice", reason="looks fine")          # guard says no: recorded as denied
+expense.send(
+    "APPROVE", actor="alice", reason="looks fine"
+)  # guard says no: recorded as denied
 expense.send("ESCALATE", actor="alice", reason="over my limit")
-expense.send("APPROVE", actor="bob", reason="Q3 travel budget", correlation_id="req-7f3a")
+expense.send(
+    "APPROVE",
+    actor="bob",
+    reason="Q3 travel budget",
+    correlation_id="req-7f3a",
+)
 
 for r in log.read("expense"):
-    print(r.seq, r.event_type, r.disposition, r.actor, r.reason, "->", r.to_states[-1].split(".")[-1])
+    print(
+        r.seq,
+        r.event_type,
+        r.disposition,
+        r.actor,
+        r.reason,
+        "->",
+        r.to_states[-1].split(".")[-1],
+    )
 # 1 APPROVE denied alice looks fine -> submitted
 # 2 ESCALATE transition alice over my limit -> escalated
 # 3 APPROVE transition bob Q3 travel budget -> approved
 
-rebuilt = replay(machine, log.read("expense"))   # re-run from context₀ on a SimulatedClock
+rebuilt = replay(
+    machine, log.read("expense")
+)  # re-run from context₀ on a SimulatedClock
 assert rebuilt.current_state_ids == expense.current_state_ids
 ```
 
@@ -566,29 +864,73 @@ You ship v2 of a machine while 10,000 orders are mid-flight on v1. Temporal need
 
 ```python
 from xstate_statemachine import SyncInterpreter, create_machine
-from xstate_statemachine.persistence import MachineVersionMismatchError, SnapshotMigrator
+from xstate_statemachine.persistence import (
+    MachineVersionMismatchError,
+    SnapshotMigrator,
+)
 
-v1 = {"id": "order", "version": "1.0", "initial": "paying",
-      "states": {"paying": {"on": {"OK": "done"}}, "done": {"type": "final"}}}
-v2 = {"id": "order", "version": "2.0", "initial": "payment",
-      "states": {"payment": {"initial": "card", "states": {"card": {"on": {"OK": "#order.done"}}}},
-                 "done": {"type": "final"}}}
+v1 = {
+    "id": "order",
+    "version": "1.0",
+    "initial": "paying",
+    "states": {
+        "paying": {
+            "on": {
+                "OK": "done",
+            },
+        },
+        "done": {
+            "type": "final",
+        },
+    },
+}
+v2 = {
+    "id": "order",
+    "version": "2.0",
+    "initial": "payment",
+    "states": {
+        "payment": {
+            "initial": "card",
+            "states": {
+                "card": {
+                    "on": {
+                        "OK": "#order.done",
+                    },
+                },
+            },
+        },
+        "done": {
+            "type": "final",
+        },
+    },
+}
 
-blob = SyncInterpreter(create_machine(v1)).start().get_snapshot()      # written by v1
+blob = (
+    SyncInterpreter(create_machine(v1)).start().get_snapshot()
+)  # written by v1
 
 try:
-    SyncInterpreter.from_snapshot(blob, create_machine(v2))            # default: refuse loudly
+    SyncInterpreter.from_snapshot(
+        blob, create_machine(v2)
+    )  # default: refuse loudly
 except MachineVersionMismatchError as exc:
-    print(exc.found, "->", exc.expected)                                # 1.0 -> 2.0
+    print(exc.found, "->", exc.expected)  # 1.0 -> 2.0
 
 migrator = SnapshotMigrator()
 
+
 @migrator.register("1.0", "2.0")
 def rename_paying(blob: dict) -> dict:
-    blob["state_ids"] = ["order.payment.card" if s == "order.paying" else s for s in blob["state_ids"]]
-    return blob                       # `configuration` is rebuilt from the leaves against v2
+    blob["state_ids"] = [
+        "order.payment.card" if s == "order.paying" else s
+        for s in blob["state_ids"]
+    ]
+    return blob  # `configuration` is rebuilt from the leaves against v2
 
-order = SyncInterpreter.from_snapshot(blob, create_machine(v2), migrator=migrator)
+
+order = SyncInterpreter.from_snapshot(
+    blob, create_machine(v2), migrator=migrator
+)
 assert order.current_state_ids == {"order.payment.card"}
 ```
 
@@ -633,24 +975,41 @@ Blobs written before labels existed (0.10.x) restore with a warning — they can
 ```python
 import time
 from xstate_statemachine import create_machine
-from xstate_statemachine.persistence import DueTimerScanner, MemoryStore, persisted
+from xstate_statemachine.persistence import (
+    DueTimerScanner,
+    MemoryStore,
+    persisted,
+)
 
-cfg = {"id": "trial", "initial": "active",
-       "states": {"active": {"after": {"3600000": "reminded"}},      # 1 hour
-                  "reminded": {"type": "final"}}}
+cfg = {
+    "id": "trial",
+    "initial": "active",
+    "states": {
+        "active": {
+            "after": {
+                "3600000": "reminded",
+            },
+        },  # 1 hour
+        "reminded": {
+            "type": "final",
+        },
+    },
+}
 machine = create_machine(cfg)
 store = MemoryStore()
 
-with persisted(store, "user:42", machine):          # arms the timer; the deadline is persisted
+with persisted(
+    store, "user:42", machine
+):  # arms the timer; the deadline is persisted
     pass
 now = time.time()
 (deadline,) = store.load("user:42").deadlines
 assert abs(deadline.due_at_wall - (now + 3600)) < 5
 
-scanner = DueTimerScanner(store, lambda key: machine)   # "another process"
-assert scanner.run_once(now=now + 1800) == 0             # not early
-assert scanner.run_once(now=now + 3601) == 1             # fires once due
-assert scanner.run_once(now=now + 3601) == 0             # idempotent
+scanner = DueTimerScanner(store, lambda key: machine)  # "another process"
+assert scanner.run_once(now=now + 1800) == 0  # not early
+assert scanner.run_once(now=now + 3601) == 1  # fires once due
+assert scanner.run_once(now=now + 3601) == 0  # idempotent
 with persisted(store, "user:42", machine) as trial:
     assert trial.matches("trial.reminded")
 ```

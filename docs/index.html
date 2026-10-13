@@ -217,92 +217,127 @@ interp  = <span class="k">await</span> Interpreter(machine).start()</code></pre>
     </div>
 
     <div class="code-tab-panel active" data-tab="class">
-<pre class="highlight"><code><span class="k">from</span> <span class="nc">xstate_statemachine</span> <span class="k">import</span> (
+{% highlight python %}
+from xstate_statemachine import (
     State, StateMachine, SyncInterpreter, action, guard
 )
 
-<span class="k">class</span> <span class="nc">TrafficLight</span>(StateMachine):
-    machine_id = <span class="s">"trafficLight"</span>
+class TrafficLight(StateMachine):
+    machine_id = "trafficLight"
 
-    <span class="c1"># States</span>
-    green  = State(<span class="s">"green"</span>,  initial=<span class="mi">True</span>)
-    yellow = State(<span class="s">"yellow"</span>)
-    red    = State(<span class="s">"red"</span>)
+    # States
+    green  = State("green",  initial=True)
+    yellow = State("yellow")
+    red    = State("red")
 
-    <span class="c1"># Transitions</span>
-    slow_down = green.to(yellow, event=<span class="s">"TIMER"</span>)
-    stop      = yellow.to(red,   event=<span class="s">"TIMER"</span>)
-    go        = red.to(green,    event=<span class="s">"TIMER"</span>)
+    # Transitions
+    slow_down = green.to(yellow, event="TIMER")
+    stop      = yellow.to(red,   event="TIMER")
+    go        = red.to(green,    event="TIMER")
 
-    <span class="k">@action</span>
-    <span class="k">def</span> <span class="nc">log_change</span>(self, interpreter, context, event, action_def):
-        print(f<span class="s">"Light: {interpreter.active_state_ids}"</span>)
+    @action
+    def log_change(self, interpreter, context, event, action_def):
+        print(f"Light: {interpreter.active_state_ids}")
 
-<span class="c1"># Run it</span>
+# Run it
 machine = TrafficLight.create_machine()
 interp = SyncInterpreter(machine).start()
-interp.send(<span class="s">"TIMER"</span>)  <span class="c1"># green &rarr; yellow</span>
-interp.send(<span class="s">"TIMER"</span>)  <span class="c1"># yellow &rarr; red</span>
-interp.stop()</code></pre>
+interp.send("TIMER")  # green → yellow
+interp.send("TIMER")  # yellow → red
+interp.stop()
+{% endhighlight %}
     </div>
 
     <div class="code-tab-panel" data-tab="builder">
-<pre class="highlight"><code><span class="k">from</span> <span class="nc">xstate_statemachine</span> <span class="k">import</span> MachineBuilder, SyncInterpreter
+{% highlight python %}
+from xstate_statemachine import MachineBuilder, SyncInterpreter
 
 machine = (
-    MachineBuilder(<span class="s">"trafficLight"</span>)
-    .state(<span class="s">"green"</span>,  initial=<span class="mi">True</span>)
-    .state(<span class="s">"yellow"</span>)
-    .state(<span class="s">"red"</span>)
-    .transition(<span class="s">"green"</span>,  <span class="s">"TIMER"</span>, <span class="s">"yellow"</span>)
-    .transition(<span class="s">"yellow"</span>, <span class="s">"TIMER"</span>, <span class="s">"red"</span>)
-    .transition(<span class="s">"red"</span>,    <span class="s">"TIMER"</span>, <span class="s">"green"</span>)
+    MachineBuilder("trafficLight")
+    .state("green",  initial=True)
+    .state("yellow")
+    .state("red")
+    .transition("green",  "TIMER", "yellow")
+    .transition("yellow", "TIMER", "red")
+    .transition("red",    "TIMER", "green")
     .build()
 )
 
 interp = SyncInterpreter(machine).start()
-interp.send(<span class="s">"TIMER"</span>)  <span class="c1"># green &rarr; yellow</span>
-interp.send(<span class="s">"TIMER"</span>)  <span class="c1"># yellow &rarr; red</span>
-interp.stop()</code></pre>
+interp.send("TIMER")  # green → yellow
+interp.send("TIMER")  # yellow → red
+interp.stop()
+{% endhighlight %}
     </div>
 
     <div class="code-tab-panel" data-tab="functional">
-<pre class="highlight"><code><span class="k">from</span> <span class="nc">xstate_statemachine</span> <span class="k">import</span> State, build_machine, SyncInterpreter
+{% highlight python %}
+from xstate_statemachine import State, build_machine, SyncInterpreter
 
-green  = State(<span class="s">"green"</span>,  initial=<span class="mi">True</span>,
-                on={<span class="s">"TIMER"</span>: <span class="s">"yellow"</span>})
-yellow = State(<span class="s">"yellow"</span>, on={<span class="s">"TIMER"</span>: <span class="s">"red"</span>})
-red    = State(<span class="s">"red"</span>,    on={<span class="s">"TIMER"</span>: <span class="s">"green"</span>})
+green = State(
+    "green",
+    initial=True,
+    on={
+        "TIMER": "yellow",
+    },
+)
+yellow = State(
+    "yellow",
+    on={
+        "TIMER": "red",
+    },
+)
+red = State(
+    "red",
+    on={
+        "TIMER": "green",
+    },
+)
 
 machine = build_machine(
-    id=<span class="s">"trafficLight"</span>,
+    id="trafficLight",
     states=[green, yellow, red],
 )
 
 interp = SyncInterpreter(machine).start()
-interp.send(<span class="s">"TIMER"</span>)  <span class="c1"># green &rarr; yellow</span>
-interp.send(<span class="s">"TIMER"</span>)  <span class="c1"># yellow &rarr; red</span>
-interp.stop()</code></pre>
+interp.send("TIMER")  # green → yellow
+interp.send("TIMER")  # yellow → red
+interp.stop()
+{% endhighlight %}
     </div>
 
     <div class="code-tab-panel" data-tab="json">
-<pre class="highlight"><code><span class="k">from</span> <span class="nc">xstate_statemachine</span> <span class="k">import</span> create_machine, SyncInterpreter
+{% highlight python %}
+from xstate_statemachine import create_machine, SyncInterpreter
 
 config = {
-    <span class="s">"id"</span>: <span class="s">"trafficLight"</span>,
-    <span class="s">"initial"</span>: <span class="s">"green"</span>,
-    <span class="s">"states"</span>: {
-        <span class="s">"green"</span>:  {<span class="s">"on"</span>: {<span class="s">"TIMER"</span>: <span class="s">"yellow"</span>}},
-        <span class="s">"yellow"</span>: {<span class="s">"on"</span>: {<span class="s">"TIMER"</span>: <span class="s">"red"</span>}},
-        <span class="s">"red"</span>:    {<span class="s">"on"</span>: {<span class="s">"TIMER"</span>: <span class="s">"green"</span>}},
-    }
+    "id": "trafficLight",
+    "initial": "green",
+    "states": {
+        "green": {
+            "on": {
+                "TIMER": "yellow",
+            },
+        },
+        "yellow": {
+            "on": {
+                "TIMER": "red",
+            },
+        },
+        "red": {
+            "on": {
+                "TIMER": "green",
+            },
+        },
+    },
 }
 
 machine = create_machine(config)
 interp = SyncInterpreter(machine).start()
-interp.send(<span class="s">"TIMER"</span>)  <span class="c1"># green &rarr; yellow</span>
-interp.send(<span class="s">"TIMER"</span>)  <span class="c1"># yellow &rarr; red</span>
-interp.stop()</code></pre>
+interp.send("TIMER")  # green → yellow
+interp.send("TIMER")  # yellow → red
+interp.stop()
+{% endhighlight %}
     </div>
   </div>
 </section>

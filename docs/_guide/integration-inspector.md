@@ -21,11 +21,29 @@ For a complete, runnable app -- `InspectorPlugin` with a context allow-list on t
 from xstate_statemachine import SyncInterpreter, create_machine
 from xstate_statemachine.inspect import InspectorPlugin, MemorySink
 
-machine = create_machine({
-    "id": "door", "initial": "closed", "context": {"opens": 0, "pin": "1234"},
-    "states": {"closed": {"on": {"OPEN": "open"}}, "open": {"on": {"CLOSE": "closed"}}},
-})
-sink = MemorySink()                                   # or JsonLinesSink / SseSink
+machine = create_machine(
+    {
+        "id": "door",
+        "initial": "closed",
+        "context": {
+            "opens": 0,
+            "pin": "1234",
+        },
+        "states": {
+            "closed": {
+                "on": {
+                    "OPEN": "open",
+                },
+            },
+            "open": {
+                "on": {
+                    "CLOSE": "closed",
+                },
+            },
+        },
+    }
+)
+sink = MemorySink()  # or JsonLinesSink / SseSink
 plugin = InspectorPlugin(sink, context_allowlist=["opens"]).install()
 door = SyncInterpreter(machine).start()
 door.send("OPEN")
@@ -34,8 +52,12 @@ plugin.uninstall()
 
 kinds = [m["type"] for m in sink.messages]
 assert kinds[0] == "@xstate.actor"
-assert ("@xstate.event", "OPEN") in [(m["type"], m.get("event", {}).get("type")) for m in sink.messages]
-assert sink.messages[-1]["snapshot"]["context"] == {"opens": 0}   # "pin" never leaves
+assert ("@xstate.event", "OPEN") in [
+    (m["type"], m.get("event", {}).get("type")) for m in sink.messages
+]
+assert sink.messages[-1]["snapshot"]["context"] == {
+    "opens": 0,
+}  # "pin" never leaves
 ```
 
 <div class="stately" data-machine="20a9f24043" data-height="320" data-title="door"></div>

@@ -34,40 +34,107 @@ xsm simulate examples/recipes/slot_filling/machine.json --events +30000 --guards
 ## The code
 
 ```python
-from xstate_statemachine import MachineLogic, SimulatedClock, SyncInterpreter, create_machine
+from xstate_statemachine import (
+    MachineLogic,
+    SimulatedClock,
+    SyncInterpreter,
+    create_machine,
+)
 
-chart = {"id": "booking", "initial": "collecting",
-         "context": {"slots": {"date": None, "party_size": None, "name": None}, "nudges": 0},
-         "states": {
-    "collecting": {
-        "always": {"target": "confirming", "guard": "allSlotsFilled"},
-        "on": {"USER_SAID": {"target": "collecting", "reenter": True, "actions": "fillSlots"}},
-        "after": {"30000": "silent"}},
-    "silent": {"always": [{"target": "collecting", "guard": "canNudge", "actions": "nudge"},
-                          {"target": "abandoned"}]},
-    "confirming": {"on": {"YES": "booked"}},
-    "booked": {"type": "final"}, "abandoned": {"type": "final"}}}
+chart = {
+    "id": "booking",
+    "initial": "collecting",
+    "context": {
+        "slots": {
+            "date": None,
+            "party_size": None,
+            "name": None,
+        },
+        "nudges": 0,
+    },
+    "states": {
+        "collecting": {
+            "always": {
+                "target": "confirming",
+                "guard": "allSlotsFilled",
+            },
+            "on": {
+                "USER_SAID": {
+                    "target": "collecting",
+                    "reenter": True,
+                    "actions": "fillSlots",
+                },
+            },
+            "after": {
+                "30000": "silent",
+            },
+        },
+        "silent": {
+            "always": [
+                {
+                    "target": "collecting",
+                    "guard": "canNudge",
+                    "actions": "nudge",
+                },
+                {
+                    "target": "abandoned",
+                },
+            ],
+        },
+        "confirming": {
+            "on": {
+                "YES": "booked",
+            },
+        },
+        "booked": {
+            "type": "final",
+        },
+        "abandoned": {
+            "type": "final",
+        },
+    },
+}
 
 said = []
-def missing(ctx): return [k for k, v in ctx["slots"].items() if v is None]
-def fill_slots(i, ctx, e, a):
-    ctx["slots"].update({k: v for k, v in e.payload.items() if k in ctx["slots"] and v})
-    ctx["nudges"] = 0
-def nudge(i, ctx, e, a):
-    ctx["nudges"] += 1; said.append(f"Still there? I need: {', '.join(missing(ctx))}")
 
-machine = create_machine(chart, logic=MachineLogic(
-    actions={"fillSlots": fill_slots, "nudge": nudge},
-    guards={"allSlotsFilled": lambda ctx, e: not missing(ctx),
-            "canNudge": lambda ctx, e: ctx["nudges"] < 2}))
+
+def missing(ctx):
+    return [k for k, v in ctx["slots"].items() if v is None]
+
+
+def fill_slots(i, ctx, e, a):
+    ctx["slots"].update(
+        {k: v for k, v in e.payload.items() if k in ctx["slots"] and v}
+    )
+    ctx["nudges"] = 0
+
+
+def nudge(i, ctx, e, a):
+    ctx["nudges"] += 1
+    said.append(f"Still there? I need: {', '.join(missing(ctx))}")
+
+
+machine = create_machine(
+    chart,
+    logic=MachineLogic(
+        actions={
+            "fillSlots": fill_slots,
+            "nudge": nudge,
+        },
+        guards={
+            "allSlotsFilled": lambda ctx, e: not missing(ctx),
+            "canNudge": lambda ctx, e: ctx["nudges"] < 2,
+        },
+    ),
+)
 
 clock = SimulatedClock()
 bot = SyncInterpreter(machine, clock=clock).start()
 bot.send("USER_SAID", name="Ann")
-clock.increment(30_000)                                   # silence -> nudge
+clock.increment(30_000)  # silence -> nudge
 assert said == ["Still there? I need: date, party_size"]
-bot.send("USER_SAID", date="Fri", party_size=4)           # two slots in one turn
-assert bot.value == "confirming"                          # `always` moved on
+bot.send("USER_SAID", date="Fri", party_size=4)  # two slots in one turn
+assert bot.value == "confirming"  # `always` moved on
 bot.send("YES")
 assert bot.value == "booked"
 ```

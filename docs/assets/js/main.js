@@ -55,6 +55,13 @@
     return prefersReducedMotion() ? 'auto' : 'smooth';
   }
 
+  /** Keep anchor targets below both visible sticky navigation rows. */
+  function getHeaderOffset() {
+    var nav = qs('#topNav');
+    var toolbar = qs('.docs-toolbar');
+    return (nav ? nav.offsetHeight : 0) + (toolbar ? toolbar.offsetHeight : 0) + 20;
+  }
+
   /** Safe localStorage wrapper (some browsers block it in private mode). */
   var storage = {
     get: function (key) {
@@ -67,6 +74,124 @@
       try { localStorage.removeItem(key); } catch (_) { /* noop */ }
     }
   };
+
+  // A single open panel owns the backdrop, scroll lock and keyboard focus.
+  // Breakpoints match the corresponding media queries in style.css.
+  var responsivePanels = [];
+
+  function closeResponsivePanels(except) {
+    responsivePanels.forEach(function (panel) {
+      if (panel !== except) panel.close(false);
+    });
+  }
+
+  function createResponsivePanel(options) {
+    var panel = options.panel;
+    var toggle = options.toggle;
+    if (!panel || !toggle) return null;
+
+    var media = window.matchMedia(options.media);
+    var originalRole = panel.getAttribute('role');
+    var isOpen = false;
+    var controller;
+
+    function syncState() {
+      var visible = isOpen || (!media.matches && options.desktopVisible !== false);
+      panel.classList.toggle('open', isOpen);
+      panel.toggleAttribute('inert', !visible);
+      if (visible && !media.matches) panel.removeAttribute('aria-hidden');
+      else panel.setAttribute('aria-hidden', visible ? 'false' : 'true');
+      toggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
+      if (options.label) {
+        toggle.setAttribute('aria-label', (isOpen ? 'Close ' : 'Open ') + options.label);
+      }
+      if (options.modal && media.matches) {
+        panel.setAttribute('role', 'dialog');
+      } else if (originalRole) {
+        panel.setAttribute('role', originalRole);
+      } else {
+        panel.removeAttribute('role');
+      }
+      if (isOpen && options.modal) panel.setAttribute('aria-modal', 'true');
+      else panel.removeAttribute('aria-modal');
+      if (options.overlay) options.overlay.classList.toggle('active', isOpen);
+    }
+
+    function close(restoreFocus) {
+      if (!isOpen) return;
+      isOpen = false;
+      // Move focus before hiding its container from assistive technology.
+      if (restoreFocus !== false && media.matches && toggle.getClientRects().length) toggle.focus();
+      else if (panel.contains(document.activeElement)) document.activeElement.blur();
+      syncState();
+      document.body.classList.remove('drawer-open');
+    }
+
+    function open() {
+      if (!media.matches) return;
+      closeResponsivePanels(controller);
+      if (options.beforeOpen) options.beforeOpen();
+      isOpen = true;
+      syncState();
+      document.body.classList.add('drawer-open');
+      var first = options.closeButton || qs('a[href], button', panel);
+      // Opening visibility transitions may not be focusable in this task yet.
+      // Wait for their first visible frame, and cancel if closed or resized.
+      function focusPanel() {
+        if (!isOpen || !media.matches || !first) return;
+        if (getComputedStyle(panel).visibility === 'hidden' || !first.getClientRects().length) {
+          requestAnimationFrame(focusPanel);
+          return;
+        }
+        first.focus({ preventScroll: true });
+      }
+      requestAnimationFrame(focusPanel);
+    }
+
+    controller = { close: close, open: open };
+    responsivePanels.push(controller);
+    toggle.addEventListener('click', function () {
+      if (isOpen) close();
+      else open();
+    });
+    if (options.overlay) options.overlay.addEventListener('click', function () { close(); });
+    if (options.closeButton) options.closeButton.addEventListener('click', function () { close(); });
+    panel.addEventListener('click', function (event) {
+      if (event.target.closest('a[href]')) close(false);
+    });
+    document.addEventListener('keydown', function (event) {
+      if (!isOpen) return;
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        close();
+      } else if (event.key === 'Tab') {
+        var root = options.focusRoot || panel;
+        var focusable = Array.from(qsa('a[href], button, input, [tabindex="0"]', root))
+          .filter(function (element) { return !element.disabled && !element.closest('[inert]') && element.getClientRects().length; });
+        if (!focusable.length) return;
+        var first = focusable[0];
+        var last = focusable[focusable.length - 1];
+        if (event.shiftKey && (document.activeElement === first || !root.contains(document.activeElement))) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && (document.activeElement === last || !root.contains(document.activeElement))) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    });
+
+    function onBreakpointChange() {
+      close(false);
+      // A newly collapsed desktop navigation must not retain invisible focus.
+      if (media.matches && panel.contains(document.activeElement) && toggle.getClientRects().length) toggle.focus();
+      syncState();
+    }
+    if (media.addEventListener) media.addEventListener('change', onBreakpointChange);
+    else media.addListener(onBreakpointChange);
+    syncState();
+    return controller;
+  }
 
   // ---------------------------------------------------------------------------
   // 1. Dark Mode Toggle
@@ -140,32 +265,13 @@
   // ---------------------------------------------------------------------------
 
   (function initMobileNav() {
-    var navToggle = document.getElementById('navToggle');
-    var navLinks = document.getElementById('navLinks');
-    if (!navToggle || !navLinks) return;
-
-    navToggle.addEventListener('click', function () {
-      var isOpen = navLinks.classList.toggle('open');
-      navToggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-    });
-
-    // Close on Escape
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && navLinks.classList.contains('open')) {
-        navLinks.classList.remove('open');
-        navToggle.setAttribute('aria-expanded', 'false');
-        navToggle.focus();
-      }
-    });
-
-    // Close when clicking a nav link (on mobile)
-    qsa('.nav-link', navLinks).forEach(function (link) {
-      link.addEventListener('click', function () {
-        if (window.innerWidth <= 1024) {
-          navLinks.classList.remove('open');
-          navToggle.setAttribute('aria-expanded', 'false');
-        }
-      });
+    createResponsivePanel({
+      panel: qs('#navLinks'),
+      toggle: qs('#navToggle'),
+      overlay: qs('#navOverlay'),
+      focusRoot: qs('#topNav'),
+      label: 'navigation',
+      media: '(max-width: 1180px)'
     });
   })();
 
@@ -218,45 +324,14 @@
   // ---------------------------------------------------------------------------
 
   (function initSidebarToggle() {
-    var sidebar = document.getElementById('sidebar');
-    if (!sidebar) return;
-
-    var sidebarToggle = document.createElement('button');
-    sidebarToggle.className = 'sidebar-toggle';
-    sidebarToggle.type = 'button';
-    sidebarToggle.innerHTML = '&#9776; Menu';
-    sidebarToggle.setAttribute('aria-label', 'Toggle sidebar navigation');
-    sidebarToggle.setAttribute('aria-expanded', 'false');
-    document.body.appendChild(sidebarToggle);
-
-    function checkMobile() {
-      if (window.innerWidth <= 1024) {
-        sidebarToggle.classList.add('visible');
-      } else {
-        sidebarToggle.classList.remove('visible');
-        sidebar.classList.remove('open');
-        sidebarToggle.setAttribute('aria-expanded', 'false');
-      }
-    }
-
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-
-    sidebarToggle.addEventListener('click', function () {
-      var isOpen = sidebar.classList.toggle('open');
-      sidebarToggle.setAttribute('aria-expanded', isOpen ? 'true' : 'false');
-    });
-
-    // Close sidebar when clicking outside
-    document.addEventListener('click', function (e) {
-      if (
-        sidebar.classList.contains('open') &&
-        !sidebar.contains(e.target) &&
-        e.target !== sidebarToggle
-      ) {
-        sidebar.classList.remove('open');
-        sidebarToggle.setAttribute('aria-expanded', 'false');
-      }
+    createResponsivePanel({
+      panel: qs('#sidebar'),
+      toggle: qs('#sidebarToggle'),
+      overlay: qs('#sidebarOverlay'),
+      closeButton: qs('#sidebarClose'),
+      label: 'documentation navigation',
+      modal: true,
+      media: '(max-width: 960px)'
     });
   })();
 
@@ -277,6 +352,8 @@
       if (!target) return;
 
       e.preventDefault();
+      if (!target.hasAttribute('tabindex')) target.setAttribute('tabindex', '-1');
+      target.focus({ preventScroll: true });
       target.scrollIntoView({ behavior: getScrollBehavior() });
 
       // Update URL hash without jumping
@@ -357,11 +434,11 @@
       // --- Language Label (only for .content pre, not homepage showcase) ---
       var isContentPre = pre.closest('.content');
       if (isContentPre) {
-        var langClass = Array.from(code.classList).find(function (cls) {
-          return cls.startsWith('language-');
-        });
-        if (langClass) {
-          var langKey = langClass.replace('language-', '').toLowerCase();
+        // Rouge puts language-python on an outer wrapper, not on <code>.
+        var langHost = code.closest('[class*="language-"]');
+        var langMatch = langHost && langHost.className.match(/\blanguage-([\w+-]+)/);
+        if (langMatch) {
+          var langKey = langMatch[1].toLowerCase();
           var langName = LANG_NAMES[langKey] || capitalize(langKey);
 
           var label = document.createElement('span');
@@ -383,7 +460,10 @@
         var codeEl = qs('code', pre);
         if (!codeEl) return;
 
-        navigator.clipboard.writeText(codeEl.textContent).then(function () {
+        var copy = navigator.clipboard && navigator.clipboard.writeText
+          ? navigator.clipboard.writeText(codeEl.textContent)
+          : Promise.reject(new Error('Clipboard unavailable'));
+        copy.then(function () {
           btn.textContent = 'Copied!';
           btn.classList.add('copied');
           setTimeout(function () {
@@ -459,7 +539,7 @@
         e.preventDefault();
 
         // Compensate for sticky header offset
-        var headerHeight = 70;
+        var headerHeight = getHeaderOffset();
         var targetPos = heading.getBoundingClientRect().top + window.scrollY - headerHeight;
         window.scrollTo({ top: targetPos, behavior: getScrollBehavior() });
 
@@ -479,6 +559,38 @@
 
       heading.appendChild(link);
     });
+  })();
+
+  // ---------------------------------------------------------------------------
+  // Keep wide code and tables keyboard-scrollable without widening the page.
+  // ResizeObserver also catches tab switches and late-loading fonts.
+  // ---------------------------------------------------------------------------
+
+  (function initScrollRegions() {
+    var regions = Array.from(qsa('.code-frame > pre, .table-scroll, .comparison-table'));
+    function update(region) {
+      var scrollable = region.scrollWidth > region.clientWidth + 1;
+      region.classList.toggle('is-scrollable', scrollable);
+      if (scrollable) {
+        region.setAttribute('tabindex', '0');
+        region.setAttribute('role', 'region');
+        region.setAttribute('aria-label', region.tagName === 'PRE' ? 'Code example, scroll horizontally' : 'Table, scroll horizontally');
+      } else {
+        region.removeAttribute('tabindex');
+        region.removeAttribute('role');
+        region.removeAttribute('aria-label');
+      }
+    }
+    var refresh = rafThrottle(function () { regions.forEach(update); });
+    if (window.ResizeObserver) {
+      var observer = new ResizeObserver(function (entries) {
+        entries.forEach(function (entry) { update(entry.target); });
+      });
+      regions.forEach(function (region) { observer.observe(region); });
+    }
+    window.addEventListener('resize', refresh);
+    if (document.fonts && document.fonts.ready) document.fonts.ready.then(refresh);
+    regions.forEach(update);
   })();
 
   // ---------------------------------------------------------------------------
@@ -580,13 +692,22 @@
             var link = qs('.toc-link[data-target="' + id + '"]', tocList);
             if (link) {
               link.classList.add('active');
-              // Scroll TOC to keep active link visible
-              link.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+              // Scroll only the TOC, never the document containing the article.
+              var sidebar = qs('#tocSidebar');
+              if (sidebar && sidebar.getClientRects().length) {
+                var panelBounds = sidebar.getBoundingClientRect();
+                var linkBounds = link.getBoundingClientRect();
+                if (linkBounds.top < panelBounds.top + 12) {
+                  sidebar.scrollTop -= panelBounds.top + 12 - linkBounds.top;
+                } else if (linkBounds.bottom > panelBounds.bottom - 12) {
+                  sidebar.scrollTop += linkBounds.bottom - panelBounds.bottom + 12;
+                }
+              }
             }
           }
         }
       }, {
-        rootMargin: '-80px 0px -60% 0px',
+        rootMargin: '-' + getHeaderOffset() + 'px 0px -60% 0px',
         threshold: 0
       });
 
@@ -607,6 +728,7 @@
     var searchInput = qs('#searchInput');
     var searchResults = qs('#searchResults');
     var searchBtn = qs('#searchBtn');
+    var searchClose = qs('#searchClose');
 
     if (!searchModal || !searchInput || !searchResults) return;
 
@@ -632,7 +754,8 @@
     }
 
     // Load search index
-    var searchUrl = (baseUrl || '') + '/assets/js/search-index.json';
+    var script = document.currentScript;
+    var searchUrl = (script && script.getAttribute('data-search-index')) || (baseUrl || '') + '/assets/js/search-index.json';
     fetch(searchUrl)
       .then(function (res) {
         if (!res.ok) throw new Error('Not found');
@@ -651,22 +774,23 @@
     searchModal.setAttribute('aria-modal', 'true');
 
     function openSearch() {
+      if (document.body.classList.contains('diagram-open')) return;
+      closeResponsivePanels();
       searchModal.classList.add('active');
       searchModal.setAttribute('aria-hidden', 'false');
       document.body.classList.add('search-open');
       searchInput.value = '';
       searchResults.innerHTML = '<div class="search-empty">Type to search the documentation...</div>';
       activeIndex = -1;
-      // Slight delay to ensure modal is visible before focusing
-      setTimeout(function () { searchInput.focus(); }, 50);
+      searchInput.focus();
     }
 
     function closeSearch() {
+      // Return focus before making the search dialog inaccessible.
+      if (searchBtn) searchBtn.focus();
       searchModal.classList.remove('active');
       searchModal.setAttribute('aria-hidden', 'true');
       document.body.classList.remove('search-open');
-      // Return focus to search button
-      if (searchBtn) searchBtn.focus();
     }
 
     function performSearch(query) {
@@ -810,6 +934,7 @@
     if (searchOverlay) {
       searchOverlay.addEventListener('click', closeSearch);
     }
+    if (searchClose) searchClose.addEventListener('click', closeSearch);
 
     if (searchBtn) {
       searchBtn.addEventListener('click', function (e) {
@@ -840,6 +965,7 @@
 
     // Global keyboard shortcut: Ctrl+K / Cmd+K
     document.addEventListener('keydown', function (e) {
+      if (document.body.classList.contains('diagram-open')) return;
       if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
         e.preventDefault();
         if (searchModal.classList.contains('active')) {
@@ -901,11 +1027,27 @@
 
     document.body.appendChild(btn);
 
+    // Documentation controls occupy one reserved row on smaller screens.
+    // Desktop and landing-page placement remains unchanged.
+    var toolbar = qs('.docs-toolbar-inner');
+    if (toolbar) {
+      var media = window.matchMedia('(max-width: 1180px)');
+      var placeButton = function () {
+        (media.matches ? toolbar : document.body).appendChild(btn);
+      };
+      if (media.addEventListener) media.addEventListener('change', placeButton);
+      else media.addListener(placeButton);
+      placeButton();
+    }
+
     var toggle = rafThrottle(function () {
-      btn.classList.toggle('visible', window.scrollY > 400);
+      var visible = window.scrollY > 400;
+      btn.classList.toggle('visible', visible);
+      btn.setAttribute('tabindex', visible ? '0' : '-1');
     });
 
     window.addEventListener('scroll', toggle, { passive: true });
+    toggle();
 
     btn.addEventListener('click', function () {
       window.scrollTo({ top: 0, behavior: getScrollBehavior() });
@@ -947,6 +1089,7 @@
     var triggerElement = null; // Track what opened the modal for focus return
 
     function openHelp() {
+      if (document.body.classList.contains('diagram-open')) return;
       triggerElement = document.activeElement;
       helpOverlay.classList.add('active');
       helpModal.classList.add('active');
@@ -1041,38 +1184,18 @@
 
     function syncTocContent() {
       mobileList.innerHTML = desktopList.innerHTML;
-      // Add click listeners to close drawer on link click
-      var links = mobileList.querySelectorAll('a');
-      for (var i = 0; i < links.length; i++) {
-        links[i].addEventListener('click', closeMobileToc);
-      }
     }
 
-    function openMobileToc() {
-      syncTocContent();
-      if (overlay) overlay.classList.add('active');
-      drawer.classList.add('active');
-      drawer.setAttribute('aria-hidden', 'false');
-      document.body.style.overflow = 'hidden';
-      if (closeBtn) closeBtn.focus();
-    }
-
-    function closeMobileToc() {
-      if (overlay) overlay.classList.remove('active');
-      drawer.classList.remove('active');
-      drawer.setAttribute('aria-hidden', 'true');
-      document.body.style.overflow = '';
-      toggleBtn.focus();
-    }
-
-    toggleBtn.addEventListener('click', openMobileToc);
-    if (overlay) overlay.addEventListener('click', closeMobileToc);
-    if (closeBtn) closeBtn.addEventListener('click', closeMobileToc);
-
-    document.addEventListener('keydown', function (e) {
-      if (e.key === 'Escape' && drawer.classList.contains('active')) {
-        closeMobileToc();
-      }
+    createResponsivePanel({
+      panel: drawer,
+      toggle: toggleBtn,
+      overlay: overlay,
+      closeButton: closeBtn,
+      label: 'table of contents',
+      modal: true,
+      desktopVisible: false,
+      beforeOpen: syncTocContent,
+      media: '(max-width: 1180px)'
     });
   })();
 

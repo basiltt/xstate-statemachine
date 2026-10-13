@@ -35,29 +35,68 @@ For a complete, runnable app -- the same choreography on the fake broker and on 
 ```python
 import asyncio
 
-import fakeredis                                   # stand-in for redis.Redis.from_url(...)
+import fakeredis  # stand-in for redis.Redis.from_url(...)
 from xstate_statemachine import MachineLogic, create_machine
-from xstate_statemachine.contrib.brokers.redis_streams import RedisStreamsBroker
+from xstate_statemachine.contrib.brokers.redis_streams import (
+    RedisStreamsBroker,
+)
 from xstate_statemachine.eda import Envelope, InboundDispatcher
 from xstate_statemachine.persistence import MemoryStore
 from xstate_statemachine.persistence.idempotency import MemoryInbox
 
 order = create_machine(
-    {"id": "order", "initial": "open", "context": {"total": 0},
-     "states": {"open": {"on": {"PAY": {"target": "paid", "actions": "setTotal"}}},
-                "paid": {"type": "final"}}},
-    logic=MachineLogic(actions={
-        "setTotal": lambda i, ctx, e, a: ctx.update(total=e.payload["total"])}))
+    {
+        "id": "order",
+        "initial": "open",
+        "context": {
+            "total": 0,
+        },
+        "states": {
+            "open": {
+                "on": {
+                    "PAY": {
+                        "target": "paid",
+                        "actions": "setTotal",
+                    },
+                },
+            },
+            "paid": {
+                "type": "final",
+            },
+        },
+    },
+    logic=MachineLogic(
+        actions={
+            "setTotal": lambda i, ctx, e, a: ctx.update(
+                total=e.payload["total"]
+            ),
+        }
+    ),
+)
 
-broker = RedisStreamsBroker(fakeredis.FakeRedis(), prefix="shop", group="orders-svc")
+broker = RedisStreamsBroker(
+    fakeredis.FakeRedis(), prefix="shop", group="orders-svc"
+)
 store = MemoryStore()
-dispatcher = InboundDispatcher(store, {"xsm.order.PAY": order}, inbox=MemoryInbox())
+dispatcher = InboundDispatcher(
+    store,
+    {
+        "xsm.order.PAY": order,
+    },
+    inbox=MemoryInbox(),
+)
 
 
 async def main() -> None:
-    cmd = Envelope.new(type="xsm.order.PAY", subject="o-42", data={"total": 99})
+    cmd = Envelope.new(
+        type="xsm.order.PAY",
+        subject="o-42",
+        data={
+            "total": 99,
+        },
+    )
     await broker.publish("orders", cmd)
-    await broker.publish("orders", cmd)            # a redelivery / double publish
+    await broker.publish("orders", cmd)  # a redelivery / double publish
     result = await dispatcher.run_once(broker, "orders", timeout=0.1)
     assert (result.processed, result.duplicates) == (1, 1)
 

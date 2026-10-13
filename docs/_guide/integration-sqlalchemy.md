@@ -24,36 +24,73 @@ from sqlalchemy import create_engine, select
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 from xstate_statemachine import MachineLogic, create_machine
 from xstate_statemachine.contrib.sqlalchemy import (
-    StatechartMixin, StatechartType, send_with_retry, xsm_sqlalchemy_ddl)
+    StatechartMixin,
+    StatechartType,
+    send_with_retry,
+    xsm_sqlalchemy_ddl,
+)
+
 
 def add(i, ctx, e, a):
     ctx["items"] += 1
 
+
 machine = create_machine(
-    {"id": "order", "initial": "cart", "context": {"items": 0},
-     "states": {"cart": {"on": {"ADD": {"actions": "add"}, "PAY": "paid"}},
-                "paid": {"type": "final"}}},
-    logic=MachineLogic(actions={"add": add}))
+    {
+        "id": "order",
+        "initial": "cart",
+        "context": {
+            "items": 0,
+        },
+        "states": {
+            "cart": {
+                "on": {
+                    "ADD": {
+                        "actions": "add",
+                    },
+                    "PAY": "paid",
+                },
+            },
+            "paid": {
+                "type": "final",
+            },
+        },
+    },
+    logic=MachineLogic(
+        actions={
+            "add": add,
+        }
+    ),
+)
+
 
 class Base(DeclarativeBase):
     pass
 
+
 class Order(StatechartMixin, Base):
     __tablename__ = "orders"
     __xsm_machine__ = machine
-    __xsm_audit__ = True                          # audit row in the same flush
+    __xsm_audit__ = True  # audit row in the same flush
     id: Mapped[int] = mapped_column(primary_key=True)
-    statechart: Mapped[Optional[dict]] = mapped_column(StatechartType, nullable=True)
+    statechart: Mapped[Optional[dict]] = mapped_column(
+        StatechartType, nullable=True
+    )
     __mapper_args__ = StatechartMixin.optimistic()  # version_id_col
 
+
 engine = create_engine("sqlite:///shop.db")
-xsm_sqlalchemy_ddl(Base.metadata).create_all(engine)   # + xsm_deadlines, xsm_transitions ...
+xsm_sqlalchemy_ddl(Base.metadata).create_all(
+    engine
+)  # + xsm_deadlines, xsm_transitions ...
 
 with Session(engine) as s:
     order = Order()
     s.add(order)
     order.send("ADD", session=s, actor="alice")
-    send_with_retry(order, "PAY", session=s)        # rolls back + retries on ConflictError
+    send_with_retry(
+        order, "PAY", session=s
+    )  # rolls back + retries on ConflictError
     s.commit()
     paid = s.scalars(select(Order).where(Order.in_state("order.paid"))).all()
     assert paid == [order] and order.state == "order.paid"
@@ -142,46 +179,95 @@ The EDA core's `OutboxStore` ([#293](https://github.com/basiltt/xstate-statemach
 ```python
 from typing import Optional
 from sqlalchemy import create_engine
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column, sessionmaker
+from sqlalchemy.orm import (
+    DeclarativeBase,
+    Mapped,
+    Session,
+    mapped_column,
+    sessionmaker,
+)
 from xstate_statemachine import create_machine
 from xstate_statemachine.contrib.sqlalchemy import (
-    SQLAlchemyOutboxStore, SQLAlchemyStore, StatechartMixin, StatechartType, xsm_sqlalchemy_ddl)
-from xstate_statemachine.eda import OutboxPlugin, OutboxRelay, SyncFakeBrokerAdapter
+    SQLAlchemyOutboxStore,
+    SQLAlchemyStore,
+    StatechartMixin,
+    StatechartType,
+    xsm_sqlalchemy_ddl,
+)
+from xstate_statemachine.eda import (
+    OutboxPlugin,
+    OutboxRelay,
+    SyncFakeBrokerAdapter,
+)
 
-chart = create_machine({"id": "inv", "initial": "open", "context": {"n": 7},
-    "states": {"open": {"on": {"PAY": {"target": "paid",
-                                       "meta": {"publish": {"type": "invoice.paid", "data": ["n"]}}}}},
-               "paid": {}}})
+chart = create_machine(
+    {
+        "id": "inv",
+        "initial": "open",
+        "context": {
+            "n": 7,
+        },
+        "states": {
+            "open": {
+                "on": {
+                    "PAY": {
+                        "target": "paid",
+                        "meta": {
+                            "publish": {
+                                "type": "invoice.paid",
+                                "data": ["n"],
+                            },
+                        },
+                    },
+                },
+            },
+            "paid": {},
+        },
+    }
+)
+
 
 class Base(DeclarativeBase):
     pass
+
 
 class Invoice(StatechartMixin, Base):
     __tablename__ = "invoices"
     __xsm_machine__ = chart
     id: Mapped[int] = mapped_column(primary_key=True)
-    statechart: Mapped[Optional[dict]] = mapped_column(StatechartType, nullable=True)
+    statechart: Mapped[Optional[dict]] = mapped_column(
+        StatechartType, nullable=True
+    )
     __mapper_args__ = StatechartMixin.optimistic()
 
+
 engine = create_engine("sqlite://")
-xsm_sqlalchemy_ddl(Base.metadata).create_all(engine)       # includes xsm_outbox
-outbox = SQLAlchemyOutboxStore(SQLAlchemyStore(sessionmaker(engine), metadata=Base.metadata))
+xsm_sqlalchemy_ddl(Base.metadata).create_all(engine)  # includes xsm_outbox
+outbox = SQLAlchemyOutboxStore(
+    SQLAlchemyStore(sessionmaker(engine), metadata=Base.metadata)
+)
 plugin = OutboxPlugin(outbox, topic="billing")
 
-with Session(engine) as s:                                  # rolled back: no event
-    inv = Invoice(); s.add(inv); s.flush()
+with Session(engine) as s:  # rolled back: no event
+    inv = Invoice()
+    s.add(inv)
+    s.flush()
     inv.send("PAY", session=s, plugins=[plugin])
     s.rollback()
 assert outbox.count() == 0
 
-with Session(engine) as s:                                  # committed: one event
-    inv = Invoice(); s.add(inv); s.flush()
+with Session(engine) as s:  # committed: one event
+    inv = Invoice()
+    s.add(inv)
+    s.flush()
     inv.send("PAY", session=s, plugins=[plugin])
     s.commit()
 broker = SyncFakeBrokerAdapter()
 assert OutboxRelay(outbox, broker).relay_once_sync() == 1
 [d] = list(broker.subscribe("billing", timeout=0))
-assert d.envelope.type == "invoice.paid" and d.envelope.data == {"n": 7}
+assert d.envelope.type == "invoice.paid" and d.envelope.data == {
+    "n": 7,
+}
 ```
 
 <div class="stately" data-machine="ea8481f572" data-height="320" data-title="inv"></div>

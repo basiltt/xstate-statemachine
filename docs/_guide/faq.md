@@ -168,10 +168,14 @@ Nested (hierarchical) states are fully supported. A transition defined on a pare
       "initial": "login",
       "states": {
         "login": {
-          "on": { "SUBMIT": "verifying" }
+          "on": {
+            "SUBMIT": "verifying"
+          }
         },
         "verifying": {
-          "on": { "SUCCESS": "#app.dashboard" }
+          "on": {
+            "SUCCESS": "#app.dashboard"
+          }
         }
       },
       "on": {
@@ -200,7 +204,10 @@ By default, if a guard function raises an exception, the transition is **blocked
 ```python
 def risky_guard(context, event):
     # If this raises, behavior depends on guardErrorPolicy
-    return context["user"]["role"] == "admin"  # KeyError if "user" not in context
+    return (
+        context["user"]["role"] == "admin"
+    )  # KeyError if "user" not in context
+
 
 config = {
     "guardErrorPolicy": "raise",  # or "false" (default) / "true"
@@ -283,10 +290,15 @@ An `always` transition has no event. It is evaluated the moment its state is ent
 ```python
 "checking": {
     "always": [
-        {"target": "approved", "guard": "isValid"},
-        {"target": "rejected"},
-    ]
-}
+        {
+            "target": "approved",
+            "guard": "isValid",
+        },
+        {
+            "target": "rejected",
+        },
+    ],
+},
 ```
 
 Since 0.8.0 both interpreters settle `always` transitions *before* `send()` returns, so you never observe the intermediate state.
@@ -333,22 +345,43 @@ Use `SyncInterpreter` in tests for synchronous, deterministic execution:
 import pytest
 from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 
+
 def test_light_switch_toggle():
     """Test that toggling switches between on and off."""
     config = {
         "id": "lightSwitch",
         "initial": "off",
-        "context": {"flips": 0},
+        "context": {
+            "flips": 0,
+        },
         "states": {
-            "off": {"on": {"TOGGLE": {"target": "on", "actions": "increment"}}},
-            "on": {"on": {"TOGGLE": {"target": "off", "actions": "increment"}}}
-        }
+            "off": {
+                "on": {
+                    "TOGGLE": {
+                        "target": "on",
+                        "actions": "increment",
+                    },
+                },
+            },
+            "on": {
+                "on": {
+                    "TOGGLE": {
+                        "target": "off",
+                        "actions": "increment",
+                    },
+                },
+            },
+        },
     }
 
     def increment(interpreter, context, event, action_def):
         context["flips"] += 1
 
-    logic = MachineLogic(actions={"increment": increment})
+    logic = MachineLogic(
+        actions={
+            "increment": increment,
+        }
+    )
     machine = create_machine(config, logic=logic)
     interp = SyncInterpreter(machine)
     interp.start()
@@ -374,19 +407,30 @@ def test_guard_blocks_transition():
     config = {
         "id": "door",
         "initial": "locked",
-        "context": {"hasKey": False},
+        "context": {
+            "hasKey": False,
+        },
         "states": {
             "locked": {
-                "on": {"UNLOCK": {"target": "unlocked", "guard": "hasKey"}}
+                "on": {
+                    "UNLOCK": {
+                        "target": "unlocked",
+                        "guard": "hasKey",
+                    },
+                },
             },
-            "unlocked": {}
-        }
+            "unlocked": {},
+        },
     }
 
     def has_key(context, event):
         return context.get("hasKey", False)
 
-    logic = MachineLogic(guards={"has_key": has_key})
+    logic = MachineLogic(
+        guards={
+            "has_key": has_key,
+        }
+    )
     machine = create_machine(config, logic=logic)
     interp = SyncInterpreter(machine)
     interp.start()
@@ -460,12 +504,17 @@ Yes!
 # Django view example
 from xstate_statemachine import create_machine, SyncInterpreter
 
+
 def checkout_view(request):
     machine = create_machine(checkout_config, logic=checkout_logic)
     interp = SyncInterpreter(machine)
     interp.start()
     interp.send("SUBMIT")
-    return JsonResponse({"state": list(interp.current_state_ids)})
+    return JsonResponse(
+        {
+            "state": list(interp.current_state_ids),
+        }
+    )
 ```
 
 **FastAPI** (async): Use `Interpreter`:
@@ -475,6 +524,7 @@ def checkout_view(request):
 # FastAPI endpoint example
 from xstate_statemachine import create_machine, Interpreter
 
+
 @app.post("/checkout")
 async def checkout():
     machine = create_machine(checkout_config, logic=checkout_logic)
@@ -483,7 +533,9 @@ async def checkout():
     await interp.send("SUBMIT")
     state = list(interp.current_state_ids)
     await interp.stop()
-    return {"state": state}
+    return {
+        "state": state,
+    }
 ```
 
 ---
@@ -528,13 +580,18 @@ config = {
     "states": {
         "active": {
             "after": {
-                "30000": "timed_out"
+                "30000": "timed_out",
             },
-            "on": { "ACTIVITY": "active" }
+            "on": {
+                "ACTIVITY": "active",
+            },
         },
-        "timed_out": { "type": "final" }
-    }
+        "timed_out": {
+            "type": "final",
+        },
+    },
 }
+
 
 async def main():
     machine = create_machine(config)

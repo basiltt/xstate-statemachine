@@ -144,8 +144,6 @@ def write_gallery() -> None:
         "drawn live by the Stately editor.",
         "---",
         "",
-        "# Example gallery",
-        "",
         "Every machine under [`examples/`]"
         "(https://github.com/basiltt/xstate-statemachine/tree/main/examples)",
         "as the Stately editor draws it. The diagrams follow the site "
@@ -170,9 +168,10 @@ def write_gallery() -> None:
                 div(key, cfg).rstrip(),
                 "",
             ]
-    (DOCS / "_guide" / "example-gallery.md").write_text(
-        "\n".join(lines) + "\n", encoding="utf-8"
-    )
+    with (DOCS / "_guide" / "example-gallery.md").open(
+        "w", encoding="utf-8", newline="\n"
+    ) as handle:
+        handle.write("\n".join(lines).rstrip("\n") + "\n")
 
 
 if __name__ == "__main__":

@@ -23,40 +23,99 @@ For a complete, runnable app -- a multi-step wizard on `SessionStore`, CSRF-prot
 from flask import Flask, request
 from xstate_statemachine import create_machine
 from xstate_statemachine.contrib.flask import (
-    XState, create_statechart_blueprint, receipt_response)
+    XState,
+    create_statechart_blueprint,
+    receipt_response,
+)
 from xstate_statemachine.persistence import MemoryInbox, SQLiteStore
 
-order = create_machine({"id": "order", "initial": "cart", "states": {
-    "cart": {"on": {"CHECKOUT": "paying"}},
-    "paying": {"on": {"PAY": "paid"}},
-    "paid": {"type": "final"}}})
+order = create_machine(
+    {
+        "id": "order",
+        "initial": "cart",
+        "states": {
+            "cart": {
+                "on": {
+                    "CHECKOUT": "paying",
+                },
+            },
+            "paying": {
+                "on": {
+                    "PAY": "paid",
+                },
+            },
+            "paid": {
+                "type": "final",
+            },
+        },
+    }
+)
 
-def can_touch(req, *, name, key, event):          # REQUIRED: who may read/drive what
+
+def can_touch(req, *, name, key, event):  # REQUIRED: who may read/drive what
     return req.headers.get("X-User") is not None
+
 
 xsm = XState()
 xsm.register("order", order, authorize=can_touch)
 
+
 def create_app():
     app = Flask(__name__)
-    xsm.init_app(app, store=SQLiteStore("app.db"), inbox=MemoryInbox(),
-                 principal=lambda req: req.headers["X-User"])
-    app.register_blueprint(create_statechart_blueprint(xsm, "order", "/orders"))
+    xsm.init_app(
+        app,
+        store=SQLiteStore("app.db"),
+        inbox=MemoryInbox(),
+        principal=lambda req: req.headers["X-User"],
+    )
+    app.register_blueprint(
+        create_statechart_blueprint(xsm, "order", "/orders")
+    )
 
-    @app.post("/orders/<oid>/quick-pay")           # your own view, same guarantees
+    @app.post("/orders/<oid>/quick-pay")  # your own view, same guarantees
     def quick_pay(oid):
         with xsm.act("order", oid) as o:
             o.send("CHECKOUT")
             return receipt_response(o, o.send("PAY", wait=True))
+
     return app
 
+
 c = create_app().test_client()
-h = {"X-User": "alice", "Idempotency-Key": "chk-1"}
-assert c.post("/orders/42/send", json={"type": "CHECKOUT"}, headers=h).status_code == 200
-assert c.post("/orders/42/send", json={"type": "CHECKOUT"}, headers=h).get_json()["duplicate"]
+h = {
+    "X-User": "alice",
+    "Idempotency-Key": "chk-1",
+}
+assert (
+    c.post(
+        "/orders/42/send",
+        json={
+            "type": "CHECKOUT",
+        },
+        headers=h,
+    ).status_code
+    == 200
+)
+assert c.post(
+    "/orders/42/send",
+    json={
+        "type": "CHECKOUT",
+    },
+    headers=h,
+).get_json()["duplicate"]
 assert c.get("/orders/42", headers=h).get_json()["state"] == "paying"
-assert c.get("/orders/42/send", headers=h).status_code == 405   # no state change via GET
-assert c.post("/orders/42/send", json={"type": "CHECKOUT"}).status_code == 403
+assert (
+    c.get("/orders/42/send", headers=h).status_code == 405
+)  # no state change via GET
+assert (
+    c.post(
+        "/orders/42/send",
+        json={
+            "type": "CHECKOUT",
+        },
+    ).status_code
+    == 403
+)
 ```
 
 <div class="stately" data-machine="18e9b981b0" data-height="320" data-title="order"></div>
@@ -88,36 +147,71 @@ Two requests on one key at once: under the default `OptimisticLock` the second t
 import os, tempfile, threading
 from flask import Flask
 from xstate_statemachine import MachineLogic, create_machine
-from xstate_statemachine.contrib.flask import XState, allow_all, receipt_response
+from xstate_statemachine.contrib.flask import (
+    XState,
+    allow_all,
+    receipt_response,
+)
 from xstate_statemachine.persistence import PessimisticLock, SQLiteStore
+
 
 def inc(i, ctx, e, a):
     ctx["n"] += 1
 
+
 counter = create_machine(
-    {"id": "counter", "initial": "on", "context": {"n": 0},
-     "states": {"on": {"on": {"INC": {"actions": "inc"}}}}},
-    logic=MachineLogic(actions={"inc": inc}))
+    {
+        "id": "counter",
+        "initial": "on",
+        "context": {
+            "n": 0,
+        },
+        "states": {
+            "on": {
+                "on": {
+                    "INC": {
+                        "actions": "inc",
+                    },
+                },
+            },
+        },
+    },
+    logic=MachineLogic(
+        actions={
+            "inc": inc,
+        }
+    ),
+)
 xsm = XState()
 xsm.register("counter", counter, authorize=allow_all, context_serializer=dict)
 app = Flask(__name__)
 db = os.path.join(tempfile.mkdtemp(), "c.db")
 xsm.init_app(app, store=SQLiteStore(db), lock=PessimisticLock())
 
+
 @app.post("/c/<k>/inc")
 def bump(k):
     with xsm.act("counter", k) as i:
         return receipt_response(i, i.send("INC", wait=True))
 
+
 codes = []
+
+
 def hit():
     codes.append(app.test_client().post("/c/1/inc").status_code)
+
+
 threads = [threading.Thread(target=hit) for _ in range(20)]
-for t in threads: t.start()
-for t in threads: t.join()
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
 assert codes == [200] * 20
 with app.test_request_context(method="POST"):
-    assert xsm.peek("counter", "1")["context"] == {"n": 20}
+    assert xsm.peek("counter", "1")["context"] == {
+        "n": 20,
+    }
 ```
 
 <div class="stately" data-machine="5f610880d8" data-height="320" data-title="counter"></div>
@@ -131,39 +225,78 @@ from flask import Flask
 from xstate_statemachine import MachineLogic, create_machine
 from xstate_statemachine.contrib.flask import XState, allow_all
 from xstate_statemachine.persistence import (
-    OptimisticLock, SQLiteStore, persisted_retry)
+    OptimisticLock,
+    SQLiteStore,
+    persisted_retry,
+)
+
 
 def inc(i, ctx, e, a):
     ctx["n"] += 1
 
+
 counter = create_machine(
-    {"id": "counter", "initial": "on", "context": {"n": 0},
-     "states": {"on": {"on": {"INC": {"actions": "inc"}}}}},
-    logic=MachineLogic(actions={"inc": inc}))
+    {
+        "id": "counter",
+        "initial": "on",
+        "context": {
+            "n": 0,
+        },
+        "states": {
+            "on": {
+                "on": {
+                    "INC": {
+                        "actions": "inc",
+                    },
+                },
+            },
+        },
+    },
+    logic=MachineLogic(
+        actions={
+            "inc": inc,
+        }
+    ),
+)
 xsm = XState()
 xsm.register("counter", counter, authorize=allow_all, context_serializer=dict)
 app = Flask(__name__)
 store = SQLiteStore(os.path.join(tempfile.mkdtemp(), "c.db"))
 xsm.init_app(app, store=store)
 
+
 @app.post("/c/<k>/inc")
 def bump(k):
     r = xsm.registry()
     n = persisted_retry(
-        store, r.store_key("counter", k), counter,
+        store,
+        r.store_key("counter", k),
+        counter,
         lambda i: (i.send("INC", wait=True), i.context["n"])[1],
-        lock=OptimisticLock(retries=50))
-    return {"n": n}
+        lock=OptimisticLock(retries=50),
+    )
+    return {
+        "n": n,
+    }
+
 
 codes = []
+
+
 def hit():
     codes.append(app.test_client().post("/c/1/inc").status_code)
+
+
 threads = [threading.Thread(target=hit) for _ in range(20)]
-for t in threads: t.start()
-for t in threads: t.join()
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
 assert codes == [200] * 20
 with app.test_request_context(method="POST"):
-    assert xsm.peek("counter", "1")["context"] == {"n": 20}
+    assert xsm.peek("counter", "1")["context"] == {
+        "n": 20,
+    }
 ```
 
 <div class="stately" data-machine="5f610880d8" data-height="320" data-title="counter"></div>
@@ -224,27 +357,73 @@ Runs the `xsm` command of the same name on the registered machine's JSON source.
 from flask import Flask
 from flask_wtf.csrf import CSRFProtect, generate_csrf
 from xstate_statemachine import create_machine
-from xstate_statemachine.contrib.flask import XState, allow_all, create_statechart_blueprint
+from xstate_statemachine.contrib.flask import (
+    XState,
+    allow_all,
+    create_statechart_blueprint,
+)
 from xstate_statemachine.persistence import MemoryStore
 
 xsm = XState()
-xsm.register("o", create_machine({"id": "o", "initial": "a",
-             "states": {"a": {"on": {"GO": "b"}}, "b": {}}}), authorize=allow_all)
+xsm.register(
+    "o",
+    create_machine(
+        {
+            "id": "o",
+            "initial": "a",
+            "states": {
+                "a": {
+                    "on": {
+                        "GO": "b",
+                    },
+                },
+                "b": {},
+            },
+        }
+    ),
+    authorize=allow_all,
+)
 app = Flask(__name__)
 app.secret_key = "dev"
 CSRFProtect(app)
 xsm.init_app(app, store=MemoryStore())
 app.register_blueprint(create_statechart_blueprint(xsm, "o", "/o"))
-app.add_url_rule("/token", "token", generate_csrf)   # your page embeds this
+app.add_url_rule("/token", "token", generate_csrf)  # your page embeds this
 
 browser = app.test_client()
-assert browser.post("/o/1/send", json={"type": "GO"}).status_code == 400
+assert (
+    browser.post(
+        "/o/1/send",
+        json={
+            "type": "GO",
+        },
+    ).status_code
+    == 400
+)
 token = browser.get("/token").get_data(as_text=True)
-ok = browser.post("/o/1/send", json={"type": "GO"}, headers={"X-CSRFToken": token})
+ok = browser.post(
+    "/o/1/send",
+    json={
+        "type": "GO",
+    },
+    headers={
+        "X-CSRFToken": token,
+    },
+)
 assert ok.status_code == 200 and ok.get_json()["state"] == "b"
-stranger = app.test_client()                          # token, but not its session
-assert stranger.post("/o/2/send", json={"type": "GO"},
-                     headers={"X-CSRFToken": token}).status_code == 400
+stranger = app.test_client()  # token, but not its session
+assert (
+    stranger.post(
+        "/o/2/send",
+        json={
+            "type": "GO",
+        },
+        headers={
+            "X-CSRFToken": token,
+        },
+    ).status_code
+    == 400
+)
 ```
 
 <div class="stately" data-machine="b777201d68" data-height="320" data-title="o"></div>

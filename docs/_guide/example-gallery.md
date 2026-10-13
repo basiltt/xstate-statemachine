@@ -3,8 +3,6 @@ title: Example gallery
 description: Every statechart shipped under examples/, drawn live by the Stately editor.
 ---
 
-# Example gallery
-
 Every machine under [`examples/`](https://github.com/basiltt/xstate-statemachine/tree/main/examples)
 as the Stately editor draws it. The diagrams follow the site theme; each one links to the
 public editor page where you can simulate it. The JSON next to each diagram is what the
@@ -477,4 +475,3 @@ Source: [`examples/sync/super_complex/class_approach/with_logic_loader/install_w
 Source: [`examples/sync/super_complex/functional_approach/with_logic_loader/ecommerce_fulfillment.json`](https://github.com/basiltt/xstate-statemachine/blob/main/examples/sync/super_complex/functional_approach/with_logic_loader/ecommerce_fulfillment.json)
 
 <div class="stately" data-machine="917ea351d3" data-height="640" data-title="ECommerceFulfillment"></div>
-

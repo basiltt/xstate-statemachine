@@ -76,22 +76,36 @@ config = {
     "id": "auth",
     "initial": "loggedOut",
     "states": {
-        "loggedOut": {"on": {"LOGIN": "loggedIn"}},
+        "loggedOut": {
+            "on": {
+                "LOGIN": "loggedIn",
+            },
+        },
         "loggedIn": {
             "initial": "dashboard",
             "states": {
                 "dashboard": {
                     "on": {
                         "VIEW_PROFILE": "profile",
-                        "VIEW_SETTINGS": "settings"
-                    }
+                        "VIEW_SETTINGS": "settings",
+                    },
                 },
-                "profile": {"on": {"BACK": "dashboard"}},
-                "settings": {"on": {"BACK": "dashboard"}}
+                "profile": {
+                    "on": {
+                        "BACK": "dashboard",
+                    },
+                },
+                "settings": {
+                    "on": {
+                        "BACK": "dashboard",
+                    },
+                },
             },
-            "on": {"LOGOUT": "loggedOut"}
-        }
-    }
+            "on": {
+                "LOGOUT": "loggedOut",
+            },
+        },
+    },
 }
 
 machine = create_machine(config)
@@ -168,10 +182,14 @@ Children can transition between each other freely:
     "initial": "dashboard",
     "states": {
       "dashboard": {
-        "on": {"VIEW_PROFILE": "profile"}
+        "on": {
+          "VIEW_PROFILE": "profile"
+        }
       },
       "profile": {
-        "on": {"BACK": "dashboard"}
+        "on": {
+          "BACK": "dashboard"
+        }
       }
     }
   }
@@ -189,7 +207,9 @@ The 0.7.x reading — resolving `.child` as a sibling of the source, i.e. a chil
   "id": "m",
   "strictTargets": true,
   "initial": "loggedIn",
-  "states": { "loggedIn": {} }
+  "states": {
+    "loggedIn": {}
+  }
 }
 ```
 
@@ -224,16 +244,31 @@ Declare a child with `"type": "history"` and target it explicitly. The `"history
   "initial": "off",
   "states": {
     "off": {
-      "on": { "POWER": "#player.playing.hist" }
+      "on": {
+        "POWER": "#player.playing.hist"
+      }
     },
     "playing": {
       "initial": "paused",
       "states": {
-        "paused": { "on": { "PLAY": "running" } },
-        "running": { "on": { "PAUSE": "paused" } },
-        "hist": { "type": "history", "history": "shallow" }
+        "paused": {
+          "on": {
+            "PLAY": "running"
+          }
+        },
+        "running": {
+          "on": {
+            "PAUSE": "paused"
+          }
+        },
+        "hist": {
+          "type": "history",
+          "history": "shallow"
+        }
       },
-      "on": { "POWER": "off" }
+      "on": {
+        "POWER": "off"
+      }
     }
   }
 }
@@ -249,18 +284,33 @@ config = {
     "initial": "off",
     "states": {
         "off": {
-            "on": {"POWER": "#player.playing.hist"}
+            "on": {
+                "POWER": "#player.playing.hist",
+            },
         },
         "playing": {
             "initial": "paused",
             "states": {
-                "paused": {"on": {"PLAY": "running"}},
-                "running": {"on": {"PAUSE": "paused"}},
-                "hist": {"type": "history", "history": "shallow"}
+                "paused": {
+                    "on": {
+                        "PLAY": "running",
+                    },
+                },
+                "running": {
+                    "on": {
+                        "PAUSE": "paused",
+                    },
+                },
+                "hist": {
+                    "type": "history",
+                    "history": "shallow",
+                },
             },
-            "on": {"POWER": "off"}
-        }
-    }
+            "on": {
+                "POWER": "off",
+            },
+        },
+    },
 }
 
 machine = create_machine(config)
@@ -300,14 +350,20 @@ Transitions defined on the parent apply to **all** children. If a child doesn't 
     "initial": "dashboard",
     "states": {
       "dashboard": {
-        "on": {"REFRESH": {"actions": "loadDashboard"}}
+        "on": {
+          "REFRESH": {
+            "actions": "loadDashboard"
+          }
+        }
       },
       "profile": {},
       "settings": {}
     },
     "on": {
       "LOGOUT": "loggedOut",
-      "SHOW_HELP": {"actions": "openHelpPanel"}
+      "SHOW_HELP": {
+        "actions": "openHelpPanel"
+      }
     }
   }
 }
@@ -360,10 +416,14 @@ Hierarchical states can be nested to any depth:
           "initial": "home",
           "states": {
             "home": {
-              "on": {"VIEW_DETAIL": "detail"}
+              "on": {
+                "VIEW_DETAIL": "detail"
+              }
             },
             "detail": {
-              "on": {"BACK": "home"}
+              "on": {
+                "BACK": "home"
+              }
             }
           }
         }
@@ -373,7 +433,9 @@ Hierarchical states can be nested to any depth:
       }
     },
     "error": {
-      "on": {"RESTART": "app"}
+      "on": {
+        "RESTART": "app"
+      }
     }
   }
 }
@@ -394,15 +456,29 @@ config = {
                 "main": {
                     "initial": "home",
                     "states": {
-                        "home": {"on": {"VIEW_DETAIL": "detail"}},
-                        "detail": {"on": {"BACK": "home"}}
-                    }
-                }
+                        "home": {
+                            "on": {
+                                "VIEW_DETAIL": "detail",
+                            },
+                        },
+                        "detail": {
+                            "on": {
+                                "BACK": "home",
+                            },
+                        },
+                    },
+                },
             },
-            "on": {"CRASH": "error"}
+            "on": {
+                "CRASH": "error",
+            },
         },
-        "error": {"on": {"RESTART": "app"}}
-    }
+        "error": {
+            "on": {
+                "RESTART": "app",
+            },
+        },
+    },
 }
 
 machine = create_machine(config)
@@ -458,19 +534,40 @@ print(is_logged_in)  # True
 ```python
 from xstate_statemachine import State, StateMachine, SyncInterpreter
 
+
 class AuthMachine(StateMachine):
     machine_id = "auth"
 
     logged_out = State("loggedOut", initial=True)
-    logged_in  = State("loggedIn", states=[
-        State("dashboard", initial=True,
-              on={"VIEW_PROFILE": "profile", "VIEW_SETTINGS": "settings"}),
-        State("profile",  on={"BACK": "dashboard"}),
-        State("settings", on={"BACK": "dashboard"}),
-    ])
+    logged_in = State(
+        "loggedIn",
+        states=[
+            State(
+                "dashboard",
+                initial=True,
+                on={
+                    "VIEW_PROFILE": "profile",
+                    "VIEW_SETTINGS": "settings",
+                },
+            ),
+            State(
+                "profile",
+                on={
+                    "BACK": "dashboard",
+                },
+            ),
+            State(
+                "settings",
+                on={
+                    "BACK": "dashboard",
+                },
+            ),
+        ],
+    )
 
-    login  = logged_out.to(logged_in,  event="LOGIN")
+    login = logged_out.to(logged_in, event="LOGIN")
     logout = logged_in.to(logged_out, event="LOGOUT")
+
 
 machine = AuthMachine.create_machine()
 interp = SyncInterpreter(machine).start()
@@ -499,16 +596,28 @@ machine = (
     MachineBuilder("auth")
     .state("loggedOut", initial=True)
     .state("loggedIn")
-    .child_states("loggedIn", initial="dashboard", states={
-        "dashboard": {
-            "on": {
-                "VIEW_PROFILE": "profile",
-                "VIEW_SETTINGS": "settings"
-            }
+    .child_states(
+        "loggedIn",
+        initial="dashboard",
+        states={
+            "dashboard": {
+                "on": {
+                    "VIEW_PROFILE": "profile",
+                    "VIEW_SETTINGS": "settings",
+                },
+            },
+            "profile": {
+                "on": {
+                    "BACK": "dashboard",
+                },
+            },
+            "settings": {
+                "on": {
+                    "BACK": "dashboard",
+                },
+            },
         },
-        "profile": {"on": {"BACK": "dashboard"}},
-        "settings": {"on": {"BACK": "dashboard"}},
-    })
+    )
     .transition("loggedOut", "LOGIN", "loggedIn")
     .transition("loggedIn", "LOGOUT", "loggedOut")
     .build()
@@ -528,13 +637,41 @@ interp.stop()
 ```python
 from xstate_statemachine import State, build_machine, SyncInterpreter
 
-logged_out = State("loggedOut", initial=True, on={"LOGIN": "loggedIn"})
-logged_in  = State("loggedIn", states=[
-    State("dashboard", initial=True,
-          on={"VIEW_PROFILE": "profile", "VIEW_SETTINGS": "settings"}),
-    State("profile",  on={"BACK": "dashboard"}),
-    State("settings", on={"BACK": "dashboard"}),
-], on={"LOGOUT": "loggedOut"})
+logged_out = State(
+    "loggedOut",
+    initial=True,
+    on={
+        "LOGIN": "loggedIn",
+    },
+)
+logged_in = State(
+    "loggedIn",
+    states=[
+        State(
+            "dashboard",
+            initial=True,
+            on={
+                "VIEW_PROFILE": "profile",
+                "VIEW_SETTINGS": "settings",
+            },
+        ),
+        State(
+            "profile",
+            on={
+                "BACK": "dashboard",
+            },
+        ),
+        State(
+            "settings",
+            on={
+                "BACK": "dashboard",
+            },
+        ),
+    ],
+    on={
+        "LOGOUT": "loggedOut",
+    },
+)
 
 machine = build_machine(id="auth", states=[logged_out, logged_in])
 interp = SyncInterpreter(machine).start()
@@ -560,10 +697,14 @@ When a compound state's child reaches a **final** state, a `done.state.*` event 
       "initial": "step1",
       "states": {
         "step1": {
-          "on": {"NEXT": "step2"}
+          "on": {
+            "NEXT": "step2"
+          }
         },
         "step2": {
-          "on": {"NEXT": "complete"}
+          "on": {
+            "NEXT": "complete"
+          }
         },
         "complete": {
           "type": "final"
@@ -590,14 +731,26 @@ config = {
         "processing": {
             "initial": "step1",
             "states": {
-                "step1": {"on": {"NEXT": "step2"}},
-                "step2": {"on": {"NEXT": "complete"}},
-                "complete": {"type": "final"}
+                "step1": {
+                    "on": {
+                        "NEXT": "step2",
+                    },
+                },
+                "step2": {
+                    "on": {
+                        "NEXT": "complete",
+                    },
+                },
+                "complete": {
+                    "type": "final",
+                },
             },
-            "onDone": "finished"
+            "onDone": "finished",
         },
-        "finished": {"type": "final"}
-    }
+        "finished": {
+            "type": "final",
+        },
+    },
 }
 
 machine = create_machine(config)
@@ -629,8 +782,14 @@ Guards work normally inside nested states:
       "cart": {
         "on": {
           "PROCEED": [
-            {"target": "payment", "guard": "cartNotEmpty"},
-            {"target": "cart",    "actions": "showEmptyError"}
+            {
+              "target": "payment",
+              "guard": "cartNotEmpty"
+            },
+            {
+              "target": "cart",
+              "actions": "showEmptyError"
+            }
           ]
         }
       },
@@ -646,7 +805,9 @@ from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 config = {
     "id": "shop",
     "initial": "checkout",
-    "context": {"items": []},
+    "context": {
+        "items": [],
+    },
     "states": {
         "checkout": {
             "initial": "cart",
@@ -654,21 +815,34 @@ config = {
                 "cart": {
                     "on": {
                         "PROCEED": [
-                            {"target": "payment", "guard": "cartNotEmpty"},
-                            {"target": "cart", "actions": "showEmptyError"}
-                        ]
-                    }
+                            {
+                                "target": "payment",
+                                "guard": "cartNotEmpty",
+                            },
+                            {
+                                "target": "cart",
+                                "actions": "showEmptyError",
+                            },
+                        ],
+                    },
                 },
                 "payment": {
-                    "on": {"PAY": "confirmation"}
+                    "on": {
+                        "PAY": "confirmation",
+                    },
                 },
-                "confirmation": {"type": "final"}
+                "confirmation": {
+                    "type": "final",
+                },
             },
-            "on": {"CANCEL": "cancelled"}
+            "on": {
+                "CANCEL": "cancelled",
+            },
         },
-        "cancelled": {}
-    }
+        "cancelled": {},
+    },
 }
+
 
 class ShopLogic(MachineLogic):
     def cart_not_empty(self, context, event):
@@ -676,6 +850,7 @@ class ShopLogic(MachineLogic):
 
     def show_empty_error(self, interpreter, context, event, action_def):
         print("Cart is empty!")
+
 
 machine = create_machine(config, logic=ShopLogic())
 interp = SyncInterpreter(machine).start()
@@ -697,12 +872,12 @@ Entry and exit actions fire in the correct order when entering/exiting nested st
 {
   "loggedIn": {
     "entry": "loadUserSession",
-    "exit":  "cleanupSession",
+    "exit": "cleanupSession",
     "initial": "dashboard",
     "states": {
       "dashboard": {
         "entry": "loadDashboardData",
-        "exit":  "clearDashboardCache"
+        "exit": "clearDashboardCache"
       },
       "profile": {
         "entry": "loadProfileData"
@@ -748,7 +923,9 @@ Services (invoked operations) work inside nested states:
       },
       "dashboard": {},
       "error": {
-        "on": {"RETRY": "loading"}
+        "on": {
+          "RETRY": "loading"
+        }
       }
     }
   }
@@ -769,18 +946,22 @@ config = {
         "items": [],
         "shippingAddress": None,
         "paymentMethod": None,
-        "orderId": None
+        "orderId": None,
     },
     "states": {
         "cart": {
             "on": {
-                "ADD_ITEM": {"actions": "addItem"},
-                "REMOVE_ITEM": {"actions": "removeItem"},
+                "ADD_ITEM": {
+                    "actions": "addItem",
+                },
+                "REMOVE_ITEM": {
+                    "actions": "removeItem",
+                },
                 "CHECKOUT": {
                     "target": "shipping",
-                    "guard": "cartNotEmpty"
-                }
-            }
+                    "guard": "cartNotEmpty",
+                },
+            },
         },
         "shipping": {
             "initial": "entering",
@@ -789,9 +970,9 @@ config = {
                     "on": {
                         "SET_ADDRESS": {
                             "target": "validating",
-                            "actions": "setAddress"
-                        }
-                    }
+                            "actions": "setAddress",
+                        },
+                    },
                 },
                 "validating": {
                     "invoke": {
@@ -799,16 +980,18 @@ config = {
                         "onDone": "confirmed",
                         "onError": {
                             "target": "entering",
-                            "actions": "showAddressError"
-                        }
-                    }
+                            "actions": "showAddressError",
+                        },
+                    },
                 },
                 "confirmed": {
-                    "type": "final"
-                }
+                    "type": "final",
+                },
             },
             "onDone": "payment",
-            "on": {"BACK": "cart"}
+            "on": {
+                "BACK": "cart",
+            },
         },
         "payment": {
             "initial": "selecting",
@@ -817,35 +1000,38 @@ config = {
                     "on": {
                         "SET_PAYMENT": {
                             "target": "ready",
-                            "actions": "setPayment"
-                        }
-                    }
+                            "actions": "setPayment",
+                        },
+                    },
                 },
                 "ready": {
-                    "type": "final"
-                }
+                    "type": "final",
+                },
             },
             "onDone": "processing",
-            "on": {"BACK": "shipping"}
+            "on": {
+                "BACK": "shipping",
+            },
         },
         "processing": {
             "invoke": {
                 "src": "submitOrder",
                 "onDone": {
                     "target": "confirmation",
-                    "actions": "storeOrderId"
+                    "actions": "storeOrderId",
                 },
                 "onError": {
                     "target": "payment",
-                    "actions": "showPaymentError"
-                }
-            }
+                    "actions": "showPaymentError",
+                },
+            },
         },
         "confirmation": {
-            "type": "final"
-        }
-    }
+            "type": "final",
+        },
+    },
 }
+
 
 class CheckoutLogic(MachineLogic):
     def add_item(self, interpreter, context, event, action_def):
@@ -863,7 +1049,9 @@ class CheckoutLogic(MachineLogic):
         context["shippingAddress"] = event.data.get("address")
 
     def validate_address(self, interpreter, context, event):
-        return {"valid": True}
+        return {
+            "valid": True,
+        }
 
     def show_address_error(self, interpreter, context, event, action_def):
         print("Invalid shipping address")
@@ -872,7 +1060,9 @@ class CheckoutLogic(MachineLogic):
         context["paymentMethod"] = event.data.get("method")
 
     def submit_order(self, interpreter, context, event):
-        return {"orderId": "ORD-12345"}
+        return {
+            "orderId": "ORD-12345",
+        }
 
     def store_order_id(self, interpreter, context, event, action_def):
         context["orderId"] = event.data.get("orderId")
@@ -880,12 +1070,23 @@ class CheckoutLogic(MachineLogic):
     def show_payment_error(self, interpreter, context, event, action_def):
         print("Payment failed, please try again")
 
+
 machine = create_machine(config, logic=CheckoutLogic())
 interp = SyncInterpreter(machine).start()
 
 # Add items to cart
-interp.send({"type": "ADD_ITEM", "item": "Widget"})
-interp.send({"type": "ADD_ITEM", "item": "Gadget"})
+interp.send(
+    {
+        "type": "ADD_ITEM",
+        "item": "Widget",
+    }
+)
+interp.send(
+    {
+        "type": "ADD_ITEM",
+        "item": "Gadget",
+    }
+)
 print(interp.context["items"])
 # ['Widget', 'Gadget']
 
@@ -895,13 +1096,23 @@ print(interp.active_state_ids)
 # {'checkout.shipping.entering'}
 
 # Set shipping address
-interp.send({"type": "SET_ADDRESS", "address": "123 Main St"})
+interp.send(
+    {
+        "type": "SET_ADDRESS",
+        "address": "123 Main St",
+    }
+)
 # validate_address runs → succeeds → confirmed (final) → onDone → payment
 print(interp.active_state_ids)
 # {'checkout.payment.selecting'}
 
 # Set payment
-interp.send({"type": "SET_PAYMENT", "method": "credit_card"})
+interp.send(
+    {
+        "type": "SET_PAYMENT",
+        "method": "credit_card",
+    }
+)
 # ready (final) → onDone → processing → submit_order → confirmation
 print(interp.active_state_ids)
 # {'checkout.confirmation'}
@@ -919,7 +1130,14 @@ interp.stop()
 ## 🧙 Complete Example: Multi-Step Form Wizard
 
 ```python
-from xstate_statemachine import State, StateMachine, SyncInterpreter, action, guard
+from xstate_statemachine import (
+    State,
+    StateMachine,
+    SyncInterpreter,
+    action,
+    guard,
+)
+
 
 class FormWizard(StateMachine):
     machine_id = "wizard"
@@ -927,37 +1145,70 @@ class FormWizard(StateMachine):
         "personal": {},
         "address": {},
         "preferences": {},
-        "currentStep": 1
+        "currentStep": 1,
     }
 
     # Top-level states
-    filling = State("filling", initial=True, states=[
-        State("personal", initial=True, on={
-            "NEXT": {"target": "address", "guard": "personalComplete"}
-        }),
-        State("address", on={
-            "PREV": "personal",
-            "NEXT": {"target": "preferences", "guard": "addressComplete"}
-        }),
-        State("preferences", on={
-            "PREV": "address",
-            "NEXT": "done"
-        }),
-        State("done", final=True),
-    ], on={
-        "UPDATE": {"actions": "updateField"}
-    }, on_done="reviewing")
+    filling = State(
+        "filling",
+        initial=True,
+        states=[
+            State(
+                "personal",
+                initial=True,
+                on={
+                    "NEXT": {
+                        "target": "address",
+                        "guard": "personalComplete",
+                    },
+                },
+            ),
+            State(
+                "address",
+                on={
+                    "PREV": "personal",
+                    "NEXT": {
+                        "target": "preferences",
+                        "guard": "addressComplete",
+                    },
+                },
+            ),
+            State(
+                "preferences",
+                on={
+                    "PREV": "address",
+                    "NEXT": "done",
+                },
+            ),
+            State("done", final=True),
+        ],
+        on={
+            "UPDATE": {
+                "actions": "updateField",
+            },
+        },
+        on_done="reviewing",
+    )
 
-    reviewing = State("reviewing", on={
-        "EDIT": "filling",
-        "SUBMIT": "submitting"
-    })
+    reviewing = State(
+        "reviewing",
+        on={
+            "EDIT": "filling",
+            "SUBMIT": "submitting",
+        },
+    )
 
-    submitting = State("submitting", invoke={
-        "src": "submitForm",
-        "onDone": "success",
-        "onError": {"target": "reviewing", "actions": "showError"}
-    })
+    submitting = State(
+        "submitting",
+        invoke={
+            "src": "submitForm",
+            "onDone": "success",
+            "onError": {
+                "target": "reviewing",
+                "actions": "showError",
+            },
+        },
+    )
 
     success = State("success", final=True)
 
@@ -981,6 +1232,7 @@ class FormWizard(StateMachine):
         if section in context and field:
             context[section][field] = value
 
+
 machine = FormWizard.create_machine()
 interp = SyncInterpreter(machine).start()
 
@@ -988,10 +1240,22 @@ print(interp.active_state_ids)
 # {'wizard.filling.personal'}
 
 # Fill personal info
-interp.send({"type": "UPDATE", "section": "personal",
-             "field": "name", "value": "Alice"})
-interp.send({"type": "UPDATE", "section": "personal",
-             "field": "email", "value": "alice@example.com"})
+interp.send(
+    {
+        "type": "UPDATE",
+        "section": "personal",
+        "field": "name",
+        "value": "Alice",
+    }
+)
+interp.send(
+    {
+        "type": "UPDATE",
+        "section": "personal",
+        "field": "email",
+        "value": "alice@example.com",
+    }
+)
 
 # Advance to address
 interp.send("NEXT")

@@ -46,10 +46,20 @@ child_config = {
     "id": "worker",
     "initial": "idle",
     "states": {
-        "idle": {"on": {"DO_WORK": "working"}},
-        "working": {"on": {"FINISH": "done"}},
-        "done": {"type": "final"}
-    }
+        "idle": {
+            "on": {
+                "DO_WORK": "working",
+            },
+        },
+        "working": {
+            "on": {
+                "FINISH": "done",
+            },
+        },
+        "done": {
+            "type": "final",
+        },
+    },
 }
 
 # 2. Build the child machine
@@ -62,15 +72,19 @@ parent_config = {
     "states": {
         "ready": {
             "on": {
-                "HIRE": {"actions": "spawn_worker"}
-            }
-        }
-    }
+                "HIRE": {
+                    "actions": "spawn_worker",
+                },
+            },
+        },
+    },
 }
 
 # 4. Register the child machine as a service
 parent_logic = MachineLogic(
-    services={"worker": child_machine}
+    services={
+        "worker": child_machine,
+    }
 )
 
 # 5. Create and run the parent
@@ -94,19 +108,29 @@ Instead of providing a pre-built `MachineNode`, you can provide a factory functi
 ```python
 from xstate_statemachine import create_machine, MachineLogic, SyncInterpreter
 
+
 def create_worker(interpreter, context, event):
     """Factory that creates a child machine based on the event payload."""
     worker_type = event.payload.get("type", "default")
     worker_config = {
         "id": f"worker-{worker_type}",
         "initial": "processing",
-        "context": {"task_type": worker_type},
+        "context": {
+            "task_type": worker_type,
+        },
         "states": {
-            "processing": {"on": {"COMPLETE": "done"}},
-            "done": {"type": "final"}
-        }
+            "processing": {
+                "on": {
+                    "COMPLETE": "done",
+                },
+            },
+            "done": {
+                "type": "final",
+            },
+        },
     }
     return create_machine(worker_config)
+
 
 parent_config = {
     "id": "dispatcher",
@@ -114,21 +138,25 @@ parent_config = {
     "states": {
         "listening": {
             "on": {
-                "DISPATCH": {"actions": "spawn_taskRunner"}
-            }
-        }
-    }
+                "DISPATCH": {
+                    "actions": "spawn_taskRunner",
+                },
+            },
+        },
+    },
 }
 
 parent_logic = MachineLogic(
-    services={"taskRunner": create_worker}
+    services={
+        "taskRunner": create_worker,
+    }
 )
 
 machine = create_machine(parent_config, logic=parent_logic)
 interp = SyncInterpreter(machine).start()
 
 interp.send("DISPATCH", type="email")  # Creates worker-email
-interp.send("DISPATCH", type="sms")    # Creates worker-sms
+interp.send("DISPATCH", type="sms")  # Creates worker-sms
 
 interp.stop()
 ```
@@ -148,10 +176,16 @@ child_config = {
     "initial": "validating",
     "states": {
         "validating": {
-            "on": {"": {"target": "valid"}}
+            "on": {
+                "": {
+                    "target": "valid",
+                },
+            },
         },
-        "valid": {"type": "final"}
-    }
+        "valid": {
+            "type": "final",
+        },
+    },
 }
 
 child_machine = create_machine(child_config)
@@ -162,14 +196,18 @@ parent_config = {
     "states": {
         "editing": {
             "on": {
-                "VALIDATE": {"actions": "spawn_blocking_validator"}
-            }
-        }
-    }
+                "VALIDATE": {
+                    "actions": "spawn_blocking_validator",
+                },
+            },
+        },
+    },
 }
 
 parent_logic = MachineLogic(
-    services={"validator": child_machine}
+    services={
+        "validator": child_machine,
+    }
 )
 
 machine = create_machine(parent_config, logic=parent_logic)
@@ -194,7 +232,9 @@ A machine-level `spawnBlockingTimeout` config key (milliseconds) bounds how long
   "id": "form",
   "spawnBlockingTimeout": 5000,
   "initial": "editing",
-  "states": { "editing": {} }
+  "states": {
+    "editing": {}
+  }
 }
 ```
 
@@ -209,8 +249,10 @@ When unset, a **30-second default** applies (`DEFAULT_SPAWN_BLOCKING_TIMEOUT_MS`
     "src": "childActor",
     "id": "kid",
     # static form
-    "input": {"greeting": "hi"},
-}
+    "input": {
+        "greeting": "hi",
+    },
+},
 ```
 
 ```python
@@ -218,8 +260,10 @@ When unset, a **30-second default** applies (`DEFAULT_SPAWN_BLOCKING_TIMEOUT_MS`
     "src": "childActor",
     "id": "kid",
     # callable, two-positional form
-    "input": lambda ctx, evt: {"greeting": ctx["name"]},
-}
+    "input": lambda ctx, evt: {
+        "greeting": ctx["name"],
+    },
+},
 ```
 
 ```python
@@ -227,8 +271,10 @@ When unset, a **30-second default** applies (`DEFAULT_SPAWN_BLOCKING_TIMEOUT_MS`
     "src": "childActor",
     "id": "kid",
     # callable, single-arg XState form: fn({"context": ..., "event": ...})
-    "input": lambda args: {"greeting": args["context"]["name"]},
-}
+    "input": lambda args: {
+        "greeting": args["context"]["name"],
+    },
+},
 ```
 
 The resolved value is deep-copied and passed to the child as its creation `input`. **The idiomatic way to parameterise a child is a context factory** — `context: lambda args: {"snapshot": args["input"]["snapshot"]}` — which shapes the child's context from the input exactly as in XState. A child with a plain dict `context` receives the input only under `context["input"]`; its declared keys are **not** overwritten. (Spreading input into declared keys would let any caller of `Interpreter(machine, input=...)` override the machine's own defaults, so the library deliberately does not.)
@@ -254,12 +300,25 @@ from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 worker = {
     "id": "worker",
     "initial": "idle",
-    "context": {"jobs": 0},
-    "states": {"idle": {"on": {"JOB": {"target": "idle", "actions": ["count"]}}}},
+    "context": {
+        "jobs": 0,
+    },
+    "states": {
+        "idle": {
+            "on": {
+                "JOB": {
+                    "target": "idle",
+                    "actions": ["count"],
+                },
+            },
+        },
+    },
 }
-worker_logic = MachineLogic(actions={
-    "count": lambda i, ctx, e, a: ctx.__setitem__("jobs", ctx["jobs"] + 1),
-})
+worker_logic = MachineLogic(
+    actions={
+        "count": lambda i, ctx, e, a: ctx.__setitem__("jobs", ctx["jobs"] + 1),
+    }
+)
 
 parent = {
     "id": "super",
@@ -267,23 +326,43 @@ parent = {
     "context": {},
     "states": {
         "up": {
-            "entry": [{"type": "spawnChild",
-                       "params": {"src": "worker", "id": "w1",
-                                  "systemId": "pool"}}],
-            "on": {"DISPATCH": {"actions": [
-                {"type": "sendTo",
-                 "params": {"to": "pool", "event": {"type": "JOB"}}}
-            ]}},
-        }
+            "entry": [
+                {
+                    "type": "spawnChild",
+                    "params": {
+                        "src": "worker",
+                        "id": "w1",
+                        "systemId": "pool",
+                    },
+                }
+            ],
+            "on": {
+                "DISPATCH": {
+                    "actions": [
+                        {
+                            "type": "sendTo",
+                            "params": {
+                                "to": "pool",
+                                "event": {
+                                    "type": "JOB",
+                                },
+                            },
+                        }
+                    ],
+                },
+            },
+        },
     },
 }
 
-logic = MachineLogic(services={
-    "worker": lambda i, ctx, e: create_machine(worker, logic=worker_logic),
-})
+logic = MachineLogic(
+    services={
+        "worker": lambda i, ctx, e: create_machine(worker, logic=worker_logic),
+    }
+)
 
 sup = SyncInterpreter(create_machine(parent, logic=logic)).start()
-print(list(sup.system.get_all()))              # ['pool']
+print(list(sup.system.get_all()))  # ['pool']
 
 sup.send("DISPATCH")
 sup.send("DISPATCH")
@@ -319,15 +398,35 @@ actors.
 
 ```python
 # child -> parent
-{"type": "sendParent", "params": {"event": {"type": "WORK_DONE"}}}
+{
+    "type": "sendParent",
+    "params": {
+        "event": {
+            "type": "WORK_DONE",
+        },
+    },
+}
 
 # parent -> named child, after a delay
-{"type": "sendTo", "params": {"to": "pool",
-                              "event": {"type": "JOB"},
-                              "delay": 500, "id": "job-1"}}
+{
+    "type": "sendTo",
+    "params": {
+        "to": "pool",
+        "event": {
+            "type": "JOB",
+        },
+        "delay": 500,
+        "id": "job-1",
+    },
+}
 
 # cancel that delayed send before it fires
-{"type": "cancel", "params": {"sendId": "job-1"}}
+{
+    "type": "cancel",
+    "params": {
+        "sendId": "job-1",
+    },
+}
 ```
 
 > **Note:** A child invoked with `invoke` fires the parent's `onDone` only when
@@ -366,8 +465,13 @@ A child that raises — or an invoked machine that ends in `"error"` — is deli
 "invoke": {
   "id": "worker",
   "src": "workerMachine",
-  "onDone":  { "target": "finished" },
-  "onError": { "target": "failed", "actions": ["recordError"] }
+  "onDone": {
+    "target": "finished"
+  },
+  "onError": {
+    "target": "failed",
+    "actions": ["recordError"]
+  }
 }
 ```
 
@@ -401,24 +505,36 @@ from xstate_statemachine import create_machine, MachineLogic, SyncInterpreter
 child_config = {
     "id": "processor",
     "initial": "waiting",
-    "context": {"items_processed": 0},
+    "context": {
+        "items_processed": 0,
+    },
     "states": {
-        "waiting": {"on": {"PROCESS": "processing"}},
+        "waiting": {
+            "on": {
+                "PROCESS": "processing",
+            },
+        },
         "processing": {
             "on": {
-                "ITEM_DONE": {"actions": "countItem"},
-                "STOP": "done"
-            }
+                "ITEM_DONE": {
+                    "actions": "countItem",
+                },
+                "STOP": "done",
+            },
         },
-        "done": {"type": "final"}
-    }
+        "done": {
+            "type": "final",
+        },
+    },
 }
 
 child_logic = MachineLogic(
     actions={
         "countItem": lambda i, ctx, e, a: ctx.update(
-            {"items_processed": ctx["items_processed"] + 1}
-        )
+            {
+                "items_processed": ctx["items_processed"] + 1,
+            }
+        ),
     }
 )
 child_machine = create_machine(child_config, logic=child_logic)
@@ -432,21 +548,25 @@ parent_config = {
             "on": {
                 "START": {
                     "target": "running",
-                    "actions": "spawn_processor"
-                }
-            }
+                    "actions": "spawn_processor",
+                },
+            },
         },
         "running": {
             "on": {
-                "DONE": "completed"
-            }
+                "DONE": "completed",
+            },
         },
-        "completed": {"type": "final"}
-    }
+        "completed": {
+            "type": "final",
+        },
+    },
 }
 
 parent_logic = MachineLogic(
-    services={"processor": child_machine}
+    services={
+        "processor": child_machine,
+    }
 )
 
 machine = create_machine(parent_config, logic=parent_logic)
@@ -472,9 +592,15 @@ child_config = {
     "id": "asyncWorker",
     "initial": "running",
     "states": {
-        "running": {"on": {"COMPLETE": "done"}},
-        "done": {"type": "final"}
-    }
+        "running": {
+            "on": {
+                "COMPLETE": "done",
+            },
+        },
+        "done": {
+            "type": "final",
+        },
+    },
 }
 
 child_machine = create_machine(child_config)
@@ -484,21 +610,29 @@ parent_config = {
     "initial": "ready",
     "states": {
         "ready": {
-            "on": {"SPAWN": {"actions": "spawn_worker"}}
-        }
-    }
+            "on": {
+                "SPAWN": {
+                    "actions": "spawn_worker",
+                },
+            },
+        },
+    },
 }
 
 parent_logic = MachineLogic(
-    services={"worker": child_machine}
+    services={
+        "worker": child_machine,
+    }
 )
+
 
 async def main():
     machine = create_machine(parent_config, logic=parent_logic)
     interp = await Interpreter(machine).start()
     await interp.send("SPAWN")  # Spawns async child actor
-    await asyncio.sleep(0.1)    # Give the actor time to start
-    await interp.stop()         # Stops parent and all children
+    await asyncio.sleep(0.1)  # Give the actor time to start
+    await interp.stop()  # Stops parent and all children
+
 
 asyncio.run(main())
 ```
@@ -516,23 +650,36 @@ from xstate_statemachine import create_machine, MachineLogic, SyncInterpreter
 worker_config = {
     "id": "worker",
     "initial": "processing",
-    "context": {"task_id": None, "result": None},
+    "context": {
+        "task_id": None,
+        "result": None,
+    },
     "states": {
         "processing": {
-            "on": {"FINISH": {"target": "completed", "actions": "saveResult"}}
+            "on": {
+                "FINISH": {
+                    "target": "completed",
+                    "actions": "saveResult",
+                },
+            },
         },
-        "completed": {"type": "final"}
-    }
+        "completed": {
+            "type": "final",
+        },
+    },
 }
 
 worker_logic = MachineLogic(
     actions={
         "saveResult": lambda i, ctx, e, a: ctx.update(
-            {"result": f"Task {ctx['task_id']} done"}
-        )
+            {
+                "result": f"Task {ctx['task_id']} done",
+            }
+        ),
     }
 )
 worker_machine = create_machine(worker_config, logic=worker_logic)
+
 
 # --- Manager Machine ---
 def create_task_worker(interpreter, context, event):
@@ -541,22 +688,35 @@ def create_task_worker(interpreter, context, event):
     config = {
         "id": f"worker-{task_id}",
         "initial": "processing",
-        "context": {"task_id": task_id, "result": None},
+        "context": {
+            "task_id": task_id,
+            "result": None,
+        },
         "states": {
             "processing": {
-                "on": {"FINISH": {"target": "completed", "actions": "saveResult"}}
+                "on": {
+                    "FINISH": {
+                        "target": "completed",
+                        "actions": "saveResult",
+                    },
+                },
             },
-            "completed": {"type": "final"}
-        }
+            "completed": {
+                "type": "final",
+            },
+        },
     }
     logic = MachineLogic(
         actions={
             "saveResult": lambda i, ctx, e, a: ctx.update(
-                {"result": f"Task {ctx['task_id']} completed"}
-            )
+                {
+                    "result": f"Task {ctx['task_id']} completed",
+                }
+            ),
         }
     )
     return create_machine(config, logic=logic)
+
 
 def log_spawn(interpreter, context, event, action_def):
     """Track spawned tasks in the parent context."""
@@ -564,24 +724,35 @@ def log_spawn(interpreter, context, event, action_def):
     context["active_tasks"].append(task_id)
     print(f"Dispatched task: {task_id}")
 
+
 manager_config = {
     "id": "taskManager",
     "initial": "accepting",
-    "context": {"active_tasks": []},
+    "context": {
+        "active_tasks": [],
+    },
     "states": {
         "accepting": {
             "on": {
-                "SUBMIT_TASK": {"actions": ["logSpawn", "spawn_taskWorker"]},
-                "SHUTDOWN": "shutDown"
-            }
+                "SUBMIT_TASK": {
+                    "actions": ["logSpawn", "spawn_taskWorker"],
+                },
+                "SHUTDOWN": "shutDown",
+            },
         },
-        "shutDown": {"type": "final"}
-    }
+        "shutDown": {
+            "type": "final",
+        },
+    },
 }
 
 manager_logic = MachineLogic(
-    actions={"log_spawn": log_spawn},
-    services={"taskWorker": create_task_worker}
+    actions={
+        "log_spawn": log_spawn,
+    },
+    services={
+        "taskWorker": create_task_worker,
+    },
 )
 
 machine = create_machine(manager_config, logic=manager_logic)
@@ -630,7 +801,13 @@ child keeps running.
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 
-child_config = {"id": "child", "initial": "idle", "states": {"idle": {}}}
+child_config = {
+    "id": "child",
+    "initial": "idle",
+    "states": {
+        "idle": {},
+    },
+}
 child_machine = create_machine(child_config)
 
 
@@ -649,17 +826,21 @@ parent_config = {
                 "GO": {
                     "target": "running",
                     # spawn_child succeeds, then boom raises
-                    "actions": ["spawn_child", "boom"]
-                }
-            }
+                    "actions": ["spawn_child", "boom"],
+                },
+            },
         },
-        "running": {}
-    }
+        "running": {},
+    },
 }
 
 logic = MachineLogic(
-    actions={"boom": boom},
-    services={"child": child_machine}
+    actions={
+        "boom": boom,
+    },
+    services={
+        "child": child_machine,
+    },
 )
 
 interp = SyncInterpreter(create_machine(parent_config, logic=logic)).start()
@@ -668,8 +849,10 @@ try:
 except RuntimeError:
     pass
 
-print(interp.current_state_ids)  # still {'parent.idle'} -- the transition rolled back
-print(interp._actors)             # {} -- the spawned child was stopped, not orphaned
+print(
+    interp.current_state_ids
+)  # still {'parent.idle'} -- the transition rolled back
+print(interp._actors)  # {} -- the spawned child was stopped, not orphaned
 ```
 
 See also [Interpreters — Lifecycle: completion and teardown](../interpreters/#lifecycle-completion-and-teardown).

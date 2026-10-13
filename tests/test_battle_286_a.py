@@ -355,6 +355,37 @@ needs_39 = pytest.mark.skipif(
 )
 
 
+def _assert_example_passed(
+    name: str, result: subprocess.CompletedProcess[str]
+) -> None:
+    """Keep the nested traceback visible instead of truncating its tuple."""
+    if result.returncode != 0:
+        pytest.fail(
+            f"{name}: example suite exited {result.returncode}\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+            pytrace=False,
+        )
+
+
+def test_example_failure_keeps_the_inner_traceback() -> None:
+    # 📝 A long scrape/log used to push the FAILED line out of a 3,000-byte
+    #    tail, then pytest abbreviated the tuple again in the outer log.
+    stdout = "FAILED inner_test: actual cause\n" + "metric sample\n" * 400
+    stderr = "inner stderr diagnostic"
+    result = subprocess.CompletedProcess([], 1, stdout, stderr)
+    with pytest.raises(pytest.fail.Exception) as failure:
+        _assert_example_passed("eda_fulfilment", result)
+    assert stdout in str(failure.value)
+    assert stderr in str(failure.value)
+    assert "example suite exited 1" in str(failure.value)
+
+
+def test_successful_example_needs_no_failure_diagnostic() -> None:
+    _assert_example_passed(
+        "eda_fulfilment", subprocess.CompletedProcess([], 0)
+    )
+
+
 @pytest.fixture(scope="module")
 def wheel39(tmp_path_factory) -> Path:
     """One wheel for every app (``build`` must be importable)."""
@@ -420,8 +451,9 @@ def test_example_runs_on_python_39(
             "no:cacheprovider",
             "-o",
             "addopts=",
+            "--color=no",
         ],
         cwd=cwd,
         timeout=2400,
     )
-    assert r.returncode == 0, (name, r.stdout[-3000:], r.stderr[-1500:])
+    _assert_example_passed(name, r)

@@ -37,7 +37,10 @@ All examples below use this `checkout.json` as input:
 {
   "id": "checkout",
   "initial": "cart",
-  "context": { "items": [], "total": 0 },
+  "context": {
+    "items": [],
+    "total": 0
+  },
   "states": {
     "cart": {
       "on": {
@@ -51,8 +54,14 @@ All examples below use this `checkout.json` as input:
     "payment": {
       "invoke": {
         "src": "processPayment",
-        "onDone": { "target": "confirmed", "actions": "clearCart" },
-        "onError": { "target": "cart", "actions": "showError" }
+        "onDone": {
+          "target": "confirmed",
+          "actions": "clearCart"
+        },
+        "onError": {
+          "target": "cart",
+          "actions": "showError"
+        }
       }
     },
     "confirmed": {
@@ -119,7 +128,10 @@ class CheckoutMachine(StateMachine):
     """Checkout state machine using the declarative class-based API."""
 
     machine_id = "checkout"
-    initial_context = {'items': [], 'total': 0}
+    initial_context = {
+        "items": [],
+        "total": 0,
+    }
 
     cart = State(
         "cart",
@@ -129,15 +141,21 @@ class CheckoutMachine(StateMachine):
                 "target": "payment",
                 "guard": "cartNotEmpty",
                 "actions": ["calculateTotal"],
-            }
+            },
         },
     )
     payment = State(
         "payment",
         invoke={
             "src": "processPayment",
-            "onDone": {"target": "confirmed", "actions": ["clearCart"]},
-            "onError": {"target": "cart", "actions": ["showError"]},
+            "onDone": {
+                "target": "confirmed",
+                "actions": ["clearCart"],
+            },
+            "onError": {
+                "target": "cart",
+                "actions": ["showError"],
+            },
         },
     )
     confirmed = State("confirmed", final=True)
@@ -238,7 +256,9 @@ class CheckoutMachine(StateMachine):
         try:
             logger.info("Running service: processPayment")
             # TODO: implement service logic
-            return {"result": "done"}
+            return {
+                "result": "done",
+            }
         except Exception:
             logger.exception("Error in service processPayment")
             raise
@@ -309,6 +329,7 @@ logger = logging.getLogger(__name__)
 # Actions
 # -----------------------------------------------------------------------
 
+
 @action
 def calculate_total(
     interpreter: SyncInterpreter,
@@ -324,6 +345,7 @@ def calculate_total(
     except Exception:
         logger.exception("Error in action calculateTotal")
         raise
+
 
 @action
 def clear_cart(
@@ -341,6 +363,7 @@ def clear_cart(
         logger.exception("Error in action clearCart")
         raise
 
+
 @action
 def show_error(
     interpreter: SyncInterpreter,
@@ -357,9 +380,11 @@ def show_error(
         logger.exception("Error in action showError")
         raise
 
+
 # -----------------------------------------------------------------------
 # Guards
 # -----------------------------------------------------------------------
+
 
 @guard
 def cart_not_empty(
@@ -371,9 +396,11 @@ def cart_not_empty(
     # TODO: implement guard logic
     return True
 
+
 # -----------------------------------------------------------------------
 # Services
 # -----------------------------------------------------------------------
+
 
 @service
 def process_payment(
@@ -385,7 +412,9 @@ def process_payment(
     logger.info("Running service: processPayment")
     try:
         # TODO: implement service logic
-        return {"result": "done"}
+        return {
+            "result": "done",
+        }
     except Exception:
         logger.exception("Error in service processPayment")
         raise
@@ -395,11 +424,35 @@ def build() -> Any:
     """Build the checkout machine using MachineBuilder."""
     machine = (
         MachineBuilder("checkout")
-        .context({'items': [], 'total': 0})
+        .context(
+            {
+                "items": [],
+                "total": 0,
+            }
+        )
         .state("cart", initial=True)
-        .state("payment", invoke={'src': 'processPayment', 'onDone': {'target': 'confirmed', 'actions': 'clearCart'}, 'onError': {'target': 'cart', 'actions': 'showError'}})
+        .state(
+            "payment",
+            invoke={
+                "src": "processPayment",
+                "onDone": {
+                    "target": "confirmed",
+                    "actions": "clearCart",
+                },
+                "onError": {
+                    "target": "cart",
+                    "actions": "showError",
+                },
+            },
+        )
         .state("confirmed")
-        .transition("cart", "SUBMIT", "payment", actions=["calculateTotal"], guard="cartNotEmpty")
+        .transition(
+            "cart",
+            "SUBMIT",
+            "payment",
+            actions=["calculateTotal"],
+            guard="cartNotEmpty",
+        )
         .action("calculateTotal", calculate_total)
         .action("clearCart", clear_cart)
         .action("showError", show_error)
@@ -476,6 +529,7 @@ logger = logging.getLogger(__name__)
 # Actions
 # -----------------------------------------------------------------------
 
+
 @action
 def calculate_total(
     interpreter: SyncInterpreter,
@@ -491,6 +545,7 @@ def calculate_total(
     except Exception:
         logger.exception("Error in action calculateTotal")
         raise
+
 
 @action
 def clear_cart(
@@ -508,6 +563,7 @@ def clear_cart(
         logger.exception("Error in action clearCart")
         raise
 
+
 @action
 def show_error(
     interpreter: SyncInterpreter,
@@ -524,9 +580,11 @@ def show_error(
         logger.exception("Error in action showError")
         raise
 
+
 # -----------------------------------------------------------------------
 # Guards
 # -----------------------------------------------------------------------
+
 
 @guard
 def cart_not_empty(
@@ -538,9 +596,11 @@ def cart_not_empty(
     # TODO: implement guard logic
     return True
 
+
 # -----------------------------------------------------------------------
 # Services
 # -----------------------------------------------------------------------
+
 
 @service
 def process_payment(
@@ -552,7 +612,9 @@ def process_payment(
     logger.info("Running service: processPayment")
     try:
         # TODO: implement service logic
-        return {"result": "done"}
+        return {
+            "result": "done",
+        }
     except Exception:
         logger.exception("Error in service processPayment")
         raise
@@ -568,15 +630,21 @@ def build() -> Any:
                 "target": "payment",
                 "guard": "cartNotEmpty",
                 "actions": ["calculateTotal"],
-            }
+            },
         },
     )
     payment = State(
         "payment",
         invoke={
             "src": "processPayment",
-            "onDone": {"target": "confirmed", "actions": ["clearCart"]},
-            "onError": {"target": "cart", "actions": ["showError"]},
+            "onDone": {
+                "target": "confirmed",
+                "actions": ["clearCart"],
+            },
+            "onError": {
+                "target": "cart",
+                "actions": ["showError"],
+            },
         },
     )
     confirmed = State("confirmed", final=True)
@@ -584,7 +652,10 @@ def build() -> Any:
     return build_machine(
         id="checkout",
         states=[cart, payment, confirmed],
-        context={"items": [], "total": 0},
+        context={
+            "items": [],
+            "total": 0,
+        },
         actions=[calculate_total, clear_cart, show_error],
         guards=[cart_not_empty],
         services=[process_payment],
@@ -768,7 +839,9 @@ class CheckoutLogic:
             logger.info("Running service processPayment")
             time.sleep(1)
             # TODO: implement service
-            return {"result": "done"}
+            return {
+                "result": "done",
+            }
         except Exception:
             logger.exception("Service 'processPayment' failed")
             raise
@@ -971,7 +1044,9 @@ def process_payment(
         logger.info("Running service processPayment")
         time.sleep(1)
         # TODO: implement service
-        return {"result": "done"}
+        return {
+            "result": "done",
+        }
     except Exception:
         logger.exception("Service 'processPayment' failed")
         raise
@@ -1164,8 +1239,12 @@ def logic() -> MachineLogic:
             "clearCart": clear_cart,
             "showError": show_error,
         },
-        guards={"cartNotEmpty": cart_not_empty},
-        services={"processPayment": process_payment},
+        guards={
+            "cartNotEmpty": cart_not_empty,
+        },
+        services={
+            "processPayment": process_payment,
+        },
     )
 ```
 

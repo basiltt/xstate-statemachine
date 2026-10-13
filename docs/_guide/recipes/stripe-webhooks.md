@@ -40,45 +40,88 @@ This is the whole flow in miniature, runnable as-is:
 ```python
 import hashlib, hmac, json, time
 from xstate_statemachine import MachineLogic, create_machine, receipt_to_status
-from xstate_statemachine.persistence import IdempotencyPlugin, MemoryInbox, MemoryStore, persisted
+from xstate_statemachine.persistence import (
+    IdempotencyPlugin,
+    MemoryInbox,
+    MemoryStore,
+    persisted,
+)
 
 SECRET, TOLERANCE_S = "whsec_demo", 300
-EVENT_MAP = {"invoice.paid": "PAYMENT_SUCCEEDED", "invoice.payment_failed": "PAYMENT_FAILED",
-             "customer.subscription.deleted": "CANCELED"}
+EVENT_MAP = {
+    "invoice.paid": "PAYMENT_SUCCEEDED",
+    "invoice.payment_failed": "PAYMENT_FAILED",
+    "customer.subscription.deleted": "CANCELED",
+}
+
 
 def sign(body: bytes, ts: int) -> str:
-    return f"t={ts},v1=" + hmac.new(SECRET.encode(), f"{ts}.".encode() + body, hashlib.sha256).hexdigest()
+    return (
+        f"t={ts},v1="
+        + hmac.new(
+            SECRET.encode(), f"{ts}.".encode() + body, hashlib.sha256
+        ).hexdigest()
+    )
+
 
 def verify(body: bytes, header: str, now: float) -> dict:
     parts = dict(p.split("=", 1) for p in header.split(",") if "=" in p)
     ts = int(parts.get("t", "0"))
     if abs(now - ts) > TOLERANCE_S:
         raise ValueError("stale")
-    if not hmac.compare_digest(sign(body, ts).split("v1=")[1], parts.get("v1", "")):
+    if not hmac.compare_digest(
+        sign(body, ts).split("v1=")[1], parts.get("v1", "")
+    ):
         raise ValueError("forged")
     return json.loads(body)
+
 
 chart = {
     "id": "subscription",
     "initial": "incomplete",
-    "context": {"failures": 0},
+    "context": {
+        "failures": 0,
+    },
     "states": {
-        "incomplete": {"on": {"PAYMENT_SUCCEEDED": "active"}},
+        "incomplete": {
+            "on": {
+                "PAYMENT_SUCCEEDED": "active",
+            },
+        },
         "active": {
             "on": {
-                "PAYMENT_FAILED": {"target": "past_due", "actions": "fail"},
+                "PAYMENT_FAILED": {
+                    "target": "past_due",
+                    "actions": "fail",
+                },
                 "CANCELED": "canceled",
             },
         },
         "past_due": {
-            "on": {"PAYMENT_SUCCEEDED": "active", "CANCELED": "canceled"},
+            "on": {
+                "PAYMENT_SUCCEEDED": "active",
+                "CANCELED": "canceled",
+            },
         },
         "canceled": {},
     },
 }
-def fail(i, ctx, e, a): ctx["failures"] += 1
-machine = create_machine(chart, logic=MachineLogic(actions={"fail": fail}))
+
+
+def fail(i, ctx, e, a):
+    ctx["failures"] += 1
+
+
+machine = create_machine(
+    chart,
+    logic=MachineLogic(
+        actions={
+            "fail": fail,
+        }
+    ),
+)
 store, inbox = MemoryStore(), MemoryInbox()
+
 
 def webhook(body: bytes, header: str) -> int:
     try:
@@ -87,22 +130,49 @@ def webhook(body: bytes, header: str) -> int:
         return 400
     kind = EVENT_MAP.get(event["type"])
     if kind is None:
-        return 200                                   # unknown type: ack, ignore
+        return 200  # unknown type: ack, ignore
     dedupe = IdempotencyPlugin(inbox, principal=lambda e: "stripe")
     sub_id = event["data"]["object"]["subscription"]
-    with persisted(store, f"subscription.{sub_id}", machine, plugins=[dedupe]) as sub:
+    with persisted(
+        store, f"subscription.{sub_id}", machine, plugins=[dedupe]
+    ) as sub:
         return receipt_to_status(sub.send(kind, id=event["id"], wait=True))
 
-paid = json.dumps({"id": "evt_1", "type": "invoice.paid", "data": {"object": {"subscription": "sub_1"}}}).encode()
-failed = json.dumps({"id": "evt_2", "type": "invoice.payment_failed", "data": {"object": {"subscription": "sub_1"}}}).encode()
+
+paid = json.dumps(
+    {
+        "id": "evt_1",
+        "type": "invoice.paid",
+        "data": {
+            "object": {
+                "subscription": "sub_1",
+            },
+        },
+    }
+).encode()
+failed = json.dumps(
+    {
+        "id": "evt_2",
+        "type": "invoice.payment_failed",
+        "data": {
+            "object": {
+                "subscription": "sub_1",
+            },
+        },
+    }
+).encode()
 now = int(time.time())
 assert webhook(paid, sign(paid, now)) == 200
 assert webhook(failed, sign(failed, now)) == 200
-assert webhook(failed, sign(failed, now + 1)) == 200          # Stripe retry: answered from the inbox
-assert webhook(paid, sign(paid, now - 600)) == 400            # stale timestamp
-assert webhook(paid, "t=%d,v1=%s" % (now, "0" * 64)) == 400   # forged
+assert (
+    webhook(failed, sign(failed, now + 1)) == 200
+)  # Stripe retry: answered from the inbox
+assert webhook(paid, sign(paid, now - 600)) == 400  # stale timestamp
+assert webhook(paid, "t=%d,v1=%s" % (now, "0" * 64)) == 400  # forged
 rec = store.load("subscription.sub_1")
-assert json.loads(rec.snapshot)["context"]["failures"] == 1   # the retry did NOT count twice
+assert (
+    json.loads(rec.snapshot)["context"]["failures"] == 1
+)  # the retry did NOT count twice
 ```
 
 <div class="stately" data-machine="f4b060b692" data-height="420" data-title="subscription"></div>

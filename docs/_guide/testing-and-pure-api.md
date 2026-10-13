@@ -33,7 +33,10 @@ for: unit tests, planning, and "preview the next step" UI.
 
 ```python
 from xstate_statemachine import (
-    create_machine, initial_transition, pure_transition, get_next_snapshot,
+    create_machine,
+    initial_transition,
+    pure_transition,
+    get_next_snapshot,
 )
 
 config = {
@@ -41,8 +44,14 @@ config = {
     "initial": "idle",
     "context": {},
     "states": {
-        "idle": {"on": {"GO": "done"}},
-        "done": {"type": "final"},
+        "idle": {
+            "on": {
+                "GO": "done",
+            },
+        },
+        "done": {
+            "type": "final",
+        },
     },
 }
 machine = create_machine(config)
@@ -50,10 +59,10 @@ machine = create_machine(config)
 snapshot, entry_actions = initial_transition(machine)
 next_snapshot, actions = pure_transition(machine, snapshot, "GO")
 
-print(snapshot.state_ids)          # {'fetch.idle'}
-print(next_snapshot.state_ids)     # {'fetch.done'}
-print(next_snapshot.status)        # 'done'
-print([a.type for a in actions])   # the actions that WOULD have run
+print(snapshot.state_ids)  # {'fetch.idle'}
+print(next_snapshot.state_ids)  # {'fetch.done'}
+print(next_snapshot.status)  # 'done'
+print([a.type for a in actions])  # the actions that WOULD have run
 ```
 
 Both functions return a `(snapshot, actions)` tuple. If you only care about the
@@ -148,10 +157,17 @@ config = {
     "initial": "idle",
     "context": {},
     "states": {
-        "idle": {"on": {"GO": "done"}},
-        "done": {"type": "final"},
+        "idle": {
+            "on": {
+                "GO": "done",
+            },
+        },
+        "done": {
+            "type": "final",
+        },
     },
 }
+
 
 async def main():
     machine = create_machine(config)
@@ -159,6 +175,7 @@ async def main():
     receipt = await interp.send("GO", wait=True)
     assert receipt.state_ids == {"fetch.done"}
     await interp.stop()
+
 
 asyncio.run(main())
 
@@ -244,7 +261,14 @@ config = {
     "id": "order",
     "initial": "submitting",
     "states": {
-        "submitting": {"after": {"30000": "timed_out"}, "on": {"ACK": "live"}},
+        "submitting": {
+            "after": {
+                "30000": "timed_out",
+            },
+            "on": {
+                "ACK": "live",
+            },
+        },
         "live": {},
         "timed_out": {},
     },
@@ -255,10 +279,10 @@ clock = SimulatedClock()
 interp = SyncInterpreter(machine, clock=clock).start()
 
 clock.increment(29_999)
-assert interp.matches("order.submitting")   # not due yet
+assert interp.matches("order.submitting")  # not due yet
 
 clock.increment(1)
-assert interp.matches("order.timed_out")    # the 30 s timer just fired
+assert interp.matches("order.timed_out")  # the 30 s timer just fired
 
 interp.stop()
 ```
@@ -341,20 +365,45 @@ The chart already *is* a graph, so the library can tell you how to reach every s
 
 ```python
 from xstate_statemachine import (
-    create_machine, stub_logic, shortest_paths, simple_paths,
-    reachable_states, SyncInterpreter, SimulatedClock,
+    create_machine,
+    stub_logic,
+    shortest_paths,
+    simple_paths,
+    reachable_states,
+    SyncInterpreter,
+    SimulatedClock,
 )
 
 cfg = {
-    "id": "pay", "initial": "editing",
+    "id": "pay",
+    "initial": "editing",
     "states": {
-        "editing": {"on": {"SUBMIT": "authenticating"}},
-        "authenticating": {
-            "invoke": {"src": "verify", "onDone": "success", "onError": "failure"},
-            "after": {"2000": "challenge"},
+        "editing": {
+            "on": {
+                "SUBMIT": "authenticating",
+            },
         },
-        "challenge": {"on": {"ANSWER": "authenticating"}},
-        "success": {"type": "final"}, "failure": {"type": "final"},
+        "authenticating": {
+            "invoke": {
+                "src": "verify",
+                "onDone": "success",
+                "onError": "failure",
+            },
+            "after": {
+                "2000": "challenge",
+            },
+        },
+        "challenge": {
+            "on": {
+                "ANSWER": "authenticating",
+            },
+        },
+        "success": {
+            "type": "final",
+        },
+        "failure": {
+            "type": "final",
+        },
     },
 }
 machine = create_machine(cfg, logic=stub_logic(cfg))

@@ -35,23 +35,31 @@ The class-based style is the most expressive. States are class attributes, trans
 
 ```python
 from xstate_statemachine import (
-    State, StateMachine, SyncInterpreter,
-    action, guard, service
+    State,
+    StateMachine,
+    SyncInterpreter,
+    action,
+    guard,
+    service,
 )
+
 
 class TrafficLight(StateMachine):
     machine_id = "trafficLight"
-    initial_context = {"cycle_count": 0, "mode": "normal"}
+    initial_context = {
+        "cycle_count": 0,
+        "mode": "normal",
+    }
 
     # ── States ──────────────────────────────────────────────
-    green  = State("green",  initial=True)
+    green = State("green", initial=True)
     yellow = State("yellow")
-    red    = State("red")
+    red = State("red")
 
     # ── Transitions ─────────────────────────────────────────
     slow_down = green.to(yellow, event="TIMER")
-    stop      = yellow.to(red,   event="TIMER")
-    go        = red.to(green,    event="TIMER")
+    stop = yellow.to(red, event="TIMER")
+    go = red.to(green, event="TIMER")
 
     # ── Actions ─────────────────────────────────────────────
     @action
@@ -76,18 +84,21 @@ class TrafficLight(StateMachine):
     @service
     def fetch_schedule(self, interpreter, context, event):
         # Could be an API call or database lookup
-        return {"rush_hours": [7, 8, 9], "night_start": 22}
+        return {
+            "rush_hours": [7, 8, 9],
+            "night_start": 22,
+        }
 
 
 # ── Run it ──────────────────────────────────────────────────
 machine = TrafficLight.create_machine()
 interp = SyncInterpreter(machine).start()
 
-print(interp.active_state_ids)   # {'trafficLight.green'}
-interp.send("TIMER")             # green → yellow
-print(interp.active_state_ids)   # {'trafficLight.yellow'}
-interp.send("TIMER")             # yellow → red
-interp.send("TIMER")             # red → green
+print(interp.active_state_ids)  # {'trafficLight.green'}
+interp.send("TIMER")  # green → yellow
+print(interp.active_state_ids)  # {'trafficLight.yellow'}
+interp.send("TIMER")  # yellow → red
+interp.send("TIMER")  # red → green
 interp.stop()
 ```
 
@@ -110,8 +121,10 @@ The builder style uses a fluent API with method chaining. Great for constructing
 ```python
 from xstate_statemachine import MachineBuilder, SyncInterpreter
 
+
 def log_change(interpreter, context, event, action_def):
     print(f"Now: {interpreter.active_state_ids}")
+
 
 def validate_input(interpreter, context, event, action_def):
     if not context.get("value"):
@@ -119,33 +132,57 @@ def validate_input(interpreter, context, event, action_def):
     else:
         context["errors"] = []
 
+
 def is_valid(context, event):
     return len(context.get("errors", [])) == 0
 
+
 def process_data(interpreter, context, event):
-    return {"result": f"processed {context['value']}"}
+    return {
+        "result": f"processed {context['value']}",
+    }
+
 
 machine = (
     MachineBuilder("formProcessor")
-    .context({"value": "", "errors": [], "result": None})
+    .context(
+        {
+            "value": "",
+            "errors": [],
+            "result": None,
+        }
+    )
     # ── States ──────────────────────────────────────────
-    .state("idle",       initial=True)
+    .state("idle", initial=True)
     .state("validating")
-    .state("processing", invoke={
-        "src": "processData",
-        "onDone": {"target": "success", "actions": "storeResult"},
-        "onError": {"target": "error"}
-    })
-    .state("success",    final=True)
-    .state("error",      on={"RETRY": "idle"})
+    .state(
+        "processing",
+        invoke={
+            "src": "processData",
+            "onDone": {
+                "target": "success",
+                "actions": "storeResult",
+            },
+            "onError": {
+                "target": "error",
+            },
+        },
+    )
+    .state("success", final=True)
+    .state(
+        "error",
+        on={
+            "RETRY": "idle",
+        },
+    )
     # ── Transitions ─────────────────────────────────────
-    .transition("idle",       "SUBMIT",   "validating", actions=["validate"])
-    .transition("validating", "VALID",    "processing", guard="isValid")
-    .transition("validating", "INVALID",  "error")
+    .transition("idle", "SUBMIT", "validating", actions=["validate"])
+    .transition("validating", "VALID", "processing", guard="isValid")
+    .transition("validating", "INVALID", "error")
     # ── Logic Registration ──────────────────────────────
     .action("logChange", log_change)
-    .action("validate",  validate_input)
-    .guard("isValid",    is_valid)
+    .action("validate", validate_input)
+    .guard("isValid", is_valid)
     .service("processData", process_data)
     .build()
 )
@@ -173,15 +210,31 @@ interp.stop()
 ```python
 machine = (
     MachineBuilder("app")
-    .state("loggedOut",  initial=True)
+    .state("loggedOut", initial=True)
     .state("loggedIn")
-    .child_states("loggedIn", initial="dashboard", states={
-        "dashboard": {"on": {"VIEW_PROFILE": "profile"}},
-        "profile":   {"on": {"BACK": "dashboard"}},
-        "settings":  {"on": {"BACK": "dashboard"}},
-    })
-    .transition("loggedOut", "LOGIN",  "loggedIn")
-    .transition("loggedIn",  "LOGOUT", "loggedOut")
+    .child_states(
+        "loggedIn",
+        initial="dashboard",
+        states={
+            "dashboard": {
+                "on": {
+                    "VIEW_PROFILE": "profile",
+                },
+            },
+            "profile": {
+                "on": {
+                    "BACK": "dashboard",
+                },
+            },
+            "settings": {
+                "on": {
+                    "BACK": "dashboard",
+                },
+            },
+        },
+    )
+    .transition("loggedOut", "LOGIN", "loggedIn")
+    .transition("loggedIn", "LOGOUT", "loggedOut")
     .build()
 )
 ```
@@ -191,23 +244,78 @@ machine = (
 ```python
 machine = (
     MachineBuilder("orderProcessor")
-    .context({"orderId": None, "result": None, "error": None})
+    .context(
+        {
+            "orderId": None,
+            "result": None,
+            "error": None,
+        }
+    )
     .state("idle", initial=True)
-    .state("processing", invoke={
-        "src": "processOrder",
-        "onDone": {"target": "completed", "actions": "storeResult"},
-        "onError": {"target": "failed", "actions": "storeError"}
-    }, after={
-        30000: {"target": "timeout"}  # 30s timeout
-    })
+    .state(
+        "processing",
+        invoke={
+            "src": "processOrder",
+            "onDone": {
+                "target": "completed",
+                "actions": "storeResult",
+            },
+            "onError": {
+                "target": "failed",
+                "actions": "storeError",
+            },
+        },
+        after={
+            30000: {
+                "target": "timeout",
+            },  # 30s timeout
+        },
+    )
     .state("completed", final=True)
-    .state("failed", on={"RETRY": "processing"})
-    .state("timeout", on={"RETRY": "processing"})
+    .state(
+        "failed",
+        on={
+            "RETRY": "processing",
+        },
+    )
+    .state(
+        "timeout",
+        on={
+            "RETRY": "processing",
+        },
+    )
     .transition("idle", "PROCESS", "processing", actions=["setOrderId"])
-    .action("setOrderId", lambda i, ctx, e, a: ctx.update({"orderId": e.payload.get("id")}))
-    .action("storeResult", lambda i, ctx, e, a: ctx.update({"result": e.data}))
-    .action("storeError", lambda i, ctx, e, a: ctx.update({"error": str(e.data)}))
-    .service("processOrder", lambda i, ctx, e: {"status": "shipped", "tracking": "TRK-001"})
+    .action(
+        "setOrderId",
+        lambda i, ctx, e, a: ctx.update(
+            {
+                "orderId": e.payload.get("id"),
+            }
+        ),
+    )
+    .action(
+        "storeResult",
+        lambda i, ctx, e, a: ctx.update(
+            {
+                "result": e.data,
+            }
+        ),
+    )
+    .action(
+        "storeError",
+        lambda i, ctx, e, a: ctx.update(
+            {
+                "error": str(e.data),
+            }
+        ),
+    )
+    .service(
+        "processOrder",
+        lambda i, ctx, e: {
+            "status": "shipped",
+            "tracking": "TRK-001",
+        },
+    )
     .build()
 )
 ```
@@ -219,22 +327,34 @@ machine = (
     MachineBuilder("dashboard")
     .state("loading", initial=True)
     .state("active")
-    .child_states("active", parallel=True, states={
-        "notifications": {
-            "initial": "unread",
-            "states": {
-                "unread": {"on": {"MARK_READ": "read"}},
-                "read":   {}
-            }
+    .child_states(
+        "active",
+        parallel=True,
+        states={
+            "notifications": {
+                "initial": "unread",
+                "states": {
+                    "unread": {
+                        "on": {
+                            "MARK_READ": "read",
+                        },
+                    },
+                    "read": {},
+                },
+            },
+            "feed": {
+                "initial": "loading",
+                "states": {
+                    "loading": {
+                        "on": {
+                            "LOADED": "showing",
+                        },
+                    },
+                    "showing": {},
+                },
+            },
         },
-        "feed": {
-            "initial": "loading",
-            "states": {
-                "loading": {"on": {"LOADED": "showing"}},
-                "showing": {}
-            }
-        }
-    })
+    )
     .transition("loading", "READY", "active")
     .build()
 )
@@ -250,44 +370,63 @@ The functional style defines states and transitions at module level, then assemb
 
 ```python
 from xstate_statemachine import (
-    State, build_machine, SyncInterpreter,
-    action, guard, service
+    State,
+    build_machine,
+    SyncInterpreter,
+    action,
+    guard,
+    service,
 )
 
 # ── Define States ───────────────────────────────────────────
-idle     = State("idle",     initial=True)
-loading  = State("loading",  invoke={
-    "src": "fetchItems",
-    "onDone":  {"target": "loaded",  "actions": "storeItems"},
-    "onError": {"target": "error",   "actions": "storeError"},
-})
-loaded   = State("loaded")
-error    = State("error")
+idle = State("idle", initial=True)
+loading = State(
+    "loading",
+    invoke={
+        "src": "fetchItems",
+        "onDone": {
+            "target": "loaded",
+            "actions": "storeItems",
+        },
+        "onError": {
+            "target": "error",
+            "actions": "storeError",
+        },
+    },
+)
+loaded = State("loaded")
+error = State("error")
 
 # ── Define Transitions ─────────────────────────────────────
 idle.to(loading, event="FETCH")
 loaded.to(loading, event="REFRESH")
-error.to(loading,  event="RETRY", guard="hasRetriesLeft")
-error.to(idle,     event="CANCEL")
+error.to(loading, event="RETRY", guard="hasRetriesLeft")
+error.to(idle, event="CANCEL")
+
 
 # ── Define Logic ────────────────────────────────────────────
 @action
 def store_items(interpreter, context, event, action_def):
     context["items"] = event.data
 
+
 @action
 def store_error(interpreter, context, event, action_def):
     context["error"] = str(event.data)
+
 
 @guard
 def has_retries_left(context, event):
     return context.get("retries", 0) < 3
 
+
 @service
 def fetch_items(interpreter, context, event):
     import requests
+
     resp = requests.get("https://api.example.com/items")
     return resp.json()
+
 
 # ── Build and Run ───────────────────────────────────────────
 machine = build_machine(
@@ -296,7 +435,11 @@ machine = build_machine(
     actions=[store_items, store_error],
     guards=[has_retries_left],
     services=[fetch_items],
-    context={"items": [], "error": None, "retries": 0},
+    context={
+        "items": [],
+        "error": None,
+        "retries": 0,
+    },
 )
 
 interp = SyncInterpreter(machine).start()
@@ -331,16 +474,26 @@ When used without arguments, the function name is automatically converted from `
 @action
 def increment_counter(interpreter, context, event, action_def):
     context["count"] += 1
+
+
 # Registered as "incrementCounter"
+
 
 @guard
 def is_valid_email(context, event):
     return "@" in context.get("email", "")
+
+
 # Registered as "isValidEmail"
+
 
 @service
 def fetch_user_data(interpreter, context, event):
-    return {"name": "Alice"}
+    return {
+        "name": "Alice",
+    }
+
+
 # Registered as "fetchUserData"
 ```
 
@@ -352,16 +505,26 @@ Pass a string to override the auto-generated name:
 @action("myCustomAction")
 def some_function(interpreter, context, event, action_def):
     pass
+
+
 # Registered as "myCustomAction"
+
 
 @guard("canProceed")
 def check_requirements(context, event):
     return context.get("ready", False)
+
+
 # Registered as "canProceed"
+
 
 @service("loadProfile")
 def get_profile_data(interpreter, context, event):
-    return {"profile": "data"}
+    return {
+        "profile": "data",
+    }
+
+
 # Registered as "loadProfile"
 ```
 
@@ -411,7 +574,9 @@ class MyMachine(StateMachine):
 
     @service
     def my_service(self, interpreter, context, event):
-        return {"data": "value"}
+        return {
+            "data": "value",
+        }
 ```
 
 ---
@@ -480,15 +645,19 @@ Use the `|` (pipe) operator to combine multiple transitions for the same event. 
 ```python
 from xstate_statemachine import State, StateMachine, guard, SyncInterpreter
 
+
 class SubscriptionRouter(StateMachine):
     machine_id = "subscriptionRouter"
-    initial_context = {"plan": "premium", "trial_expired": False}
+    initial_context = {
+        "plan": "premium",
+        "trial_expired": False,
+    }
 
-    checking   = State("checking", initial=True)
-    premium    = State("premium")
-    basic      = State("basic")
-    trial      = State("trial")
-    expired    = State("expired")
+    checking = State("checking", initial=True)
+    premium = State("premium")
+    basic = State("basic")
+    trial = State("trial")
+    expired = State("expired")
 
     # Multiple guarded transitions — first match wins
     route = (
@@ -532,12 +701,15 @@ Internal transitions run actions **without exiting and re-entering** the current
 ```python
 from xstate_statemachine import State, StateMachine, action, SyncInterpreter
 
+
 class Counter(StateMachine):
     machine_id = "counter"
-    initial_context = {"count": 0}
+    initial_context = {
+        "count": 0,
+    }
 
     counting = State("counting", initial=True)
-    done     = State("done", final=True)
+    done = State("done", final=True)
 
     # Internal transition — stays in "counting", runs action
     increment = counting.internal("INCREMENT", actions=["addOne"])
@@ -561,7 +733,7 @@ interp = SyncInterpreter(machine).start()
 interp.send("INCREMENT")  # count: 1 (no exit/entry actions fire)
 interp.send("INCREMENT")  # count: 2
 interp.send("DECREMENT")  # count: 1
-interp.send("FINISH")     # counting → done
+interp.send("FINISH")  # counting → done
 
 print(interp.context["count"])  # 1
 interp.stop()
@@ -701,21 +873,31 @@ The `after` parameter on `State` defines timer-based transitions. Keys are delay
 ```python
 from xstate_statemachine import State, StateMachine, SyncInterpreter, action
 
+
 class SessionTimeout(StateMachine):
     machine_id = "session"
-    initial_context = {"warnings": 0}
+    initial_context = {
+        "warnings": 0,
+    }
 
-    active = State("active", initial=True, after={
-        300000: "warning"   # 5 minutes → show warning
-    })
-    warning = State("warning", after={
-        60000: "expired"    # 1 minute after warning → expire
-    })
+    active = State(
+        "active",
+        initial=True,
+        after={
+            300000: "warning",  # 5 minutes → show warning
+        },
+    )
+    warning = State(
+        "warning",
+        after={
+            60000: "expired",  # 1 minute after warning → expire
+        },
+    )
     expired = State("expired", final=True)
 
     # User activity resets the timer by re-entering 'active'
     activity = active.to(active, event="USER_ACTIVITY", reenter=True)
-    dismiss  = warning.to(active, event="DISMISS_WARNING")
+    dismiss = warning.to(active, event="DISMISS_WARNING")
 
     @expired.enter
     def on_expire(self, interpreter, context, event, action_def):
@@ -732,22 +914,39 @@ interp.stop()
 ### Delayed Transition with Guard and Actions
 
 ```python
-from xstate_statemachine import State, StateMachine, SyncInterpreter, guard, action
+from xstate_statemachine import (
+    State,
+    StateMachine,
+    SyncInterpreter,
+    guard,
+    action,
+)
+
 
 class AutoSave(StateMachine):
     machine_id = "autosave"
-    initial_context = {"dirty": False, "save_count": 0}
+    initial_context = {
+        "dirty": False,
+        "save_count": 0,
+    }
 
-    editing = State("editing", initial=True, after={
-        2000: {
-            "target": "saving",
-            "guard": "isDirty",
-            "actions": ["markClean"]
-        }
-    })
-    saving  = State("saving", after={
-        500: "editing"  # Return to editing after save completes
-    })
+    editing = State(
+        "editing",
+        initial=True,
+        after={
+            2000: {
+                "target": "saving",
+                "guard": "isDirty",
+                "actions": ["markClean"],
+            },
+        },
+    )
+    saving = State(
+        "saving",
+        after={
+            500: "editing",  # Return to editing after save completes
+        },
+    )
 
     @guard
     def is_dirty(self, context, event):
@@ -766,11 +965,19 @@ machine = AutoSave.create_machine()
 ### Multiple Timers on One State
 
 ```python
-notification = State("notification", initial=True, after={
-    3000:  {"actions": ["fadeIn"]},           # Fade in after 3s
-    8000:  {"actions": ["startFadeOut"]},      # Start fading at 8s
-    10000: "dismissed"                         # Dismiss at 10s
-})
+notification = State(
+    "notification",
+    initial=True,
+    after={
+        3000: {
+            "actions": ["fadeIn"],
+        },  # Fade in after 3s
+        8000: {
+            "actions": ["startFadeOut"],
+        },  # Start fading at 8s
+        10000: "dismissed",  # Dismiss at 10s
+    },
+)
 ```
 
 > **Tip:** In the Builder API, use `.state("name", after={...})` — the syntax is identical. In JSON config, use the `"after"` key on a state definition.
@@ -786,19 +993,34 @@ Eventless (transient) transitions fire automatically when a state is entered, wi
 ```python
 from xstate_statemachine import State, StateMachine, SyncInterpreter, guard
 
+
 class AgeRouter(StateMachine):
     machine_id = "ageRouter"
-    initial_context = {"age": 25}
+    initial_context = {
+        "age": 25,
+    }
 
     # This state immediately routes to the correct target
-    checking = State("checking", initial=True, always=[
-        {"target": "senior",  "guard": "isSenior"},
-        {"target": "adult",   "guard": "isAdult"},
-        {"target": "minor"}   # fallback
-    ])
+    checking = State(
+        "checking",
+        initial=True,
+        always=[
+            {
+                "target": "senior",
+                "guard": "isSenior",
+            },
+            {
+                "target": "adult",
+                "guard": "isAdult",
+            },
+            {
+                "target": "minor",
+            },  # fallback
+        ],
+    )
     senior = State("senior")
-    adult  = State("adult")
-    minor  = State("minor")
+    adult = State("adult")
+    minor = State("minor")
 
     @guard
     def is_senior(self, context, event):
@@ -828,10 +1050,13 @@ submitted = State("submitted", always="processing")
 Or a dict for actions:
 
 ```python
-submitted = State("submitted", always={
-    "target": "processing",
-    "actions": ["logSubmission"]
-})
+submitted = State(
+    "submitted",
+    always={
+        "target": "processing",
+        "actions": ["logSubmission"],
+    },
+)
 ```
 
 > **Note:** Eventless transitions are evaluated **immediately** when the state is entered. If guards are used, they're evaluated in order — the first match wins. If no guard matches, the state remains active until an event triggers a normal transition.
@@ -874,13 +1099,18 @@ interp.stop()
 ### Completion with Actions
 
 ```python
-step1 = State("step1", initial=True, states=[
-    State("working", initial=True),
-    State("finished", final=True),
-], on_done={
-    "target": "step2",
-    "actions": ["logStepComplete", "saveProgress"]
-})
+step1 = State(
+    "step1",
+    initial=True,
+    states=[
+        State("working", initial=True),
+        State("finished", final=True),
+    ],
+    on_done={
+        "target": "step2",
+        "actions": ["logStepComplete", "saveProgress"],
+    },
+)
 ```
 
 ### Completion in Parallel States
@@ -925,11 +1155,11 @@ class ShoppingCart(StateMachine):
         "items": [],
         "total": 0.0,
         "discount": None,
-        "coupon_code": None
+        "coupon_code": None,
     }
 
-    browsing  = State("browsing", initial=True)
-    checkout  = State("checkout")
+    browsing = State("browsing", initial=True)
+    checkout = State("checkout")
     # ...
 ```
 
@@ -938,7 +1168,12 @@ class ShoppingCart(StateMachine):
 ```python
 machine = (
     MachineBuilder("cart")
-    .context({"items": [], "total": 0.0})
+    .context(
+        {
+            "items": [],
+            "total": 0.0,
+        }
+    )
     .state("browsing", initial=True)
     # ...
     .build()
@@ -951,7 +1186,10 @@ machine = (
 machine = build_machine(
     id="cart",
     states=[browsing, checkout],
-    context={"items": [], "total": 0.0},
+    context={
+        "items": [],
+        "total": 0.0,
+    },
 )
 ```
 
@@ -961,10 +1199,20 @@ All three styles support context overrides when creating the machine:
 
 ```python
 # Class-based
-machine = ShoppingCart.create_machine(context={"items": ["preset"], "total": 9.99})
+machine = ShoppingCart.create_machine(
+    context={
+        "items": ["preset"],
+        "total": 9.99,
+    }
+)
 
 # Builder — pass context to .build()
-machine = builder.build(context={"items": ["preset"], "total": 9.99})
+machine = builder.build(
+    context={
+        "items": ["preset"],
+        "total": 9.99,
+    }
+)
 ```
 
 ---
@@ -975,9 +1223,13 @@ This example demonstrates a multi-step form wizard using the class-based API wit
 
 ```python
 from xstate_statemachine import (
-    State, StateMachine, SyncInterpreter,
-    action, guard
+    State,
+    StateMachine,
+    SyncInterpreter,
+    action,
+    guard,
 )
+
 
 class FormWizard(StateMachine):
     machine_id = "wizard"
@@ -995,29 +1247,42 @@ class FormWizard(StateMachine):
     }
 
     # ── Top-Level States ────────────────────────────────────
-    step1 = State("step1", initial=True, states=[
-        State("editing",  initial=True),
-        State("complete", final=True),
-    ], on_done="step2")
+    step1 = State(
+        "step1",
+        initial=True,
+        states=[
+            State("editing", initial=True),
+            State("complete", final=True),
+        ],
+        on_done="step2",
+    )
 
-    step2 = State("step2", states=[
-        State("editing",  initial=True),
-        State("complete", final=True),
-    ], on_done="step3")
+    step2 = State(
+        "step2",
+        states=[
+            State("editing", initial=True),
+            State("complete", final=True),
+        ],
+        on_done="step3",
+    )
 
-    step3 = State("step3", states=[
-        State("editing",  initial=True),
-        State("complete", final=True),
-    ], on_done="review")
+    step3 = State(
+        "step3",
+        states=[
+            State("editing", initial=True),
+            State("complete", final=True),
+        ],
+        on_done="review",
+    )
 
-    review    = State("review")
+    review = State("review")
     submitted = State("submitted", final=True)
 
     # ── Transitions ─────────────────────────────────────────
     # Going back
     back_to_step1 = step2.to(step1, event="BACK")
     back_to_step2 = step3.to(step2, event="BACK")
-    back_to_edit  = review.to(step1, event="EDIT")
+    back_to_edit = review.to(step1, event="EDIT")
 
     # Submit from review
     submit = review.to(submitted, event="SUBMIT", guard="allStepsValid")
@@ -1154,19 +1419,24 @@ interp.stop()
 ```python
 from xstate_statemachine import State, StateMachine, SyncInterpreter
 
+
 class SessionMachine(StateMachine):
     machine_id = "session"
-    initial_context = {"login_count": 0, "active_since": None}
+    initial_context = {
+        "login_count": 0,
+        "active_since": None,
+    }
 
     logged_out = State("logged_out", initial=True)
-    logged_in  = State("logged_in")
+    logged_in = State("logged_in")
 
-    login  = logged_out.to(logged_in,  event="LOGIN")
+    login = logged_out.to(logged_in, event="LOGIN")
     logout = logged_in.to(logged_out, event="LOGOUT")
 
     @logged_in.enter
     def on_login(self, interpreter, context, event, action_def):
         import time
+
         context["login_count"] += 1
         context["active_since"] = time.time()
         print(f"Login #{context['login_count']}")
@@ -1175,6 +1445,7 @@ class SessionMachine(StateMachine):
     def on_logout(self, interpreter, context, event, action_def):
         context["active_since"] = None
         print("Session ended")
+
 
 machine = SessionMachine.create_machine()
 interp = SyncInterpreter(machine).start()
@@ -1238,7 +1509,14 @@ interp.stop()
 ### `transition()` with Guards and Actions
 
 ```python
-from xstate_statemachine import State, build_machine, SyncInterpreter, transition, action, guard
+from xstate_statemachine import (
+    State,
+    build_machine,
+    SyncInterpreter,
+    transition,
+    action,
+    guard,
+)
 
 off = State("off", initial=True)
 on  = State("on")
@@ -1310,17 +1588,24 @@ re-entering the parent resumes where you left off instead of restarting.
 from xstate_statemachine import State, build_machine
 
 # 🕰️ "shallow" restores the immediate child; "deep" restores the whole subtree.
-resume     = State("resume", history="deep")
+resume = State("resume", history="deep")
 configuring = State("configuring", initial=True)
-running     = State("running")
+running = State("running")
 
 online = State(
     "online",
     initial=True,
     states=[configuring, running, resume],
-    on={"DISCONNECT": "offline"},
+    on={
+        "DISCONNECT": "offline",
+    },
 )
-offline = State("offline", on={"RECONNECT": "online.resume"})
+offline = State(
+    "offline",
+    on={
+        "RECONNECT": "online.resume",
+    },
+)
 
 machine = build_machine(id="device", states=[online, offline])
 ```
@@ -1341,10 +1626,13 @@ enumerating state IDs. `meta` attaches arbitrary data for your own use.
 loading = State(
     "loading",
     tags=["busy", "network"],
-    meta={"spinner": "large", "timeout_ms": 5000},
+    meta={
+        "spinner": "large",
+        "timeout_ms": 5000,
+    },
 )
 saving = State("saving", tags=["busy"])
-idle   = State("idle", initial=True)
+idle = State("idle", initial=True)
 ```
 
 ```python
@@ -1370,7 +1658,13 @@ Use `root=` with `build_machine()`:
 ```python
 from xstate_statemachine import State, build_machine
 
-root = State("", on={"EMERGENCY": "halted"}, tags=["v2"])
+root = State(
+    "",
+    on={
+        "EMERGENCY": "halted",
+    },
+    tags=["v2"],
+)
 
 machine = build_machine(
     id="press",
@@ -1387,7 +1681,12 @@ machine = (
     .state("idle", initial=True)
     .state("running")
     .state("halted")
-    .root(on={"EMERGENCY": "halted"}, tags=["v2"])
+    .root(
+        on={
+            "EMERGENCY": "halted",
+        },
+        tags=["v2"],
+    )
     .build()
 )
 ```
@@ -1397,7 +1696,12 @@ machine = (
 ```python
 class Press(StateMachine):
     machine_id = "press"
-    machine_root = State("", on={"EMERGENCY": "halted"})
+    machine_root = State(
+        "",
+        on={
+            "EMERGENCY": "halted",
+        },
+    )
 
     idle = State("idle", initial=True)
     # ...

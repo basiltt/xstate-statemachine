@@ -48,8 +48,14 @@ Here is a fully annotated machine configuration showing all top-level and state-
     },
     "validating": {
       "always": [
-        { "target": "processing", "guard": "isValid" },
-        { "target": "idle", "actions": "showValidationError" }
+        {
+          "target": "processing",
+          "guard": "isValid"
+        },
+        {
+          "target": "idle",
+          "actions": "showValidationError"
+        }
       ]
     },
     "processing": {
@@ -125,8 +131,16 @@ This machine has:
   "id": "toggle",
   "initial": "off",
   "states": {
-    "off": { "on": { "FLIP": "on" } },
-    "on":  { "on": { "FLIP": "off" } }
+    "off": {
+      "on": {
+        "FLIP": "on"
+      }
+    },
+    "on": {
+      "on": {
+        "FLIP": "off"
+      }
+    }
   }
 }
 ```
@@ -147,9 +161,15 @@ This machine has:
   "states": {
     "counting": {
       "on": {
-        "INCREMENT": { "actions": "addOne" },
-        "DECREMENT": { "actions": "subtractOne" },
-        "RESET":     { "actions": "resetCount" }
+        "INCREMENT": {
+          "actions": "addOne"
+        },
+        "DECREMENT": {
+          "actions": "subtractOne"
+        },
+        "RESET": {
+          "actions": "resetCount"
+        }
       }
     }
   }
@@ -190,14 +210,23 @@ Every value in the `states` object is a **state configuration** with the followi
   "exit": "hideSpinner",
   "invoke": {
     "src": "fetchData",
-    "onDone":  { "target": "success", "actions": "storeResult" },
-    "onError": { "target": "failure", "actions": "storeError" }
+    "onDone": {
+      "target": "success",
+      "actions": "storeResult"
+    },
+    "onError": {
+      "target": "failure",
+      "actions": "storeError"
+    }
   },
   "on": {
     "CANCEL": "idle"
   },
   "after": {
-    "15000": { "target": "failure", "actions": "logTimeout" }
+    "15000": {
+      "target": "failure",
+      "actions": "logTimeout"
+    }
   }
 }
 ```
@@ -215,19 +244,27 @@ config = {
     "states": {
         "pending": {
             "tags": ["active", "billable"],
-            "meta": {"ui": {"color": "blue"}},
+            "meta": {
+                "ui": {
+                    "color": "blue",
+                },
+            },
             "description": "Waiting for payment confirmation.",
-            "on": {"FILL": "filled"},
+            "on": {
+                "FILL": "filled",
+            },
         },
-        "filled": {"type": "final"},
+        "filled": {
+            "type": "final",
+        },
     },
 }
 
 machine = create_machine(config)
 interp = SyncInterpreter(machine).start()
 print(interp.has_tag("billable"))  # True
-print(interp.tags)                 # {'active', 'billable'}
-print(interp.get_meta())           # {'order.pending': {'ui': {'color': 'blue'}}}
+print(interp.tags)  # {'active', 'billable'}
+print(interp.get_meta())  # {'order.pending': {'ui': {'color': 'blue'}}}
 ```
 
 <div class="stately" data-machine="6a28cbe7f8" data-height="320" data-title="order"></div>
@@ -282,9 +319,17 @@ When an event has multiple possible outcomes, use an array. **The first transiti
 ```json
 "on": {
   "SUBMIT": [
-    { "target": "premium",  "guard": "isPremiumUser" },
-    { "target": "standard", "guard": "isVerified" },
-    { "target": "rejected" }
+    {
+      "target": "premium",
+      "guard": "isPremiumUser"
+    },
+    {
+      "target": "standard",
+      "guard": "isVerified"
+    },
+    {
+      "target": "rejected"
+    }
   ]
 }
 ```
@@ -336,18 +381,29 @@ Eventless transitions fire **immediately** when a state is entered — no event 
 {
   "id": "router",
   "initial": "checking",
-  "context": { "role": "admin", "authenticated": true },
+  "context": {
+    "role": "admin",
+    "authenticated": true
+  },
   "states": {
     "checking": {
       "always": [
-        { "target": "adminPanel",    "guard": "isAdmin" },
-        { "target": "userDashboard", "guard": "isUser" },
-        { "target": "login" }
+        {
+          "target": "adminPanel",
+          "guard": "isAdmin"
+        },
+        {
+          "target": "userDashboard",
+          "guard": "isUser"
+        },
+        {
+          "target": "login"
+        }
       ]
     },
-    "adminPanel":    {},
+    "adminPanel": {},
     "userDashboard": {},
-    "login":         {}
+    "login": {}
   }
 }
 ```
@@ -440,11 +496,15 @@ A state can invoke multiple services simultaneously using an array:
   "invoke": [
     {
       "src": "loadConfig",
-      "onDone": { "actions": "storeConfig" }
+      "onDone": {
+        "actions": "storeConfig"
+      }
     },
     {
       "src": "loadUser",
-      "onDone": { "actions": "storeUser" }
+      "onDone": {
+        "actions": "storeUser"
+      }
     }
   ]
 }
@@ -494,8 +554,14 @@ A state can have multiple `after` timers running simultaneously:
 ```json
 "monitoring": {
   "after": {
-    "5000":   { "target": "monitoring", "actions": "heartbeat" },
-    "60000":  { "target": "stale",      "guard": "noRecentData" },
+    "5000": {
+      "target": "monitoring",
+      "actions": "heartbeat"
+    },
+    "60000": {
+      "target": "stale",
+      "guard": "noRecentData"
+    },
     "300000": "timeout"
   }
 }
@@ -514,12 +580,20 @@ This state:
   "initial": "active",
   "states": {
     "active": {
-      "after": { "300000": "warning" },
-      "on": { "ACTIVITY": "active" }
+      "after": {
+        "300000": "warning"
+      },
+      "on": {
+        "ACTIVITY": "active"
+      }
     },
     "warning": {
-      "after": { "30000": "expired" },
-      "on": { "EXTEND": "active" }
+      "after": {
+        "30000": "expired"
+      },
+      "on": {
+        "EXTEND": "active"
+      }
     },
     "expired": {
       "type": "final"
@@ -550,7 +624,9 @@ Every state has a `type` that determines its behavior:
 
 ```json
 "idle": {
-  "on": { "START": "running" }
+  "on": {
+    "START": "running"
+  }
 }
 ```
 
@@ -575,15 +651,27 @@ When a final state is entered inside a compound state, it triggers a `done.state
     "video": {
       "initial": "loading",
       "states": {
-        "loading": { "on": { "LOADED": "showing" } },
+        "loading": {
+          "on": {
+            "LOADED": "showing"
+          }
+        },
         "showing": {}
       }
     },
     "audio": {
       "initial": "muted",
       "states": {
-        "muted":   { "on": { "UNMUTE": "playing" } },
-        "playing": { "on": { "MUTE": "muted" } }
+        "muted": {
+          "on": {
+            "UNMUTE": "playing"
+          }
+        },
+        "playing": {
+          "on": {
+            "MUTE": "muted"
+          }
+        }
       }
     }
   }
@@ -601,15 +689,32 @@ config = {
     "id": "player",
     "initial": "off",
     "states": {
-        "off": {"on": {"POWER": "on.hist"}},
+        "off": {
+            "on": {
+                "POWER": "on.hist",
+            },
+        },
         "on": {
             "type": "compound",
             "initial": "playing",
-            "on": {"POWER": "off"},
+            "on": {
+                "POWER": "off",
+            },
             "states": {
-                "playing": {"on": {"PAUSE": "paused"}},
-                "paused": {"on": {"PLAY": "playing"}},
-                "hist": {"type": "history", "history": "shallow"},
+                "playing": {
+                    "on": {
+                        "PAUSE": "paused",
+                    },
+                },
+                "paused": {
+                    "on": {
+                        "PLAY": "playing",
+                    },
+                },
+                "hist": {
+                    "type": "history",
+                    "history": "shallow",
+                },
             },
         },
     },
@@ -640,7 +745,9 @@ When a state has a `states` field, it becomes a **compound state**. It must also
   "initial": "loggedOut",
   "states": {
     "loggedOut": {
-      "on": { "LOGIN": "loggedIn" }
+      "on": {
+        "LOGIN": "loggedIn"
+      }
     },
     "loggedIn": {
       "initial": "dashboard",
@@ -652,10 +759,14 @@ When a state has a `states` field, it becomes a **compound state**. It must also
           }
         },
         "profile": {
-          "on": { "BACK": "dashboard" }
+          "on": {
+            "BACK": "dashboard"
+          }
         },
         "settings": {
-          "on": { "BACK": "dashboard" }
+          "on": {
+            "BACK": "dashboard"
+          }
         }
       },
       "on": {
@@ -681,8 +792,16 @@ States can be nested multiple levels deep:
     "main": {
       "initial": "home",
       "states": {
-        "home":     { "on": { "NAV_PROFILE": "profile" } },
-        "profile":  { "on": { "NAV_HOME": "home" } }
+        "home": {
+          "on": {
+            "NAV_PROFILE": "profile"
+          }
+        },
+        "profile": {
+          "on": {
+            "NAV_HOME": "home"
+          }
+        }
       }
     }
   }
@@ -704,9 +823,13 @@ When a compound state's child enters a `final` state, the parent can react via `
       "initial": "editing",
       "states": {
         "editing": {
-          "on": { "NEXT": "complete" }
+          "on": {
+            "NEXT": "complete"
+          }
         },
-        "complete": { "type": "final" }
+        "complete": {
+          "type": "final"
+        }
       },
       "onDone": "step2"
     },
@@ -714,13 +837,19 @@ When a compound state's child enters a `final` state, the parent can react via `
       "initial": "editing",
       "states": {
         "editing": {
-          "on": { "NEXT": "complete" }
+          "on": {
+            "NEXT": "complete"
+          }
         },
-        "complete": { "type": "final" }
+        "complete": {
+          "type": "final"
+        }
       },
       "onDone": "finished"
     },
-    "finished": { "type": "final" }
+    "finished": {
+      "type": "final"
+    }
   }
 }
 ```
@@ -920,9 +1049,18 @@ config = {
     "initial": "pending",
     "strict": True,
     "states": {
-        "pending": {"on": {"FILL": "filled", "CANCEL": "cancelled"}},
-        "filled": {"type": "final"},
-        "cancelled": {"type": "final"},
+        "pending": {
+            "on": {
+                "FILL": "filled",
+                "CANCEL": "cancelled",
+            },
+        },
+        "filled": {
+            "type": "final",
+        },
+        "cancelled": {
+            "type": "final",
+        },
     },
 }
 
@@ -989,16 +1127,31 @@ config = {
     "id": "order",
     "initial": "pending",
     "states": {
-        "pending": {"on": {"FILL": "filled", "CANCEL": "cancelled"}},
-        "filled": {"on": {"SHIP": "shipped"}},
-        "shipped": {"type": "final"},
-        "cancelled": {"type": "final"},
+        "pending": {
+            "on": {
+                "FILL": "filled",
+                "CANCEL": "cancelled",
+            },
+        },
+        "filled": {
+            "on": {
+                "SHIP": "shipped",
+            },
+        },
+        "shipped": {
+            "type": "final",
+        },
+        "cancelled": {
+            "type": "final",
+        },
     },
 }
 
 interp = SyncInterpreter(create_machine(config)).start()  # strict via config
-interp.send("FILL")     # pending -> filled
-interp.send("CANCEL")   # known (declared in `pending`), but `filled` has no handler -> ignored
+interp.send("FILL")  # pending -> filled
+interp.send(
+    "CANCEL"
+)  # known (declared in `pending`), but `filled` has no handler -> ignored
 print(interp.current_state_ids)  # {'order.filled'}
 ```
 
@@ -1043,17 +1196,27 @@ config = {
     "initial": "pending",
     "onUnhandled": "defer",
     "states": {
-        "pending": {"on": {"START_SHIP": "filled"}},
-        "filled": {"on": {"SHIP": "shipped"}},
-        "shipped": {"type": "final"},
+        "pending": {
+            "on": {
+                "START_SHIP": "filled",
+            },
+        },
+        "filled": {
+            "on": {
+                "SHIP": "shipped",
+            },
+        },
+        "shipped": {
+            "type": "final",
+        },
     },
 }
 
 machine = create_machine(config)
 interp = SyncInterpreter(machine).start()
-interp.send("SHIP")           # unmatched in 'pending' -> deferred, not lost
+interp.send("SHIP")  # unmatched in 'pending' -> deferred, not lost
 print(interp.deferred_count)  # 1
-interp.send("START_SHIP")     # pending -> filled; deferred SHIP replays here
+interp.send("START_SHIP")  # pending -> filled; deferred SHIP replays here
 print(interp.current_state_ids)  # {'order.shipped'}
 ```
 
@@ -1072,7 +1235,13 @@ class Fill:
         if not isinstance(payload.get("qty"), (int, float)):
             raise ValueError("qty: Input should be a valid number")
 
-machine = create_machine(config, event_schemas={"FILL": Fill})
+
+machine = create_machine(
+    config,
+    event_schemas={
+        "FILL": Fill,
+    },
+)
 interp = SyncInterpreter(machine).start()
 
 interp.send("FILL", qty="not-a-number")
@@ -1090,7 +1259,13 @@ def check_qty(payload):
     if "qty" not in payload:
         raise KeyError("qty")
 
-machine = create_machine(config, event_schemas={"FILL": check_qty})
+
+machine = create_machine(
+    config,
+    event_schemas={
+        "FILL": check_qty,
+    },
+)
 ```
 
 `InvalidEventPayloadError` carries `.event_type` and `.cause` (the original exception the validator raised). Schema validation runs regardless of `strict`, and — like the unknown-event check — happens before the event is queued, so a rejected payload never reaches the machine's context.

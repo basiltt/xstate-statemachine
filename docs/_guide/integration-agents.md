@@ -23,18 +23,39 @@ For a complete, runnable agent -- a support bot with per-state tool allow-lists,
 <!-- doc-requires: pydantic -->
 ```python
 import asyncio
-from xstate_statemachine.contrib.agents import FakeModel, run_agent, tool_registry
+from xstate_statemachine.contrib.agents import (
+    FakeModel,
+    run_agent,
+    tool_registry,
+)
+
 
 def get_weather(city: str) -> str:
     """Current weather for a city."""
     return f"sunny in {city}"
 
-model = FakeModel([                                  # scripted, offline
-    {"tool": "get_weather", "args": {"city": "Kochi"}},
-    {"text": "It is sunny in Kochi."},
-])
-res = asyncio.run(run_agent(model, tools=tool_registry(get_weather),
-                            prompt="Weather in Kochi?", max_turns=5))
+
+model = FakeModel(
+    [  # scripted, offline
+        {
+            "tool": "get_weather",
+            "args": {
+                "city": "Kochi",
+            },
+        },
+        {
+            "text": "It is sunny in Kochi.",
+        },
+    ]
+)
+res = asyncio.run(
+    run_agent(
+        model,
+        tools=tool_registry(get_weather),
+        prompt="Weather in Kochi?",
+        max_turns=5,
+    )
+)
 print(res.final_state, res.output, res.usage)
 assert res.final_state == "toolLoop.done" and res.usage["turns"] == 2
 ```
@@ -159,27 +180,52 @@ A `side_effect=True` tool parks the agent in `awaiting_human`. That is an ordina
 ```python
 from fastapi import FastAPI
 from xstate_statemachine import create_machine
-from xstate_statemachine.contrib.agents import TOOL_LOOP, agent_logic, run_agent, tool, tool_registry
+from xstate_statemachine.contrib.agents import (
+    TOOL_LOOP,
+    agent_logic,
+    run_agent,
+    tool,
+    tool_registry,
+)
 from xstate_statemachine.persistence import DueTimerScanner, SQLiteStore
 
 store = SQLiteStore("agents.db")
-tools = tool_registry(tool(send_refund, timeout_s=10, side_effect=True), lookup_order)
-machine = create_machine(TOOL_LOOP, logic=agent_logic(model, tools, human_timeout_s=3600))
+tools = tool_registry(
+    tool(send_refund, timeout_s=10, side_effect=True), lookup_order
+)
+machine = create_machine(
+    TOOL_LOOP, logic=agent_logic(model, tools, human_timeout_s=3600)
+)
 app = FastAPI()
+
 
 @app.post("/tickets/{tid}")
 async def start(tid: str, body: dict):
-    res = await run_agent(machine, store=store, key=f"ticket:{tid}", prompt=body["text"])
-    return {"state": res.final_state, "waiting_for_human": res.waiting}
+    res = await run_agent(
+        machine, store=store, key=f"ticket:{tid}", prompt=body["text"]
+    )
+    return {
+        "state": res.final_state,
+        "waiting_for_human": res.waiting,
+    }
 
-@app.post("/tickets/{tid}/approve")          # authorise this route!
+
+@app.post("/tickets/{tid}/approve")  # authorise this route!
 async def approve(tid: str):
     # approve=True sends HUMAN_APPROVED naming exactly the pending call ids
     # (show the reviewer `pending_approval(res.context)` first)
-    res = await run_agent(machine, store=store, key=f"ticket:{tid}", approve=True)
-    return {"state": res.final_state, "answer": res.output}
+    res = await run_agent(
+        machine, store=store, key=f"ticket:{tid}", approve=True
+    )
+    return {
+        "state": res.final_state,
+        "answer": res.output,
+    }
 
-scanner = DueTimerScanner(store, lambda key: machine)  # run_forever() in a worker
+
+scanner = DueTimerScanner(
+    store, lambda key: machine
+)  # run_forever() in a worker
 ```
 
 ### Structured output
@@ -189,14 +235,28 @@ scanner = DueTimerScanner(store, lambda key: machine)  # run_forever() in a work
 from pydantic import BaseModel
 from xstate_statemachine.contrib.agents import FakeModel, run_agent_sync
 
+
 class Weather(BaseModel):
     city: str
     temp_c: float
 
-model = FakeModel([{"text": "warm, I think"},                    # invalid -> RETRY_OUTPUT
-                   {"text": '{"city": "Kochi", "temp_c": 31}'}], is_async=False)
+
+model = FakeModel(
+    [
+        {
+            "text": "warm, I think",
+        },  # invalid -> RETRY_OUTPUT
+        {
+            "text": '{"city": "Kochi", "temp_c": 31}',
+        },
+    ],
+    is_async=False,
+)
 res = run_agent_sync(model=model, prompt="Weather?", output_model=Weather)
-assert res.output == {"city": "Kochi", "temp_c": 31.0}
+assert res.output == {
+    "city": "Kochi",
+    "temp_c": 31.0,
+}
 assert res.context["output_retries"] == 1 and res.usage["turns"] == 2
 ```
 
@@ -212,42 +272,123 @@ A reply that fails validation is re-prompted with the field errors (never the re
 ```python
 from xstate_statemachine import MachineLogic, SyncInterpreter, create_machine
 from xstate_statemachine.contrib.agents import (
-    BudgetPlugin, FakeModel, handoff_guard, load_chart, spawn_agent, tool_registry)
+    BudgetPlugin,
+    FakeModel,
+    handoff_guard,
+    load_chart,
+    spawn_agent,
+    tool_registry,
+)
+
 
 def search(q: str) -> str:
     """Search the web."""
     return f"results for {q}"
 
+
 def store_plan(i, ctx, e, a):
-    ctx["tasks"], ctx["outstanding"] = list(e.payload["tasks"]), len(e.payload["tasks"])
+    ctx["tasks"], ctx["outstanding"] = list(e.payload["tasks"]), len(
+        e.payload["tasks"]
+    )
+
 
 def hand_off(i, ctx, e, a):
     for t in ctx["tasks"]:
-        i.send({"type": "HANDOFF", "from": "planner", "to": "worker", "task": t})
+        i.send(
+            {
+                "type": "HANDOFF",
+                "from": "planner",
+                "to": "worker",
+                "task": t,
+            }
+        )
+
 
 def collect(key):
-    return lambda i, ctx, e, a: ctx.update({key: ctx[key] + [e.payload["result"]]})
+    return lambda i, ctx, e, a: ctx.update(
+        {
+            key: ctx[key] + [e.payload["result"]],
+        }
+    )
+
 
 budget = BudgetPlugin(max_total_usd=1.00)
-worker_model = FakeModel([{"tool": "search", "args": {"q": "a"}}, {"text": "A"},
-                          {"tool": "search", "args": {"q": "b"}}, {"text": "B"}], is_async=False)
+worker_model = FakeModel(
+    [
+        {
+            "tool": "search",
+            "args": {
+                "q": "a",
+            },
+        },
+        {
+            "text": "A",
+        },
+        {
+            "tool": "search",
+            "args": {
+                "q": "b",
+            },
+        },
+        {
+            "text": "B",
+        },
+    ],
+    is_async=False,
+)
 logic = MachineLogic(
-    actions={"storePlan": store_plan, "handOffTasks": hand_off,
-             "collectResult": collect("results"), "collectFailure": collect("failures")},
-    guards={"allWorkersReported": lambda c, e: 0 < c["outstanding"] <= len(c["results"]) + len(c["failures"])},
+    actions={
+        "storePlan": store_plan,
+        "handOffTasks": hand_off,
+        "collectResult": collect("results"),
+        "collectFailure": collect("failures"),
+    },
+    guards={
+        "allWorkersReported": lambda c, e: 0
+        < c["outstanding"]
+        <= len(c["results"]) + len(c["failures"]),
+    },
 ).merge(
-    spawn_agent(None, worker_model, tool_registry(search, timeout_s=5),
-                budget={"max_turns": 4, "max_usd": 0.10},     # each worker's OWN budget
-                parent_tools=["search", "fetch"], name="worker"),
-    handoff_guard({"planner": ["worker"]}),
+    spawn_agent(
+        None,
+        worker_model,
+        tool_registry(search, timeout_s=5),
+        budget={
+            "max_turns": 4,
+            "max_usd": 0.10,
+        },  # each worker's OWN budget
+        parent_tools=["search", "fetch"],
+        name="worker",
+    ),
+    handoff_guard(
+        {
+            "planner": ["worker"],
+        }
+    ),
     budget.guards(),
 )
-sup = SyncInterpreter(create_machine(load_chart("supervisor"), logic=logic)).use(budget).start()
-denied = sup.send({"type": "HANDOFF", "from": "worker", "to": "judge"}, wait=True)
-assert denied.denied                                   # not in the handoff table
+sup = (
+    SyncInterpreter(create_machine(load_chart("supervisor"), logic=logic))
+    .use(budget)
+    .start()
+)
+denied = sup.send(
+    {
+        "type": "HANDOFF",
+        "from": "worker",
+        "to": "judge",
+    },
+    wait=True,
+)
+assert denied.denied  # not in the handoff table
 sup.send("PLAN", tasks=["a", "b"])
-print(sup.current_state_ids, sup.context["results"], sup.context["total_usage"])
-assert sup.current_state_ids == {"supervisor.reporting"} and sup.context["total_usage"]["turns"] == 4
+print(
+    sup.current_state_ids, sup.context["results"], sup.context["total_usage"]
+)
+assert (
+    sup.current_state_ids == {"supervisor.reporting"}
+    and sup.context["total_usage"]["turns"] == 4
+)
 ```
 
 ### LangGraph interop
@@ -268,33 +409,89 @@ Rip-and-replace never wins; incremental adoption does. `xstate_statemachine.cont
 from typing import TypedDict
 from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
-from xstate_statemachine.contrib.agents import FakeModel, agent_logic, load_chart, tool_registry
-from xstate_statemachine.contrib.agents.langgraph import route_by_statechart, statechart_node
+from xstate_statemachine.contrib.agents import (
+    FakeModel,
+    agent_logic,
+    load_chart,
+    tool_registry,
+)
+from xstate_statemachine.contrib.agents.langgraph import (
+    route_by_statechart,
+    statechart_node,
+)
+
 
 def lookup(order_id: int) -> str:
     """Look up an order."""
     return f"order {order_id}: shipped"
 
+
 chart = load_chart()
 for s in ("awaiting_model", "awaiting_tool"):
-    chart["states"][s]["meta"]["tools"] = ["lookup"]          # the ONLY tool here
-model = FakeModel([{"tool": "lookup", "args": {"order_id": 42}}, {"text": "Shipped."}], is_async=False)
+    chart["states"][s]["meta"]["tools"] = ["lookup"]  # the ONLY tool here
+model = FakeModel(
+    [
+        {
+            "tool": "lookup",
+            "args": {
+                "order_id": 42,
+            },
+        },
+        {
+            "text": "Shipped.",
+        },
+    ],
+    is_async=False,
+)
+
 
 class S(TypedDict, total=False):
     xsm: dict
     question: str
     answer: str
 
+
 g = StateGraph(S)
-g.add_node("agent", statechart_node(
-    chart, agent_logic(model, tool_registry(lookup, timeout_s=5)),
-    event_from_state=lambda s: {"type": "START", "prompt": s["question"]},
-    result_to_state=lambda interp, s: {"answer": interp.context["result"]}))
+g.add_node(
+    "agent",
+    statechart_node(
+        chart,
+        agent_logic(model, tool_registry(lookup, timeout_s=5)),
+        event_from_state=lambda s: {
+            "type": "START",
+            "prompt": s["question"],
+        },
+        result_to_state=lambda interp, s: {
+            "answer": interp.context["result"],
+        },
+    ),
+)
 g.set_entry_point("agent")
-g.add_conditional_edges("agent", route_by_statechart(chart, {"done": END, "error": END, "awaiting_human": END}))
+g.add_conditional_edges(
+    "agent",
+    route_by_statechart(
+        chart,
+        {
+            "done": END,
+            "error": END,
+            "awaiting_human": END,
+        },
+    ),
+)
 app = g.compile(checkpointer=MemorySaver())
-out = app.invoke({"question": "Where is order 42?"}, {"configurable": {"thread_id": "t1"}})
-assert out["answer"] == "Shipped." and out["xsm"]["state_ids"] == ["toolLoop.done"]
+out = app.invoke(
+    {
+        "question": "Where is order 42?",
+    },
+    {
+        "configurable": {
+            "thread_id": "t1",
+        },
+    },
+)
+assert out["answer"] == "Shipped." and out["xsm"]["state_ids"] == [
+    "toolLoop.done"
+]
 ```
 
 The tool still runs only through `run_tool`: the node cannot execute a tool outside the state's `meta.tools`, even with a forged snapshot in the graph state (`tests/contrib/agents/test_langgraph.py::TestX013Preserved`).
@@ -306,46 +503,115 @@ The tool still runs only through `run_tool`: the node cannot execute a tool outs
 from typing import TypedDict
 from langgraph.graph import END, StateGraph
 from langgraph.checkpoint.memory import MemorySaver
-from xstate_statemachine.contrib.agents import FakeModel, agent_logic, load_chart, pending_approval, tool_registry
-from xstate_statemachine.contrib.agents.langgraph import route_by_statechart, statechart_node
+from xstate_statemachine.contrib.agents import (
+    FakeModel,
+    agent_logic,
+    load_chart,
+    pending_approval,
+    tool_registry,
+)
+from xstate_statemachine.contrib.agents.langgraph import (
+    route_by_statechart,
+    statechart_node,
+)
 
 refunds = []
+
 
 def refund(order_id: int) -> str:
     """Refund an order."""
     refunds.append(order_id)
     return "refunded"
 
+
 chart = load_chart()
 for s in ("awaiting_model", "awaiting_tool"):
     chart["states"][s]["meta"]["tools"] = ["refund"]
-model = FakeModel([{"tool": "refund", "args": {"order_id": 7}}, {"text": "Refunded."}], is_async=False)
+model = FakeModel(
+    [
+        {
+            "tool": "refund",
+            "args": {
+                "order_id": 7,
+            },
+        },
+        {
+            "text": "Refunded.",
+        },
+    ],
+    is_async=False,
+)
+
 
 class S(TypedDict, total=False):
     xsm: dict
     event: dict
     reply: str
 
+
 g = StateGraph(S)
-g.add_node("intake", lambda s: {})                    # your existing nodes stay as they are
-g.add_node("agent", statechart_node(
-    chart, agent_logic(model, tool_registry(refund, timeout_s=5, side_effect=True)),
-    event_from_state=lambda s: s.get("event")))
-g.add_node("notify", lambda s: {"reply": s["xsm"]["value"]})
+g.add_node("intake", lambda s: {})  # your existing nodes stay as they are
+g.add_node(
+    "agent",
+    statechart_node(
+        chart,
+        agent_logic(
+            model, tool_registry(refund, timeout_s=5, side_effect=True)
+        ),
+        event_from_state=lambda s: s.get("event"),
+    ),
+)
+g.add_node(
+    "notify",
+    lambda s: {
+        "reply": s["xsm"]["value"],
+    },
+)
 g.set_entry_point("intake")
 g.add_edge("intake", "agent")
-g.add_conditional_edges("agent", route_by_statechart(
-    chart, {"awaiting_human": "notify", "done": "notify", "error": "notify"}))
+g.add_conditional_edges(
+    "agent",
+    route_by_statechart(
+        chart,
+        {
+            "awaiting_human": "notify",
+            "done": "notify",
+            "error": "notify",
+        },
+    ),
+)
 g.add_edge("notify", END)
-app = g.compile(checkpointer=MemorySaver())           # a Postgres / SQLite saver works the same
-cfg = {"configurable": {"thread_id": "ticket-7"}}
+app = g.compile(
+    checkpointer=MemorySaver()
+)  # a Postgres / SQLite saver works the same
+cfg = {
+    "configurable": {
+        "thread_id": "ticket-7",
+    },
+}
 
-out = app.invoke({"event": {"type": "START", "prompt": "refund order 7"}}, cfg)
+out = app.invoke(
+    {
+        "event": {
+            "type": "START",
+            "prompt": "refund order 7",
+        },
+    },
+    cfg,
+)
 assert out["reply"] == "awaiting_human" and refunds == []
 
 # ...hours later, after YOUR code has authorised the reviewer:
 ids = [c["id"] for c in pending_approval(out["xsm"]["context"])]
-out = app.invoke({"event": {"type": "HUMAN_APPROVED", "call_ids": ids}}, cfg)
+out = app.invoke(
+    {
+        "event": {
+            "type": "HUMAN_APPROVED",
+            "call_ids": ids,
+        },
+    },
+    cfg,
+)
 assert out["reply"] == "done" and refunds == [7]
 ```
 
@@ -361,27 +627,67 @@ from langgraph.graph import END, StateGraph
 from xstate_statemachine import Interpreter, MachineLogic, create_machine
 from xstate_statemachine.contrib.agents.langgraph import langgraph_service
 
+
 class G(TypedDict):
     n: int
 
+
 g = StateGraph(G)
-g.add_node("double", lambda s: {"n": s["n"] * 2})
+g.add_node(
+    "double",
+    lambda s: {
+        "n": s["n"] * 2,
+    },
+)
 g.set_entry_point("double")
 g.add_edge("double", END)
 
-svc = langgraph_service(g.compile(), input_from=lambda ctx, e: {"n": ctx["n"]}, output_to=lambda out: out["n"])
+svc = langgraph_service(
+    g.compile(),
+    input_from=lambda ctx, e: {
+        "n": ctx["n"],
+    },
+    output_to=lambda out: out["n"],
+)
 m = create_machine(
-    {"id": "host", "initial": "run", "context": {"n": 21},
-     "states": {"run": {"invoke": {"src": "graph", "onDone": {"target": "ok", "actions": "keep"}}},
-                "ok": {"type": "final"}}},
-    logic=MachineLogic(services={"graph": svc},
-                       actions={"keep": lambda i, ctx, e, a: ctx.update(n=e.data)}))
+    {
+        "id": "host",
+        "initial": "run",
+        "context": {
+            "n": 21,
+        },
+        "states": {
+            "run": {
+                "invoke": {
+                    "src": "graph",
+                    "onDone": {
+                        "target": "ok",
+                        "actions": "keep",
+                    },
+                },
+            },
+            "ok": {
+                "type": "final",
+            },
+        },
+    },
+    logic=MachineLogic(
+        services={
+            "graph": svc,
+        },
+        actions={
+            "keep": lambda i, ctx, e, a: ctx.update(n=e.data),
+        },
+    ),
+)
+
 
 async def main():
     interp = await Interpreter(m).start()
     while interp.status == "running":
         await asyncio.sleep(0.01)
     return interp.context["n"]
+
 
 assert asyncio.run(main()) == 42
 ```
@@ -403,18 +709,30 @@ from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
 from xstate_statemachine import Interpreter, MachineLogic, create_machine
 from xstate_statemachine.contrib.agents import budget_guards
-from xstate_statemachine.contrib.agents.pydantic_ai import pydantic_ai_service, usage_logic
+from xstate_statemachine.contrib.agents.pydantic_ai import (
+    pydantic_ai_service,
+    usage_logic,
+)
 
 agent = Agent(TestModel(custom_output_text="Kochi is sunny"))
 chart = {
     "id": "ask",
     "initial": "gate",
-    "context": {"tokens_in": 0, "tokens_out": 0, "turns": 0},
+    "context": {
+        "tokens_in": 0,
+        "tokens_out": 0,
+        "turns": 0,
+    },
     "states": {
         "gate": {
             "always": [
-                {"guard": "!underTokenBudget", "target": "over"},
-                {"target": "asking"},
+                {
+                    "guard": "!underTokenBudget",
+                    "target": "over",
+                },
+                {
+                    "target": "asking",
+                },
             ],
         },
         "asking": {
@@ -426,22 +744,40 @@ chart = {
                 },
             },
         },
-        "answered": {"on": {"AGAIN": "gate"}},
-        "over": {"type": "final"},
+        "answered": {
+            "on": {
+                "AGAIN": "gate",
+            },
+        },
+        "over": {
+            "type": "final",
+        },
     },
 }
-logic = MachineLogic(services={"ask": pydantic_ai_service(agent, prompt_from=lambda ctx, e: "Weather?")})
-m = create_machine(chart, logic=logic.merge(usage_logic(), budget_guards(max_tokens=10)))
+logic = MachineLogic(
+    services={
+        "ask": pydantic_ai_service(
+            agent, prompt_from=lambda ctx, e: "Weather?"
+        ),
+    }
+)
+m = create_machine(
+    chart, logic=logic.merge(usage_logic(), budget_guards(max_tokens=10))
+)
+
 
 async def main():
     i = await Interpreter(m).start()
     while "ask.answered" not in i.current_state_ids:
         await asyncio.sleep(0.01)
-    await i.send("AGAIN", wait=True)                    # over budget: never reaches the model
+    await i.send("AGAIN", wait=True)  # over budget: never reaches the model
     return i
 
+
 i = asyncio.run(main())
-assert i.context["result"] == "Kochi is sunny" and i.current_state_ids == {"ask.over"}
+assert i.context["result"] == "Kochi is sunny" and i.current_state_ids == {
+    "ask.over"
+}
 ```
 
 <div class="stately" data-machine="a50f44e7c1" data-height="420" data-title="ask"></div>
@@ -459,26 +795,40 @@ Per-state schemas: `collect_name → collect_address → confirm`, each state wi
 import sys
 from pydantic import BaseModel, ConfigDict, Field
 from xstate_statemachine import MachineLogic, create_machine
-from xstate_statemachine.contrib.agents import FakeModel, agent_logic, run_agent_sync, structured_output
+from xstate_statemachine.contrib.agents import (
+    FakeModel,
+    agent_logic,
+    run_agent_sync,
+    structured_output,
+)
+
 
 class Name(BaseModel):
-    model_config = ConfigDict(extra="forbid")          # an address here is refused
+    model_config = ConfigDict(extra="forbid")  # an address here is refused
     name: str = Field(min_length=1, max_length=100)
+
 
 class Address(BaseModel):
     model_config = ConfigDict(extra="forbid")
     street: str
     city: str
 
+
 class Confirm(BaseModel):
     model_config = ConfigDict(extra="forbid")
     confirmed: bool
 
-sys.modules["forms"] = sys.modules[__name__]           # docs only: make "forms:Name" importable
+
+sys.modules["forms"] = sys.modules[
+    __name__
+]  # docs only: make "forms:Name" importable
+
 
 def ask(state, schema, nxt):
     return {
-        "meta": {"output_model": f"forms:{schema}"},
+        "meta": {
+            "output_model": f"forms:{schema}",
+        },
         "invoke": {
             "src": "callModel",
             "onDone": [
@@ -505,6 +855,7 @@ def ask(state, schema, nxt):
         },
     }
 
+
 chart = {
     "id": "intake",
     "initial": "collect_name",
@@ -521,23 +872,58 @@ chart = {
         "collect_name": ask("collect_name", "Name", "collect_address"),
         "collect_address": ask("collect_address", "Address", "confirm"),
         "confirm": ask("confirm", "Confirm", "done"),
-        "done": {"type": "final"},
-        "error": {"type": "final"},
+        "done": {
+            "type": "final",
+        },
+        "error": {
+            "type": "final",
+        },
     },
 }
 
-def keep(i, ctx, e, a):
-    ctx["form"] = {**ctx["form"], **ctx["result"]}
 
-model = FakeModel([{"text": '{"name": "Ann", "street": "1 Main St"}'},   # address in collect_name -> RETRY_OUTPUT
-                   {"text": '{"name": "Ann"}'},
-                   {"text": '{"street": "1 Main St", "city": "Kochi"}'},
-                   {"text": '{"confirmed": true}'}], is_async=False)
-logic = agent_logic(model, **structured_output(retries=2)).merge(MachineLogic(actions={"keep": keep}))
+def keep(i, ctx, e, a):
+    ctx["form"] = {
+        **ctx["form"],
+        **ctx["result"],
+    }
+
+
+model = FakeModel(
+    [
+        {
+            "text": '{"name": "Ann", "street": "1 Main St"}',
+        },  # address in collect_name -> RETRY_OUTPUT
+        {
+            "text": '{"name": "Ann"}',
+        },
+        {
+            "text": '{"street": "1 Main St", "city": "Kochi"}',
+        },
+        {
+            "text": '{"confirmed": true}',
+        },
+    ],
+    is_async=False,
+)
+logic = agent_logic(model, **structured_output(retries=2)).merge(
+    MachineLogic(
+        actions={
+            "keep": keep,
+        }
+    )
+)
 res = run_agent_sync(create_machine(chart, logic=logic), prompt="Sign me up")
 assert res.final_state == "intake.done"
-assert res.context["form"] == {"name": "Ann", "street": "1 Main St", "city": "Kochi", "confirmed": True}
-assert res.context["output_retries"] == 1 and res.usage["turns"] == 4      # the retry was a turn
+assert res.context["form"] == {
+    "name": "Ann",
+    "street": "1 Main St",
+    "city": "Kochi",
+    "confirmed": True,
+}
+assert (
+    res.context["output_retries"] == 1 and res.usage["turns"] == 4
+)  # the retry was a turn
 ```
 
 After `retries` failed attempts the agent ends in `error` with `kind: "output"` and the **last** validation detail in the message (`model output failed validation (order_id: Input should be greater than 0)` — field names and pydantic's built-in messages, never the model's values: a `field_validator` that raises `ValueError(f"bad {v}")` is reported as its error type `value_error`, and `loc` parts that are not declared field names -- a `dict`-typed field's keys come from the reply -- are printed as `*`); `failOutput` never writes `result`, so a half-valid value never leaks. Every retry is a model turn and counts against every budget — **`max_turns` beats `retries`**: with `max_turns=2, retries=5` the run ends `kind: "budget"` (`turn limit reached`) after two turns, never a hidden extra call.
@@ -549,15 +935,34 @@ After `retries` failed attempts the agent ends in `error` with `kind: "output"` 
 from pydantic import BaseModel, Field
 from xstate_statemachine.contrib.agents import validate_structured
 
+
 class OrderRef(BaseModel):
     order_id: int = Field(gt=0, le=10**6)
     reason: str = Field(min_length=3, max_length=200)
 
+
 prose = 'Here you go: {"order_id": 42, "reason": "late"} hope that helps'
-assert validate_structured(OrderRef, prose, use_instructor=False) == (False, "not valid JSON")
-assert validate_structured(OrderRef, prose, use_instructor=True) == (True, {"order_id": 42, "reason": "late"})
-ok, detail = validate_structured(OrderRef, {"order_id": -1, "reason": "oops"})
-assert not ok and detail.startswith("order_id:") and "-1" not in detail   # the range is enforced; the value is not echoed
+assert validate_structured(OrderRef, prose, use_instructor=False) == (
+    False,
+    "not valid JSON",
+)
+assert validate_structured(OrderRef, prose, use_instructor=True) == (
+    True,
+    {
+        "order_id": 42,
+        "reason": "late",
+    },
+)
+ok, detail = validate_structured(
+    OrderRef,
+    {
+        "order_id": -1,
+        "reason": "oops",
+    },
+)
+assert (
+    not ok and detail.startswith("order_id:") and "-1" not in detail
+)  # the range is enforced; the value is not echoed
 ```
 
 ## Guarantees
@@ -575,18 +980,41 @@ Value ranges belong in the tool's signature, so they are part of the schema chec
 <!-- doc-requires: pydantic -->
 ```python
 from pydantic import Field
-from xstate_statemachine.contrib.agents import FakeModel, run_agent_sync, tool, tool_registry
+from xstate_statemachine.contrib.agents import (
+    FakeModel,
+    run_agent_sync,
+    tool,
+    tool_registry,
+)
 
-def refund_order(order_id: int, amount_cents: int = Field(gt=0, le=100_000)) -> str:
+
+def refund_order(
+    order_id: int, amount_cents: int = Field(gt=0, le=100_000)
+) -> str:
     """Refund part of an order (needs human approval)."""
     return f"refunded {amount_cents}"
 
+
 tools = tool_registry(tool(refund_order, timeout_s=10, side_effect=True))
-bad = FakeModel([{"tool": "refund_order", "args": {"order_id": 7, "amount_cents": -1}}],
-                is_async=False)
+bad = FakeModel(
+    [
+        {
+            "tool": "refund_order",
+            "args": {
+                "order_id": 7,
+                "amount_cents": -1,
+            },
+        }
+    ],
+    is_async=False,
+)
 res = run_agent_sync(model=bad, tools=tools, prompt="refund -1")
-assert res.error["kind"] == "tool_denied" and not res.waiting   # no reviewer bothered
-assert "amount_cents" in res.error["message"] and "-1" not in res.error["message"]
+assert (
+    res.error["kind"] == "tool_denied" and not res.waiting
+)  # no reviewer bothered
+assert (
+    "amount_cents" in res.error["message"] and "-1" not in res.error["message"]
+)
 ```
 
 `Annotated[int, Field(gt=0, le=100_000)]` works the same way.

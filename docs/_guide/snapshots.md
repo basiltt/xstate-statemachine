@@ -34,13 +34,39 @@ from xstate_statemachine import create_machine, SyncInterpreter
 config = {
     "id": "workflow",
     "initial": "step1",
-    "context": {"progress": 0, "data": {}},
+    "context": {
+        "progress": 0,
+        "data": {},
+    },
     "states": {
-        "step1": {"on": {"NEXT": {"target": "step2", "actions": "updateProgress"}}},
-        "step2": {"on": {"NEXT": {"target": "step3", "actions": "updateProgress"}}},
-        "step3": {"on": {"NEXT": {"target": "step4", "actions": "updateProgress"}}},
-        "step4": {"type": "final"}
-    }
+        "step1": {
+            "on": {
+                "NEXT": {
+                    "target": "step2",
+                    "actions": "updateProgress",
+                },
+            },
+        },
+        "step2": {
+            "on": {
+                "NEXT": {
+                    "target": "step3",
+                    "actions": "updateProgress",
+                },
+            },
+        },
+        "step3": {
+            "on": {
+                "NEXT": {
+                    "target": "step4",
+                    "actions": "updateProgress",
+                },
+            },
+        },
+        "step4": {
+            "type": "final",
+        },
+    },
 }
 
 from xstate_statemachine import MachineLogic
@@ -48,8 +74,10 @@ from xstate_statemachine import MachineLogic
 logic = MachineLogic(
     actions={
         "updateProgress": lambda i, ctx, e, a: ctx.update(
-            {"progress": ctx["progress"] + 25}
-        )
+            {
+                "progress": ctx["progress"] + 25,
+            }
+        ),
     }
 )
 
@@ -78,9 +106,7 @@ print(snapshot_json)
       "step1_result": "validated"
     }
   },
-  "state_ids": [
-    "workflow.step2"
-  ]
+  "state_ids": ["workflow.step2"]
 }
 ```
 
@@ -164,25 +190,46 @@ from xstate_statemachine import create_machine, MachineLogic, Interpreter
 OMS = {
     "id": "oms",
     "initial": "submitting",
-    "context": {"acked": False},
+    "context": {
+        "acked": False,
+    },
     "states": {
         "submitting": {
-            "invoke": {"src": "place", "id": "place", "onDone": "live"},
-            "on": {"LEAVE": "idle"},
+            "invoke": {
+                "src": "place",
+                "id": "place",
+                "onDone": "live",
+            },
+            "on": {
+                "LEAVE": "idle",
+            },
         },
-        "live": {"entry": ["ack"]},
+        "live": {
+            "entry": ["ack"],
+        },
         "idle": {},
     },
 }
+
 
 async def place(interpreter, context, event):
     await asyncio.sleep(5.0)  # simulate a slow call
     return "ok"
 
+
 def ack(interpreter, context, event, action_def):
     context["acked"] = True
 
-logic = MachineLogic(actions={"ack": ack}, services={"place": place})
+
+logic = MachineLogic(
+    actions={
+        "ack": ack,
+    },
+    services={
+        "place": place,
+    },
+)
+
 
 async def main():
     interp = await Interpreter(create_machine(OMS, logic=logic)).start()
@@ -190,9 +237,12 @@ async def main():
     snapshot = interp.get_snapshot()
     await interp.stop()
 
-    restored = Interpreter.from_snapshot(snapshot, create_machine(OMS, logic=logic))
+    restored = Interpreter.from_snapshot(
+        snapshot, create_machine(OMS, logic=logic)
+    )
     print(restored.pending_invocations())
     # [PendingInvocation(state_id='oms.submitting', invoke_id='place', src='place')]
+
 
 asyncio.run(main())
 ```
@@ -224,12 +274,21 @@ If the machine being restored into no longer registers the service a dormant `in
 ```python
 from xstate_statemachine import ImplementationMissingError
 
-bare = create_machine(OMS, logic=MachineLogic(actions={"ack": ack}))  # no 'place' service registered
+bare = create_machine(
+    OMS,
+    logic=MachineLogic(
+        actions={
+            "ack": ack,
+        }
+    ),
+)  # no 'place' service registered
 restored = Interpreter.from_snapshot(snapshot, bare, restart_services=True)
 try:
     await restored.start()
 except ImplementationMissingError as exc:
-    print(exc)  # "Service 'place' referenced by state 'oms.submitting' is not registered."
+    print(
+        exc
+    )  # "Service 'place' referenced by state 'oms.submitting' is not registered."
 ```
 
 ## ✉️ Snapshot Envelope
@@ -351,13 +410,30 @@ from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 config = {
     "id": "onboarding",
     "initial": "welcome",
-    "context": {"user": "alice", "steps_completed": []},
+    "context": {
+        "user": "alice",
+        "steps_completed": [],
+    },
     "states": {
-        "welcome": {"on": {"CONTINUE": "profile"}},
-        "profile": {"on": {"CONTINUE": "preferences"}},
-        "preferences": {"on": {"CONTINUE": "complete"}},
-        "complete": {"type": "final"}
-    }
+        "welcome": {
+            "on": {
+                "CONTINUE": "profile",
+            },
+        },
+        "profile": {
+            "on": {
+                "CONTINUE": "preferences",
+            },
+        },
+        "preferences": {
+            "on": {
+                "CONTINUE": "complete",
+            },
+        },
+        "complete": {
+            "type": "final",
+        },
+    },
 }
 
 machine = create_machine(config)
@@ -398,6 +474,7 @@ import sqlite3
 import json
 from xstate_statemachine import create_machine, SyncInterpreter
 
+
 # --- Database Setup ---
 def init_db(db_path="machines.db"):
     conn = sqlite3.connect(db_path)
@@ -411,6 +488,7 @@ def init_db(db_path="machines.db"):
     conn.commit()
     return conn
 
+
 def save_snapshot(conn, machine_id, interpreter):
     """Save the interpreter's current state to the database."""
     snapshot = interpreter.get_snapshot()
@@ -418,31 +496,50 @@ def save_snapshot(conn, machine_id, interpreter):
         """INSERT OR REPLACE INTO machine_snapshots
            (machine_id, snapshot, updated_at)
            VALUES (?, ?, CURRENT_TIMESTAMP)""",
-        (machine_id, snapshot)
+        (machine_id, snapshot),
     )
     conn.commit()
     print(f"Saved snapshot for '{machine_id}'")
+
 
 def load_snapshot(conn, machine_id):
     """Load a saved snapshot from the database."""
     cursor = conn.execute(
         "SELECT snapshot FROM machine_snapshots WHERE machine_id = ?",
-        (machine_id,)
+        (machine_id,),
     )
     row = cursor.fetchone()
     return row[0] if row else None
+
 
 # --- Usage ---
 config = {
     "id": "order-42",
     "initial": "placed",
-    "context": {"items": ["widget"], "total": 29.99},
+    "context": {
+        "items": ["widget"],
+        "total": 29.99,
+    },
     "states": {
-        "placed": {"on": {"CONFIRM": "confirmed"}},
-        "confirmed": {"on": {"SHIP": "shipped"}},
-        "shipped": {"on": {"DELIVER": "delivered"}},
-        "delivered": {"type": "final"}
-    }
+        "placed": {
+            "on": {
+                "CONFIRM": "confirmed",
+            },
+        },
+        "confirmed": {
+            "on": {
+                "SHIP": "shipped",
+            },
+        },
+        "shipped": {
+            "on": {
+                "DELIVER": "delivered",
+            },
+        },
+        "delivered": {
+            "type": "final",
+        },
+    },
 }
 
 conn = init_db()
@@ -480,13 +577,26 @@ from xstate_statemachine import create_machine, Interpreter
 config = {
     "id": "asyncWorkflow",
     "initial": "phase1",
-    "context": {"results": []},
+    "context": {
+        "results": [],
+    },
     "states": {
-        "phase1": {"on": {"ADVANCE": "phase2"}},
-        "phase2": {"on": {"ADVANCE": "phase3"}},
-        "phase3": {"type": "final"}
-    }
+        "phase1": {
+            "on": {
+                "ADVANCE": "phase2",
+            },
+        },
+        "phase2": {
+            "on": {
+                "ADVANCE": "phase3",
+            },
+        },
+        "phase3": {
+            "type": "final",
+        },
+    },
 }
+
 
 async def main():
     machine = create_machine(config)
@@ -505,6 +615,7 @@ async def main():
     print(restored.current_state_ids)  # {'asyncWorkflow.phase2'}
     print(restored.status)  # 'running'
 
+
 asyncio.run(main())
 ```
 
@@ -521,46 +632,73 @@ from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 config = {
     "id": "checkout",
     "initial": "cart",
-    "context": {"items": [], "total": 0, "payment_status": None},
+    "context": {
+        "items": [],
+        "total": 0,
+        "payment_status": None,
+    },
     "states": {
-        "cart": {"on": {"PROCEED": "shipping"}},
-        "shipping": {"on": {"CONFIRM_ADDRESS": "payment"}},
+        "cart": {
+            "on": {
+                "PROCEED": "shipping",
+            },
+        },
+        "shipping": {
+            "on": {
+                "CONFIRM_ADDRESS": "payment",
+            },
+        },
         "payment": {
             "on": {
-                "PAY": {"target": "processing", "actions": "startPayment"}
-            }
+                "PAY": {
+                    "target": "processing",
+                    "actions": "startPayment",
+                },
+            },
         },
         "processing": {
             "on": {
                 "SUCCESS": "confirmed",
-                "FAILURE": "payment"
-            }
+                "FAILURE": "payment",
+            },
         },
-        "confirmed": {"type": "final"}
-    }
+        "confirmed": {
+            "type": "final",
+        },
+    },
 }
 
 logic = MachineLogic(
     actions={
         "startPayment": lambda i, ctx, e, a: ctx.update(
-            {"payment_status": "processing"}
-        )
+            {
+                "payment_status": "processing",
+            }
+        ),
     }
 )
+
 
 # --- Test: Jump directly to the payment state ---
 def test_payment_flow():
     """Test the payment flow without navigating through cart and shipping."""
     # Create a snapshot that puts us directly in the payment state
-    snapshot = json.dumps({
-        "status": "running",
-        "context": {
-            "items": [{"name": "Widget", "price": 29.99}],
-            "total": 29.99,
-            "payment_status": None
-        },
-        "state_ids": ["checkout.payment"]
-    })
+    snapshot = json.dumps(
+        {
+            "status": "running",
+            "context": {
+                "items": [
+                    {
+                        "name": "Widget",
+                        "price": 29.99,
+                    }
+                ],
+                "total": 29.99,
+                "payment_status": None,
+            },
+            "state_ids": ["checkout.payment"],
+        }
+    )
 
     machine = create_machine(config, logic=logic)
     interp = SyncInterpreter.from_snapshot(snapshot, machine)
@@ -577,13 +715,20 @@ def test_payment_flow():
     interp.stop()
     print("test_payment_flow PASSED")
 
+
 def test_payment_failure_retry():
     """Test that payment failure returns to the payment state."""
-    snapshot = json.dumps({
-        "status": "running",
-        "context": {"items": [], "total": 0, "payment_status": None},
-        "state_ids": ["checkout.processing"]
-    })
+    snapshot = json.dumps(
+        {
+            "status": "running",
+            "context": {
+                "items": [],
+                "total": 0,
+                "payment_status": None,
+            },
+            "state_ids": ["checkout.processing"],
+        }
+    )
 
     machine = create_machine(config, logic=logic)
     interp = SyncInterpreter.from_snapshot(snapshot, machine)
@@ -593,6 +738,7 @@ def test_payment_failure_retry():
 
     interp.stop()
     print("test_payment_failure_retry PASSED")
+
 
 test_payment_flow()
 test_payment_failure_retry()
@@ -617,46 +763,65 @@ config = {
         "records_ingested": 0,
         "records_transformed": 0,
         "records_loaded": 0,
-        "errors": []
+        "errors": [],
     },
     "states": {
         "ingesting": {
             "on": {
-                "INGEST_DONE": {"target": "transforming", "actions": "markIngested"}
-            }
+                "INGEST_DONE": {
+                    "target": "transforming",
+                    "actions": "markIngested",
+                },
+            },
         },
         "transforming": {
             "on": {
-                "TRANSFORM_DONE": {"target": "loading", "actions": "markTransformed"}
-            }
+                "TRANSFORM_DONE": {
+                    "target": "loading",
+                    "actions": "markTransformed",
+                },
+            },
         },
         "loading": {
             "on": {
-                "LOAD_DONE": {"target": "complete", "actions": "markLoaded"}
-            }
+                "LOAD_DONE": {
+                    "target": "complete",
+                    "actions": "markLoaded",
+                },
+            },
         },
-        "complete": {"type": "final"}
-    }
+        "complete": {
+            "type": "final",
+        },
+    },
 }
 
 logic = MachineLogic(
     actions={
         "markIngested": lambda i, ctx, e, a: ctx.update(
-            {"records_ingested": e.payload.get("count", 0)}
+            {
+                "records_ingested": e.payload.get("count", 0),
+            }
         ),
         "markTransformed": lambda i, ctx, e, a: ctx.update(
-            {"records_transformed": e.payload.get("count", 0)}
+            {
+                "records_transformed": e.payload.get("count", 0),
+            }
         ),
         "markLoaded": lambda i, ctx, e, a: ctx.update(
-            {"records_loaded": e.payload.get("count", 0)}
+            {
+                "records_loaded": e.payload.get("count", 0),
+            }
         ),
     }
 )
+
 
 def checkpoint(interp):
     """Save current state to disk after each step."""
     CHECKPOINT_FILE.write_text(interp.get_snapshot())
     print(f"Checkpoint saved: {interp.current_state_ids}")
+
 
 def resume_or_start():
     """Resume from checkpoint if available, otherwise start fresh."""
@@ -669,6 +834,7 @@ def resume_or_start():
     else:
         print("Starting fresh...")
         return SyncInterpreter(machine).start()
+
 
 # --- Main workflow ---
 interp = resume_or_start()
@@ -709,6 +875,7 @@ import sys
 from pathlib import Path
 from xstate_statemachine import create_machine, SyncInterpreter, MachineLogic
 
+
 class RecoverableWorkflow:
     """A workflow wrapper that automatically persists and recovers state."""
 
@@ -725,10 +892,14 @@ class RecoverableWorkflow:
         if self.storage_path.exists():
             snapshot = self.storage_path.read_text()
             self.interp = SyncInterpreter.from_snapshot(snapshot, machine)
-            print(f"Recovered workflow at state: {self.interp.current_state_ids}")
+            print(
+                f"Recovered workflow at state: {self.interp.current_state_ids}"
+            )
         else:
             self.interp = SyncInterpreter(machine).start()
-            print(f"Started new workflow at state: {self.interp.current_state_ids}")
+            print(
+                f"Started new workflow at state: {self.interp.current_state_ids}"
+            )
 
         return self
 
@@ -757,18 +928,39 @@ class RecoverableWorkflow:
     def context(self):
         return self.interp.context
 
+
 # Usage
 config = {
     "id": "deploy",
     "initial": "building",
-    "context": {"version": "1.2.3", "status": "pending"},
+    "context": {
+        "version": "1.2.3",
+        "status": "pending",
+    },
     "states": {
-        "building": {"on": {"BUILD_OK": "testing"}},
-        "testing": {"on": {"TESTS_PASS": "deploying", "TESTS_FAIL": "failed"}},
-        "deploying": {"on": {"DEPLOY_OK": "done"}},
-        "done": {"type": "final"},
-        "failed": {"type": "final"}
-    }
+        "building": {
+            "on": {
+                "BUILD_OK": "testing",
+            },
+        },
+        "testing": {
+            "on": {
+                "TESTS_PASS": "deploying",
+                "TESTS_FAIL": "failed",
+            },
+        },
+        "deploying": {
+            "on": {
+                "DEPLOY_OK": "done",
+            },
+        },
+        "done": {
+            "type": "final",
+        },
+        "failed": {
+            "type": "final",
+        },
+    },
 }
 
 workflow = RecoverableWorkflow(config).start()

@@ -31,24 +31,57 @@ An order: charge the card with retries, wait for the warehouse to confirm shipme
     "Charge": {
       "Type": "Task",
       "Resource": "arn:aws:states:::lambda:invoke",
-      "Parameters": { "FunctionName": "charge-card", "Payload.$": "$" },
-      "Retry": [{ "ErrorEquals": ["States.TaskFailed"], "IntervalSeconds": 2,
-                  "MaxAttempts": 3, "BackoffRate": 2.0, "JitterStrategy": "FULL" }],
-      "Catch": [{ "ErrorEquals": ["States.ALL"], "Next": "PaymentFailed" }],
+      "Parameters": {
+        "FunctionName": "charge-card",
+        "Payload.$": "$"
+      },
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed"],
+          "IntervalSeconds": 2,
+          "MaxAttempts": 3,
+          "BackoffRate": 2.0,
+          "JitterStrategy": "FULL"
+        }
+      ],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.ALL"],
+          "Next": "PaymentFailed"
+        }
+      ],
       "Next": "AwaitShipment"
     },
     "AwaitShipment": {
       "Type": "Task",
       "Resource": "arn:aws:states:::sqs:sendMessage.waitForTaskToken",
-      "Parameters": { "QueueUrl": "https://sqs.../warehouse",
-                      "MessageBody": { "order.$": "$.id", "token.$": "$$.Task.Token" } },
+      "Parameters": {
+        "QueueUrl": "https://sqs.../warehouse",
+        "MessageBody": {
+          "order.$": "$.id",
+          "token.$": "$$.Task.Token"
+        }
+      },
       "TimeoutSeconds": 259200,
-      "Catch": [{ "ErrorEquals": ["States.Timeout"], "Next": "Cancelled" }],
+      "Catch": [
+        {
+          "ErrorEquals": ["States.Timeout"],
+          "Next": "Cancelled"
+        }
+      ],
       "Next": "Shipped"
     },
-    "Shipped": { "Type": "Succeed" },
-    "Cancelled": { "Type": "Fail", "Error": "NotShipped" },
-    "PaymentFailed": { "Type": "Fail", "Error": "PaymentFailed" }
+    "Shipped": {
+      "Type": "Succeed"
+    },
+    "Cancelled": {
+      "Type": "Fail",
+      "Error": "NotShipped"
+    },
+    "PaymentFailed": {
+      "Type": "Fail",
+      "Error": "PaymentFailed"
+    }
   }
 }
 ```
@@ -59,24 +92,51 @@ An order: charge the card with retries, wait for the warehouse to confirm shipme
 {
   "id": "order",
   "initial": "charging",
-  "context": { "attempt": 0 },
+  "context": {
+    "attempt": 0
+  },
   "states": {
     "charging": {
-      "invoke": { "src": "chargeCard",
-                  "onDone": "awaitingShipment",
-                  "onError": { "target": "retrying", "actions": "retryBump" } }
+      "invoke": {
+        "src": "chargeCard",
+        "onDone": "awaitingShipment",
+        "onError": {
+          "target": "retrying",
+          "actions": "retryBump"
+        }
+      }
     },
     "retrying": {
-      "after": { "retryDelay": [ { "target": "charging", "guard": "retryCanRetry" },
-                                 { "target": "paymentFailed" } ] }
+      "after": {
+        "retryDelay": [
+          {
+            "target": "charging",
+            "guard": "retryCanRetry"
+          },
+          {
+            "target": "paymentFailed"
+          }
+        ]
+      }
     },
     "awaitingShipment": {
-      "on": { "SHIPPED": "shipped", "CUSTOMER_CANCELLED": "cancelled" },
-      "after": { "259200000": "cancelled" }
+      "on": {
+        "SHIPPED": "shipped",
+        "CUSTOMER_CANCELLED": "cancelled"
+      },
+      "after": {
+        "259200000": "cancelled"
+      }
     },
-    "shipped": { "type": "final" },
-    "cancelled": { "type": "final" },
-    "paymentFailed": { "type": "final" }
+    "shipped": {
+      "type": "final"
+    },
+    "cancelled": {
+      "type": "final"
+    },
+    "paymentFailed": {
+      "type": "final"
+    }
   }
 }
 ```
@@ -92,34 +152,93 @@ With Step Functions you test ASL through the `TestState` API, which runs one sta
 Here the chart is tested with pytest in-process. A `SimulatedClock` makes the 3-day timeout instantaneous:
 
 ```python
-from xstate_statemachine import MachineLogic, SimulatedClock, SyncInterpreter, create_machine
+from xstate_statemachine import (
+    MachineLogic,
+    SimulatedClock,
+    SyncInterpreter,
+    create_machine,
+)
 from xstate_statemachine.patterns import RetryPolicy
 
-chart = {"id": "order", "initial": "charging", "context": {"attempt": 0}, "states": {
-    "charging": {"invoke": {"src": "chargeCard", "onDone": "awaitingShipment",
-                            "onError": {"target": "retrying", "actions": "retryBump"}}},
-    "retrying": {"after": {"retryDelay": [{"target": "charging", "guard": "retryCanRetry"},
-                                          {"target": "paymentFailed"}]}},
-    "awaitingShipment": {"on": {"SHIPPED": "shipped", "CUSTOMER_CANCELLED": "cancelled"},
-                         "after": {"259200000": "cancelled"}},
-    "shipped": {"type": "final"}, "cancelled": {"type": "final"}, "paymentFailed": {"type": "final"}}}
+chart = {
+    "id": "order",
+    "initial": "charging",
+    "context": {
+        "attempt": 0,
+    },
+    "states": {
+        "charging": {
+            "invoke": {
+                "src": "chargeCard",
+                "onDone": "awaitingShipment",
+                "onError": {
+                    "target": "retrying",
+                    "actions": "retryBump",
+                },
+            },
+        },
+        "retrying": {
+            "after": {
+                "retryDelay": [
+                    {
+                        "target": "charging",
+                        "guard": "retryCanRetry",
+                    },
+                    {
+                        "target": "paymentFailed",
+                    },
+                ],
+            },
+        },
+        "awaitingShipment": {
+            "on": {
+                "SHIPPED": "shipped",
+                "CUSTOMER_CANCELLED": "cancelled",
+            },
+            "after": {
+                "259200000": "cancelled",
+            },
+        },
+        "shipped": {
+            "type": "final",
+        },
+        "cancelled": {
+            "type": "final",
+        },
+        "paymentFailed": {
+            "type": "final",
+        },
+    },
+}
 
-outcomes = iter([ConnectionError("card network"), "ch_123"])    # fail once, then succeed
+outcomes = iter(
+    [ConnectionError("card network"), "ch_123"]
+)  # fail once, then succeed
+
+
 def charge_card(i, ctx, e):
     r = next(outcomes)
     if isinstance(r, Exception):
         raise r
     return r
 
+
 policy = RetryPolicy(max_attempts=3, base_ms=2000, jitter="none")
-machine = create_machine(chart, logic=MachineLogic(services={"chargeCard": charge_card}).merge(policy.logic()))
+machine = create_machine(
+    chart,
+    logic=MachineLogic(
+        services={
+            "chargeCard": charge_card,
+        }
+    ).merge(policy.logic()),
+)
 
 clock = SimulatedClock()
 order = SyncInterpreter(machine, clock=clock).start()
 assert order.value == "retrying"
-clock.increment(2_000)                        # backoff
+clock.increment(2_000)  # backoff
 assert order.value == "awaitingShipment"
-clock.increment(3 * 24 * 3_600_000)           # three days, instantly
+clock.increment(3 * 24 * 3_600_000)  # three days, instantly
 assert order.value == "cancelled"
 ```
 

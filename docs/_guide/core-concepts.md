@@ -68,10 +68,23 @@ interpreter.send("LOGIN", username="alice", password="secret")
 
 # Event object for full control
 from xstate_statemachine import Event
-interpreter.send(Event(type="LOGIN", payload={"username": "alice"}))
+
+interpreter.send(
+    Event(
+        type="LOGIN",
+        payload={
+            "username": "alice",
+        },
+    )
+)
 
 # Dict form
-interpreter.send({"type": "LOGIN", "username": "alice"})
+interpreter.send(
+    {
+        "type": "LOGIN",
+        "username": "alice",
+    }
+)
 
 # Multiple events in sequence
 interpreter.send_events(["STEP_1", "STEP_2", "STEP_3"])
@@ -121,21 +134,30 @@ config = {
     "onUnhandled": "error",
     "initial": "idle",
     "states": {
-        "idle": {"on": {"START": "running"}},
+        "idle": {
+            "on": {
+                "START": "running",
+            },
+        },
         "running": {},
     },
 }
 
 machine = create_machine(config)
 interp = SyncInterpreter(machine).start()
-interp.send("START")   # idle -> running
+interp.send("START")  # idle -> running
 
-interp.send("START")   # known event, no transition from "running"
-print(interp.status)    # "error" -- onUnhandled: "error" fails the machine
+interp.send("START")  # known event, no transition from "running"
+print(interp.status)  # "error" -- onUnhandled: "error" fails the machine
 print(type(interp.error).__name__)  # UnhandledEventError
 
 try:
-    machine2 = create_machine({**config, "onUnhandled": "ignore"})
+    machine2 = create_machine(
+        {
+            **config,
+            "onUnhandled": "ignore",
+        }
+    )
     interp2 = SyncInterpreter(machine2).start()
     interp2.send("NOT_A_REAL_EVENT")  # never declared anywhere in config
 except Exception as exc:
@@ -168,7 +190,11 @@ The most basic form — just specify where to go:
 off.to(on, event="TOGGLE")
 
 # JSON equivalent
-{"on": {"TOGGLE": "on"}}
+{
+    "on": {
+        "TOGGLE": "on",
+    },
+}
 ```
 
 ### Transition with Actions
@@ -180,7 +206,14 @@ Run side effects when the transition fires:
 off.to(on, event="TOGGLE", actions="logToggle")
 
 # JSON equivalent
-{"on": {"TOGGLE": {"target": "on", "actions": "logToggle"}}}
+{
+    "on": {
+        "TOGGLE": {
+            "target": "on",
+            "actions": "logToggle",
+        },
+    },
+}
 
 # Multiple actions
 off.to(on, event="TOGGLE", actions=["validate", "logToggle"])
@@ -195,7 +228,14 @@ Only transition if a condition is met:
 checking.to(allowed, event="VERIFY", guard="isAdult")
 
 # JSON equivalent
-{"on": {"VERIFY": {"target": "allowed", "guard": "isAdult"}}}
+{
+    "on": {
+        "VERIFY": {
+            "target": "allowed",
+            "guard": "isAdult",
+        },
+    },
+}
 ```
 
 ### Multiple Guarded Transitions
@@ -204,16 +244,24 @@ When the same event can lead to different states depending on conditions, the **
 
 ```python
 # Pythonic — use the | operator
-verify = (
-    checking.to(allowed,  event="VERIFY", guard="isAdult")
-    | checking.to(rejected, event="VERIFY")  # fallback (no guard)
-)
+verify = checking.to(allowed, event="VERIFY", guard="isAdult") | checking.to(
+    rejected, event="VERIFY"
+)  # fallback (no guard)
 
 # JSON equivalent — array of transition candidates
-{"on": {"VERIFY": [
-    {"target": "allowed",  "guard": "isAdult"},
-    {"target": "rejected"}
-]}}
+{
+    "on": {
+        "VERIFY": [
+            {
+                "target": "allowed",
+                "guard": "isAdult",
+            },
+            {
+                "target": "rejected",
+            },
+        ],
+    },
+}
 ```
 
 ### Self-Transitions
@@ -225,7 +273,14 @@ A state can transition to itself — useful for incrementing counters or re-runn
 counting.to(counting, event="INCREMENT", actions="addOne")
 
 # JSON equivalent
-{"on": {"INCREMENT": {"target": "counting", "actions": "addOne"}}}
+{
+    "on": {
+        "INCREMENT": {
+            "target": "counting",
+            "actions": "addOne",
+        },
+    },
+}
 ```
 
 ---
@@ -408,30 +463,36 @@ When multiple transitions share the same event, guards are evaluated **top to bo
 from xstate_statemachine import State, build_machine, SyncInterpreter, guard
 
 checking = State("checking", initial=True)
-premium  = State("premium")
+premium = State("premium")
 standard = State("standard")
 rejected = State("rejected")
 
 # Order matters! First match wins.
 verify = (
-    checking.to(premium,  event="VERIFY", guard="isPremium")
+    checking.to(premium, event="VERIFY", guard="isPremium")
     | checking.to(standard, event="VERIFY", guard="isAdult")
     | checking.to(rejected, event="VERIFY")  # fallback — no guard
 )
+
 
 @guard
 def is_premium(context, event):
     return context.get("age", 0) >= 18 and context.get("plan") == "premium"
 
+
 @guard
 def is_adult(context, event):
     return context.get("age", 0) >= 18
+
 
 machine = build_machine(
     id="accessControl",
     states=[checking, premium, standard, rejected],
     guards=[is_premium, is_adult],
-    context={"age": 25, "plan": "premium"},
+    context={
+        "age": 25,
+        "plan": "premium",
+    },
 )
 
 interp = SyncInterpreter(machine).start()
@@ -453,21 +514,26 @@ Context is a **mutable dictionary** that travels with the machine across all tra
 from xstate_statemachine import State, build_machine, SyncInterpreter, action
 
 counting = State("counting", initial=True)
-done     = State("done")
+done = State("done")
 
 counting.to(counting, event="INCREMENT", actions="addOne")
-counting.to(done,     event="FINISH")
+counting.to(done, event="FINISH")
+
 
 @action
 def add_one(interpreter, context, event, action_def):
     context["count"] += 1
     context["history"].append(f"+1 -> {context['count']}")
 
+
 machine = build_machine(
     id="counter",
     states=[counting, done],
     actions=[add_one],
-    context={"count": 0, "history": []},
+    context={
+        "count": 0,
+        "history": [],
+    },
 )
 
 interp = SyncInterpreter(machine).start()
@@ -475,8 +541,8 @@ interp.send("INCREMENT")
 interp.send("INCREMENT")
 interp.send("INCREMENT")
 
-print(interp.context["count"])      # 3
-print(interp.context["history"])    # ['+1 -> 1', '+1 -> 2', '+1 -> 3']
+print(interp.context["count"])  # 3
+print(interp.context["history"])  # ['+1 -> 1', '+1 -> 2', '+1 -> 3']
 
 interp.send("FINISH")
 interp.stop()
@@ -673,7 +739,16 @@ Processing a single external event is a **macrostep**, made of one or more
 from xstate_statemachine import State, build_machine, SyncInterpreter, raise_
 
 step_one = State("stepOne", initial=True)
-step_two = State("stepTwo", entry=[raise_({"type": "NEXT"})])
+step_two = State(
+    "stepTwo",
+    entry=[
+        raise_(
+            {
+                "type": "NEXT",
+            }
+        )
+    ],
+)
 step_three = State("stepThree")
 
 # Entering "stepTwo" immediately raises NEXT to itself -- processed as part

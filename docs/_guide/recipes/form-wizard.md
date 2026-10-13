@@ -24,7 +24,10 @@ from xstate_statemachine import MachineLogic, SyncInterpreter, create_machine
 chart = {
     "id": "signup",
     "initial": "account",
-    "context": {"email": "", "plan": ""},
+    "context": {
+        "email": "",
+        "plan": "",
+    },
     "states": {
         "account": {
             "on": {
@@ -45,14 +48,23 @@ chart = {
                 },
             },
         },
-        "done": {"type": "final"},
+        "done": {
+            "type": "final",
+        },
     },
 }
-def save(i, ctx, e, a): ctx.update({k: v for k, v in e.payload.items() if k in ctx})
+
+
+def save(i, ctx, e, a):
+    ctx.update({k: v for k, v in e.payload.items() if k in ctx})
+
+
 machine = create_machine(
     chart,
     logic=MachineLogic(
-        actions={"save": save},
+        actions={
+            "save": save,
+        },
         guards={
             "accountValid": lambda ctx, e: "@" in e.payload.get("email", ""),
             "planChosen": lambda ctx, e: (
@@ -62,19 +74,29 @@ machine = create_machine(
     ),
 )
 
+
 def click(session: dict, event: str, **fields) -> bool:
     """One UI interaction: restore -> send -> snapshot. False = input refused."""
     blob = session.get("wizard")
-    i = (SyncInterpreter.from_snapshot(blob, machine) if blob else SyncInterpreter(machine)).start()
+    i = (
+        SyncInterpreter.from_snapshot(blob, machine)
+        if blob
+        else SyncInterpreter(machine)
+    ).start()
     changed = i.send(event, wait=True, **fields).changed
-    session["wizard"] = i.get_snapshot()      # a JSON string: session-state safe
+    session["wizard"] = i.get_snapshot()  # a JSON string: session-state safe
     i.stop()
     return changed
 
-session = {}                                  # st.session_state / the dict in gr.State
-assert click(session, "NEXT", email="nope") is False     # the guard refuses; show an error
+
+session = {}  # st.session_state / the dict in gr.State
+assert (
+    click(session, "NEXT", email="nope") is False
+)  # the guard refuses; show an error
 assert click(session, "NEXT", email="ann@example.com")
-assert click(session, "BACK") and click(session, "NEXT", email="ann@example.com")
+assert click(session, "BACK") and click(
+    session, "NEXT", email="ann@example.com"
+)
 assert click(session, "NEXT", plan="pro")
 assert '"done"' in session["wizard"]
 ```
@@ -115,18 +137,36 @@ with st.expander("How this form works"):
 import gradio as gr
 from wizard import PLANS, Wizard, diagram
 
+
 def on_next(state, email, plan, accepted):
-    state = dict(state or {}); wiz = Wizard(state)
-    fields = {"account": {"email": email}, "plan": {"plan": plan},
-              "confirm": {"accepted": accepted}}.get(wiz.step, {})
+    state = dict(state or {})
+    wiz = Wizard(state)
+    fields = {
+        "account": {
+            "email": email,
+        },
+        "plan": {
+            "plan": plan,
+        },
+        "confirm": {
+            "accepted": accepted,
+        },
+    }.get(wiz.step, {})
     wiz.send("SUBMIT" if wiz.step == "confirm" else "NEXT", **fields)
     return state, f"## Sign up -- {wiz.step}"
+
 
 with gr.Blocks() as demo:
     session = gr.State({})
     header = gr.Markdown("## Sign up -- account")
-    email, plan, terms = gr.Textbox(label="Email"), gr.Radio(list(PLANS)), gr.Checkbox()
-    gr.Button("Next").click(on_next, [session, email, plan, terms], [session, header])
+    email, plan, terms = (
+        gr.Textbox(label="Email"),
+        gr.Radio(list(PLANS)),
+        gr.Checkbox(),
+    )
+    gr.Button("Next").click(
+        on_next, [session, email, plan, terms], [session, header]
+    )
     fence = "`" * 3
     gr.Markdown(f"{fence}mermaid\n{diagram()}\n{fence}")
 ```

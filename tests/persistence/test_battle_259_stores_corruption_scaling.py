@@ -3,8 +3,8 @@
 
 Every backend (Memory / File / SQLite) and the ``as_async`` wrapper of each
 is held to ONE contract; the matrix below is what the docs' backend
-comparison table is generated from. Scaling tests assert SHAPE only (ratios,
-bounded growth) and print the numbers.
+comparison table is generated from. Scaling tests assert SHAPE only (bounded
+work/growth and backend-appropriate ratios) and print timing diagnostics.
 """
 
 from __future__ import annotations
@@ -43,6 +43,9 @@ from src.xstate_statemachine.persistence import (
 from src.xstate_statemachine.persistence.file_store import (
     decode_key,
     encode_key,
+)
+from tests.persistence.test_sqlite_operation_budget import (
+    sqlite_operation_budget,
 )
 
 TYPED = (StoreError, SnapshotCorruptError)
@@ -737,6 +740,7 @@ class TestScaling(_Base):
         sizes = (1, 100, 2000)  # 10 000 is measured, not asserted (below)
         for kind in KINDS:
             per: Dict[int, Dict[str, float]] = {}
+            work: Dict[int, Dict[str, int]] = {}
             s = self.make(kind)
             filled = 0
             for n in sizes:
@@ -760,12 +764,36 @@ class TestScaling(_Base):
                     s.save(k, SNAP, deadlines=[DL])
                     s.delete(k)
 
+                operations = (
+                    ("save", save, 20),
+                    ("load", load, 20),
+                    ("list10", lst, 5),
+                    ("save+delete", dele, 10),
+                )
                 per[n] = {
-                    "save": _timeit(save, 20),
-                    "load": _timeit(load, 20),
-                    "list10": _timeit(lst, 5),
-                    "save+delete": _timeit(dele, 10),
+                    name: _timeit(operation, repetitions)
+                    for name, operation, repetitions in operations
                 }
+                if kind == "sqlite":
+                    # 🛡️ Disk/WAL pauses are not query complexity. Count
+                    #    actual SQL work at every size, independently of
+                    #    the diagnostic wall-time samples above. Missing
+                    #    deadline indexes or reading all keys before
+                    #    slicing exceed this fixed per-operation budget.
+                    work[n] = {}
+                    for name, operation, _ in operations:
+                        with sqlite_operation_budget(s) as counts:
+                            operation()
+                        work[n][name] = counts["sqlite_instructions"]
+                    record = s.load(probe)
+                    self.assertEqual(record.snapshot, SNAP)
+                    self.assertEqual(record.deadlines, (DL,))
+                    self.assertEqual(
+                        s.list_keys(limit=10),
+                        [f"key-{i:06d}" for i in range(min(n, 10))],
+                    )
+                    self.assertIsNone(s.load(f"tmp-{cnt[0]}"))
+                    self.assertEqual(len(s.list_keys(limit=n + 1)), n)
             _report(
                 f"scaling {kind}",
                 **{
@@ -773,6 +801,12 @@ class TestScaling(_Base):
                     for n, d in per.items()
                 },
             )
+            if kind == "sqlite":
+                _report(
+                    "sqlite instruction counts (fixed per-operation budget)",
+                    **{str(n): counts for n, counts in work.items()},
+                )
+                continue
             hi, lo = per[sizes[-1]], per[sizes[1]]
             with self.subTest(kind):
                 # 2000/100 = 20x more keys; O(1) ops must stay within 3x
@@ -782,31 +816,23 @@ class TestScaling(_Base):
                 #    APFS (macOS CI) that read 8.6x at 2000 vs 100 while
                 #    Windows/NTFS and ext4 read ~1x. A filesystem property,
                 #    not an algorithm; allow it a wider band and keep the
-                #    strict 3x for every other op and every other store.
-                # 📝 #268 CI: SQLite `save+delete` on macOS read 4.25x --
-                #    `DELETE` + WAL checkpoint cost on APFS grows with the
-                #    file, the same filesystem property. Same wider band
-                #    for that one op; `save` / `load` stay strict.
+                #    strict 3x for other Memory/File point operations.
+                #    SQLite is gated by actual SQL work above, not by
+                #    filesystem-dependent elapsed-time ratios.
                 band = {
                     ("file", "save"): 12.0,
                     ("file", "save+delete"): 12.0,
-                    ("sqlite", "save+delete"): 12.0,
                 }
                 for op in ("save", "load", "save+delete"):
                     limit = band.get((kind, op), 3.0)
                     self.assertLess(hi[op] / lo[op], limit, (kind, op, hi, lo))
-                if kind == "sqlite":
-                    self.assertLess(
-                        hi["list10"] / lo["list10"], 3.0, (kind, hi, lo)
-                    )
-                else:
-                    # Documented shape: Memory sorts every key and File
-                    # lists + decodes the whole directory, so list_keys is
-                    # O(n) however small `limit` is. Recorded, not asserted.
-                    _report(
-                        f"{kind} list_keys(limit=10) is O(n)",
-                        ratio=round(hi["list10"] / lo["list10"], 1),
-                    )
+                # Documented shape: Memory sorts every key and File
+                # lists + decodes the whole directory, so list_keys is
+                # O(n) however small `limit` is. Recorded, not asserted.
+                _report(
+                    f"{kind} list_keys(limit=10) is O(n)",
+                    ratio=round(hi["list10"] / lo["list10"], 1),
+                )
 
     @unittest.skipUnless(
         os.environ.get("XSM_BIG"), "10 000-key run: set XSM_BIG=1"
