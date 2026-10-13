@@ -50,6 +50,15 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
 
 ### Fixed
 
+- Gave the 16-worker SQLite audit-log stress tests an explicit contention
+  budget while preserving their 1,600-write workload, error reporting,
+  commit counts, and gap-free sequence assertions. Production lock-wait
+  defaults are unchanged; regressions retain timeout propagation even
+  when a snapshot has committed before its separate audit-log append.
+
+- Replaced the documentation footer's outdated test count and Python range
+  with a link to the maintained compatibility guide.
+
 - Preserved leaf-state containment and machine-level entry arrows in Mermaid
   exports, including non-initial and unconnected states. Regenerated the
   documentation examples and documented the existing local-key alias
@@ -89,7 +98,7 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
 
 - Python 3.15 is supported and tested (classifier, the full Linux matrix cell and the Windows / macOS spot-checks). The only API the interpreter still used that 3.14+ turns into an error without a set loop -- `asyncio.get_event_loop()` inside `wait_for` -- is `get_running_loop()`.
 - Type safety: the library is `mypy --strict` clean (496 findings across 104 files resolved: every generic parametrised, every def annotated, 34 stale `# type: ignore` removed; the ones that remain all carry a code and a reason for a framework base with no stubs). `[tool.mypy] strict = true` is now the configured gate, enforced by the CI lint job and `tests/test_type_safety.py`. `pythonic.State(after=...)` accepts `int` delay keys, as the generated builder template always has.
-- Docs: live, theme-following Stately editor diagrams for every machine on the site (288 charts in the public Stately project, 239 embeds, an Example Gallery page); the duplicate page `<h1>` removed from 54 pages; every machine config in the guides, the README, the example apps and the `xsm new` templates re-flowed to one key per line / canonical 2-space JSON; the plugin-hook table lists `on_event_refused`, `on_event_sent` and `on_resolve_error`; the Django guide lists the app's six models; `snapshots.md` no longer says `deadlines` is unused.
+- Docs: live, theme-following Stately editor diagrams for every machine on the site, including an Example Gallery page; the duplicate page `<h1>` removed from 54 pages; every machine config in the guides, the README, the example apps and the `xsm new` templates re-flowed to one key per line / canonical 2-space JSON; the plugin-hook table lists `on_event_refused`, `on_event_sent` and `on_resolve_error`; the Django guide lists the app's six models; `snapshots.md` no longer says `deadlines` is unused.
 - Performance: build-time and per-event fast paths (#307 follow-up). `create_machine()` no longer sorts keys, filters `x-` and imports `difflib` for every state and transition whose keys are all known (one set comparison decides), skips label formatting for targetless transitions in the target validator, and does one thread-local lookup per node (not three per child) for the aliased-cycle guard; tag/meta validation runs only when declared. On the event path `_collect_eligible_transitions` decides the event's kind once per call instead of once per ancestor and inlines the exact-key `on` lookup for nodes without partial descriptors or a wildcard; `_select_transitions` has a single-active-leaf fast path and takes the first (deepest) eligible transition instead of `max()`; `_execute_transition` no longer sorts a single exiting state or snapshots actor ids when there are no actors. Construction is ~20 % cheaper and a flat `send()` ~15 %; semantics are unchanged (same resolver, same descriptor matching, same ordering). The competitor table in `benchmarks/competitors/README.md`, the README and the docs home page is re-measured (2026-10-11, sismic 1.6.14): construction and 1,000 instances, previously a tie with `transitions`, are now 5-14 % ahead.
 
 ### Release polish (Fixed)

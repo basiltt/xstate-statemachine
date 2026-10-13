@@ -39,7 +39,7 @@ from src.xstate_statemachine import (
     create_machine,
 )
 from src.xstate_statemachine.clock import SimulatedClock
-from src.xstate_statemachine.exceptions import ConflictError
+from src.xstate_statemachine.exceptions import ConflictError, LockTimeoutError
 from src.xstate_statemachine.persistence import (
     AuditPlugin,
     JSONLinesLog,
@@ -256,8 +256,8 @@ class _Tmp(unittest.TestCase):
                 pass
         shutil.rmtree(self.tmp, ignore_errors=True)
 
-    def sqlite(self, name: str = "app.db") -> SQLiteStore:
-        s = SQLiteStore(self.tmp / name)
+    def sqlite(self, name: str = "app.db", **kwargs: Any) -> SQLiteStore:
+        s = SQLiteStore(self.tmp / name, **kwargs)
         self._closers.append(s.close)
         return s
 
@@ -634,7 +634,10 @@ class TestSeqUnderConcurrency(_Tmp):
     PER = 100
 
     def _hammer(self, lock_factory: Any) -> Tuple[SQLiteStore, SQLiteLog, int]:
-        store = self.sqlite(f"{id(lock_factory)}.db")
+        # 📝 This tests ordering, not the default five-second lock-wait limit.
+        # Slow CI gets the pessimistic case's 30-second contention budget.
+        # Timeouts still fail: NoLock may already have committed its snapshot.
+        store = self.sqlite(f"{id(lock_factory)}.db", busy_timeout=30.0)
         log = SQLiteLog(store)
         m = counter_machine()
         plugin = TransitionLogPlugin(log)
@@ -677,6 +680,73 @@ class TestSeqUnderConcurrency(_Tmp):
     def _assert_gap_free(self, log: SQLiteLog, n: int) -> None:
         seqs = [r.seq for r in log.read("k", limit=10**6)]
         self.assertEqual(seqs, list(range(1, n + 1)))
+
+    def test_hammer_configures_worker_busy_timeout(self) -> None:
+        """Inspect the real worker connection without repeating the stress."""
+        real_connect = SQLiteStore._connect
+        caller = threading.get_ident()
+        worker_timeouts: List[int] = []
+
+        def tracked_connect(store: SQLiteStore) -> Any:
+            conn = real_connect(store)
+            if (
+                threading.get_ident() != caller
+                and pathlib.Path(store.path).parent == self.tmp
+            ):
+                worker_timeouts.append(
+                    conn.execute("PRAGMA busy_timeout").fetchone()[0]
+                )
+            return conn
+
+        with mock.patch.multiple(self, THREADS=1, PER=1):
+            with mock.patch.object(SQLiteStore, "_connect", tracked_connect):
+                store, log, committed = self._hammer(NoLock)
+
+        self.assertEqual(store.busy_timeout, 30.0)
+        self.assertEqual(worker_timeouts, [30_000])
+        self.assertEqual(committed, 1)
+        self._assert_gap_free(log, committed)
+
+    def test_sqlite_fixture_preserves_default_busy_timeout(self) -> None:
+        """Only the ordering hammer opts into the longer contention wait."""
+        store = self.sqlite()
+        self.assertEqual(store.busy_timeout, 5.0)
+        self.assertEqual(
+            store._conn().execute("PRAGMA busy_timeout").fetchone(),
+            (5_000,),
+        )
+
+    def test_nolock_post_commit_timeout_propagates_without_retry(self) -> None:
+        """A late log timeout is not permission to replay a durable action."""
+        store = self.sqlite()
+        log = SQLiteLog(store)
+        machine = counter_machine()
+        inc = mock.Mock(wraps=machine.logic.actions["inc"])
+        machine.logic.actions["inc"] = inc
+        error = LockTimeoutError("<db>", store.busy_timeout)
+
+        with mock.patch.object(
+            log, "append_next", side_effect=error
+        ) as append:
+            with self.assertRaises(LockTimeoutError) as raised:
+                with persisted(
+                    store,
+                    "k",
+                    machine,
+                    plugins=[TransitionLogPlugin(log)],
+                    lock=NoLock(),
+                ) as interpreter:
+                    interpreter.send("INC")
+
+        self.assertIs(raised.exception, error)
+        inc.assert_called_once()
+        append.assert_called_once()
+        saved = store.load("k")
+        self.assertIsNotNone(saved)
+        self.assertEqual(saved.version, 1)
+        self.assertEqual(json.loads(saved.snapshot)["context"]["n"], 1)
+        self.assertEqual(log.read("k"), [])
+        self.assertFalse(store._conn().in_transaction)
 
     def test_optimistic_only_committed_attempts_are_logged(self) -> None:
         store, log, committed = self._hammer(
