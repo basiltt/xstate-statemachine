@@ -15,6 +15,15 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ## [0.11.0] - 2026-10-13
 
+### Added
+
+- Added an in-page Fullscreen viewer to every embedded Stately diagram.
+  Large charts use the documentation viewport without opening the editor;
+  the responsive toolbar keeps Close and Open in Stately available. The
+  viewer follows the site theme, restores page position and keyboard focus,
+  and unloads its separate iframe when closed. Inline charts and machine
+  definitions are unchanged.
+
 ### Changed
 
 - Aligned the development lockfile with version 0.11.0, its declared extras,

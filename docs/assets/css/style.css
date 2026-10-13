@@ -716,6 +716,8 @@ pre > code { display: block; width: max-content; min-width: 100%; }
    a theme-following iframe of the chart in the public Stately project)
 ---------------------------------------------------------------------------- */
 .stately-embed { margin: 1.4em 0 1.8em; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--panel); box-shadow: var(--glass-hi); overflow: hidden; }
+.stately-embed, .stately-fullscreen { --stately-accent: #087052; }
+html[data-theme="dark"] .stately-embed, html[data-theme="dark"] .stately-fullscreen { --stately-accent: var(--signal); }
 .stately-frame { position: relative; width: 100%; background: var(--panel-solid); }
 .stately-iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; opacity: 0; transition: opacity .35s ease; }
 .stately-iframe.is-ready { opacity: 1; }
@@ -723,6 +725,29 @@ pre > code { display: block; width: max-content; min-width: 100%; }
 .stately-caption { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 8px 14px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--fg-dim); }
 .stately-name { min-width: 0; overflow-wrap: anywhere; font-family: var(--font-mono); }
 .stately-name::before { content: "statechart · "; color: var(--fg-faint); }
-.stately-open { font-weight: 600; color: var(--a1); text-decoration: none; white-space: nowrap; }
+.stately-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.stately-open { display: inline-flex; align-items: center; min-height: 44px; font-weight: 600; color: var(--stately-accent); text-decoration: none; white-space: nowrap; }
 .stately-open:hover { text-decoration: underline; }
+.stately-expand, .stately-fullscreen-close, .stately-fullscreen-return { display: inline-flex; align-items: center; justify-content: center; gap: 8px; flex: none; min-width: 44px; min-height: 44px; padding: 8px 14px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: var(--signal-soft); color: var(--stately-accent); font-size: .875rem; font-weight: 600; line-height: 1.4; cursor: pointer; touch-action: manipulation; }
+.stately-expand:hover, .stately-fullscreen-close:hover, .stately-fullscreen-return:hover { border-color: var(--stately-accent); background: var(--panel-solid); }
+.stately-expand:focus-visible, .stately-fullscreen-close:focus-visible, .stately-fullscreen-return:focus-visible, .stately-open:focus-visible { outline-color: var(--stately-accent); }
+.stately-expand svg, .stately-fullscreen-close svg { width: 16px; height: 16px; flex: none; }
+/* A native modal keeps the page inert and traps focus, including its iframe.
+   Explicitly hide the closed dialog: display:flex alone overrides UA hiding. */
+.stately-fullscreen { position: fixed; inset: 0; display: none; flex-direction: column; width: 100%; max-width: none; height: 100vh; height: 100dvh; max-height: none; margin: 0; padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); border: 0; border-radius: 0; background: var(--panel-solid); color: var(--fg); overflow: hidden; overscroll-behavior: contain; }
+.stately-fullscreen[open] { display: flex; }
+.stately-fullscreen::backdrop { background: var(--ink); }
+.stately-fullscreen-toolbar { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 10px clamp(12px, 2vw, 24px); border-bottom: 1px solid var(--line-strong); box-shadow: var(--glass-hi); }
+.stately-fullscreen-title { flex: 1 1 12rem; min-width: 0; margin: 0; font-family: var(--font-mono); font-size: .9375rem; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+.stately-fullscreen-actions { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.stately-fullscreen-actions .stately-open { font-size: .875rem; }
+.stately-fullscreen-frame { position: relative; flex: 1 1 0; width: 100%; min-width: 0; min-height: 0; overflow: hidden; background: var(--panel-solid); }
+.stately-fullscreen-status { flex: none; margin: 0; padding: 6px clamp(12px, 2vw, 24px); border-top: 1px solid var(--line); color: var(--fg-dim); font-size: .75rem; line-height: 1.4; overflow-wrap: anywhere; }
+/* A keyboard-visible return path after the cross-origin iframe also avoids
+   Firefox's native dialog/iframe forward-Tab wrap edge case. */
+.stately-fullscreen-return { position: absolute; right: max(12px, env(safe-area-inset-right, 0px)); bottom: max(12px, env(safe-area-inset-bottom, 0px)); z-index: 1; max-width: calc(100% - 24px); background: var(--panel-solid); box-shadow: var(--shadow); }
+.stately-fullscreen-return:not(:focus) { width: 1px; height: 1px; min-width: 0; min-height: 0; padding: 0; border: 0; clip-path: inset(50%); overflow: hidden; white-space: nowrap; }
 @media (max-width: 760px) { .stately-frame { min-height: 320px; } .stately-caption { padding: 8px 10px; } }
+@media (max-width: 480px) { .stately-fullscreen-toolbar { gap: 6px; padding: 8px 12px; } .stately-fullscreen-title { flex-basis: 100%; } .stately-fullscreen-actions { width: 100%; justify-content: space-between; } }
+@media (prefers-reduced-motion: reduce) { .stately-iframe { transition: none; } }
+@media print { .stately-expand, .stately-fullscreen, .stately-fullscreen[open] { display: none; } }
