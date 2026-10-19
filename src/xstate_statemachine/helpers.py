@@ -317,7 +317,9 @@ def _make_probe_class() -> type:
                     )
             return _Done([])
 
-        def _schedule_state_tasks(self, state: Any) -> None:
+        def _schedule_state_tasks(
+            self, state: Any, trigger: Any = None
+        ) -> None:
             """Suppresses timers and invoked services entirely."""
             return None
 
