@@ -821,8 +821,8 @@ class StateMachine(metaclass=_StateMachineMeta):
         logic = _compile_logic_from_instance(
             instance=instance, decorated=cls._xsm_decorated, sink=sink
         )
-        _bind_plain_methods_by_name(cls, instance, config, logic, sink)
         machine = _original_create_machine(config, logic=logic)
+        _bind_plain_methods_by_name(cls, instance, machine, sink)
         if validate:
             _validate_logic(machine, cls.__name__)
         return machine
@@ -1079,8 +1079,7 @@ class StateMachine(metaclass=_StateMachineMeta):
 def _bind_plain_methods_by_name(
     cls: type,
     instance: Any,
-    config: Dict[str, Any],
-    logic: Any,
+    machine: MachineNode[Any],
     sink: Optional[Any],
 ) -> None:
     """Let an undecorated method satisfy a name the chart references.
@@ -1094,7 +1093,9 @@ def _bind_plain_methods_by_name(
 
     A plain method is bound only for a name the chart actually references
     and no decorated callable already provides, so helper methods are
-    never swept in by accident.
+    never swept in by accident. Runs on the built ``MachineNode``: its
+    ``logic`` tables are the live lookup the engine uses, and walking the
+    parsed model keeps the ``cli`` extractor out of the import graph.
     """
     from .testing_utils import logic_names
 
@@ -1102,7 +1103,8 @@ def _bind_plain_methods_by_name(
     if not plain:
         return
     by_camel = {_snake_to_camel(name): fn for name, fn in plain.items()}
-    actions, guards, services = logic_names(config)
+    actions, guards, services = logic_names(machine)
+    logic = machine.logic
     for kind, wanted, table in (
         ("action", actions, logic.actions),
         ("guard", guards, logic.guards),
