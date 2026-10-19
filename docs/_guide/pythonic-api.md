@@ -166,6 +166,36 @@ except ImplementationMissingError as exc:
     print(exc)  # Broken references logic that is not implemented: ...
 ```
 
+### Lifecycle methods vs. events called `start` / `stop`
+
+`sm.start()` and `sm.stop()` always start and stop the machine. Timers, jobs and media players naturally have `START` / `STOP` *events* too, and that is allowed: declare the transition as usual, and send the event by name. The attribute just does not get the `sm.stop()` shortcut, and a warning at class-definition time tells you so.
+
+```python
+import logging
+
+from xstate_statemachine import State, StateMachine
+
+logging.basicConfig(level=logging.WARNING)
+
+
+class Timer(StateMachine):
+    idle = State(initial=True)
+    running = State()
+    start = idle.to(running)  # the START event -- warning logged here
+    stop = running.to(idle)  # the STOP event  -- and here
+
+
+with Timer() as t:
+    t.send("START")  # the event
+    print(t.state)  # running
+    t.send("STOP")  # the event
+    print(t.state)  # idle
+# leaving the block stopped the machine; t.stop() would have done the same
+print(t.status)  # stopped
+```
+
+Why the lifecycle wins: event methods are new in this release, so no code relied on `sm.stop()` sending an event, whereas a shutdown call that silently sent an event instead would leave the interpreter and its timers running. Names that would break the façade itself (`send`, `state`, `context`, `status`, `can`, `matches`, `machine`, `interpreter`, …) are reserved and raise `InvalidConfigError`; give the transition another attribute name and keep the event name with `event="STATE"` if you need it.
+
 ### Async machines
 
 If any callback is `async def`, the instance runs on the asyncio `Interpreter`; start it with `await sm.start()` (or `async with`) and `await` its events. Set `engine = "async"` to force it for sync callbacks.

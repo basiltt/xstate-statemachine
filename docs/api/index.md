@@ -420,7 +420,8 @@ decorated methods at class-definition time.
 - **Naming-convention hooks** are bound automatically: `on_enter_<state>`, `on_exit_<state>`, `on_<event>` (runs between exit and entry), `before_<event>` / `after_<event>` (run before exit / after entry; instance façade only), and the generic `on_enter_state(state)`, `on_exit_state(state)`, `on_transition(event, source, target)`, `before_transition`, `after_transition`. A suffix that matches no state or event logs a warning.
 - **Every callback declares only the arguments it wants.** Injectable names: `context`/`ctx`, `event`, `event_type`, `interpreter`/`machine`, `action_def`/`action`, `error`, `data`, `input`, `source`, `target`, `state`, any payload field of the event, and `**kwargs` for the remaining payload. The legacy positional shapes — `(interpreter, context, event, action_def)` for actions, `(context, event)` for guards, `(interpreter, context, event)` for services — are detected by arity and called unchanged.
 - Nested classes accept every `State(...)` keyword (`class paid(State.Compound, on_done="fulfil", after={...}): ...`) and are valid transition sources and targets. `State.Compound` and `State.Parallel` are aliases of `State`.
-- Reserved attribute names (raise `InvalidConfigError` if used for a state or transition): `send`, `state`, `configuration`, `context`, `status`, `can`, `matches`, `allowed_events`, `machine`, `interpreter`, `engine`, `strict`, `plugins`, `validate_logic`, `create_machine`, `machine_id`, `initial_context`, `machine_root`. `start` and `stop` are **not** reserved — a `stop` transition makes `sm.stop()` send `STOP`; use `sm.interpreter.stop()` or `with sm:` for the lifecycle.
+- Reserved attribute names (raise `InvalidConfigError` if used for a state or transition): `send`, `state`, `configuration`, `context`, `status`, `can`, `matches`, `allowed_events`, `machine`, `interpreter`, `engine`, `strict`, `plugins`, `validate_logic`, `create_machine`, `machine_id`, `initial_context`, `machine_root`.
+- **Lifecycle names are not reserved, and the lifecycle always wins.** A transition may be called `start` or `stop` (timers, jobs and media players need those events, and Stately exports use them). The chart keeps the event, but the attribute gets no event-method sugar: `sm.start()` / `sm.stop()` always start and stop the machine, and you send the event with `sm.send("STOP")`. A one-line warning is logged when the class is defined so the collision is visible at import time, never a surprise at run time. Rationale: event methods are new in this release (nothing depended on `sm.stop()` sending an event), whereas letting the event win would turn a documented shutdown into a machine that silently keeps running.
 
 #### Instance API **[Unreleased]**
 
@@ -443,7 +444,7 @@ StateMachine(context=None, *, engine=None, strict=None, plugins=None)
 | `sm.allowed_events` | Events the active states declare a handler for (no guard evaluation). |
 | `sm.<state_attr>` | A `BoundState` with `.is_active`, `.path`, `.id`; `Cls.<state_attr>` is still the `State` definition. |
 | `sm.machine`, `sm.interpreter`, `sm.engine` | The `MachineNode`, the underlying interpreter, and `"sync"`/`"async"`. |
-| `sm.start()`, `sm.stop()` | Lifecycle; awaitables on the async engine (`await sm.start()`). |
+| `sm.start()`, `sm.stop()` | Lifecycle; awaitables on the async engine (`await sm.start()`). Always the lifecycle, even if the chart has a `start` / `stop` transition — send those with `sm.send("START")` / `sm.send("STOP")`. |
 | `with sm:` / `async with sm:` | Stops on exit; `async with` also starts. |
 | `repr(sm)` | `Light(state='green', context={})` |
 

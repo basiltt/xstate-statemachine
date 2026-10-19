@@ -70,6 +70,14 @@ logger = logging.getLogger("xstate_statemachine.pythonic")
 #: long-running machine from growing it without limit.
 RESULT_SINK_MAXLEN = 1024
 
+#: Lifecycle methods of the instance façade that a transition attribute
+#: may legitimately share a name with. The transition is kept (the event
+#: exists, `sm.send("STOP")` works) but it gets no `sm.stop()` sugar: the
+#: method always stops the machine. Letting the event win would turn a
+#: documented shutdown call into a silent no-op shutdown, which is the
+#: failure mode this project refuses.
+_LIFECYCLE_NAMES = frozenset({"start", "stop"})
+
 _GENERIC_HOOKS = (
     "on_enter_state",
     "on_exit_state",
@@ -121,6 +129,9 @@ class _Collected:
         #: the first nested transition per attribute name (exposed as an
         #: event method on the machine)
         self.nested_attrs: Dict[str, Union[Transition, TransitionGroup]] = {}
+        #: transition attributes that collide with a lifecycle method and
+        #: must be removed from the class namespace so the method wins
+        self.shadowing: Set[str] = set()
         self.overlay = CompileOverlay()
 
     # Convenience views -------------------------------------------------
@@ -267,6 +278,27 @@ def _collect_namespace(
             _check_reserved(attr_name, "transition")
             _infer_events(attr_value, attr_name, c.overlay)
             c.transition_attrs[attr_name] = attr_value
+            if attr_name in _LIFECYCLE_NAMES:
+                c.shadowing.add(attr_name)
+                events = sorted(
+                    e
+                    for t in _members(attr_value)
+                    for e in [c.overlay.event_of(t)]
+                    if e
+                )
+                logger.warning(
+                    "⚠️ %s.%s is a transition, but %s() is the machine's "
+                    "lifecycle method and keeps that meaning: sm.%s() will "
+                    "%s the machine, not send %s. Send the event with "
+                    "sm.send(%r).",
+                    cls_name,
+                    attr_name,
+                    attr_name,
+                    attr_name,
+                    attr_name,
+                    "/".join(events) or "the event",
+                    events[0] if events else attr_name.upper(),
+                )
         elif callable(attr_value) and hasattr(attr_value, "_xsm_type"):
             c.decorated[attr_name] = attr_value
             c.plain.pop(attr_name, None)
@@ -535,10 +567,20 @@ class _StateMachineMeta(type):
         _resolve_class_refs(c)
         _drop_leaked_children(c)
         # 🔗 Expose nested-class transitions as event methods on the
-        #    machine itself; a top-level attribute of the same name wins.
+        #    machine itself; a top-level attribute of the same name wins,
+        #    and lifecycle / reserved names are never shadowed.
         for attr_name, value in c.nested_attrs.items():
-            if attr_name not in namespace and attr_name not in _RESERVED_NAMES:
+            if (
+                attr_name not in namespace
+                and attr_name not in _RESERVED_NAMES
+                and attr_name not in _LIFECYCLE_NAMES
+            ):
                 namespace[attr_name] = value
+        # 🚦 A transition called `start` / `stop` stays in the chart but
+        #    leaves the class namespace, so `sm.start()` / `sm.stop()`
+        #    resolve to the lifecycle methods on `StateMachine`.
+        for attr_name in c.shadowing:
+            namespace.pop(attr_name, None)
         conventions = _apply_conventions(c, name)
 
         cls = super().__new__(mcs, name, bases, namespace)
@@ -594,6 +636,15 @@ class StateMachine(metaclass=_StateMachineMeta):
 
     ``Light.create_machine()`` still returns the bare ``MachineNode`` for
     use with your own ``Interpreter`` / ``SyncInterpreter``.
+
+    **Lifecycle vs. events.** ``sm.start()`` and ``sm.stop()`` always
+    start and stop the machine. A transition may be *named* ``start`` or
+    ``stop`` -- those are common event names and real charts use them --
+    but it then gets no ``sm.stop()`` sugar; send it with
+    ``sm.send("STOP")``. A warning is logged when the class is defined so
+    the collision is never a surprise at run time. Names that would break
+    the façade itself (``send``, ``state``, ``context``, ``status``, ...)
+    raise ``InvalidConfigError`` instead; see ``_RESERVED_NAMES``.
 
     Class Attributes:
         machine_id: Optional machine ID (defaults to class name).
@@ -814,7 +865,11 @@ class StateMachine(metaclass=_StateMachineMeta):
         return str(self._xsm_interp.status)
 
     def start(self) -> Any:
-        """Start the machine. Sync: returns ``self``. Async: awaitable."""
+        """Start the machine. Sync: returns ``self``. Async: awaitable.
+
+        Always the lifecycle method, even when the chart has a transition
+        called ``start``; send that event with ``sm.send("START")``.
+        """
         if self.engine == "async":
             return self._astart()
         self._xsm_interp.start()
@@ -825,7 +880,11 @@ class StateMachine(metaclass=_StateMachineMeta):
         return self
 
     def stop(self) -> Any:
-        """Stop the machine. Sync: returns ``None``. Async: awaitable."""
+        """Stop the machine. Sync: returns ``None``. Async: awaitable.
+
+        Always the lifecycle method, even when the chart has a transition
+        called ``stop``; send that event with ``sm.send("STOP")``.
+        """
         if self.engine == "async":
             return self._xsm_interp.stop()
         self._xsm_interp.stop()
@@ -837,7 +896,6 @@ class StateMachine(metaclass=_StateMachineMeta):
         return self
 
     def __exit__(self, *exc: Any) -> None:
-        # 📝 Not `self.stop()`: a transition named `stop` may shadow it.
         self._xsm_interp.stop()
 
     async def __aenter__(self) -> "StateMachine":

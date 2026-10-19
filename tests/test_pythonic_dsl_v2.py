@@ -632,19 +632,39 @@ class TestInstanceFacade(unittest.TestCase):
         self.assertIn("reserved", str(cm.exception))
         self.assertIn("send", str(cm.exception))
 
-    def test_start_and_stop_may_be_event_names(self):
-        class Timer(StateMachine):
-            idle = State(initial=True)
-            running = State()
-            start = idle.to(running)
-            stop = running.to(idle)
+    def test_start_and_stop_transitions_keep_lifecycle_methods(self):
+        with self.assertLogs("xstate_statemachine.pythonic", "WARNING") as cm:
 
-        with Timer() as t:
-            t.start()  # sends START
-            self.assertEqual(t.state, "running")
-            t.stop()  # sends STOP
-            self.assertEqual(t.state, "idle")
+            class Timer(StateMachine):
+                idle = State(initial=True)
+                running = State()
+                start = idle.to(running)
+                stop = running.to(idle)
+
+        self.assertTrue(any("Timer.stop" in m for m in cm.output))
+        self.assertTrue(any("sm.send('STOP')" in m for m in cm.output))
+
+        t = Timer()
+        self.assertIn("START", t.machine.known_events)  # the chart has it
+        t.send("START")  # the event is sent explicitly
+        self.assertEqual(t.state, "running")
+        t.send("STOP")
+        self.assertEqual(t.state, "idle")
+        t.stop()  # the lifecycle method, not the event
         self.assertEqual(t.status, "stopped")
+        self.assertIs(Timer.stop, StateMachine.stop)
+
+    def test_nested_stop_transition_does_not_shadow_lifecycle(self):
+        class Player(StateMachine):
+            idle = State(initial=True)
+
+            class playing(State):
+                loud = State(initial=True)
+                stop = loud.to("idle")
+
+            play = idle.to(playing)
+
+        self.assertIs(Player.stop, StateMachine.stop)
 
     def test_string_entry_and_actions_are_single_actions(self):
         seen = []
@@ -971,7 +991,7 @@ class TestReviewRegressions(unittest.TestCase):
         )
         sm = G()
         sm.jump()
-        sm.start()
+        sm.send("START")  # `start` is the lifecycle method, not sugar
         self.assertEqual(sm.state, "b.work")
         sm.stop()
 

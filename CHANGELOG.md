@@ -94,8 +94,12 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
   `plugins`, `validate_logic` and the existing class settings are reserved
   attribute names in a `StateMachine` body and raise `InvalidConfigError`
   if used for a state or transition. `start` and `stop` are deliberately
-  not reserved: a `stop` transition makes `sm.stop()` send `STOP`; the
-  lifecycle stays reachable through `sm.interpreter` and `with sm:`.
+  not reserved -- timers and media players need those events and Stately
+  exports use them -- but the lifecycle always wins: a `stop` transition
+  stays in the chart (`sm.send("STOP")`) and gets no `sm.stop()` sugar,
+  and a warning is logged at class definition. Letting the event win
+  would have turned a documented shutdown call into a machine that keeps
+  running silently.
 - `xstate_statemachine.pythonic` is now a thin public module; the
   implementation moved to `_pythonic_core`, `_pythonic_builder`,
   `_pythonic_class` and `_pythonic_runtime`. Every public name (and the

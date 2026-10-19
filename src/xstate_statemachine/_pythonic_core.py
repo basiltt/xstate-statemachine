@@ -104,9 +104,11 @@ def _as_action_list(value: Any) -> List[Any]:
 
 #: Attribute names a ``StateMachine`` subclass may not use for a state
 #: or transition: they are the instance façade's own API. ``start`` and
-#: ``stop`` are deliberately NOT reserved -- they are common event names;
-#: a ``stop`` transition makes ``sm.stop()`` send the event, and the
-#: lifecycle stays reachable via ``sm.interpreter`` / ``with sm:``.
+#: ``stop`` are deliberately NOT in this set -- they are common event
+#: names (timers, jobs, media players) and real Stately exports use them.
+#: A transition may be called ``start`` / ``stop``; it simply gets no
+#: event-method sugar, because the lifecycle methods keep their meaning.
+#: See ``_LIFECYCLE_NAMES`` in ``_pythonic_class``.
 _RESERVED_NAMES: FrozenSet[str] = frozenset(
     {
         "send",
