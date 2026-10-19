@@ -29,7 +29,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import json
 from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
 
@@ -135,6 +134,10 @@ def structure_hash(machine: "MachineNode[Any]") -> str:
     descriptions, or key order. See `_node_shape` for the exact contract.
     """
     from ..validation import walk
+
+    # 🏛️ Deferred: `hashlib` is only needed when a fingerprint is computed,
+    # and importing it eagerly is paid by every `import xstate_statemachine`.
+    import hashlib
 
     shapes = sorted(
         json.dumps(_node_shape(n), sort_keys=True) for n in walk(machine)

@@ -441,6 +441,18 @@ _WARNED_ACTION_ERROR_POLICY_DEFAULT: bool = False
 _ACCEPTS_KWARG_CACHE: Dict[Tuple[int, str], bool] = {}
 
 
+def _new_actor_suffix() -> str:
+    """A fresh unique suffix for an anonymous actor / invoke id.
+
+    📝 `uuid` is imported here, not at module level: it is only needed when
+    an anonymous child is spawned, and importing it eagerly is paid by every
+    ``import xstate_statemachine``.
+    """
+    import uuid
+
+    return str(uuid.uuid4())
+
+
 def _accepts_kwarg(fn: Callable[..., Any], name: str) -> bool:
     """``True`` if calling *fn* with keyword *name* is signature-legal.
 

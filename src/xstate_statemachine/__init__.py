@@ -67,7 +67,23 @@ Example:
     >>> asyncio.run(main())
     💡 Flipped! Total: 1
     💡 Flipped! Total: 2
+
+Import cost:
+    ``import xstate_statemachine`` only loads the engine core (machines,
+    interpreters, events, exceptions, plugins, the Pythonic DSL and the
+    built-in action creators). The graph algorithms (``reachable_states``,
+    ``shortest_paths``, ...), the pure transition API (``wait_for``,
+    ``get_next_snapshot``, ...), the testing utilities (``stub_logic``,
+    ``logic_names``) and the receipt codec are resolved on first access
+    through a module-level ``__getattr__`` (PEP 562). The optional
+    subpackages (``cli``, ``contrib``, ``eda``, ``patterns``, ``inspect``)
+    and the file / SQLite stores are never imported by the package itself.
+    ``__all__`` is unchanged, ``from xstate_statemachine import <name>``
+    works for every name in it, and type checkers see every name through
+    the ``TYPE_CHECKING`` block below.
 """
+
+from typing import TYPE_CHECKING, Any, Dict, List, Tuple
 
 # -----------------------------------------------------------------------------
 # ⚙️ Core Components
@@ -200,41 +216,6 @@ from .actions import (
     stop_child,
 )
 
-# -----------------------------------------------------------------------------
-# 🧰 Helpers & Pure Transition API
-# -----------------------------------------------------------------------------
-# 📝 `transition` is already exported by the Pythonic DSL (it builds a
-# transition definition). The pure reducer is therefore exported under its
-# XState-adjacent aliases plus an explicit `pure_transition` name, so neither
-# meaning shadows the other.
-from .helpers import (
-    PureSnapshot,
-    get_initial_snapshot,
-    get_next_snapshot,
-    initial_transition,
-    to_promise,
-    wait_for,
-    wait_for_sync,
-)
-from .helpers import transition as pure_transition
-
-# -------------------------------------------------------------------------
-# 🧪 Testing utilities (#304) -- drive any chart without its real logic
-# -------------------------------------------------------------------------
-from .testing_utils import logic_names, stub_logic
-
-# -------------------------------------------------------------------------
-# 🗺️ Graph algorithms (#269) -- paths and reachability from the real engine
-# -------------------------------------------------------------------------
-from .graph import (
-    Path,
-    Step,
-    reachable_states,
-    shortest_paths,
-    simple_paths,
-    transition_coverage_targets,
-)
-
 # -------------------------------------------------------------------------
 # 🎭 Actor logic helpers (#267) -- fromCallback / fromObservable parity
 # -------------------------------------------------------------------------
@@ -250,10 +231,77 @@ from .actor_logic import (
     from_iterator,
 )
 
-# -------------------------------------------------------------------------
-# 🧾 Receipt codec (#305) -- one JSON shape / HTTP status for every adapter
-# -------------------------------------------------------------------------
-from .receipts import receipt_from_json, receipt_to_json, receipt_to_status
+# -----------------------------------------------------------------------------
+# 💤 Lazily-resolved public names (PEP 562)
+# -----------------------------------------------------------------------------
+# 🏛️ Architecture decision: `import xstate_statemachine` is paid by every
+# user, including those who never touch graph analysis, the pure transition
+# API, stub logic or the receipt codec. Those names stay in `__all__` and stay
+# importable (`from xstate_statemachine import shortest_paths`), but their
+# modules are only imported on first access, via the module-level
+# `__getattr__` at the bottom of this file. The resolved value is cached in
+# the module namespace, so every later access is a plain attribute lookup.
+#
+# 📝 Only side-effect-free modules belong here: nothing in this table may
+# register plugins, patch anything or read global state at import time (the
+# global plugin registry is read in `BaseInterpreter.__init__`, not here).
+# 📝 Each entry maps public name -> (submodule, attribute in that submodule);
+# the `TYPE_CHECKING` block mirrors it so mypy/pyright see the real types.
+_LAZY_ATTRS: Dict[str, Tuple[str, str]] = {
+    # 🧰 Helpers & pure transition API
+    "PureSnapshot": (".helpers", "PureSnapshot"),
+    "get_initial_snapshot": (".helpers", "get_initial_snapshot"),
+    "get_next_snapshot": (".helpers", "get_next_snapshot"),
+    "initial_transition": (".helpers", "initial_transition"),
+    # 📝 `transition` is the Pythonic DSL's name; the pure reducer is
+    # exported as `pure_transition` so neither meaning shadows the other.
+    "pure_transition": (".helpers", "transition"),
+    "to_promise": (".helpers", "to_promise"),
+    "wait_for": (".helpers", "wait_for"),
+    "wait_for_sync": (".helpers", "wait_for_sync"),
+    # 🧪 Testing utilities (#304)
+    "logic_names": (".testing_utils", "logic_names"),
+    "stub_logic": (".testing_utils", "stub_logic"),
+    # 🗺️ Graph algorithms (#269)
+    "Path": (".graph", "Path"),
+    "Step": (".graph", "Step"),
+    "reachable_states": (".graph", "reachable_states"),
+    "shortest_paths": (".graph", "shortest_paths"),
+    "simple_paths": (".graph", "simple_paths"),
+    "transition_coverage_targets": (".graph", "transition_coverage_targets"),
+    # 🧾 Receipt codec (#305)
+    "receipt_from_json": (".receipts", "receipt_from_json"),
+    "receipt_to_json": (".receipts", "receipt_to_json"),
+    "receipt_to_status": (".receipts", "receipt_to_status"),
+}
+
+if TYPE_CHECKING:  # pragma: no cover
+    # 💡 Type checkers cannot follow `__getattr__`; these imports give them
+    # the real definitions. They never execute at runtime.
+    from .graph import (
+        Path,
+        Step,
+        reachable_states,
+        shortest_paths,
+        simple_paths,
+        transition_coverage_targets,
+    )
+    from .helpers import (
+        PureSnapshot,
+        get_initial_snapshot,
+        get_next_snapshot,
+        initial_transition,
+        to_promise,
+        wait_for,
+        wait_for_sync,
+    )
+    from .helpers import transition as pure_transition
+    from .receipts import (
+        receipt_from_json,
+        receipt_to_json,
+        receipt_to_status,
+    )
+    from .testing_utils import logic_names, stub_logic
 
 # -----------------------------------------------------------------------------
 # 📦 Version Information
@@ -404,3 +452,35 @@ __all__ = [
     "receipt_from_json",
     "__version__",
 ]
+
+
+# -----------------------------------------------------------------------------
+# 💤 PEP 562 hooks -- resolve the names in `_LAZY_ATTRS` on first access
+# -----------------------------------------------------------------------------
+def __getattr__(name: str) -> Any:
+    """Import and cache a lazily-provided public name.
+
+    Args:
+        name: The attribute being looked up on the package.
+
+    Returns:
+        The resolved object (also stored in the module namespace, so this
+        hook runs at most once per name).
+
+    Raises:
+        AttributeError: If ``name`` is not a lazily-provided public name.
+    """
+    target = _LAZY_ATTRS.get(name)
+    if target is None:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    import importlib
+
+    module_name, attr = target
+    value = getattr(importlib.import_module(module_name, __name__), attr)
+    globals()[name] = value  # 💡 cache: later lookups skip this hook
+    return value
+
+
+def __dir__() -> List[str]:
+    """List every public name, including the not-yet-resolved lazy ones."""
+    return sorted({*globals(), *_LAZY_ATTRS})

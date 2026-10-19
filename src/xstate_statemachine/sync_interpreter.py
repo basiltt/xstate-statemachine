@@ -36,7 +36,6 @@ import inspect
 import logging
 import threading
 import time
-import uuid
 from collections import deque
 from typing import (
     Literal,
@@ -58,7 +57,12 @@ from typing import (
 # -----------------------------------------------------------------------------
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
-from .base_interpreter import AnyEvent, BaseInterpreter, _RollbackRequested
+from .base_interpreter import (
+    AnyEvent,
+    BaseInterpreter,
+    _RollbackRequested,
+    _new_actor_suffix,
+)
 from .exceptions import (
     InterpreterStoppedError,
     ReentrantWaitError,
@@ -1700,7 +1704,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         actor_id = (
             f"{self.id}:{explicit_id}"
             if explicit_id
-            else f"{self.id}:{key}:{uuid.uuid4()}"
+            else f"{self.id}:{key}:{_new_actor_suffix()}"
         )
         # 📥 Input goes in at CONSTRUCTION so a child `context` factory
         #    receives `{input}` (#42); `_build_initial_context` also seeds

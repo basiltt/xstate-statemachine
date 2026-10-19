@@ -31,7 +31,6 @@ import inspect
 import logging
 import threading
 import time
-import uuid
 import warnings
 from collections import deque
 from typing import (
@@ -64,7 +63,7 @@ from .actions import (
 # -----------------------------------------------------------------------------
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
-from .base_interpreter import AnyEvent, BaseInterpreter
+from .base_interpreter import AnyEvent, BaseInterpreter, _new_actor_suffix
 from .exceptions import RunawayChainError, StateNotFoundError
 import contextvars
 
@@ -2714,7 +2713,7 @@ class Interpreter(BaseInterpreter[TContext]):
         actor_id = (
             f"{self.id}:{explicit_id}"
             if explicit_id
-            else f"{self.id}:{actor_machine_key}:{uuid.uuid4()}"
+            else f"{self.id}:{actor_machine_key}:{_new_actor_suffix()}"
         )
         # 📥 Input goes in at CONSTRUCTION so a child `context` factory
         #    receives `{input}` (#42); `_build_initial_context` also seeds
@@ -3628,7 +3627,7 @@ class Interpreter(BaseInterpreter[TContext]):
             actor_id = (
                 f"{self.id}:{invocation.id}"
                 if invocation.id_is_explicit
-                else f"{self.id}:{invocation.src}:{uuid.uuid4()}"
+                else f"{self.id}:{invocation.src}:{_new_actor_suffix()}"
             )
             # 📥 #42: resolve `input` against the PARENT's live context. A
             #    raising resolver is a child failure -> `onError`.

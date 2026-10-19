@@ -42,7 +42,6 @@ from ..exceptions import (
     StoreError,
     StoreUnavailableError,
 )
-from .async_store import AsyncStateStore, AsyncStoreAdapter, as_async
 from .migration import (
     MachineVersionMismatchError,
     MigrationStep,
@@ -50,8 +49,6 @@ from .migration import (
     SnapshotMigrator,
 )
 from .deadline import Deadline, check_deadline_record
-from .file_store import FileStore
-from .sqlite_store import SQLiteStore
 from .store import (
     DEFAULT_MAX_SNAPSHOT_BYTES,
     MAX_KEY_LENGTH,
@@ -74,7 +71,20 @@ from .snapshot import (
 
 # 🔁 #259: the helpers import the engines, and the engines import this
 #    package -- resolve the cycle by loading them on first attribute access.
+#
+# 🏛️ Import-time budget: the engines import this package, so everything
+#    imported eagerly above is paid by `import xstate_statemachine`. The
+#    file / SQLite / async store backends (`tempfile`, `sqlite3`,
+#    `concurrent.futures`, ...) are therefore loaded on first attribute
+#    access too. `from xstate_statemachine.persistence import FileStore`
+#    and `persistence.FileStore` behave exactly as before.
 _LAZY = {
+    # 💾 backends that pull heavy stdlib modules
+    "AsyncStateStore": ".async_store",
+    "AsyncStoreAdapter": ".async_store",
+    "as_async": ".async_store",
+    "FileStore": ".file_store",
+    "SQLiteStore": ".sqlite_store",
     "load_interpreter": ".helpers",
     "aload_interpreter": ".helpers",
     "save_interpreter": ".helpers",
@@ -122,6 +132,13 @@ _LAZY = {
 }
 
 if TYPE_CHECKING:  # pragma: no cover
+    from .async_store import (  # noqa: F401
+        AsyncStateStore,
+        AsyncStoreAdapter,
+        as_async,
+    )
+    from .file_store import FileStore  # noqa: F401
+    from .sqlite_store import SQLiteStore  # noqa: F401
     from .helpers import (  # noqa: F401
         KeyNotFoundError,
         aload_interpreter,
@@ -170,12 +187,19 @@ if TYPE_CHECKING:  # pragma: no cover
     )
 
 
+# 📝 Submodules that used to be bound as attributes by the eager imports
+#    (`persistence.file_store.X`); keep resolving them on attribute access.
+_LAZY_SUBMODULES = frozenset({"async_store", "file_store", "sqlite_store"})
+
+
 def __getattr__(name: str) -> Any:
+    import importlib
+
+    if name in _LAZY_SUBMODULES:
+        return importlib.import_module("." + name, __name__)
     module = _LAZY.get(name)
     if module is None:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-    import importlib
-
     return getattr(importlib.import_module(module, __name__), name)
 
 

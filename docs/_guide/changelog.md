@@ -176,6 +176,17 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
   and a warning is logged at class definition. Letting the event win
   would have turned a documented shutdown call into a machine that keeps
   running silently.
+- `import xstate_statemachine` is lighter: about 25-30% less import time
+  with warm bytecode and 47 fewer modules loaded. The graph algorithms
+  (`reachable_states`, `shortest_paths`, ...), the pure transition API
+  (`wait_for`, `get_next_snapshot`, ...), the testing utilities
+  (`stub_logic`, `logic_names`), the receipt codec and the file / SQLite /
+  async store backends are imported on first use (PEP 562 module
+  `__getattr__`). `__all__` and every `from xstate_statemachine import X`
+  are unchanged and type checkers still see every name. `hashlib` and
+  `uuid` are loaded only when a structure hash or an anonymous actor id
+  is first needed. `tests/test_import_time.py` pins which modules a bare
+  import may load.
 - Docs: the Quick Start is one recommended path -- a `StateMachine`
   class run with `with Machine() as sm:` -- followed by "Also: load
   XState JSON or design in Stately", "Choose your engine" and "Next
