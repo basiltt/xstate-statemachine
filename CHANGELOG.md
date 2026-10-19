@@ -67,7 +67,40 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
   base's chart was silently dropped and the subclass compiled to an
   empty machine.
 - `engine = "sync" | "async" | "auto"` on a `StateMachine`; `auto` picks
-  the asyncio `Interpreter` when any callback is `async def`.
+  the asyncio `Interpreter` when any callback is `async def`. The façade
+  also accepts `clock=` (a `SimulatedClock` in tests) and `plugins=`.
+- **Services see the triggering event.** An invoked service's `input`
+  factory now receives the event whose transition entered the state
+  (XState's `input: ({context, event}) => ...`; it used to get `None`),
+  and when a state declares no `input` the service's input defaults to
+  that event's payload: `send("START", url=...)` arrives as
+  `event.payload["input"]["url"]` -- or simply as a `url` parameter with
+  argument injection -- instead of an empty dict, so a machine no longer
+  needs an action whose only job is to copy the payload into `context`.
+  Child machines invoked as actors keep the previous rule (no input
+  unless declared). Both engines.
+- **`@state.service(on_done=..., on_error=..., id=..., input=...)`**
+  decorator on a `State`: the method becomes the service AND the state
+  gains the matching `invoke` entry, so the two cannot drift apart.
+- **`SyncInterpreter.from_state(machine, state, context=...)` /
+  `Interpreter.from_state(...)`** build an interpreter that is already in
+  a given state -- a dot path relative to the root (`"paid.packing"`),
+  an absolute id, or several for parallel regions -- without running
+  entry actions, exactly like a snapshot restore (it is one: a minimal
+  snapshot handed to `from_snapshot`, so the same legality checks
+  apply). A compound or parallel state completes to its initial leaves;
+  a top-level final state restores as `done`. `StateMachine(state=...)`
+  exposes the same on the façade. This is the "state string stored on a
+  model row" case that previously needed a hand-built `PureSnapshot`
+  with its ancestor set.
+- `tests/test_battle_310_pythonic_dsl.py`: battle tests for the new
+  surface -- 200 concurrent async sends keep their results apart,
+  cross-thread `send_threadsafe` into a façade, hooks that raise, five
+  levels of nesting with deep history and a simulated-clock `after`,
+  same-named leaves at every level, snapshot round-trips of façade-built
+  machines, three-level inheritance, every callback signature shape in
+  one machine, a 200-state machine with the compiled-config cache, the
+  bounded result sink, and lifecycle misuse.
 
 ### Fixed
 
@@ -78,6 +111,21 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
 - Two states with the same name under different parents received each
   other's transitions: the class-based compiler keyed transitions by bare
   state name. They are keyed by the source state's path now.
+- `MachineNode.to_mermaid()` and `to_plantuml()` now draw what a
+  statechart diagram needs and previously omitted: delayed `after`
+  transitions (`created --> cancelled : after 100ms`, or `after TIMEOUT`
+  for named delays, with `[guard]` when guarded), a `--> [*]` end marker
+  on every `type: final` state (inside the parent's block for nested
+  finals), and the `--` divider between the regions of a `type: parallel`
+  state. `invoke` `onDone` / `onError` edges are drawn too (`invoke
+  onDone`, `invoke onError`), and eventless `always` edges carry an
+  `always` label (plus `[guard]`) instead of an empty one. Existing `on`
+  / `onDone` edges are unchanged.
+- A three-argument legacy guard `(context, event, params)` on a
+  transition that declares no `params` received two arguments and raised
+  `TypeError` (evaluating as `False`); it now receives `params=None`.
+- A strict `StateMachine` façade refuses a send to a finished or stopped
+  machine with `InterpreterStoppedError` instead of a silent drop.
 - `State(entry="name")`, `State(exit="name")` and `.to(..., actions="name")`
   with a bare string were iterated character by character into nonsense
   action names. A string is one action, as in XState JSON.
