@@ -444,8 +444,9 @@ StateMachine(context=None, *, engine=None, strict=None, plugins=None)
 | `sm.allowed_events` | Events the active states declare a handler for (no guard evaluation). |
 | `sm.<state_attr>` | A `BoundState` with `.is_active`, `.path`, `.id`; `Cls.<state_attr>` is still the `State` definition. |
 | `sm.machine`, `sm.interpreter`, `sm.engine` | The `MachineNode`, the underlying interpreter, and `"sync"`/`"async"`. |
-| `sm.start()`, `sm.stop()` | Lifecycle; awaitables on the async engine (`await sm.start()`). Always the lifecycle, even if the chart has a `start` / `stop` transition — send those with `sm.send("START")` / `sm.send("STOP")`. |
-| `with sm:` / `async with sm:` | Stops on exit; `async with` also starts. |
+| `with Machine() as sm:` / `async with Machine() as sm:` | **Recommended lifecycle idiom.** Stops on exit (also on exceptions); `async with` also starts. Independent of what the chart's events are called. |
+| `sm.interpreter.start()` / `sm.interpreter.stop()` | The explicit escape hatch for a machine that outlives a block; always reaches the lifecycle. |
+| `sm.start()`, `sm.stop()` | Convenience lifecycle methods; awaitables on the async engine (`await sm.start()`). Always the lifecycle, even if the chart has a `start` / `stop` transition — send those with `sm.send("START")` / `sm.send("STOP")`. |
 | `repr(sm)` | `Light(state='green', context={})` |
 
 ```python
@@ -464,10 +465,9 @@ class Light(StateMachine):
         return amount * 2
 
 
-light = Light()
-print(light.cycle(amount=4))  # slow down after CYCLE / 8
-print(light.state, light.yellow.is_active)  # yellow True
-light.stop()
+with Light() as light:  # stopped on exit; `async with` for the asyncio engine
+    print(light.cycle(amount=4))  # slow down after CYCLE / 8
+    print(light.state, light.yellow.is_active)  # yellow True
 ```
 
 #### Class Method

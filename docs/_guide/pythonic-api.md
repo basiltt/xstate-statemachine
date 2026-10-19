@@ -61,17 +61,19 @@ class TrafficLight(StateMachine):
         return f"counted {amount}"
 
 
-light = TrafficLight()  # started, in `green`
-print(light.state)  # green
-print(light.cycle(amount=3))  # counted 3   <- return values come back
-print(light.send("CYCLE"))  # counted 1   <- same thing, by name
-print(light.state)  # red
-print(light.red.is_active, light.count)  # True 4
-print(light.configuration)  # frozenset({'red'})
-print(light.can("CYCLE"), sorted(light.allowed_events))  # True ['CYCLE']
-print(light)  # TrafficLight(state='red', context={})
-light.stop()
+with TrafficLight() as light:  # started, in `green`; stopped on exit
+    print(light.state)  # green
+    print(light.cycle(amount=3))  # counted 3   <- return values come back
+    print(light.send("CYCLE"))  # counted 1   <- same thing, by name
+    print(light.state)  # red
+    print(light.red.is_active, light.count)  # True 4
+    print(light.configuration)  # frozenset({'red'})
+    print(light.can("CYCLE"), sorted(light.allowed_events))  # True ['CYCLE']
+    print(light)  # TrafficLight(state='red', context={})
+print(light.status)  # stopped
 ```
+
+**Use the context manager.** `with Machine() as sm:` (or `async with` for the asyncio engine) is the recommended way to run an instance: it stops the machine on the way out, including when an exception escapes, and it never depends on method names. For a long-lived machine that outlives a block, hold the instance and call `sm.interpreter.stop()` when you are done; `sm.interpreter.start()` / `sm.interpreter.stop()` are the explicit escape hatch that always reaches the lifecycle, whatever the chart's events are called.
 
 Everything above still compiles to the same XState JSON (`TrafficLight.create_machine().to_json()`), and `TrafficLight.create_machine()` still returns the bare `MachineNode` when you want to drive it with your own `Interpreter` or `SyncInterpreter` (snapshots, custom clocks, actor systems).
 
@@ -107,14 +109,14 @@ class Order(StateMachine):
     close = fulfil.to(closed)  # ...and a valid source
 
 
-order = Order()
-order.pay()
-order.ship()
-print(sorted(order.configuration))  # ['fulfil.notify.idle', 'fulfil.payment.pending']
-order.settle()
-order.send_mail()
-order.close()
-print(order.state, order.status)  # closed done
+with Order() as order:
+    order.pay()
+    order.ship()
+    print(sorted(order.configuration))  # ['fulfil.notify.idle', 'fulfil.payment.pending']
+    order.settle()
+    order.send_mail()
+    order.close()
+    print(order.state, order.status)  # closed done
 ```
 
 ### Strict mode and build-time validation
@@ -138,18 +140,17 @@ class Door(StateMachine):
     close = opened.to(closed)
 
 
-door = Door()
-door.open()
-try:
-    door.open()  # already open
-except TransitionNotAllowedError as exc:
-    print(exc)  # Can't 'OPEN' when in 'opened': no enabled transition ...
-try:
-    door.send("OPNE")  # typo
-except UnknownEventError as exc:
-    print("unknown:", exc.event_type)
-print(door.state)  # opened  <- the machine is untouched
-door.stop()
+with Door() as door:
+    door.open()
+    try:
+        door.open()  # already open
+    except TransitionNotAllowedError as exc:
+        print(exc)  # Can't 'OPEN' when in 'opened': no enabled transition ...
+    try:
+        door.send("OPNE")  # typo
+    except UnknownEventError as exc:
+        print("unknown:", exc.event_type)
+    print(door.state)  # opened  <- the machine is untouched
 
 # Logic the chart names but nobody implemented is reported when the
 # class is instantiated (or on create_machine(validate=True)), not at
@@ -166,9 +167,17 @@ except ImplementationMissingError as exc:
     print(exc)  # Broken references logic that is not implemented: ...
 ```
 
-### Lifecycle methods vs. events called `start` / `stop`
+### Lifecycle: `with`, `async with`, and the escape hatch
 
-`sm.start()` and `sm.stop()` always start and stop the machine. Timers, jobs and media players naturally have `START` / `STOP` *events* too, and that is allowed: declare the transition as usual, and send the event by name. The attribute just does not get the `sm.stop()` shortcut, and a warning at class-definition time tells you so.
+There are three ways to control an instance's lifecycle, in order of preference:
+
+| Idiom | When |
+|---|---|
+| `with Machine() as sm:` / `async with Machine() as sm:` | **Recommended.** Starts (async) and stops the machine for you, also on exceptions, and never depends on what the chart's events are called. |
+| `sm.interpreter.start()` / `sm.interpreter.stop()` | The explicit escape hatch for a machine that outlives a block (a module-level singleton, a machine owned by a request handler). Always reaches the lifecycle. |
+| `sm.start()` / `sm.stop()` | Convenience methods on the instance; same effect as the escape hatch. |
+
+`sm.start()` and `sm.stop()` always start and stop the machine. Timers, jobs and media players naturally have `START` / `STOP` *events* too, and that is allowed: declare the transition as usual, and send the event by name. The attribute just does not get the `sm.stop()` shortcut, and a warning at class-definition time tells you so. With the context manager you never have to think about it.
 
 ```python
 import logging
@@ -190,8 +199,15 @@ with Timer() as t:
     print(t.state)  # running
     t.send("STOP")  # the event
     print(t.state)  # idle
-# leaving the block stopped the machine; t.stop() would have done the same
+# leaving the block stopped the machine
 print(t.status)  # stopped
+
+# The same machine kept beyond a block: the explicit escape hatch.
+t2 = Timer()
+t2.send("START")
+print(t2.state)  # running
+t2.interpreter.stop()  # always the lifecycle, whatever the events are called
+print(t2.status)  # stopped
 ```
 
 Why the lifecycle wins: event methods are new in this release, so no code relied on `sm.stop()` sending an event, whereas a shutdown call that silently sent an event instead would leave the interpreter and its timers running. Names that would break the façade itself (`send`, `state`, `context`, `status`, `can`, `matches`, `machine`, `interpreter`, …) are reserved and raise `InvalidConfigError`; give the transition another attribute name and keep the event name with `event="STATE"` if you need it.

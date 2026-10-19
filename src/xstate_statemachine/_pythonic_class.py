@@ -629,22 +629,27 @@ class StateMachine(metaclass=_StateMachineMeta):
             def on_enter_yellow(self):
                 print("slow down")
 
-        light = Light()          # started, in `green`
-        light.cycle()            # same as light.send("CYCLE")
-        light.state              # 'yellow'
-        light.yellow.is_active   # True
+        with Light() as light:     # started, in `green`; stopped on exit
+            light.cycle()          # same as light.send("CYCLE")
+            light.state            # 'yellow'
+            light.yellow.is_active # True
 
     ``Light.create_machine()`` still returns the bare ``MachineNode`` for
     use with your own ``Interpreter`` / ``SyncInterpreter``.
 
-    **Lifecycle vs. events.** ``sm.start()`` and ``sm.stop()`` always
-    start and stop the machine. A transition may be *named* ``start`` or
-    ``stop`` -- those are common event names and real charts use them --
-    but it then gets no ``sm.stop()`` sugar; send it with
-    ``sm.send("STOP")``. A warning is logged when the class is defined so
-    the collision is never a surprise at run time. Names that would break
-    the façade itself (``send``, ``state``, ``context``, ``status``, ...)
-    raise ``InvalidConfigError`` instead; see ``_RESERVED_NAMES``.
+    **Lifecycle.** ``with Machine() as sm:`` (``async with`` on the
+    asyncio engine) is the recommended idiom: it stops the machine on
+    exit, exceptions included, and does not depend on method names. For
+    an instance that outlives a block, ``sm.interpreter.start()`` /
+    ``sm.interpreter.stop()`` are the explicit escape hatch; ``sm.start()``
+    / ``sm.stop()`` are conveniences with the same effect. They are always
+    the lifecycle: a transition may be *named* ``start`` or ``stop`` --
+    common event names, and real charts use them -- but it then gets no
+    ``sm.stop()`` sugar; send it with ``sm.send("STOP")``. A warning is
+    logged when the class is defined so the collision is never a surprise
+    at run time. Names that would break the façade itself (``send``,
+    ``state``, ``context``, ``status``, ...) raise ``InvalidConfigError``
+    instead; see ``_RESERVED_NAMES``.
 
     Class Attributes:
         machine_id: Optional machine ID (defaults to class name).

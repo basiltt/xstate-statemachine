@@ -16,8 +16,11 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
   `sm.send("CYCLE", amount=3)` send events and return the actions' return
   values, and `sm.state`, `sm.configuration`, `sm.context`, `sm.status`,
   `sm.can()`, `sm.matches()`, `sm.allowed_events`, `sm.green.is_active`
-  and a readable `repr()` answer the questions a caller has. `with sm:` /
-  `async with sm:` stop it. `Light.create_machine()` is unchanged and
+  and a readable `repr()` answer the questions a caller has. The
+  recommended lifecycle idiom is `with Light() as sm:` / `async with
+  Light() as sm:` (stops on exit, exceptions included); for an instance
+  that outlives a block, `sm.interpreter.start()` / `sm.interpreter.stop()`
+  are the explicit escape hatch. `Light.create_machine()` is unchanged and
   still returns the bare `MachineNode`.
 - **Events are named by the attribute**: `cycle = green.to(yellow)` is the
   `CYCLE` event (`slow_down` → `SLOW_DOWN`); `event=` remains an override.
