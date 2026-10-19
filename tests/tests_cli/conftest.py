@@ -21,3 +21,21 @@ _FORCE = ("FORCE_COLOR", "XSM_FORCE_COLOR", "CLICOLOR_FORCE")
 def _no_forced_color(monkeypatch: pytest.MonkeyPatch) -> None:
     for key in _FORCE:
         monkeypatch.delenv(key, raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_console() -> None:
+    """Forget the process-wide CLI console before and after every test.
+
+    `get_console()` caches a `Console` bound to whatever `sys.stdout` was
+    when it was first called. Under pytest that is a per-test capture
+    stream, so a console built by an earlier test (a contrib suite running
+    a CLI command, for instance) points at a stream pytest has since
+    closed, and the next CLI test fails with "I/O operation on closed
+    file". Resetting here gives every test a console on ITS capture.
+    """
+    from src.xstate_statemachine.cli.commands import reset_console
+
+    reset_console()
+    yield
+    reset_console()
