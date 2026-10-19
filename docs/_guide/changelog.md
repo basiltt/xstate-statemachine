@@ -13,6 +13,8 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-20
+
 ### Added
 
 - **Pythonic DSL, second generation.** A `StateMachine` subclass is now a

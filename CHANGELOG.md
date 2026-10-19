@@ -9,6 +9,8 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-20
+
 ### Added
 
 - **Pythonic DSL, second generation.** A `StateMachine` subclass is now a

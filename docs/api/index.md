@@ -410,11 +410,11 @@ decorated methods at class-definition time.
 | `machine_id` | `Optional[str]` | `None` | Machine identifier. Defaults to the class name if not set. |
 | `initial_context` | `Optional[Dict]` | `None` | Initial context dictionary for the machine. |
 | `machine_root` | `Optional[State]` | `None` | A `State` carrying MACHINE-LEVEL properties (`on`, `entry`, `exit`, `tags`, `parallel=True`). Give it an empty name. `machine_root` is **reserved** — a state genuinely named `machine_root` raises `InvalidConfigError` rather than being silently dropped. *Added in v0.7.0.* |
-| `engine` | `str` | `"auto"` | `"sync"`, `"async"` or `"auto"`. Auto selects the asyncio `Interpreter` when any callback is `async def`. On an instance this reads as the engine chosen. *Unreleased.* |
-| `strict` | `bool` | `False` | Refuse undeclared events (`UnknownEventError`) and declared events that no active state will take right now (`TransitionNotAllowedError`) at the `send()` call site, without dispatching. *Unreleased.* |
-| `validate_logic` | `bool` | `True` | When instantiating, raise one `ImplementationMissingError` listing every guard, action and service the chart names but no method implements. `create_machine(validate=True)` applies the same check to a bare `MachineNode`. *Unreleased.* |
+| `engine` | `str` | `"auto"` | `"sync"`, `"async"` or `"auto"`. Auto selects the asyncio `Interpreter` when any callback is `async def`. On an instance this reads as the engine chosen. *Added in v0.12.0.* |
+| `strict` | `bool` | `False` | Refuse undeclared events (`UnknownEventError`) and declared events that no active state will take right now (`TransitionNotAllowedError`) at the `send()` call site, without dispatching. *Added in v0.12.0.* |
+| `validate_logic` | `bool` | `True` | When instantiating, raise one `ImplementationMissingError` listing every guard, action and service the chart names but no method implements. `create_machine(validate=True)` applies the same check to a bare `MachineNode`. *Added in v0.12.0.* |
 
-#### Events, hooks and argument injection **[Unreleased]**
+#### Events, hooks and argument injection **[0.12.0]**
 
 - A transition's **attribute name is its event**: `cycle = green.to(yellow)` is `CYCLE`, `slow_down = ...` is `SLOW_DOWN`. `event=` overrides. Transitions declared inside nested state classes are exposed as event methods on the machine (`order.ship()`).
 - **Naming-convention hooks** are bound automatically: `on_enter_<state>`, `on_exit_<state>`, `on_<event>` (runs between exit and entry), `before_<event>` / `after_<event>` (run before exit / after entry; instance façade only), and the generic `on_enter_state(state)`, `on_exit_state(state)`, `on_transition(event, source, target)`, `before_transition`, `after_transition`. A suffix that matches no state or event logs a warning.
@@ -423,7 +423,7 @@ decorated methods at class-definition time.
 - Reserved attribute names (raise `InvalidConfigError` if used for a state or transition): `send`, `state`, `configuration`, `context`, `status`, `can`, `matches`, `allowed_events`, `machine`, `interpreter`, `engine`, `strict`, `plugins`, `validate_logic`, `create_machine`, `machine_id`, `initial_context`, `machine_root`.
 - **Lifecycle names are not reserved, and the lifecycle always wins.** A transition may be called `start` or `stop` (timers, jobs and media players need those events, and Stately exports use them). The chart keeps the event, but the attribute gets no event-method sugar: `sm.start()` / `sm.stop()` always start and stop the machine, and you send the event with `sm.send("STOP")`. A one-line warning is logged when the class is defined so the collision is visible at import time, never a surprise at run time. Rationale: event methods are new in this release (nothing depended on `sm.stop()` sending an event), whereas letting the event win would turn a documented shutdown into a machine that silently keeps running.
 
-#### Instance API **[Unreleased]**
+#### Instance API **[0.12.0]**
 
 Instantiating the class builds the machine, binds callbacks to the instance (`self` is yours to use), and on the sync engine starts it.
 
@@ -2147,7 +2147,7 @@ specific exception types.
 | `NotSupportedError` | An unsupported operation was attempted for the current interpreter mode. | Async action/service used with `SyncInterpreter`; async guard function. |
 | `UnhandledEventError` | An event selected no transition and `onUnhandled` is `"error"`. | Sending an event no active state (or its ancestors) handles. |
 | `TransitionFailedError` | An action raised and `actionErrorPolicy` is `"fail"`. | An action raises during a transition on a machine configured with `actionErrorPolicy: "fail"`. |
-| `TransitionNotAllowedError` | A strict Pythonic `StateMachine` refused a declared event that no active state will take right now. The event is not dispatched; the machine keeps running. **[Unreleased]** | `sm.go()` on a `strict = True` machine when `go` is not enabled (or its guard refuses). |
+| `TransitionNotAllowedError` | A strict Pythonic `StateMachine` refused a declared event that no active state will take right now. The event is not dispatched; the machine keeps running. **[0.12.0]** | `sm.go()` on a `strict = True` machine when `go` is not enabled (or its guard refuses). |
 | `WrongThreadError` | A loop-affine `Interpreter` method was called from a foreign thread. | Calling `interpreter.send()` from a thread other than the one that started the interpreter; use `send_threadsafe()` instead. |
 | `SnapshotVersionError` | A snapshot's `version` is newer than this library's `SNAPSHOT_VERSION`. | Restoring a snapshot written by a newer release of the library. |
 | `SnapshotDriftError` | A snapshot doesn't belong to the machine restoring it, or can no longer be checked: a `version >= 1` payload whose `machine_hash` is `null`/absent is refused under `verify_machine_hash=True` (#185) — the fingerprint was lost in transit, not omitted by design; only version-0 payloads are exempt. | The snapshot's `machine_id` differs from the target machine's, or (when `verify_machine_hash=True`) `machine_hash` no longer matches `machine.structure_hash`. |
