@@ -2106,6 +2106,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         invocation: InvokeDefinition,
         service: Union[Callable[..., Any], "MachineNode[Any]"],
         owner_id: str,
+        trigger: Optional[AnyEvent] = None,
     ) -> None:
         """Handles invoked services, supporting only synchronous callables.
 
@@ -2117,6 +2118,8 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             invocation: The definition of the invoked service.
             service: The callable representing the service logic.
             owner_id: The ID of the state node owns this invocation.
+            trigger: The event that entered the owning state, so the
+                service's ``input`` can see it (0.12.0).
 
         Raises:
             NotSupportedError: If the provided service is an `async def` function.
@@ -2145,7 +2148,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             #    raising resolver is a child FAILURE -> `error.platform`,
             #    exactly as on the async engine (review F10).
             try:
-                child_input = invocation.resolve_input(self.context, None)
+                child_input = invocation.resolve_input(self.context, trigger)
             except Exception as exc:  # noqa: BLE001 -- user code
                 self.send(
                     _engine_error(
@@ -2189,7 +2192,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             # 🎁 Prepare a synthetic event for the service.
             invoke_event = Event(
                 f"invoke.{invocation.id}",
-                {"input": invocation.resolve_input(self.context, None) or {}},
+                {"input": self._invoke_input(invocation, trigger)},
             )
             # 🚀 Execute the synchronous service.
             result = service(self, self.context, invoke_event)

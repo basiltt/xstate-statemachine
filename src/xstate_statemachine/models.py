@@ -1581,6 +1581,67 @@ def _root_number(
         ) from None
 
 
+def _guarded_label(label: str, transition: TransitionDefinition) -> str:
+    """Append ``[guard]`` to a diagram label when the transition is guarded.
+
+    Args:
+        label: The edge label without any guard annotation.
+        transition: The transition whose guard (if any) is shown.
+
+    Returns:
+        The label, suffixed with ``" [guardName]"`` for guarded transitions.
+    """
+    guard = transition.guard
+    return f"{label} [{guard}]" if guard else label
+
+
+def _diagram_edges(node: StateNode[Any]) -> List[Tuple[StateNode[Any], str]]:
+    """Collect the labelled outgoing edges of *node* for diagram export.
+
+    📝 Shared by `to_mermaid` and `to_plantuml` so both renderers draw the
+    same edges. Order: ``on`` events (eventless ``always`` transitions are
+    labelled ``always``), the compound ``onDone``, delayed ``after``
+    transitions, then ``invoke`` ``onDone`` / ``onError``. ``on`` and
+    ``onDone`` labels are the bare event name; the newer edge kinds carry a
+    ``[guard]`` suffix when guarded, because several guarded alternatives
+    would otherwise be indistinguishable. Targetless transitions and
+    targets that cannot be resolved are skipped.
+
+    Args:
+        node: The source state.
+
+    Returns:
+        ``(target_node, label)`` pairs in drawing order.
+    """
+    candidates: List[Tuple[TransitionDefinition, str]] = []
+    for event, transitions in node.on.items():
+        for t in transitions:
+            label = _guarded_label("always", t) if event == "" else event
+            candidates.append((t, label))
+    if node.on_done:
+        candidates.append((node.on_done, "onDone"))
+    for delay, transitions in node.after.items():
+        suffix = f"{delay}ms" if isinstance(delay, int) else str(delay)
+        for t in transitions:
+            candidates.append((t, _guarded_label(f"after {suffix}", t)))
+    for invoke in node.invoke:
+        for t in invoke.on_done:
+            candidates.append((t, _guarded_label("invoke onDone", t)))
+        for t in invoke.on_error:
+            candidates.append((t, _guarded_label("invoke onError", t)))
+
+    edges: List[Tuple[StateNode[Any], str]] = []
+    for t, label in candidates:
+        if not t.target_str:
+            continue
+        try:
+            target = resolve_target_state(t.target_str, node)
+        except StateNotFoundError:
+            continue
+        edges.append((target, label))
+    return edges
+
+
 class MachineNode(StateNode[TContext]):
     """The root node of a state machine, with added machine-wide utilities.
 
@@ -2090,11 +2151,17 @@ class MachineNode(StateNode[TContext]):
                         ".", "_"
                     )
                     content.append(f"{indent}  [*] --> {initial_target_id}")
-                for child in node.states.values():
+                for index, child in enumerate(node.states.values()):
+                    if index and node.type == "parallel":
+                        # 🔀 `--` separates the concurrent regions.
+                        content.append(f"{indent}  --")
                     build_puml_states(child, level + 1)
                 content.append(f"{indent}}}")
             else:
                 content.append(f'{indent}state "{node.key}" as {safe_id}')
+                if node.type == "final" and node.parent is not None:
+                    # 🏁 Final states terminate their enclosing region.
+                    content.append(f"{indent}{safe_id} --> [*]")
 
         build_puml_states(self, 0)
 
@@ -2104,31 +2171,13 @@ class MachineNode(StateNode[TContext]):
             Transitions whose target cannot be resolved are skipped.
 
             Args:
-                node: The state whose ``on`` and ``onDone`` edges are rendered.
+                node: The state whose outgoing edges are rendered (see
+                    `_diagram_edges`).
             """
             source_id = node.id.replace(".", "_")
-            for event, transitions in node.on.items():
-                for t in transitions:
-                    if t.target_str:
-                        try:
-                            target_node = resolve_target_state(
-                                t.target_str, node
-                            )
-                            target_id = target_node.id.replace(".", "_")
-                            content.append(
-                                f"{source_id} --> {target_id} : {event}"
-                            )
-                        except StateNotFoundError:
-                            pass
-            if node.on_done and node.on_done.target_str:
-                try:
-                    target_node = resolve_target_state(
-                        node.on_done.target_str, node
-                    )
-                    target_id = target_node.id.replace(".", "_")
-                    content.append(f"{source_id} --> {target_id} : onDone")
-                except StateNotFoundError:
-                    pass
+            for target_node, label in _diagram_edges(node):
+                target_id = target_node.id.replace(".", "_")
+                content.append(f"{source_id} --> {target_id} : {label}")
             for child in node.states.values():
                 build_puml_transitions(child)
 
@@ -2190,11 +2239,18 @@ class MachineNode(StateNode[TContext]):
                 if node.initial and node.states.get(node.initial):
                     initial_key = node.states[node.initial].key
                     content.append(f"{indent}    [*] --> {initial_key}")
-                for child in node.states.values():
+                for index, child in enumerate(node.states.values()):
+                    if index and node.type == "parallel":
+                        # 🔀 A lone `--` line separates the concurrent
+                        #    regions of a parallel state.
+                        content.append(f"{indent}    --")
                     build_mmd_states(child, level + 1)
                 content.append(f"{indent}}}")
             else:
                 content.append(f'{indent}state "{node.key}" as {node.key}')
+                if node.type == "final" and node.parent is not None:
+                    # 🏁 Final states terminate their enclosing region.
+                    content.append(f"{indent}{node.key} --> [*]")
 
         def build_mmd_transitions(node: StateNode[Any]) -> None:
             """Emit Mermaid transition lines for *node* and its descendants.
@@ -2202,30 +2258,11 @@ class MachineNode(StateNode[TContext]):
             Transitions whose target cannot be resolved are skipped.
 
             Args:
-                node: The state whose ``on`` and ``onDone`` edges are rendered.
+                node: The state whose outgoing edges are rendered (see
+                    `_diagram_edges`).
             """
-            for event, transitions in node.on.items():
-                for t in transitions:
-                    if t.target_str:
-                        try:
-                            target_node = resolve_target_state(
-                                t.target_str, node
-                            )
-                            content.append(
-                                f"{node.key} --> {target_node.key} : {event}"
-                            )
-                        except StateNotFoundError:
-                            pass
-            if node.on_done and node.on_done.target_str:
-                try:
-                    target_node = resolve_target_state(
-                        node.on_done.target_str, node
-                    )
-                    content.append(
-                        f"{node.key} --> {target_node.key} : onDone"
-                    )
-                except StateNotFoundError:
-                    pass
+            for target_node, label in _diagram_edges(node):
+                content.append(f"{node.key} --> {target_node.key} : {label}")
             for child in node.states.values():
                 build_mmd_transitions(child)
 

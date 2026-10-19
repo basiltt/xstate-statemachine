@@ -1159,6 +1159,255 @@ class TestReviewRegressions(unittest.TestCase):
 
 
 # =========================================================================
+# 8c. Services see the triggering event; @state.service decorator
+# =========================================================================
+class TestServiceInput(unittest.TestCase):
+    def test_service_receives_triggering_payload_as_input(self):
+        seen = {}
+
+        class Fetch(StateMachine):
+            idle = State(initial=True)
+            loading = State(
+                invoke={"src": "fetchUrl", "onDone": "done"},
+            )
+            done = State()
+            start = idle.to(loading)
+
+            @service
+            def fetch_url(self, interpreter, context, event):
+                seen["input"] = event.payload["input"]
+                return "ok"
+
+        with Fetch() as sm:
+            sm.send("START", url="http://x", retries=2)
+            self.assertEqual(seen["input"], {"url": "http://x", "retries": 2})
+            self.assertEqual(sm.state, "done")
+
+    def test_service_injection_reads_payload_fields_by_name(self):
+        seen = {}
+
+        class Fetch(StateMachine):
+            idle = State(initial=True)
+            loading = State(invoke={"src": "fetchUrl", "onDone": "done"})
+            done = State()
+            start = idle.to(loading)
+
+            @service
+            def fetch_url(self, url, retries=0):
+                seen.update(url=url, retries=retries)
+                return url.upper()
+
+        with Fetch() as sm:
+            sm.send("START", url="x")
+            self.assertEqual(seen, {"url": "x", "retries": 0})
+
+    def test_declared_input_wins_and_factory_sees_the_event(self):
+        seen = {}
+
+        class M(StateMachine):
+            idle = State(initial=True)
+            working = State(
+                invoke={
+                    "src": "work",
+                    "input": lambda ctx, ev: {"n": ev.payload["n"] * 2},
+                    "onDone": "done",
+                }
+            )
+            done = State()
+            go = idle.to(working)
+
+            @service
+            def work(self, interpreter, context, event):
+                seen["input"] = event.payload["input"]
+
+        with M() as sm:
+            sm.go(n=21)
+            self.assertEqual(seen["input"], {"n": 42})
+
+    def test_no_payload_means_empty_input(self):
+        seen = {}
+
+        class M(StateMachine):
+            idle = State(initial=True)
+            working = State(invoke={"src": "work", "onDone": "done"})
+            done = State()
+            go = idle.to(working)
+
+            @service
+            def work(self, interpreter, context, event):
+                seen["input"] = event.payload["input"]
+
+        with M() as sm:
+            sm.go()
+            self.assertEqual(seen["input"], {})
+
+    def test_state_service_decorator_wires_invoke(self):
+        class Fetch(StateMachine):
+            idle = State(initial=True)
+            loading = State()
+            done = State()
+            failed = State()
+            start = idle.to(loading)
+
+            @loading.service(on_done="done", on_error="failed")
+            def fetch_url(self, url):
+                if url == "bad":
+                    raise ValueError("bad url")
+                return url.upper()
+
+            def on_enter_done(self, event):
+                self.result = event.data
+
+        cfg = Fetch.create_machine().source_config
+        inv = cfg["states"]["loading"]["invoke"]
+        self.assertEqual(inv["src"], "fetchUrl")
+        self.assertEqual(inv["onDone"], {"target": "done"})
+        self.assertEqual(inv["onError"], {"target": "failed"})
+
+        with Fetch() as sm:
+            sm.send("START", url="x")
+            self.assertEqual(sm.state, "done")
+            self.assertEqual(sm.result, "X")
+        with Fetch() as sm:
+            sm.send("START", url="bad")
+            self.assertEqual(sm.state, "failed")
+
+    def test_state_service_decorator_async(self):
+        class Fetch(StateMachine):
+            idle = State(initial=True)
+            loading = State()
+            done = State()
+            start = idle.to(loading)
+
+            @loading.service(on_done="done")
+            async def fetch_url(self, url):
+                await asyncio.sleep(0)
+                return url.upper()
+
+        async def main():
+            async with Fetch() as sm:
+                await sm.send("START", url="x")
+                await sm.interpreter.await_settled(1.0)
+                self.assertEqual(sm.state, "done")
+
+        asyncio.run(main())
+
+    def test_state_service_outside_statemachine_is_rejected(self):
+        loading = State("loading")
+
+        @loading.service(on_done="done")
+        def fetch(self):
+            pass
+
+        with self.assertRaises(InvalidConfigError):
+            build_machine(id="m", states=[loading], services=[fetch])
+
+
+# =========================================================================
+# 8d. Restoring at a given state
+# =========================================================================
+class TestFromState(unittest.TestCase):
+    def _flow(self):
+        class Flow(StateMachine):
+            initial_context = {"n": 1}
+            draft = State(initial=True)
+
+            class review(State.Compound):
+                reading = State(initial=True)
+                voting = State()
+                vote = reading.to(voting)
+
+            published = State(final=True)
+            submit = draft.to(review)
+            approve = review.to(published)
+
+            def __init__(self, *a, **kw):
+                self.entered = []
+                super().__init__(*a, **kw)
+
+            def on_enter_state(self, state):
+                self.entered.append(state)
+
+        return Flow
+
+    def test_facade_starts_in_the_given_state_without_entry_actions(self):
+        Flow = self._flow()
+        with Flow(state="review") as sm:
+            self.assertEqual(sm.state, "review.reading")  # initial leaf
+            self.assertEqual(sm.entered, [])  # no entry actions ran
+            self.assertEqual(sm.context, {"n": 1})  # defaults kept
+            sm.approve()
+            self.assertEqual(sm.state, "published")
+            self.assertEqual(sm.entered, ["published"])
+
+    def test_facade_state_with_context_and_leaf_path(self):
+        Flow = self._flow()
+        with Flow(state="review.voting", context={"k": 2}) as sm:
+            self.assertEqual(sm.state, "review.voting")
+            # `context=` replaces initial_context, as create_machine does
+            self.assertEqual(sm.context, {"k": 2})
+
+    def test_unknown_state_is_loud(self):
+        from xstate_statemachine import StateNotFoundError
+
+        Flow = self._flow()
+        with self.assertRaises(StateNotFoundError):
+            Flow(state="nowhere")
+
+    def test_interpreter_from_state_sync_and_async(self):
+        Flow = self._flow()
+        m = Flow.create_machine()
+        i = SyncInterpreter.from_state(m, "review").start()
+        self.assertEqual(i.current_state_ids, {"Flow.review.reading"})
+        i.send("VOTE")
+        self.assertEqual(i.current_state_ids, {"Flow.review.voting"})
+        i.stop()
+
+        from xstate_statemachine import Interpreter
+
+        async def main():
+            a = await Interpreter.from_state(m, "Flow.published").start()
+            self.assertEqual(a.current_state_ids, {"Flow.published"})
+            self.assertEqual(a.status, "done")
+            await a.stop()
+
+        asyncio.run(main())
+
+    def test_parallel_regions_from_state(self):
+        class P(StateMachine):
+            class root(State.Parallel, initial=True):
+                class x(State.Compound):
+                    a = State(initial=True)
+                    b = State()
+                    nxt = a.to(b)
+
+                class y(State.Compound):
+                    c = State(initial=True)
+                    d = State()
+
+        with P(state=["root.x.b", "root.y.c"]) as sm:
+            self.assertEqual(
+                sm.configuration, frozenset({"root.x.b", "root.y.c"})
+            )
+        with P(state="root") as sm:
+            self.assertEqual(
+                sm.configuration, frozenset({"root.x.a", "root.y.c"})
+            )
+
+    def test_strict_still_applies_after_restore(self):
+        from xstate_statemachine import InterpreterStoppedError
+
+        Flow = self._flow()
+        with Flow(state="review", strict=True) as sm:
+            with self.assertRaises(TransitionNotAllowedError):
+                sm.submit()  # not enabled in review
+        with Flow(state="published", strict=True) as sm:
+            self.assertEqual(sm.status, "done")
+            with self.assertRaises(InterpreterStoppedError):
+                sm.approve()  # the machine has finished
+
+
+# =========================================================================
 # 9. MachineNode.to_json
 # =========================================================================
 class TestToJson(unittest.TestCase):

@@ -156,6 +156,7 @@ def test_unreachable_atomic_and_final_leaves_are_not_dropped() -> None:
         "    [*] --> draft",
         '    state "draft" as draft',
         '    state "archived" as archived',
+        "    archived --> [*]",
         '    state "unreachable" as unreachable',
         "}",
     ]

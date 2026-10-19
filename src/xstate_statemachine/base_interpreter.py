@@ -585,6 +585,7 @@ class BaseInterpreter(Generic[TContext]):
         "_restart_services_on_start",
         "_restored_from_snapshot",
         "_states_to_invoke",
+        "_invoke_trigger",  # 0.12.0
         "_restart_timers_on_start",
         "_armed_after",  # #264
         "_entry_seq",  # #264
@@ -832,6 +833,12 @@ class BaseInterpreter(Generic[TContext]):
         #: engine and for either service kind: "it does not make sense to
         #: start an invocation in a state that will be exited immediately".
         self._states_to_invoke: List[StateNode[Any]] = []
+        #: 📨 0.12.0: the event that ENTERED each state awaiting invocation,
+        #: by state id, so a deferred `invoke` can still see it -- its
+        #: `input` factory receives it (XState: `input: ({event}) => ...`)
+        #: and, with no `input` declared, the service gets the event's
+        #: payload as its input instead of an empty dict.
+        self._invoke_trigger: Dict[str, AnyEvent] = {}
         #: ⏱️ #128: re-arm `after` timers of the restored configuration on
         #: the next `start()`.
         self._restart_timers_on_start: bool = False
@@ -2080,6 +2087,111 @@ class BaseInterpreter(Generic[TContext]):
         raise MachineVersionMismatchError(machine.id, expected, found)
 
     @classmethod
+    def from_state(
+        cls: Type[TInterpreter],
+        machine: MachineNode[Any],
+        state: Union[str, Iterable[str]],
+        *,
+        context: Optional[Dict[str, Any]] = None,
+        clock: Optional[Clock] = None,
+        plugins: Optional[Iterable[PluginBase[Any]]] = None,
+        restart_services: bool = False,
+        restart_timers: Union[bool, str, None] = None,
+    ) -> TInterpreter:
+        """Build an interpreter that is already IN *state* (0.12.0).
+
+        The "state string on a model row" case: the row says the order is
+        in ``review``, so construct the machine there -- without running
+        entry actions, exactly like a snapshot restore -- and continue.
+        Call ``start()`` afterwards as usual (it resumes rather than
+        re-entering the initial state).
+
+        🏛️ Implemented as a minimal snapshot handed to `from_snapshot`, so
+        the configuration goes through the same legality checks (an active
+        leaf in every region, ancestors active) instead of a second,
+        slightly different restore path. ``machine_hash`` verification is
+        skipped: there is no persisted hash to compare.
+
+        Args:
+            machine: The machine definition.
+            state: One state, or several for parallel regions. Each is an
+                absolute id (``"order.paid.packing"``) or a dot path relative
+                to the machine root (``"paid.packing"``). A compound or
+                parallel state is completed to its initial leaves, as
+                entering it would.
+            context: Context values layered over the machine's defaults
+                (shallow merge, like a snapshot's context).
+            clock: Clock for the new interpreter.
+            plugins: Plugins to attach before anything runs.
+            restart_services: Re-invoke the restored states' ``invoke``
+                services on ``start()`` (see `from_snapshot`).
+            restart_timers: Re-arm the restored states' ``after`` timers on
+                ``start()`` (see `from_snapshot`).
+
+        Returns:
+            TInterpreter: A ``running`` interpreter in the given state.
+
+        Raises:
+            StateNotFoundError: A state id does not exist in *machine*.
+            SnapshotCorruptError: The states do not form a legal
+                configuration (e.g. two leaves of one non-parallel parent).
+
+        Example:
+            >>> from xstate_statemachine import create_machine, SyncInterpreter
+            >>> m = create_machine({"id": "flow", "initial": "draft", "states": {
+            ...     "draft": {"on": {"SUBMIT": "review"}},
+            ...     "review": {"on": {"APPROVE": "done"}}, "done": {}}})
+            >>> i = SyncInterpreter.from_state(m, "review").start()
+            >>> sorted(i.current_state_ids)
+            ['flow.review']
+            >>> i.send("APPROVE"); sorted(i.current_state_ids)
+            ['flow.done']
+        """
+        from .persistence.snapshot import SNAPSHOT_VERSION
+
+        wanted = [state] if isinstance(state, str) else list(state)
+        leaf_nodes: List[StateNode[Any]] = []
+        for ref in wanted:
+            node = machine.get_state_by_id(ref)
+            if node is None and not ref.startswith(f"{machine.id}."):
+                node = machine.get_state_by_id(f"{machine.id}.{ref}")
+            if node is None:
+                raise StateNotFoundError(target=ref, reference_id=machine.id)
+            leaf_nodes.extend(_initial_leaves_of(node))
+        leaves = [n.id for n in leaf_nodes]
+        # 🏁 Restored straight into a top-level final state: the machine is
+        #    finished, exactly as if it had got there itself.
+        status = (
+            "done"
+            if leaf_nodes
+            and all(n.is_final and n.parent is machine for n in leaf_nodes)
+            else "running"
+        )
+
+        snapshot: Dict[str, Any] = {
+            "version": SNAPSHOT_VERSION,
+            "machine_id": machine.id,
+            "machine_hash": None,
+            "machine_version": None,
+            "taken_at": None,
+            "status": status,
+            "context": dict(context or {}),
+            "state_ids": leaves,
+            "configuration": leaves,
+            "output": None,
+            "error": None,
+        }
+        return cls.from_snapshot(
+            json.dumps(snapshot),
+            machine,
+            verify_machine_hash=False,
+            restart_services=restart_services,
+            restart_timers=restart_timers,
+            clock=clock,
+            plugins=plugins,
+        )
+
+    @classmethod
     def from_snapshot(
         cls: Type[TInterpreter],
         snapshot_str: str,
@@ -2999,13 +3111,51 @@ class BaseInterpreter(Generic[TContext]):
             "Subclasses must implement the '_after_timer' method."
         )
 
+    def _invoke_input(
+        self, invocation: InvokeDefinition, trigger: Optional[AnyEvent]
+    ) -> Any:
+        """The ``input`` a service receives on its ``invoke.<id>`` event.
+
+        🏛️ 0.12.0: a declared ``input`` is resolved against the parent's
+        context AND the event that entered the state, so an XState-style
+        ``input: ({context, event}) => ...`` factory finally sees the
+        event. With no ``input`` declared, the service gets the triggering
+        event's payload: ``send("START", url=...)`` arrives as
+        ``event.payload["input"]["url"]`` instead of an empty dict, so a
+        machine no longer needs an extra action just to copy the payload
+        into ``context`` for its service. Child MACHINES keep the old rule
+        (no input unless declared): their ``context`` factory must not
+        start receiving surprise input.
+
+        Args:
+            invocation: The invoke being armed.
+            trigger: The event whose transition entered the state, if any.
+
+        Returns:
+            Any: The resolved input; ``{}`` when there is nothing to pass.
+        """
+        resolved = invocation.resolve_input(self.context, trigger)
+        if resolved is not None:
+            return resolved
+        payload = getattr(trigger, "payload", None)
+        if isinstance(payload, dict) and payload:
+            return copy.deepcopy(payload)
+        return {}
+
     def _invoke_service(
         self,
         invocation: InvokeDefinition,
         service: Union[Callable[..., Any], "MachineNode[Any]"],
         owner_id: str,
+        trigger: Optional[AnyEvent] = None,
     ) -> Union[None, Awaitable[None]]:
         """Handles an invoked service -- a callable, or a child MACHINE.
+
+        Args:
+            invocation: The invoke definition.
+            service: The implementation, or a child machine.
+            owner_id: Id of the state that owns the invocation.
+            trigger: The event that entered the owning state (0.12.0).
 
         Raises:
             NotImplementedError: This method must be implemented by a concrete
@@ -4740,7 +4890,7 @@ class BaseInterpreter(Generic[TContext]):
                     state.entry, trigger_event
                 )
             if state.owns_tasks:  # ⚡ no `after` / `invoke` -> nothing to arm
-                self._schedule_state_tasks(state)
+                self._schedule_state_tasks(state, trigger_event)
 
             # 🎉 If we entered a final state, check if its parent is now complete.
             if state.is_final:
@@ -6032,12 +6182,22 @@ class BaseInterpreter(Generic[TContext]):
     # 🛡️ Task & Guard Management
     # -------------------------------------------------------------------------
 
-    def _schedule_state_tasks(self, state: StateNode[Any]) -> None:
+    def _schedule_state_tasks(
+        self,
+        state: StateNode[Any],
+        trigger: Optional[AnyEvent] = None,
+    ) -> None:
         """Schedules `after` and `invoke` tasks for a state upon its entry.
 
         This method dispatches to the abstract `_after_timer` and
         `_invoke_service` methods, which are implemented by the concrete
         sync/async subclasses to handle the actual execution.
+
+        Args:
+            state: The state being entered.
+            trigger: The event whose transition entered *state*, handed to
+                the state's invokes when they are armed. ``None`` for the
+                initial entry and for re-arming after a rollback.
 
         Args:
             state (StateNode): The state being entered.
@@ -6046,6 +6206,10 @@ class BaseInterpreter(Generic[TContext]):
         # 📞 #204: invokes are DEFERRED to the end of the macrostep (SCXML
         #    6.1); see `_arm_pending_invokes`.
         self._states_to_invoke.append(state)
+        if trigger is not None:
+            self._invoke_trigger[state.id] = trigger
+        else:
+            self._invoke_trigger.pop(state.id, None)
 
     def _arm_pending_invokes(self) -> None:
         """Arm `invoke`s for states entered this macrostep and still active.
@@ -6065,8 +6229,9 @@ class BaseInterpreter(Generic[TContext]):
         pending, self._states_to_invoke = self._states_to_invoke, []
         active = self._active_state_nodes
         for state in pending:
+            trigger = self._invoke_trigger.pop(state.id, None)
             if state in active and state.invoke:
-                self._schedule_state_invokes(state)
+                self._schedule_state_invokes(state, trigger)
 
     def _schedule_state_timers(self, state: StateNode[Any]) -> None:
         """Arm every ``after`` timer *state* declares (#128 split).
@@ -6157,8 +6322,17 @@ class BaseInterpreter(Generic[TContext]):
                     state.id,
                 )
 
-    def _schedule_state_invokes(self, state: StateNode[Any]) -> None:
-        """Start every ``invoke`` *state* declares (#128 split)."""
+    def _schedule_state_invokes(
+        self,
+        state: StateNode[Any],
+        trigger: Optional[AnyEvent] = None,
+    ) -> None:
+        """Start every ``invoke`` *state* declares (#128 split).
+
+        Args:
+            state: The entered state whose invokes are armed.
+            trigger: The event that entered it, if any (0.12.0).
+        """
         # 📞 Schedule `invoke` services.
         for invocation in state.invoke:
             service_callable = (
@@ -6174,7 +6348,10 @@ class BaseInterpreter(Generic[TContext]):
                     f"state '{state.id}' is not registered."
                 )
             self._invoke_service(
-                invocation, service_callable, owner_id=state.id
+                invocation,
+                service_callable,
+                owner_id=state.id,
+                trigger=trigger,
             )
             logger.debug(
                 "📞 Invoking service '%s' for state '%s'.",
@@ -6440,3 +6617,30 @@ class BaseInterpreter(Generic[TContext]):
         if has_varargs or accepts >= 3:
             return fn(context, event, params)
         return fn(context, event)
+
+
+def _initial_leaves_of(node: "StateNode[Any]") -> List["StateNode[Any]"]:
+    """The leaf states entering *node* would activate, without side effects.
+
+    Used by `BaseInterpreter.from_state` so a caller may name a compound
+    or parallel state and get a legal configuration: a compound state
+    contributes its ``initial`` child's leaves, a parallel state every
+    region's leaves, and an atomic or final state itself.
+    """
+    if node.is_atomic or node.is_final or not node.states:
+        return [node]
+    if node.type == "parallel":
+        out: List["StateNode[Any]"] = []
+        for region in node.states.values():
+            out.extend(_initial_leaves_of(region))
+        return out
+    initial_key = node.initial
+    child: Optional["StateNode[Any]"] = (
+        node.states.get(initial_key) if initial_key else None
+    )
+    if child is None:
+        # 📝 A compound state with no `initial` cannot be entered; report
+        #    it as the node itself and let the legality check refuse it
+        #    with its usual message rather than guessing a child.
+        return [node]
+    return _initial_leaves_of(child)

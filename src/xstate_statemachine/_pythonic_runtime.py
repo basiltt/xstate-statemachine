@@ -347,9 +347,15 @@ def adapt_callable(
         return not any(name in payload for name in shape.names)
 
     def _legacy_call_args(call_args: Tuple[Any, ...]) -> Tuple[Any, ...]:
-        # A two-argument legacy guard must not receive `params`.
-        if kind == "guard" and len(shape.names) == 2:
+        if kind != "guard":
+            return call_args
+        # A two-argument legacy guard must not receive `params`; a
+        # three-argument one always gets it (`None` when the transition
+        # declares none) instead of a TypeError.
+        if len(shape.names) == 2:
             return call_args[:2]
+        if len(shape.names) == 3 and len(call_args) == 2:
+            return call_args + (None,)
         return call_args
 
     if is_async:

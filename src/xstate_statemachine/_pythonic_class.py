@@ -56,6 +56,7 @@ from ._pythonic_runtime import ConventionHooksPlugin, adapt_callable
 from .events import Event
 from .exceptions import (
     ImplementationMissingError,
+    InterpreterStoppedError,
     InvalidConfigError,
     TransitionNotAllowedError,
     UnknownEventError,
@@ -696,18 +697,29 @@ class StateMachine(metaclass=_StateMachineMeta):
         self,
         context: Optional[Dict[str, Any]] = None,
         *,
+        state: Union[None, str, List[str]] = None,
         engine: Optional[str] = None,
         strict: Optional[bool] = None,
         plugins: Optional[List[Any]] = None,
+        clock: Optional[Any] = None,
     ) -> None:
         """Build and (for the sync engine) start a machine instance.
 
         Args:
             context: Initial context, overriding ``initial_context``.
+            state: Start already IN this state (a dot path relative to the
+                machine root, e.g. ``"paid.packing"``, or several for
+                parallel regions) without running entry actions -- the
+                "state string stored on a model row" case. Compound states
+                are completed to their initial leaves. See
+                ``BaseInterpreter.from_state``.
             engine: ``"sync"`` / ``"async"``; defaults to the class's
                 ``engine`` attribute.
             strict: Overrides the class's ``strict`` attribute.
             plugins: Extra ``PluginBase`` instances to attach.
+            clock: A ``Clock`` for ``after`` timers; pass a
+                ``SimulatedClock`` in tests and drive it with
+                ``clock.increment(ms)``.
         """
         if getattr(self, "_xsm_logic_only", False):
             # 📝 `create_machine()` only needs `self` to bind callbacks.
@@ -737,11 +749,22 @@ class StateMachine(metaclass=_StateMachineMeta):
         if chosen == "async":
             from .interpreter import Interpreter
 
-            interp: Any = Interpreter(machine, strict=self.strict)
+            engine_cls: Any = Interpreter
         else:
             from .sync_interpreter import SyncInterpreter
 
-            interp = SyncInterpreter(machine, strict=self.strict)
+            engine_cls = SyncInterpreter
+
+        if state is None:
+            interp: Any = engine_cls(machine, strict=self.strict, clock=clock)
+        else:
+            # 🗃️ Restore semantics: the configuration is applied without
+            #    entry actions, as a snapshot restore would. `from_state`
+            #    builds the interpreter itself, so `strict` is set after.
+            interp = engine_cls.from_state(
+                machine, state, context=context, clock=clock
+            )
+            interp.strict = self.strict
 
         if cls._xsm_before or cls._xsm_after:
             interp.use(
@@ -923,6 +946,8 @@ class StateMachine(metaclass=_StateMachineMeta):
         list otherwise. On the async engine this is a coroutine.
 
         Raises:
+            InterpreterStoppedError: ``strict`` and the machine is no
+                longer running (lenient mode logs a drop instead).
             UnknownEventError: ``strict`` and the event is not declared.
             TransitionNotAllowedError: ``strict`` and no active state
                 takes the event right now (guards included). The event
@@ -961,6 +986,11 @@ class StateMachine(metaclass=_StateMachineMeta):
 
     def _strict_check(self, ev: Event) -> None:
         machine = self._xsm_machine
+        if self._xsm_interp.status != "running":
+            raise InterpreterStoppedError(
+                f"{type(self).__name__} is {self._xsm_interp.status}; event "
+                f"'{ev.type}' was not sent (strict mode)."
+            )
         if not machine.is_known_event(ev.type, user_sent=True):
             raise UnknownEventError(
                 ev.type, machine.id, sorted(machine.known_events)

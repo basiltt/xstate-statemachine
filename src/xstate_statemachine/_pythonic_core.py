@@ -448,6 +448,85 @@ class State(metaclass=_StateMeta):
             self._exit_actions.append(name)
         return fn
 
+    def service(
+        self,
+        fn: Optional[Callable[..., Any]] = None,
+        *,
+        on_done: Optional[Union[str, Dict[str, Any]]] = None,
+        on_error: Optional[Union[str, Dict[str, Any]]] = None,
+        id: Optional[str] = None,  # noqa: A002 -- mirrors the JSON key
+        input: Optional[Any] = None,  # noqa: A002 -- mirrors the JSON key
+    ) -> Any:
+        """Decorator: invoke this method while the state is active.
+
+        The decorated method becomes a ``@service`` AND the state gains an
+        ``invoke`` entry pointing at it, so the two can no longer drift
+        apart (``invoke={"src": "fetchUrl", ...}`` on the state plus a
+        ``@service def fetch_url`` elsewhere). Only valid inside a
+        ``StateMachine`` class.
+
+        Example::
+
+            class Fetch(StateMachine):
+                idle = State(initial=True)
+                loading = State()
+                done = State()
+                failed = State()
+                start = idle.to(loading)
+
+                @loading.service(on_done="done", on_error="failed")
+                async def fetch_url(self, url):
+                    ...
+
+        The service receives the triggering event's payload as its input
+        (``url`` above comes from ``sm.start(url=...)``), unless ``input``
+        is given explicitly.
+
+        Args:
+            fn: The method, when used bare as ``@state.service``.
+            on_done: Target (or transition dict) for ``done.invoke``.
+            on_error: Target (or transition dict) for ``error.platform``.
+            id: Optional invoke id (defaults to the state id).
+            input: Optional static input or ``fn(context, event)`` factory.
+
+        Returns:
+            The decorated method, or a decorator when called with keywords.
+        """
+
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            name = _snake_to_camel(func.__name__)
+            setattr(func, "_xsm_type", "service")
+            setattr(func, "_xsm_name", name)
+            setattr(func, "_xsm_state_service", self)
+            entry: Dict[str, Any] = {"src": name}
+            if id is not None:
+                entry["id"] = id
+            if input is not None:
+                entry["input"] = input
+            if on_done is not None:
+                entry["onDone"] = (
+                    {"target": on_done}
+                    if isinstance(on_done, str)
+                    else on_done
+                )
+            if on_error is not None:
+                entry["onError"] = (
+                    {"target": on_error}
+                    if isinstance(on_error, str)
+                    else on_error
+                )
+            if self.invoke is None:
+                self.invoke = entry
+            elif isinstance(self.invoke, list):
+                self.invoke.append(entry)
+            else:
+                self.invoke = [self.invoke, entry]
+            return func
+
+        if fn is not None:
+            return decorator(fn)
+        return decorator
+
 
 class _Compound(State):
     """``class paid(State.Compound): ...`` -- a state with children."""
@@ -1327,6 +1406,13 @@ def _compile_logic_from_functions(
 
     all_fns = list(actions) + list(guards) + list(services)
     for fn in all_fns:
+        if hasattr(fn, "_xsm_state_service"):
+            owner = getattr(fn, "_xsm_state_service").name
+            raise InvalidConfigError(
+                f"@{owner}.service "
+                f"decorator is only valid inside a "
+                f"StateMachine class"
+            )
         if hasattr(fn, "_xsm_state_enter"):
             owner = getattr(fn, "_xsm_state_enter").name
             raise InvalidConfigError(

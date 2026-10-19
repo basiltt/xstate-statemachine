@@ -467,6 +467,7 @@ state "player" as player {
             state "loading" as loading
             state "streaming" as streaming
         }
+        --
         state "audio" as audio {
             [*] --> muted
             state "muted" as muted
@@ -474,6 +475,7 @@ state "player" as player {
         }
     }
     state "stopped" as stopped
+    stopped --> [*]
 }
 playing --> stopped : STOP
 loading --> streaming : VIDEO_READY

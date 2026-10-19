@@ -3092,6 +3092,7 @@ class Interpreter(BaseInterpreter[TContext]):
         self,
         invocation: InvokeDefinition,
         service: Callable[..., Awaitable[Any]],
+        trigger: Optional[AnyEvent] = None,
     ) -> None:
         """Wrapper coroutine that runs an invoked service and handles its result.
 
@@ -3119,9 +3120,7 @@ class Interpreter(BaseInterpreter[TContext]):
                 type=f"invoke.{invocation.id}",
                 # 📥 #42: callable `input` is resolved here too, so a
                 #    service `src` and a machine `src` see the same value.
-                payload={
-                    "input": invocation.resolve_input(self.context, None) or {}
-                },
+                payload={"input": self._invoke_input(invocation, trigger)},
             )
             # 🏃‍♂️ Await the actual service coroutine.
             # 🔀 Accept both plain and coroutine services.
@@ -3203,6 +3202,7 @@ class Interpreter(BaseInterpreter[TContext]):
         invocation: InvokeDefinition,
         service: Union[Callable[..., Any], "MachineNode[Any]"],
         owner_id: str,
+        trigger: Optional[AnyEvent] = None,
     ) -> None:
         """Creates and registers a background task to run an invoked service or actor.
 
@@ -3226,7 +3226,9 @@ class Interpreter(BaseInterpreter[TContext]):
         #    child `start()` raising) is a child failure -> `onError`.
         if isinstance(service, MachineNode):
             task = asyncio.create_task(
-                self._start_invoked_actor(invocation, service, owner_id)
+                self._start_invoked_actor(
+                    invocation, service, owner_id, trigger
+                )
             )
             # The bring-up task is transient (microseconds) and is tracked
             # only so an exit racing the start cancels it cleanly.
@@ -3257,7 +3259,9 @@ class Interpreter(BaseInterpreter[TContext]):
         #    tasks: they genuinely await, and that is the async engine's
         #    whole reason to exist.
         if _is_plain_sync_callable(service):
-            self._invoke_plain_service_inline(invocation, service, owner_id)
+            self._invoke_plain_service_inline(
+                invocation, service, owner_id, trigger
+            )
             return
 
         async def _invoke_wrapper() -> None:
@@ -3265,7 +3269,7 @@ class Interpreter(BaseInterpreter[TContext]):
             # condition, ensuring the task is registered before the service
             # code runs.
             await asyncio.sleep(0)
-            await self._invoke_service_task(invocation, service)
+            await self._invoke_service_task(invocation, service, trigger)
 
         task = asyncio.create_task(_invoke_wrapper())
         # Register the task with its owner for lifecycle management.
@@ -3456,6 +3460,7 @@ class Interpreter(BaseInterpreter[TContext]):
         invocation: InvokeDefinition,
         service: Callable[..., Any],
         owner_id: str,
+        trigger: Optional[AnyEvent] = None,
     ) -> None:
         """Run a non-coroutine service off the loop; the step awaits it.
 
@@ -3477,9 +3482,7 @@ class Interpreter(BaseInterpreter[TContext]):
         try:
             invoke_event = Event(
                 type=f"invoke.{invocation.id}",
-                payload={
-                    "input": invocation.resolve_input(self.context, None) or {}
-                },
+                payload={"input": self._invoke_input(invocation, trigger)},
             )
         except Exception as exc:  # noqa: BLE001 -- user code (input factory)
             self._report_service_failure(invocation, exc)
@@ -3591,6 +3594,7 @@ class Interpreter(BaseInterpreter[TContext]):
         invocation: InvokeDefinition,
         actor_machine: MachineNode[Any],
         owner_id: str,
+        trigger: Optional[AnyEvent] = None,
     ) -> None:
         """Create and start an invoked child; wire completion as a PUSH.
 
@@ -3628,7 +3632,7 @@ class Interpreter(BaseInterpreter[TContext]):
             )
             # 📥 #42: resolve `input` against the PARENT's live context. A
             #    raising resolver is a child failure -> `onError`.
-            child_input = invocation.resolve_input(self.context, None)
+            child_input = invocation.resolve_input(self.context, trigger)
             # 🕰️ Same inheritance as `_spawn_actor`: clock (#49) + strict (#51).
             child_interpreter = Interpreter(
                 actor_machine,
