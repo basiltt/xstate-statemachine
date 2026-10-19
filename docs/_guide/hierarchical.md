@@ -1137,6 +1137,7 @@ from xstate_statemachine import (
     SyncInterpreter,
     action,
     guard,
+    service,
 )
 
 
@@ -1232,6 +1233,18 @@ class FormWizard(StateMachine):
         value = event.data.get("value")
         if section in context and field:
             context[section][field] = value
+
+    @action
+    def show_error(self, interpreter, context, event, action_def):
+        context["error"] = str(event.error)
+
+    # Services
+    @service
+    def submit_form(self, interpreter, context, event):
+        return {
+            "id": 42,
+            "personal": context["personal"],
+        }
 
 
 machine = FormWizard.create_machine()

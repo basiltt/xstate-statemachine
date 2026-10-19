@@ -56,6 +56,7 @@ __all__ = [
     "RestoredError",
     "UnhandledEventError",
     "TransitionFailedError",
+    "TransitionNotAllowedError",
     "SnapshotVersionError",
     "SnapshotDriftError",
     "QueueOverflowError",
@@ -278,6 +279,32 @@ class UnhandledEventError(XStateMachineError):
             f"Event '{event_type}' is not handled in any active state "
             f"{self.active_states} and the machine's onUnhandled policy "
             f"is 'error'."
+        )
+
+
+class TransitionNotAllowedError(XStateMachineError):
+    """Raised by a strict Pythonic ``StateMachine`` for a declared event
+    that no active state will take right now.
+
+    🏛️ Unlike ``onUnhandled: "error"`` (which stops the machine) this is a
+    refusal at the call site: the event is never dispatched and the
+    configuration is untouched, so the caller can recover and try
+    something else -- the behaviour a ``TransitionNotAllowed`` user of
+    python-statemachine expects.
+
+    Attributes:
+        event_type: The event that was refused.
+        active_states: The leaf state ids that were active, relative to
+            the machine root.
+    """
+
+    def __init__(self, event_type: str, active_states: Iterable[str]):
+        self.event_type = event_type
+        self.active_states = sorted(active_states)
+        shown = ", ".join(self.active_states)
+        super().__init__(
+            f"Can't '{event_type}' when in '{shown}': no enabled "
+            f"transition for this event (strict mode)."
         )
 
 

@@ -27,6 +27,179 @@ All three compile to the same internal `MachineNode` and work with both `Interpr
 
 ---
 
+## ⚡ The short way (v0.12.0)
+
+> **New in v0.12.0** — a `StateMachine` subclass is a running machine. Events are named by the attribute you assign them to, callbacks are found by name, and each callback declares only the arguments it wants.
+
+```python
+from xstate_statemachine import State, StateMachine
+
+
+class TrafficLight(StateMachine):
+    green = State(initial=True)
+    yellow = State()
+    red = State()
+
+    # The attribute name is the event: CYCLE
+    cycle = green.to(yellow) | yellow.to(red) | red.to(green)
+
+    def __init__(self, *args, **kwargs):
+        self.count = 0
+        super().__init__(*args, **kwargs)
+
+    # Naming-convention hooks: on_enter_<state>, on_exit_<state>,
+    # on_<event>, before_<event>, after_<event>, and the generic
+    # on_enter_state / on_exit_state / on_transition /
+    # before_transition / after_transition.
+    def on_enter_red(self):
+        print("Don't move.")
+
+    # Only the arguments you name are injected: payload fields,
+    # `context`, `event`, `interpreter`, `source`, `target`, `state`.
+    def on_cycle(self, amount=1):
+        self.count += amount
+        return f"counted {amount}"
+
+
+light = TrafficLight()  # started, in `green`
+print(light.state)  # green
+print(light.cycle(amount=3))  # counted 3   <- return values come back
+print(light.send("CYCLE"))  # counted 1   <- same thing, by name
+print(light.state)  # red
+print(light.red.is_active, light.count)  # True 4
+print(light.configuration)  # frozenset({'red'})
+print(light.can("CYCLE"), sorted(light.allowed_events))  # True ['CYCLE']
+print(light)  # TrafficLight(state='red', context={})
+light.stop()
+```
+
+Everything above still compiles to the same XState JSON (`TrafficLight.create_machine().to_json()`), and `TrafficLight.create_machine()` still returns the bare `MachineNode` when you want to drive it with your own `Interpreter` or `SyncInterpreter` (snapshots, custom clocks, actor systems).
+
+### Compound and parallel states as nested classes
+
+Nested classes may hold child states, their own transitions, and any `State(...)` keyword (`after=`, `on_done=`, `history=`, `tags=`, `entry=`, …). `State.Compound` and `State.Parallel` are aliases for readers coming from other libraries.
+
+```python
+from xstate_statemachine import State, StateMachine
+
+
+class Order(StateMachine):
+    created = State(initial=True)
+
+    class paid(State.Compound, on_done="fulfil"):
+        packing = State(initial=True)
+        shipped = State(final=True)
+        ship = packing.to(shipped)  # event SHIP, declared where it belongs
+
+    class fulfil(State.Parallel):
+        class payment(State.Compound):
+            pending = State(initial=True)
+            settled = State(final=True)
+            settle = pending.to(settled)
+
+        class notify(State.Compound):
+            idle = State(initial=True)
+            sent = State(final=True)
+            send_mail = idle.to(sent)
+
+    closed = State(final=True)
+    pay = created.to(paid)  # a nested class is a valid target...
+    close = fulfil.to(closed)  # ...and a valid source
+
+
+order = Order()
+order.pay()
+order.ship()
+print(sorted(order.configuration))  # ['fulfil.notify.idle', 'fulfil.payment.pending']
+order.settle()
+order.send_mail()
+order.close()
+print(order.state, order.status)  # closed done
+```
+
+### Strict mode and build-time validation
+
+```python
+from xstate_statemachine import (
+    ImplementationMissingError,
+    State,
+    StateMachine,
+    TransitionNotAllowedError,
+    UnknownEventError,
+)
+
+
+class Door(StateMachine):
+    strict = True  # refuse events that cannot be taken right now
+
+    closed = State(initial=True)
+    opened = State()
+    open = closed.to(opened)
+    close = opened.to(closed)
+
+
+door = Door()
+door.open()
+try:
+    door.open()  # already open
+except TransitionNotAllowedError as exc:
+    print(exc)  # Can't 'OPEN' when in 'opened': no enabled transition ...
+try:
+    door.send("OPNE")  # typo
+except UnknownEventError as exc:
+    print("unknown:", exc.event_type)
+print(door.state)  # opened  <- the machine is untouched
+door.stop()
+
+# Logic the chart names but nobody implemented is reported when the
+# class is instantiated (or on create_machine(validate=True)), not at
+# the first send.
+try:
+
+    class Broken(StateMachine):
+        a = State(initial=True)
+        b = State()
+        go = a.to(b, guard="isReady", actions=["save"])
+
+    Broken()
+except ImplementationMissingError as exc:
+    print(exc)  # Broken references logic that is not implemented: ...
+```
+
+### Async machines
+
+If any callback is `async def`, the instance runs on the asyncio `Interpreter`; start it with `await sm.start()` (or `async with`) and `await` its events. Set `engine = "async"` to force it for sync callbacks.
+
+```python
+import asyncio
+
+from xstate_statemachine import State, StateMachine
+
+
+class Fetch(StateMachine):
+    idle = State(initial=True)
+    done = State()
+    fetch = idle.to(done)
+
+    async def on_fetch(self, url):
+        await asyncio.sleep(0)
+        return url.upper()
+
+
+async def main():
+    async with Fetch() as sm:
+        print(sm.engine)  # async
+        print(await sm.fetch(url="http://x"))  # HTTP://X
+        print(sm.state)  # done
+
+
+asyncio.run(main())
+```
+
+The rest of this page documents the three styles in full, including the explicit `@action` / `@guard` / `@service` decorators and the legacy positional callback signatures, which keep working unchanged.
+
+---
+
 ## 🏛️ Style 1: Class-Based (`StateMachine`)
 
 The class-based style is the most expressive. States are class attributes, transitions use `.to()`, and logic is defined with `@action`, `@guard`, and `@service` decorators.
@@ -305,7 +478,7 @@ machine = (
         "storeError",
         lambda i, ctx, e, a: ctx.update(
             {
-                "error": str(e.data),
+                "error": str(e.error),
             }
         ),
     )

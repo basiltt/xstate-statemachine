@@ -2140,6 +2140,28 @@ class MachineNode(StateNode[TContext]):
         content.append("@enduml")
         return "\n".join(content)
 
+    def to_json(self, *, indent: Optional[int] = None) -> str:
+        """Serialise the machine's XState JSON configuration.
+
+        The output is the config this machine was built from (the
+        Pythonic DSL compiles to the same dict), so it loads back with
+        ``create_machine()`` and pastes straight into the Stately editor.
+
+        Args:
+            indent: Passed to :func:`json.dumps`; ``None`` is compact.
+
+        Returns:
+            A JSON document for the machine.
+
+        Raises:
+            TypeError: The config holds a value JSON cannot represent (for
+                example a ``datetime`` in ``context``). Silently stringifying
+                it would produce a chart that no longer round-trips.
+        """
+        import json
+
+        return json.dumps(self.source_config, indent=indent)
+
     def to_mermaid(self) -> str:
         """Generates a Mermaid.js string representation of the state machine.
 

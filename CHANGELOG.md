@@ -9,6 +9,98 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
 
 ## [Unreleased]
 
+### Added
+
+- **Pythonic DSL, second generation.** A `StateMachine` subclass is now a
+  running machine: `sm = Light()` starts it (sync engine), `sm.cycle()` /
+  `sm.send("CYCLE", amount=3)` send events and return the actions' return
+  values, and `sm.state`, `sm.configuration`, `sm.context`, `sm.status`,
+  `sm.can()`, `sm.matches()`, `sm.allowed_events`, `sm.green.is_active`
+  and a readable `repr()` answer the questions a caller has. `with sm:` /
+  `async with sm:` stop it. `Light.create_machine()` is unchanged and
+  still returns the bare `MachineNode`.
+- **Events are named by the attribute**: `cycle = green.to(yellow)` is the
+  `CYCLE` event (`slow_down` → `SLOW_DOWN`); `event=` remains an override.
+  Transitions declared inside nested state classes are exposed as event
+  methods on the machine (`order.ship()`).
+- **Naming-convention hooks**: `on_enter_<state>`, `on_exit_<state>`,
+  `on_<event>`, `before_<event>`, `after_<event>` and the generic
+  `on_enter_state`, `on_exit_state`, `on_transition`, `before_transition`,
+  `after_transition`. A hook whose suffix matches no state or event logs
+  a warning instead of silently never running. `before_*` / `after_*`
+  need the instance façade (`create_machine()` warns when they exist)
+  and must be plain `def` (an `async def` hook is an `InvalidConfigError`).
+  Convention bindings and inferred event names are recorded per class,
+  never written into the `State` / `Transition` objects, so module-level
+  states can be shared between machines.
+- **Signature-based argument injection** for every class-based and
+  functional callback: declare only what you need (`context`, `event`,
+  `event_type`, `interpreter`, `action_def`, `error`, `data`, `input`,
+  `source`, `target`, `state`, any payload field, `**kwargs` for the rest).
+  The legacy positional shapes (`(interpreter, context, event,
+  action_def)`, `(context, event)`, `(interpreter, context, event)`) are
+  detected by arity and keep working unchanged.
+- **`State.Compound` / `State.Parallel`** aliases for the nested-class
+  form, and nested classes now accept every `State(...)` keyword
+  (`after=`, `on_done=`, `history=`, `tags=`, `entry=`, `invoke=`, …).
+  A nested class is a valid transition source and target.
+- **`strict = True`** on a `StateMachine` refuses undeclared events
+  (`UnknownEventError`) and declared events that no active state will
+  take right now (new `TransitionNotAllowedError`), at the call site,
+  without dispatching or stopping the machine.
+- **Build-time logic validation**: instantiating a `StateMachine` raises
+  one `ImplementationMissingError` listing every guard, action and
+  service the chart names but no method implements, instead of one name
+  at a time at the first `send()`. `validate_logic = False` defers the
+  check to runtime; `create_machine(validate=True)` applies it to a bare
+  `MachineNode` (off by default there, because a chart without logic is
+  a legitimate static artifact for `to_json()`, diagrams and codegen).
+- `MachineNode.to_json(indent=None)` serialises the XState configuration
+  the machine was built from (raising `TypeError` on a value JSON cannot
+  represent rather than stringifying it). The Pythonic API guide had
+  advertised it since 0.5.0; it did not exist.
+- A subclass of a `StateMachine` subclass inherits its states,
+  transitions and callbacks; attributes it redefines win. Before, the
+  base's chart was silently dropped and the subclass compiled to an
+  empty machine.
+- `engine = "sync" | "async" | "auto"` on a `StateMachine`; `auto` picks
+  the asyncio `Interpreter` when any callback is `async def`.
+
+### Fixed
+
+- Transitions declared inside a nested `class paid(State): ...` body were
+  silently dropped; children declared both as class attributes and in a
+  parent's `states=[...]` were compiled twice (once at the root); a nested
+  class used as a `.to()` target raised `AttributeError`.
+- Two states with the same name under different parents received each
+  other's transitions: the class-based compiler keyed transitions by bare
+  state name. They are keyed by the source state's path now.
+- `State(entry="name")`, `State(exit="name")` and `.to(..., actions="name")`
+  with a bare string were iterated character by character into nonsense
+  action names. A string is one action, as in XState JSON.
+- The Pythonic API guide's `storeError` example read the deprecated
+  `event.data` on an error event; it now reads `event.error`. The
+  hierarchical guide's `FormWizard` referenced a service and an action it
+  never implemented.
+
+### Changed
+
+- `State.to()` and `State.internal()` no longer raise when `event=` is
+  omitted; the event may be inferred from the attribute name. Compiling a
+  transition that still has no event (functional API, `build_machine()`)
+  raises `InvalidConfigError` at build time instead.
+- `send`, `state`, `configuration`, `context`, `status`, `can`, `matches`,
+  `allowed_events`, `machine`, `interpreter`, `engine`, `strict`,
+  `plugins`, `validate_logic` and the existing class settings are reserved
+  attribute names in a `StateMachine` body and raise `InvalidConfigError`
+  if used for a state or transition. `start` and `stop` are deliberately
+  not reserved: a `stop` transition makes `sm.stop()` send `STOP`; the
+  lifecycle stays reachable through `sm.interpreter` and `with sm:`.
+- `xstate_statemachine.pythonic` is now a thin public module; the
+  implementation moved to `_pythonic_core`, `_pythonic_builder`,
+  `_pythonic_class` and `_pythonic_runtime`. Every public name (and the
+  private compiler helpers tests import) is re-exported unchanged.
+
 ## [0.11.0] - 2026-10-13
 
 ### Added

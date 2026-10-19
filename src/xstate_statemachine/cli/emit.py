@@ -28,6 +28,7 @@ from .ir import (
     StateIR,
     TransitionIR,
 )
+from .._pythonic_core import _RESERVED_NAMES
 from .naming import IdentifierAllocator, literal
 
 # 📝 Names bound by the generated module's own imports. Reserving them stops a
@@ -54,6 +55,12 @@ RESERVED_BINDINGS = frozenset(
         "Union",
         "machine",
     }
+    # 🛡️ A chart may have a state called `state`, `context` or `status`
+    #    (Stately exports do). As a class attribute that would shadow the
+    #    StateMachine instance API, which the DSL refuses loudly; the
+    #    allocator hands out `state_2` instead and keeps the chart name via
+    #    State("state", ...).
+    | _RESERVED_NAMES
 )
 
 

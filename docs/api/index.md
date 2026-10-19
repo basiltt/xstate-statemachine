@@ -410,6 +410,64 @@ decorated methods at class-definition time.
 | `machine_id` | `Optional[str]` | `None` | Machine identifier. Defaults to the class name if not set. |
 | `initial_context` | `Optional[Dict]` | `None` | Initial context dictionary for the machine. |
 | `machine_root` | `Optional[State]` | `None` | A `State` carrying MACHINE-LEVEL properties (`on`, `entry`, `exit`, `tags`, `parallel=True`). Give it an empty name. `machine_root` is **reserved** — a state genuinely named `machine_root` raises `InvalidConfigError` rather than being silently dropped. *Added in v0.7.0.* |
+| `engine` | `str` | `"auto"` | `"sync"`, `"async"` or `"auto"`. Auto selects the asyncio `Interpreter` when any callback is `async def`. On an instance this reads as the engine chosen. *Unreleased.* |
+| `strict` | `bool` | `False` | Refuse undeclared events (`UnknownEventError`) and declared events that no active state will take right now (`TransitionNotAllowedError`) at the `send()` call site, without dispatching. *Unreleased.* |
+| `validate_logic` | `bool` | `True` | When instantiating, raise one `ImplementationMissingError` listing every guard, action and service the chart names but no method implements. `create_machine(validate=True)` applies the same check to a bare `MachineNode`. *Unreleased.* |
+
+#### Events, hooks and argument injection **[Unreleased]**
+
+- A transition's **attribute name is its event**: `cycle = green.to(yellow)` is `CYCLE`, `slow_down = ...` is `SLOW_DOWN`. `event=` overrides. Transitions declared inside nested state classes are exposed as event methods on the machine (`order.ship()`).
+- **Naming-convention hooks** are bound automatically: `on_enter_<state>`, `on_exit_<state>`, `on_<event>` (runs between exit and entry), `before_<event>` / `after_<event>` (run before exit / after entry; instance façade only), and the generic `on_enter_state(state)`, `on_exit_state(state)`, `on_transition(event, source, target)`, `before_transition`, `after_transition`. A suffix that matches no state or event logs a warning.
+- **Every callback declares only the arguments it wants.** Injectable names: `context`/`ctx`, `event`, `event_type`, `interpreter`/`machine`, `action_def`/`action`, `error`, `data`, `input`, `source`, `target`, `state`, any payload field of the event, and `**kwargs` for the remaining payload. The legacy positional shapes — `(interpreter, context, event, action_def)` for actions, `(context, event)` for guards, `(interpreter, context, event)` for services — are detected by arity and called unchanged.
+- Nested classes accept every `State(...)` keyword (`class paid(State.Compound, on_done="fulfil", after={...}): ...`) and are valid transition sources and targets. `State.Compound` and `State.Parallel` are aliases of `State`.
+- Reserved attribute names (raise `InvalidConfigError` if used for a state or transition): `send`, `state`, `configuration`, `context`, `status`, `can`, `matches`, `allowed_events`, `machine`, `interpreter`, `engine`, `strict`, `plugins`, `validate_logic`, `create_machine`, `machine_id`, `initial_context`, `machine_root`. `start` and `stop` are **not** reserved — a `stop` transition makes `sm.stop()` send `STOP`; use `sm.interpreter.stop()` or `with sm:` for the lifecycle.
+
+#### Instance API **[Unreleased]**
+
+Instantiating the class builds the machine, binds callbacks to the instance (`self` is yours to use), and on the sync engine starts it.
+
+```text
+StateMachine(context=None, *, engine=None, strict=None, plugins=None)
+```
+
+| Member | Description |
+|--------|-------------|
+| `sm.send(event, **payload)` | Send an event. Returns the actions' return values: `None`, the single value, or a list. A coroutine on the async engine. |
+| `sm.<event_attr>(**payload)` | Same as `send`, for each transition attribute (`sm.cycle(amount=3)`). Keyword arguments only. |
+| `sm.state` | The single active leaf as a dot path relative to the root (`"paid.packing"`). `ValueError` when several leaves are active. |
+| `sm.configuration` | `frozenset` of active leaf paths. |
+| `sm.context` | The live context. |
+| `sm.status` | `"running"`, `"done"`, `"stopped"`, … |
+| `sm.can(event, **payload)` | Would this event be taken right now (guards evaluated)? |
+| `sm.matches(state)` | Is the given state path / value active? |
+| `sm.allowed_events` | Events the active states declare a handler for (no guard evaluation). |
+| `sm.<state_attr>` | A `BoundState` with `.is_active`, `.path`, `.id`; `Cls.<state_attr>` is still the `State` definition. |
+| `sm.machine`, `sm.interpreter`, `sm.engine` | The `MachineNode`, the underlying interpreter, and `"sync"`/`"async"`. |
+| `sm.start()`, `sm.stop()` | Lifecycle; awaitables on the async engine (`await sm.start()`). |
+| `with sm:` / `async with sm:` | Stops on exit; `async with` also starts. |
+| `repr(sm)` | `Light(state='green', context={})` |
+
+```python
+from xstate_statemachine import State, StateMachine
+
+
+class Light(StateMachine):
+    green = State(initial=True)
+    yellow = State()
+    cycle = green.to(yellow) | yellow.to(green)
+
+    def on_enter_yellow(self, event):
+        print("slow down after", event.type)
+
+    def on_cycle(self, amount=1):
+        return amount * 2
+
+
+light = Light()
+print(light.cycle(amount=4))  # slow down after CYCLE / 8
+print(light.state, light.yellow.is_active)  # yellow True
+light.stop()
+```
 
 #### Class Method
 
@@ -2088,6 +2146,7 @@ specific exception types.
 | `NotSupportedError` | An unsupported operation was attempted for the current interpreter mode. | Async action/service used with `SyncInterpreter`; async guard function. |
 | `UnhandledEventError` | An event selected no transition and `onUnhandled` is `"error"`. | Sending an event no active state (or its ancestors) handles. |
 | `TransitionFailedError` | An action raised and `actionErrorPolicy` is `"fail"`. | An action raises during a transition on a machine configured with `actionErrorPolicy: "fail"`. |
+| `TransitionNotAllowedError` | A strict Pythonic `StateMachine` refused a declared event that no active state will take right now. The event is not dispatched; the machine keeps running. **[Unreleased]** | `sm.go()` on a `strict = True` machine when `go` is not enabled (or its guard refuses). |
 | `WrongThreadError` | A loop-affine `Interpreter` method was called from a foreign thread. | Calling `interpreter.send()` from a thread other than the one that started the interpreter; use `send_threadsafe()` instead. |
 | `SnapshotVersionError` | A snapshot's `version` is newer than this library's `SNAPSHOT_VERSION`. | Restoring a snapshot written by a newer release of the library. |
 | `SnapshotDriftError` | A snapshot doesn't belong to the machine restoring it, or can no longer be checked: a `version >= 1` payload whose `machine_hash` is `null`/absent is refused under `verify_machine_hash=True` (#185) — the fingerprint was lost in transit, not omitted by design; only version-0 payloads are exempt. | The snapshot's `machine_id` differs from the target machine's, or (when `verify_machine_hash=True`) `machine_hash` no longer matches `machine.structure_hash`. |
@@ -2156,6 +2215,7 @@ Exception
       +-- NotSupportedError
       +-- UnhandledEventError
       +-- TransitionFailedError
+      +-- TransitionNotAllowedError
       +-- WrongThreadError
       +-- SnapshotVersionError
       +-- SnapshotDriftError
