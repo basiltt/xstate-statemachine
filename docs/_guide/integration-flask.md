@@ -452,7 +452,7 @@ assert (
 
 | Flask | Quart | Python | Tested in CI |
 |:--|:--|:--|:--|
-| 2.3 – 3.1 | 0.19+ (optional) | 3.9 – 3.14 | ✅ `[flask]` cell, Quart + Flask-WTF installed |
+| 2.3 – 3.1 | 0.19+ (optional) | 3.9 – 3.15 | ✅ `[flask]` cell, Quart + Flask-WTF installed |
 
 ## Troubleshooting
 

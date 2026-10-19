@@ -199,11 +199,11 @@ A message fetched into the local buffer and not handed out within **half** the w
 
 | Broker client | Python | Tested in CI |
 |:--|:--|:--|
-| redis 5 – latest (Streams) | 3.9 – 3.14 | ✅ fakeredis; live opt-in |
-| aiokafka 0.10 – latest | 3.9 – 3.14 | ✅ in-memory stand-in; Redpanda opt-in |
-| aio-pika 9 – latest | 3.9 – 3.14 | ✅ in-memory stand-in; RabbitMQ opt-in |
-| nats-py 2 – latest | 3.9 – 3.14 | ✅ in-memory stand-in; NATS opt-in |
-| boto3 1.28 – latest | 3.9 – 3.14 | ✅ moto; LocalStack opt-in |
+| redis 5 – latest (Streams) | 3.9 – 3.15 | ✅ fakeredis; live opt-in |
+| aiokafka 0.10 – latest | 3.9 – 3.15 | ✅ in-memory stand-in; Redpanda opt-in |
+| aio-pika 9 – latest | 3.9 – 3.15 | ✅ in-memory stand-in; RabbitMQ opt-in |
+| nats-py 2 – latest | 3.9 – 3.15 | ✅ in-memory stand-in; NATS opt-in |
+| boto3 1.28 – latest | 3.9 – 3.15 | ✅ moto; LocalStack opt-in |
 
 Live broker suite: `XSM_CONTAINERS=1 pytest tests/contrib/brokers -m containers` (Docker required; images pinned by digest).
 

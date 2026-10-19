@@ -821,6 +821,7 @@ class StateMachine(metaclass=_StateMachineMeta):
         logic = _compile_logic_from_instance(
             instance=instance, decorated=cls._xsm_decorated, sink=sink
         )
+        _bind_plain_methods_by_name(cls, instance, config, logic, sink)
         machine = _original_create_machine(config, logic=logic)
         if validate:
             _validate_logic(machine, cls.__name__)
@@ -1073,6 +1074,49 @@ class StateMachine(metaclass=_StateMachineMeta):
             f"{type(self).__name__}(state={shown!r}, "
             f"context={self.context!r})"
         )
+
+
+def _bind_plain_methods_by_name(
+    cls: type,
+    instance: Any,
+    config: Dict[str, Any],
+    logic: Any,
+    sink: Optional[Any],
+) -> None:
+    """Let an undecorated method satisfy a name the chart references.
+
+    ``guard="can_pay"`` (or ``"canPay"``) plus a plain ``def can_pay(self,
+    amount)`` is the obvious thing to write, and it is what
+    python-statemachine users expect. The decorators remain the explicit
+    form (and the only way to register under a different name); this
+    fills in the gaps by name so the ``ImplementationMissingError`` text
+    ("define a method with that name") is literally true.
+
+    A plain method is bound only for a name the chart actually references
+    and no decorated callable already provides, so helper methods are
+    never swept in by accident.
+    """
+    from .testing_utils import logic_names
+
+    plain: Dict[str, Callable[..., Any]] = getattr(cls, "_xsm_collected").plain
+    if not plain:
+        return
+    by_camel = {_snake_to_camel(name): fn for name, fn in plain.items()}
+    actions, guards, services = logic_names(config)
+    for kind, wanted, table in (
+        ("action", actions, logic.actions),
+        ("guard", guards, logic.guards),
+        ("service", services, logic.services),
+    ):
+        for name in wanted:
+            if name in table:
+                continue
+            fn = plain.get(name) or by_camel.get(name)
+            if fn is None:
+                continue
+            table[name] = adapt_callable(
+                functools.partial(fn, instance), kind, sink=sink
+            )
 
 
 def _validate_logic(machine: MachineNode[Any], cls_name: str) -> None:

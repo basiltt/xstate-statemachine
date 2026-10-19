@@ -156,7 +156,7 @@ The SCAN-pattern escaper `list_keys` uses; exported for your own `SCAN`s.
 
 | redis-py | Redis server | Python | Tested in CI |
 |:--|:--|:--|:--|
-| 5.x – 6.x | 7.x (Lua, Streams, `SET NX PX`) | 3.9 – 3.14 | ✅ `fakeredis[lua]` in the `[redis]` cell; live server opt-in via `XSM_REDIS_URL` |
+| 5.x – 6.x | 7.x (Lua, Streams, `SET NX PX`) | 3.9 – 3.15 | ✅ `fakeredis[lua]` in the `[redis]` cell; live server opt-in via `XSM_REDIS_URL` |
 
 ## Troubleshooting
 

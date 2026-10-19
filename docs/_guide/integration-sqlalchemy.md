@@ -296,8 +296,8 @@ The relay marks a row sent only **after** the broker accepted it. A crash in bet
 
 | SQLAlchemy | Database | Python | Tested in CI |
 |:--|:--|:--|:--|
-| 2.0.x | SQLite (pysqlite, aiosqlite) | 3.9 – 3.14 | ✅ `[sqlalchemy]` cell |
-| 2.0.x | PostgreSQL 16 (psycopg 3) | 3.9 – 3.14 | opt-in: `DATABASE_URL=postgresql+<driver>://…`, or `XSM_CONTAINERS=1` for a throwaway testcontainer (no CI job yet) |
+| 2.0.x | SQLite (pysqlite, aiosqlite) | 3.9 – 3.15 | ✅ `[sqlalchemy]` cell |
+| 2.0.x | PostgreSQL 16 (psycopg 3) | 3.9 – 3.15 | opt-in: `DATABASE_URL=postgresql+<driver>://…`, or `XSM_CONTAINERS=1` for a throwaway testcontainer (no CI job yet) |
 
 ## Troubleshooting
 

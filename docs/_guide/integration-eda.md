@@ -550,9 +550,9 @@ The rest of `xstate_statemachine.eda.__all__`, for readers who grep. Everything 
 
 | Component | Python | Tested in CI |
 |:--|:--|:--|
-| Core `eda` (no extra) | 3.9 – 3.14 | ✅ (default test matrix) |
-| `[cloudevents]` `cloudevents` 1.10 – 2.x | 3.9 – 3.14 | ✅ (see the [compatibility table](../compatibility/)) |
-| `SQLAlchemyOutboxStore` (`[sqlalchemy]`) | 3.9 – 3.14 | ✅ |
+| Core `eda` (no extra) | 3.9 – 3.15 | ✅ (default test matrix) |
+| `[cloudevents]` `cloudevents` 1.10 – 2.x | 3.9 – 3.15 | ✅ (see the [compatibility table](../compatibility/)) |
+| `SQLAlchemyOutboxStore` (`[sqlalchemy]`) | 3.9 – 3.15 | ✅ |
 
 ## Troubleshooting
 

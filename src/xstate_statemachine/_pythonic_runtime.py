@@ -30,6 +30,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 # -------------------------------------------------------------------------
 # 📥 Project-Specific Imports
 # -------------------------------------------------------------------------
+from .events import ErrorEvent
 from .plugins import PluginBase
 
 #: Positional arities of the legacy callback shapes, per kind. Guards may
@@ -183,6 +184,10 @@ def _engine_value(
     if name == "error":
         return getattr(event, "error", None)
     if name == "data":
+        # 📝 `ErrorEvent.data` is a deprecated alias of `.error`; ask for
+        #    `error` on an error event, `data` means a done-event result.
+        if isinstance(event, ErrorEvent):
+            return None
         return getattr(event, "data", None)
     if name == "input":
         payload = getattr(event, "payload", None) or {}

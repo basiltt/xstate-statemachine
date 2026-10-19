@@ -267,7 +267,7 @@ Events from one socket are processed one at a time, in order.
 
 | Starlette | Python | Tested in CI |
 |:--|:--|:--|
-| 0.27 – 1.x | 3.9 – 3.14 | ✅ |
+| 0.27 – 1.x | 3.9 – 3.15 | ✅ |
 
 ## Troubleshooting
 

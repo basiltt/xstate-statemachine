@@ -174,8 +174,8 @@ The hygiene primitives the plugins share, exported for your own exporters.
 
 | Package | Python | Tested in CI |
 |:--|:--|:--|
-| opentelemetry-api 1.20 – latest, prometheus-client 0.17 – latest | 3.9 – 3.14 | ✅ oldest on 3.9, newest on 3.13 ([compatibility](../compatibility/)) |
-| structlog / loguru / sentry-sdk (soft) | 3.9 – 3.14 | ✅ latest in the `observability` cell |
+| opentelemetry-api 1.20 – latest, prometheus-client 0.17 – latest | 3.9 – 3.15 | ✅ oldest on 3.9, newest on 3.13 ([compatibility](../compatibility/)) |
+| structlog / loguru / sentry-sdk (soft) | 3.9 – 3.15 | ✅ latest in the `observability` cell |
 
 ## Troubleshooting
 

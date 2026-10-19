@@ -143,8 +143,8 @@ Refuses unless `debug=True`. Appends an `InspectorPlugin` to `registry.plugins` 
 
 | Component | Python | Tested in CI |
 |:--|:--|:--|
-| Core (`xstate_statemachine.inspect`, SSE, JSONL) | 3.9 – 3.14 | ✅ default test job |
-| `WebSocketSink` / `mount_inspector` | 3.9 – 3.14 with `[starlette]` | ✅ `starlette` cells |
+| Core (`xstate_statemachine.inspect`, SSE, JSONL) | 3.9 – 3.15 | ✅ default test job |
+| `WebSocketSink` / `mount_inspector` | 3.9 – 3.15 with `[starlette]` | ✅ `starlette` cells |
 | Wire protocol | `@statelyai/inspect` 0.7.x | ✅ recorded fixtures |
 
 ## Troubleshooting

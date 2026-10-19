@@ -493,7 +493,7 @@ The Pydantic models that describe the wire shapes in OpenAPI. Every 4xx/5xx is d
 
 | FastAPI | Pydantic | Python | Tested in CI |
 |:--|:--|:--|:--|
-| 0.100 – 0.1xx | 2.5 – 2.x | 3.9 – 3.14 | ✅ |
+| 0.100 – 0.1xx | 2.5 – 2.x | 3.9 – 3.15 | ✅ |
 
 ## Troubleshooting
 

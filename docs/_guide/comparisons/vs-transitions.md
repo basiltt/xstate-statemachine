@@ -174,4 +174,6 @@ The `after` deadline is part of `snapshot`. With a store and `DueTimerScanner`, 
 
 See [Integration extras](../integrations-extras/) for the web and database integrations.
 
+Porting? See [Coming from transitions](../coming-from-transitions/) for a concept map and a worked port.
+
 New to the library? Start with the [integrations journey](../integrations/): pick your path, then a fifteen-minute tutorial.

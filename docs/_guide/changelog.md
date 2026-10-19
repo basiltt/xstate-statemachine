@@ -83,6 +83,12 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
   needs an action whose only job is to copy the payload into `context`.
   Child machines invoked as actors keep the previous rule (no input
   unless declared). Both engines.
+- **Plain methods satisfy string references by name.** `guard="can_pay"`
+  (or `"canPay"`) plus an undecorated `def can_pay(self, amount)` now
+  binds, as do `actions=["reserve"]` and `invoke={"src": "charge_card"}`
+  -- for names the chart references and no decorated callable already
+  provides, so helper methods are never swept in. The decorators remain
+  the explicit form and the only way to register under another name.
 - **`@state.service(on_done=..., on_error=..., id=..., input=...)`**
   decorator on a `State`: the method becomes the service AND the state
   gains the matching `invoke` entry, so the two cannot drift apart.
@@ -97,6 +103,14 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
   exposes the same on the façade. This is the "state string stored on a
   model row" case that previously needed a hand-built `PureSnapshot`
   with its ancestor set.
+- Docs: "Coming from python-statemachine" and "Coming from transitions"
+  migration guides, each with a concept map, a worked traffic-light port
+  (guard, nested state, `after` timeout) shown in the other library and
+  as an executable block in ours, and "what maps 1:1 / what differs /
+  what you gain" sections. Linked from the comparison pages and the
+  integrations journey.
+- Docs: `jekyll-sitemap` is enabled and `docs/robots.txt` points
+  crawlers at the sitemap.
 - `tests/test_battle_310_pythonic_dsl.py`: battle tests for the new
   surface -- 200 concurrent async sends keep their results apart,
   cross-thread `send_threadsafe` into a façade, hooks that raise, five
@@ -130,6 +144,13 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
   `TypeError` (evaluating as `False`); it now receives `params=None`.
 - A strict `StateMachine` façade refuses a send to a finished or stopped
   machine with `InterpreterStoppedError` instead of a silent drop.
+- Docs: Getting Started showed a four-command `xsm --help` (the CLI has
+  24) and a project tree of modules that do not exist (`machine.py`,
+  `snapshot.py`, `plugin.py`, `diagram_exporter.py`); both now match the
+  shipped CLI and `src/`. Supported-Python ranges on the integration
+  pages read 3.9 - 3.14 and now read 3.9 - 3.15. The site search index
+  had a missing object boundary that dropped the "vs python-statemachine"
+  entry (it appeared under the Step Functions title).
 - `State(entry="name")`, `State(exit="name")` and `.to(..., actions="name")`
   with a bare string were iterated character by character into nonsense
   action names. A string is one action, as in XState JSON.
@@ -155,6 +176,11 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
   and a warning is logged at class definition. Letting the event win
   would have turned a documented shutdown call into a machine that keeps
   running silently.
+- Docs: the Quick Start is one recommended path -- a `StateMachine`
+  class run with `with Machine() as sm:` -- followed by "Also: load
+  XState JSON or design in Stately", "Choose your engine" and "Next
+  steps"; the older Python styles are kept in a compact section. Getting
+  Started leads with the class DSL.
 - `xstate_statemachine.pythonic` is now a thin public module; the
   implementation moved to `_pythonic_core`, `_pythonic_builder`,
   `_pythonic_class` and `_pythonic_runtime`. Every public name (and the

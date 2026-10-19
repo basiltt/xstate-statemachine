@@ -229,7 +229,7 @@ The rest of `xstate_statemachine.contrib.celery.__all__`:
 
 | Celery | Python | Tested in CI |
 |:--|:--|:--|
-| 5.3 – latest | 3.9 – 3.14 | ✅ (eager + in-process worker; live broker opt-in) |
+| 5.3 – latest | 3.9 – 3.15 | ✅ (eager + in-process worker; live broker opt-in) |
 
 ## Troubleshooting
 

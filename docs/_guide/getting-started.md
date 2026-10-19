@@ -36,29 +36,58 @@ You can also verify the CLI tool is available:
 xsm --help
 ```
 
-Expected output:
+Expected output (trimmed; run `xsm --help` for the current text):
 
 ```
-usage: xsm [-h] [-v]
-           {generate-template,gt,list-templates,lt,validate,val,info} ...
+usage: xsm [-h] [-v] [--plain] [--no-color] [--no-anim] [--verbose]
+           {generate-template,gt,list-templates,lt,validate,val,paths,coverage,
+            info,plugins,update,snapshots,dlq,asyncapi,setup,inspect,ins,replay,
+            diagram,dia,simulate,sim,docs,new} ...
 
 XState-StateMachine CLI — Generate Python code from XState JSON.
 
 positional arguments:
-  {generate-template,gt,list-templates,lt,validate,val,info}
-                        Available commands
     generate-template (gt)
                         Generate Python code from an XState JSON file.
     list-templates (lt)
                         List all available code generation templates.
     validate (val)      Validate an XState JSON config file.
+    paths               List a path to every reachable configuration of a
+                        chart.
+    coverage            Render a statechart coverage report (pytest --xsm-
+                        coverage).
     info                Show library version, Python version, and feature
                         summary.
+    plugins             List installed third-party plugins, stores and
+                        brokers.
+    update              Upgrade xstate-statemachine to the latest release on
+                        PyPI.
+    snapshots           List persisted snapshots in a store; --stale finds
+                        instances written by another machine version.
+    dlq                 List, show, replay or purge dead-lettered messages.
+    asyncapi            Generate an AsyncAPI 3.0 document from a machine.
+    setup               Make the `xsm` command work on Windows machines that
+                        block pip's xsm.exe launcher.
+    inspect (ins)       Show a machine's state tree, transitions, logic and
+                        policies.
+    replay              Print or stream (--live) a recorded inspector session.
+    diagram (dia)       Export a Mermaid, PlantUML or ASCII diagram.
+    simulate (sim)      Run a machine live: pick events, advance the clock,
+                        inspect context.
+    docs                Generate a Markdown reference page per machine.
+    new                 Scaffold a minimal project from an example app.
 
 options:
   -h, --help            show this help message and exit
   -v, --version         Show program's version number and exit.
+  --plain               Plain text: no colour, no box glyphs, no animation
+                        (implied when piped).
+  --no-color            Keep layout and animation but emit no colour escapes.
+  --no-anim             Disable spinners and in-place redraws.
+  --verbose             Show the library's INFO log on stderr while running.
 ```
+
+A bare `xsm` on a terminal opens an interactive launcher. See the [CLI Tool](../cli/) guide for every command.
 
 ## 📋 Requirements
 
@@ -81,6 +110,30 @@ stateDiagram-v2
     off --> on : TOGGLE
     on --> off : TOGGLE
 ```
+
+### Using a Python class (recommended):
+
+```python
+from xstate_statemachine import State, StateMachine
+
+
+class Toggle(StateMachine):
+    off = State(initial=True)
+    on = State()
+    toggle = off.to(on) | on.to(off)  # the attribute name is the event: TOGGLE
+
+
+with Toggle() as switch:  # started, in `off`; stopped on exit
+    switch.toggle()
+    print(switch.state)
+    # on
+
+    switch.send("TOGGLE")
+    print(switch.state)
+    # off
+```
+
+The [Quick Start](../quick-start/) walks through this style, and the [Pythonic API](../pythonic-api/) page documents it in full. The styles below build the same machine.
 
 ### Using JSON (XState-compatible):
 
@@ -152,7 +205,7 @@ print(interp.active_state_ids)
 interp.stop()
 ```
 
-### Using Class-Based Style:
+### Using Class-Based Style (explicit events):
 
 ```python
 from xstate_statemachine import State, StateMachine, SyncInterpreter
@@ -217,7 +270,7 @@ print(interp.active_state_ids)
 interp.stop()
 ```
 
-> **All four approaches produce identical runtime behavior.** Choose the style that fits your project.
+> **All five approaches produce identical runtime behavior.** Choose the style that fits your project.
 
 ## 2️⃣ Your Second Machine: With Actions and Context
 
@@ -363,19 +416,37 @@ python -m pytest tests/ --cov=xstate_statemachine --cov-report=html
 ```
 xstate-statemachine/
 ├── src/xstate_statemachine/
-│   ├── __init__.py          # Public API exports
-│   ├── machine.py           # MachineNode, state tree, config parser
-│   ├── interpreter.py       # Interpreter (async) + SyncInterpreter
-│   ├── pythonic.py           # State, StateMachine, MachineBuilder, decorators
-│   ├── snapshot.py           # Snapshot save/restore
-│   ├── plugin.py             # Plugin base + LoggingInspector
-│   ├── diagram_exporter.py   # Mermaid, PlantUML export
-│   └── cli/                  # xsm: generate / inspect / simulate / diagram / docs
-│       ├── __main__.py       # Entry point (xsm command)
-│       ├── extractor.py      # JSON feature extraction
-│       └── strategies/       # 5 code generation templates
-├── tests/                    # 3,735 tests, 93% coverage
-├── docs/                     # GitHub Pages documentation
+│   ├── __init__.py            # Public API exports
+│   ├── models.py              # MachineNode, StateNode, config parser, Mermaid/PlantUML export
+│   ├── factory.py             # create_machine()
+│   ├── base_interpreter.py    # Engine-agnostic semantics shared by both engines
+│   ├── interpreter.py         # Interpreter (async)
+│   ├── sync_interpreter.py    # SyncInterpreter (blocking)
+│   ├── pythonic.py            # Public Pythonic API (re-exports the _pythonic_* modules)
+│   ├── _pythonic_class.py     # StateMachine class DSL
+│   ├── _pythonic_builder.py   # MachineBuilder
+│   ├── _pythonic_core.py      # State, Transition, build_machine, decorators
+│   ├── machine_logic.py       # MachineLogic container
+│   ├── logic_loader.py        # Auto-discovery of actions, guards and services
+│   ├── actions.py             # Built-in action creators (assign, raise, sendTo, ...)
+│   ├── plugins.py             # PluginBase + LoggingInspector
+│   ├── clock.py               # RealClock, SimulatedClock
+│   ├── graph.py               # Graph algorithms (shortest_paths, reachable_states, ...)
+│   ├── helpers.py             # wait_for, to_promise, pure transition()
+│   ├── testing_utils.py       # Test helpers (stub_logic, ...)
+│   ├── persistence/           # Stores, locking, idempotency, snapshots, durable timers
+│   ├── patterns/              # RetryPolicy, dead_letter, CircuitBreaker, sagas
+│   ├── eda/                   # CloudEvents envelope, outbox, dead letters, AsyncAPI
+│   ├── inspect/               # Live inspector (Stately Inspector protocol)
+│   ├── contrib/               # Optional extras: fastapi, django, sqlalchemy, redis, ...
+│   └── cli/                   # xsm: generate / inspect / simulate / diagram / docs / ...
+│       ├── __main__.py        # Entry point (xsm command)
+│       ├── args.py            # Argument parsing
+│       ├── commands/          # One module per sub-command
+│       ├── extractor.py       # JSON feature extraction
+│       └── strategies/        # 10 code generation templates
+├── tests/                     # Unit, integration and docs tests (90% coverage gate)
+├── docs/                      # GitHub Pages documentation
 └── pyproject.toml
 ```
 
@@ -384,6 +455,16 @@ xstate-statemachine/
 ```bash
 pip install --upgrade xstate-statemachine
 ```
+
+**From v0.10.x to v0.11.0:**
+
+The library core is additive: everything new (persistence, patterns, EDA, the
+inspector and every `contrib` extra) is opt-in, and existing machines run
+unchanged. One thing to know:
+
+- **Snapshot layout is v4** (`machine_version`, `deadlines`). Older blobs upcast
+  transparently on load; a v4 blob does not load on 0.10.x. See
+  [Snapshots](../snapshots/).
 
 **From v0.8.0 to v0.9.0:**
 
@@ -765,9 +846,10 @@ See the [full changelog](../changelog/) for every change in this release.
 
 Now that you're set up, explore the features:
 
-- **[Quick Start](../quick-start/)** — Build 5 different machine styles in detail
+- **[Quick Start](../quick-start/)** — One recommended path (a Python class), then XState JSON, engines and next steps
 - **[Core Concepts](../core-concepts/)** — States, events, transitions, guards, actions
-- **[Pythonic API](../pythonic-api/)** — Define machines in pure Python (3 styles)
+- **[Pythonic API](../pythonic-api/)** — Define machines in pure Python (class, builder, functional)
+- **[Coming from python-statemachine](../coming-from-python-statemachine/)** and **[Coming from transitions](../coming-from-transitions/)** — Port a worked machine, concept by concept
 - **[JSON Configuration](../json-config/)** — XState JSON format reference
 - **[Context](../context/)** — Working with machine data
 - **[Guards](../guards/)** — Conditional transitions

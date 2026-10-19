@@ -545,7 +545,7 @@ The output of the first four matches `xsm` byte for byte, and the tests pin that
 
 | Django | Python | Tested in CI |
 |:--|:--|:--|
-| 4.2 – 6.1 | 3.9 – 3.14 | ✅ (oldest: Django 4.2 on Python 3.9) |
+| 4.2 – 6.1 | 3.9 – 3.15 | ✅ (oldest: Django 4.2 on Python 3.9) |
 
 See the generated [compatibility table](../compatibility/). SQLite runs everywhere. The same suite runs on Postgres when `DATABASE_URL=postgres://...` is set.
 

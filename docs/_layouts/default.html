@@ -206,6 +206,8 @@
           <a href="{{ '/guide/vs-transitions/' | relative_url }}" class="sidebar-link">vs transitions</a>
           <a href="{{ '/guide/vs-python-statemachine/' | relative_url }}" class="sidebar-link">vs python-statemachine</a>
           <a href="{{ '/guide/vs-step-functions/' | relative_url }}" class="sidebar-link">vs AWS Step Functions</a>
+          <a href="{{ '/guide/coming-from-python-statemachine/' | relative_url }}" class="sidebar-link">Coming from python-statemachine</a>
+          <a href="{{ '/guide/coming-from-transitions/' | relative_url }}" class="sidebar-link">Coming from transitions</a>
         </div>
         <div class="sidebar-section">
           <h3 class="sidebar-heading">Recipes</h3>
@@ -277,7 +279,7 @@
         </div>
 
         <!-- Previous / Next Navigation -->
-        {% assign pages_order = "getting-started,quick-start,core-concepts,json-config,pythonic-api,interpreters,context,guards,actions,services,delayed-transitions,hierarchical,parallel,final-states,actors,plugins,snapshots,reliability,testing-and-pure-api,diagrams,examples,example-gallery,cli,cli-templates,cli-hierarchy,stately-export,integrations,integrations-extras,patterns,persistence,guarantees,security,compatibility,deprecation-policy,integration-redis,integration-pydantic,integration-starlette,integration-fastapi,integration-litestar,integration-sqlalchemy,integration-flask,integration-django,integration-drf,integration-agents,integration-testing,integration-observability,integration-inspector,integration-eda,integration-brokers,integration-celery,vs-langgraph,vs-burr,vs-statelyai-agent,vs-django-fsm,vs-transitions,vs-python-statemachine,vs-step-functions,recipes,stripe-webhooks,apscheduler-timers,task-queue-workers,form-wizard,slot-filling,feature-flag-rollout,websocket-reconnect,circuit-breaker-retry,production-characteristics,troubleshooting,faq,changelog" | split: "," %}
+        {% assign pages_order = "getting-started,quick-start,core-concepts,json-config,pythonic-api,interpreters,context,guards,actions,services,delayed-transitions,hierarchical,parallel,final-states,actors,plugins,snapshots,reliability,testing-and-pure-api,diagrams,examples,example-gallery,cli,cli-templates,cli-hierarchy,stately-export,integrations,integrations-extras,patterns,persistence,guarantees,security,compatibility,deprecation-policy,integration-redis,integration-pydantic,integration-starlette,integration-fastapi,integration-litestar,integration-sqlalchemy,integration-flask,integration-django,integration-drf,integration-agents,integration-testing,integration-observability,integration-inspector,integration-eda,integration-brokers,integration-celery,vs-langgraph,vs-burr,vs-statelyai-agent,vs-django-fsm,vs-transitions,vs-python-statemachine,vs-step-functions,coming-from-python-statemachine,coming-from-transitions,recipes,stripe-webhooks,apscheduler-timers,task-queue-workers,form-wizard,slot-filling,feature-flag-rollout,websocket-reconnect,circuit-breaker-retry,production-characteristics,troubleshooting,faq,changelog" | split: "," %}
         {% assign current_name = page.url | remove: "/guide/" | remove: "/" %}
         {% assign prev_page = nil %}
         {% assign next_page = nil %}

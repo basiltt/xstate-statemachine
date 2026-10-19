@@ -240,8 +240,8 @@ Sends run the model's `send()` inside `database_sync_to_async`, so the row lock 
 
 | Package | Python | Tested in CI |
 |:--|:--|:--|
-| Django REST framework 3.14 – 3.x | 3.9 – 3.14 | ✅ |
-| Channels 4.0 – 4.x | 3.9 – 3.14 | ✅ |
+| Django REST framework 3.14 – 3.x | 3.9 – 3.15 | ✅ |
+| Channels 4.0 – 4.x | 3.9 – 3.15 | ✅ |
 
 See the generated [compatibility table](../compatibility/).
 

@@ -150,7 +150,7 @@ assert (
 
 | pydantic | Python | Tested in CI |
 |:--|:--|:--|
-| 2.5 – 2.x | 3.9 – 3.14 | ✅ `[pydantic]` cell (Linux, Windows) |
+| 2.5 – 2.x | 3.9 – 3.15 | ✅ `[pydantic]` cell (Linux, Windows) |
 
 ## Troubleshooting
 

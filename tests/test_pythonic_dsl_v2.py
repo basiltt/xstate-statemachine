@@ -1408,6 +1408,294 @@ class TestFromState(unittest.TestCase):
 
 
 # =========================================================================
+# 8e. Injection and DSL corners
+# =========================================================================
+class TestInjectionCorners(unittest.TestCase):
+    def test_every_engine_name_resolves(self):
+        seen = {}
+
+        class M(StateMachine):
+            a = State(initial=True)
+            b = State(invoke={"src": "svc", "onDone": "c", "onError": "d"})
+            c = State()
+            d = State()
+            go = a.to(b, actions=[{"type": "act", "params": {"limit": 3}}])
+
+            @action
+            def act(self, event_type, action, params, interp):
+                seen["event_type"] = event_type
+                seen["action_type"] = action.type
+                seen["params"] = params
+                seen["interp"] = interp is not None
+
+            @service
+            def svc(self, input, data, error):
+                seen["input"] = input
+                seen["data_error"] = (data, error)
+                raise RuntimeError("boom")
+
+            def on_enter_d(self, error, data):
+                seen["enter_d"] = (type(error).__name__, data)
+
+        with M() as sm:
+            with self.assertLogs("xstate_statemachine", "ERROR"):
+                sm.go(x=1)
+            self.assertEqual(sm.state, "d")
+        self.assertEqual(seen["event_type"], "GO")
+        self.assertEqual(seen["action_type"], "act")
+        self.assertEqual(seen["params"], {"limit": 3})
+        self.assertTrue(seen["interp"])
+        self.assertEqual(seen["input"], {"x": 1})
+        # `data` on a plain Event is its payload (compat alias); `error` None
+        self.assertEqual(seen["data_error"], ({"input": {"x": 1}}, None))
+        self.assertEqual(seen["enter_d"], ("RuntimeError", None))
+
+    def test_is_legacy_signature_helper(self):
+        from xstate_statemachine._pythonic_runtime import (
+            is_legacy_signature,
+        )
+
+        self.assertTrue(is_legacy_signature(lambda i, c, e, a: None, "action"))
+        self.assertTrue(is_legacy_signature(lambda c, e: None, "guard"))
+        self.assertTrue(is_legacy_signature(lambda *a: None, "service"))
+        self.assertFalse(is_legacy_signature(lambda amount: None, "action"))
+        self.assertFalse(
+            is_legacy_signature(lambda context, event, x, y: None, "action")
+        )
+
+    def test_async_legacy_action_with_result_sink(self):
+        class M(StateMachine):
+            engine = "async"
+            a = State(initial=True)
+            go = a.internal(actions=["act"])
+
+            @action
+            async def act(self, i, ctx, e, a):
+                return "legacy-async"
+
+        async def main():
+            async with M() as sm:
+                self.assertEqual(await sm.go(), "legacy-async")
+
+        asyncio.run(main())
+
+    def test_event_sender_errors_and_reprs(self):
+        class M(StateMachine):
+            a = State(initial=True)
+            b = State()
+            c = State()
+            mixed = a.to(b, event="X") | b.to(c, event="Y")
+            back = c.to(a)
+
+        with M() as sm:
+            with self.assertRaises(TypeError):
+                sm.mixed()  # two different events: ambiguous
+            self.assertIn("event sender", repr(sm.mixed))
+            self.assertEqual(repr(sm.a), "BoundState('a', active)")
+            self.assertEqual(sm.a.id, "M.a")
+            self.assertIs(sm.a.definition, M.a)
+            with self.assertRaises(AttributeError):
+                sm.a.__deepcopy__  # dunder probes are not delegated
+        self.assertIn("Transition(", repr(M.back))
+        self.assertIn("transitions", repr(M.mixed))
+        self.assertEqual(M.mixed.event_types, {"X", "Y"})
+        self.assertEqual(M.back.event_types, set())  # inferred, not stored
+
+    def test_group_composition_orders(self):
+        a, b, c, d = (State(n) for n in "abcd")
+        a.initial = True
+        t1, t2, t3 = a.to(b, event="E"), b.to(c, event="E"), c.to(d, event="E")
+        g1 = t1 | t2
+        self.assertEqual(len((g1 | t3).transitions), 3)
+        self.assertEqual(len((t3 | g1).transitions), 3)
+        self.assertEqual(len((g1 | (t3 | t3)).transitions), 4)
+
+    def test_nested_class_internal_and_class_level_access(self):
+        class M(StateMachine):
+            class a(State, initial=True, final=False):
+                x = State(initial=True)
+
+            b = State()
+            poke = a.internal(actions=["note"])
+            go = a.to(b)
+
+            @action
+            def note(self):
+                self.poked = True
+
+        self.assertIs(M.a, M.a)  # class access gives the class back
+        with M() as sm:
+            sm.poke()
+            self.assertTrue(sm.poked)
+            self.assertEqual(sm.state, "a.x")
+
+    def test_bad_nested_keyword_and_history_on_done_dict(self):
+        with self.assertRaises(InvalidConfigError):
+
+            class Bad(State, bogus=1):
+                pass
+
+        class M(StateMachine):
+            class p(State, initial=True, on_done={"target": "q"}):
+                x = State(initial=True, final=True)
+
+            q = State(final=True)
+
+        with M() as sm:
+            self.assertEqual(sm.status, "done")
+
+    def test_state_service_appends_to_existing_invokes(self):
+        class M(StateMachine):
+            idle = State(initial=True)
+            busy = State(invoke={"src": "first"})
+            go = idle.to(busy)
+
+            @service
+            def first(self):
+                return 1
+
+            @busy.service(id="second-id", input={"k": 1})
+            def second(self, input):
+                return input["k"]
+
+        inv = M.create_machine().source_config["states"]["busy"]["invoke"]
+        self.assertEqual([i["src"] for i in inv], ["first", "second"])
+        self.assertEqual(inv[1]["id"], "second-id")
+
+        class N(StateMachine):
+            idle = State(initial=True)
+            busy = State()
+            go = idle.to(busy)
+
+            @busy.service
+            def one(self):
+                return 1
+
+            @busy.service
+            def two(self):
+                return 2
+
+        inv2 = N.create_machine().source_config["states"]["busy"]["invoke"]
+        self.assertEqual([i["src"] for i in inv2], ["one", "two"])
+
+    def test_machine_root_with_facade(self):
+        class M(StateMachine):
+            machine_root = State("", on={"RESET": "a"}, always=None)
+            a = State(initial=True)
+            b = State()
+            go = a.to(b)
+
+        with M() as sm:
+            sm.go()
+            sm.send("RESET")
+            self.assertEqual(sm.state, "a")
+
+    def test_unresolvable_nested_reference_is_loud(self):
+        class Other(State):
+            x = State(initial=True)
+
+        with self.assertRaises(InvalidConfigError):
+
+            class M(StateMachine):
+                a = State(initial=True)
+                go = a.to(Other)
+
+
+# =========================================================================
+# 8f. Plain methods satisfy string references by name
+# =========================================================================
+class TestPlainMethodBinding(unittest.TestCase):
+    def test_plain_methods_are_bound_as_guard_action_and_service(self):
+        seen = []
+
+        class Shop(StateMachine):
+            initial_context = {"stock": 1}
+            browsing = State(initial=True)
+            paying = State(invoke={"src": "charge_card", "onDone": "done"})
+            done = State()
+            checkout = browsing.to(
+                paying, guard="has_stock", actions=["reserve"]
+            )
+
+            def has_stock(self, context):  # snake_case reference
+                return context["stock"] > 0
+
+            def reserve(self, context, qty=1):
+                context["stock"] -= qty
+                seen.append("reserve")
+
+            def charge_card(self, interpreter, context, event):
+                seen.append("charge")
+                return "receipt"
+
+        with Shop() as sm:
+            sm.checkout()
+            self.assertEqual(sm.state, "done")
+        self.assertEqual(seen, ["reserve", "charge"])
+
+    def test_camel_case_reference_binds_snake_case_method(self):
+        class M(StateMachine):
+            a = State(initial=True, entry="say_hi")
+            b = State()
+            go = a.to(b, guard="isReady")
+
+            def say_hi(self):
+                self.greeted = True
+
+            def is_ready(self):
+                return True
+
+        with M() as sm:
+            self.assertTrue(sm.greeted)
+            sm.go()
+            self.assertEqual(sm.state, "b")
+
+    def test_decorated_name_wins_over_plain_method(self):
+        class M(StateMachine):
+            a = State(initial=True)
+            b = State()
+            go = a.to(b, actions=["note"])
+
+            @action("note")
+            def decorated(self):
+                self.which = "decorated"
+
+            def note(self):
+                self.which = "plain"
+
+        with M() as sm:
+            sm.go()
+            self.assertEqual(sm.which, "decorated")
+
+    def test_unreferenced_helper_methods_are_left_alone(self):
+        class M(StateMachine):
+            a = State(initial=True)
+            b = State()
+            go = a.to(b)
+
+            def helper(self):
+                return "not a callback"
+
+        with M() as sm:
+            self.assertEqual(sm.helper(), "not a callback")
+            self.assertNotIn("helper", sm.machine.logic.actions)
+            sm.go()
+
+    def test_missing_name_still_reported(self):
+        class M(StateMachine):
+            a = State(initial=True)
+            b = State()
+            go = a.to(b, guard="is_readyy")  # typo: no such method
+
+            def is_ready(self):
+                return True
+
+        with self.assertRaises(ImplementationMissingError) as cm:
+            M()
+        self.assertIn("is_readyy", str(cm.exception))
+
+
+# =========================================================================
 # 9. MachineNode.to_json
 # =========================================================================
 class TestToJson(unittest.TestCase):

@@ -127,4 +127,6 @@ If you prefer classes to JSON, the [Pythonic API](../pythonic-api/) builds the s
 
 See [Integration extras](../integrations-extras/) for everything that ships today.
 
+Porting? See [Coming from python-statemachine](../coming-from-python-statemachine/) for a concept map and a worked port.
+
 New to the library? Start with the [integrations journey](../integrations/): pick your path, then a fifteen-minute tutorial.

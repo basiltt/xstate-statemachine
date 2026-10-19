@@ -108,185 +108,199 @@
     "url": "/guide/reliability/"
   },
   {
+    "description": "Start here: pick your path (framework x store x worker model x events-in), a 15-minute tutorial from a Stately export to FastAPI on SQLite and Redis with an idempotency inbox, what you get and what you don't.",
+    "section": "Integrations",
     "title": "Integrations",
-    "section": "Integrations",
-    "url": "/guide/integrations/",
-    "description": "Start here: pick your path (framework x store x worker model x events-in), a 15-minute tutorial from a Stately export to FastAPI on SQLite and Redis with an idempotency inbox, what you get and what you don't."
+    "url": "/guide/integrations/"
   },
   {
+    "description": "Every optional pip extra with its status and issue: pydantic, redis, starlette, fastapi, litestar, agents shipped; django, flask, sqlalchemy, celery, kafka, observability, testing planned. MissingExtraError, design rules.",
+    "section": "Integrations",
     "title": "Integration extras",
-    "section": "Integrations",
-    "url": "/guide/integrations-extras/",
-    "description": "Every optional pip extra with its status and issue: pydantic, redis, starlette, fastapi, litestar, agents shipped; django, flask, sqlalchemy, celery, kafka, observability, testing planned. MissingExtraError, design rules."
+    "url": "/guide/integrations-extras/"
   },
   {
+    "description": "Crash-consistency specification \u2014 order of actions, snapshot save, inbox mark and timer fire; exactly-once vs at-least-once; every crash window and the test that proves it; the processed_ids ring.",
+    "section": "Integrations",
     "title": "Guarantees",
-    "section": "Integrations",
-    "url": "/guide/guarantees/",
-    "description": "Crash-consistency specification — order of actions, snapshot save, inbox mark and timer fire; exactly-once vs at-least-once; every crash window and the test that proves it; the processed_ids ring."
+    "url": "/guide/guarantees/"
   },
   {
+    "description": "Trust model \u2014 installed packages and the machine definition are trusted, events and snapshots are not; the X0 baseline (#303) mapped to the test or CI job that enforces each item; principal, redact, codec, pip-audit.",
+    "section": "Integrations",
     "title": "Security",
-    "section": "Integrations",
-    "url": "/guide/security/",
-    "description": "Trust model — installed packages and the machine definition are trusted, events and snapshots are not; the X0 baseline (#303) mapped to the test or CI job that enforces each item; principal, redact, codec, pip-audit."
+    "url": "/guide/security/"
   },
   {
+    "description": "Supported framework versions per extra -- oldest and newest pins, each proven by a CI cell; generated from tests/contrib/compat_matrix.json.",
+    "section": "Integrations",
     "title": "Compatibility",
-    "section": "Integrations",
-    "url": "/guide/compatibility/",
-    "description": "Supported framework versions per extra -- oldest and newest pins, each proven by a CI cell; generated from tests/contrib/compat_matrix.json."
+    "url": "/guide/compatibility/"
   },
   {
+    "description": "SemVer for core and persistence, contrib provisional; one minor release of DeprecationWarning, removal no earlier than the next major; the current deprecations table.",
+    "section": "Integrations",
     "title": "Deprecation Policy",
-    "section": "Integrations",
-    "url": "/guide/deprecation-policy/",
-    "description": "SemVer for core and persistence, contrib provisional; one minor release of DeprecationWarning, removal no earlier than the next major; the current deprecations table."
+    "url": "/guide/deprecation-policy/"
   },
   {
+    "description": "[starlette] extra \u2014 StatechartRegistry (create \u2192 act \u2192 persist \u2192 discard), Receipt \u2192 HTTP status, RFC 9457 problems, Idempotency-Key, SSE and WebSocket transition streams, residents, lifespan timer scanner, health/ready probes.",
+    "section": "Integrations",
     "title": "Starlette",
-    "section": "Integrations",
-    "url": "/guide/integration-starlette/",
-    "description": "[starlette] extra — StatechartRegistry (create → act → persist → discard), Receipt → HTTP status, RFC 9457 problems, Idempotency-Key, SSE and WebSocket transition streams, residents, lifespan timer scanner, health/ready probes."
+    "url": "/guide/integration-starlette/"
   },
   {
+    "description": "[fastapi] extra \u2014 StatechartRouter generates a REST API and OpenAPI from a chart: discriminated-union event bodies, RFC 9457 problems, Depends(get_interpreter), Idempotency-Key, SSE/WebSocket, instrument_app.",
+    "section": "Integrations",
     "title": "FastAPI",
-    "section": "Integrations",
-    "url": "/guide/integration-fastapi/",
-    "description": "[fastapi] extra — StatechartRouter generates a REST API and OpenAPI from a chart: discriminated-union event bodies, RFC 9457 problems, Depends(get_interpreter), Idempotency-Key, SSE/WebSocket, instrument_app."
+    "url": "/guide/integration-fastapi/"
   },
   {
+    "description": "[litestar] extra \u2014 XStatePlugin, Provide() get_interpreter, generated statechart Controller with OpenAPI discriminated union, problem+json, SSE/WebSocket.",
+    "section": "Integrations",
     "title": "Litestar",
-    "section": "Integrations",
-    "url": "/guide/integration-litestar/",
-    "description": "[litestar] extra — XStatePlugin, Provide() get_interpreter, generated statechart Controller with OpenAPI discriminated union, problem+json, SSE/WebSocket."
+    "url": "/guide/integration-litestar/"
   },
   {
+    "description": "[sqlalchemy] extra \u2014 StatechartType, StatechartMixin with version_id_col optimistic locking, in_state() queries, audit rows in the same flush, SQLAlchemyStore / AsyncSQLAlchemyStore, inbox and log, Alembic.",
+    "section": "Integrations",
     "title": "SQLAlchemy integration",
-    "section": "Integrations",
-    "url": "/guide/integration-sqlalchemy/",
-    "description": "[sqlalchemy] extra — StatechartType, StatechartMixin with version_id_col optimistic locking, in_state() queries, audit rows in the same flush, SQLAlchemyStore / AsyncSQLAlchemyStore, inbox and log, Alembic."
+    "url": "/guide/integration-sqlalchemy/"
   },
   {
+    "description": "[flask] extra \u2014 XState init_app extension, act(), statechart blueprint, Idempotency-Key, SSE, SessionStore wizards, flask xsm CLI, Flask-WTF CSRF, Quart shim.",
+    "section": "Integrations",
     "title": "Flask integration",
-    "section": "Integrations",
-    "url": "/guide/integration-flask/",
-    "description": "[flask] extra — XState init_app extension, act(), statechart blueprint, Idempotency-Key, SSE, SessionStore wizards, flask xsm CLI, Flask-WTF CSRF, Quart shim."
+    "url": "/guide/integration-flask/"
   },
-    {
-      "title": "Django integration",
-      "section": "Integrations",
-      "url": "/guide/integration-django/",
-      "description": "[django] extra — StatechartField + StatechartModelMixin (atomic + select_for_update, optimistic send_with_retry), in_state(), signals, TransitionLog audit in the same transaction, PermissionGuard, admin transition buttons (CSRF POST), xsm_* management commands, DjangoStore, xsm_deadlines, xsm_migrate_fsm from django-fsm-2."
-    },
-    {
-      "title": "DRF & Channels integration",
-      "section": "Integrations",
-      "url": "/guide/integration-drf/",
-      "description": "[drf] StatechartViewSetMixin — one @action per event, receipt→status, Idempotency-Key, drf-spectacular schema, StatechartSerializerField; [channels] StatechartConsumer — snapshot on connect, transition broadcast, 1008 on unauthenticated."
-    },
   {
+    "description": "[django] extra \u2014 StatechartField + StatechartModelMixin (atomic + select_for_update, optimistic send_with_retry), in_state(), signals, TransitionLog audit in the same transaction, PermissionGuard, admin transition buttons (CSRF POST), xsm_* management commands, DjangoStore, xsm_deadlines, xsm_migrate_fsm from django-fsm-2.",
+    "section": "Integrations",
+    "title": "Django integration",
+    "url": "/guide/integration-django/"
+  },
+  {
+    "description": "[drf] StatechartViewSetMixin \u2014 one @action per event, receipt\u2192status, Idempotency-Key, drf-spectacular schema, StatechartSerializerField; [channels] StatechartConsumer \u2014 snapshot on connect, transition broadcast, 1008 on unauthenticated.",
+    "section": "Integrations",
+    "title": "DRF & Channels integration",
+    "url": "/guide/integration-drf/"
+  },
+  {
+    "description": "LLM agents as statecharts: TOOL_LOOP chart, per-state tool allow-lists, budgets, timeouts, durable human-in-the-loop, structured output, OpenAI/Anthropic adapters, spawn_agent, BudgetPlugin, prompt-injection threat model, LangGraph interop (statechart_node, langgraph_service), pydantic-ai service/tool, structured output per state.",
+    "section": "Integrations",
     "title": "LLM agents",
-    "section": "Integrations",
-    "url": "/guide/integration-agents/",
-    "description": "LLM agents as statecharts: TOOL_LOOP chart, per-state tool allow-lists, budgets, timeouts, durable human-in-the-loop, structured output, OpenAI/Anthropic adapters, spawn_agent, BudgetPlugin, prompt-injection threat model, LangGraph interop (statechart_node, langgraph_service), pydantic-ai service/tool, structured output per state."
+    "url": "/guide/integration-agents/"
   },
   {
+    "description": "Comparison: hierarchy, guards as policy, durable timeouts, human-in-the-loop, persistence, incremental adoption via statechart_node. When to choose LangGraph.",
+    "section": "Integrations",
     "title": "xstate-statemachine vs LangGraph",
-    "section": "Integrations",
-    "url": "/guide/vs-langgraph/",
-    "description": "Comparison: hierarchy, guards as policy, durable timeouts, human-in-the-loop, persistence, incremental adoption via statechart_node. When to choose LangGraph."
+    "url": "/guide/vs-langgraph/"
   },
   {
+    "description": "Comparison with Burr: nested and parallel states, durable after deadlines, XState JSON portability, tool allow-lists. When to choose Burr.",
+    "section": "Integrations",
     "title": "xstate-statemachine vs Burr",
-    "section": "Integrations",
-    "url": "/guide/vs-burr/",
-    "description": "Comparison with Burr: nested and parallel states, durable after deadlines, XState JSON portability, tool allow-lists. When to choose Burr."
+    "url": "/guide/vs-burr/"
   },
   {
+    "description": "Comparison with @statelyai/agent: same XState chart model, Python runtime, stores, budgets and tool policy. When to choose @statelyai/agent.",
+    "section": "Integrations",
     "title": "xstate-statemachine vs @statelyai/agent",
-    "section": "Integrations",
-    "url": "/guide/vs-statelyai-agent/",
-    "description": "Comparison with @statelyai/agent: same XState chart model, Python runtime, stores, budgets and tool policy. When to choose @statelyai/agent."
+    "url": "/guide/vs-statelyai-agent/"
   },
   {
+    "description": "Comparison with django-fsm-2: hierarchy, parallel regions, durable timers, locking, admin, audit, XState JSON; side-by-side order lifecycle; migration recipe (xsm_migrate_fsm, planned). When to choose django-fsm.",
+    "section": "Integrations",
     "title": "xstate-statemachine vs django-fsm",
-    "section": "Integrations",
-    "url": "/guide/vs-django-fsm/",
-    "description": "Comparison with django-fsm-2: hierarchy, parallel regions, durable timers, locking, admin, audit, XState JSON; side-by-side order lifecycle; migration recipe (xsm_migrate_fsm, planned). When to choose django-fsm."
+    "url": "/guide/vs-django-fsm/"
   },
   {
+    "description": "Comparison with pytransitions: HierarchicalMachine vs native nesting, Timeout threads vs persisted deadlines, persistence, typed context, XState JSON portability. When to choose transitions.",
+    "section": "Integrations",
     "title": "xstate-statemachine vs transitions",
-    "section": "Integrations",
-    "url": "/guide/vs-transitions/",
-    "description": "Comparison with pytransitions: HierarchicalMachine vs native nesting, Timeout threads vs persisted deadlines, persistence, typed context, XState JSON portability. When to choose transitions."
+    "url": "/guide/vs-transitions/"
   },
   {
-    "title": "xstate-statemachine vs python-statemachine",
-    "section": "Integrations",
-    "url": "/guide/vs-python-statemachine/",
     "description": "Comparison with python-statemachine: declarative class API and diagrams vs portable XState JSON, stores, locking and durable timers. When to choose python-statemachine.",
-    "title": "xstate-statemachine vs AWS Step Functions",
     "section": "Integrations",
-    "url": "/guide/vs-step-functions/",
-    "description": "ASL vs XState JSON side by side, event-driven transitions, timers, retries, local testing with pytest, and when Step Functions is still the right call."
+    "title": "xstate-statemachine vs python-statemachine",
+    "url": "/guide/vs-python-statemachine/"
   },
   {
+    "description": "Port a python-statemachine 3.x chart: concept map, a worked traffic light with a guard, a nested state and a timeout, what maps one to one, what differs, and what you gain.",
+    "section": "Integrations",
+    "title": "Coming from python-statemachine",
+    "url": "/guide/coming-from-python-statemachine/"
+  },
+  {
+    "description": "Port a pytransitions Machine: concept map, a worked traffic light with a condition, a nested state and a timeout, what maps one to one, what differs, and what you gain.",
+    "section": "Integrations",
+    "title": "Coming from transitions",
+    "url": "/guide/coming-from-transitions/"
+  },
+  {
+    "description": "ASL vs XState JSON side by side, event-driven transitions, timers, retries, local testing with pytest, and when Step Functions is still the right call.",
+    "section": "Integrations",
+    "title": "xstate-statemachine vs AWS Step Functions",
+    "url": "/guide/vs-step-functions/"
+  },
+  {
+    "description": "Worked, tested recipes: Stripe webhooks, APScheduler timers, RQ/arq/Dramatiq workers, Streamlit/Gradio wizard, slot filling, feature flags, WebSocket reconnect, circuit breaker.",
+    "section": "Recipes",
     "title": "Recipes",
-    "section": "Recipes",
-    "url": "/guide/recipes/",
-    "description": "Worked, tested recipes: Stripe webhooks, APScheduler timers, RQ/arq/Dramatiq workers, Streamlit/Gradio wizard, slot filling, feature flags, WebSocket reconnect, circuit breaker."
+    "url": "/guide/recipes/"
   },
   {
+    "description": "Subscription lifecycle chart; FastAPI and Flask webhook endpoints verifying Stripe-Signature (HMAC, tolerance window); event.id idempotency; persisted().",
+    "section": "Recipes",
     "title": "Recipe: Stripe webhooks",
-    "section": "Recipes",
-    "url": "/guide/stripe-webhooks/",
-    "description": "Subscription lifecycle chart; FastAPI and Flask webhook endpoints verifying Stripe-Signature (HMAC, tolerance window); event.id idempotency; persisted()."
+    "url": "/guide/stripe-webhooks/"
   },
   {
+    "description": "7- and 14-day after follow-ups that survive restarts: DueTimerScanner.run_once as an APScheduler cron or interval job, scheduler role.",
+    "section": "Recipes",
     "title": "Recipe: APScheduler durable timers",
-    "section": "Recipes",
-    "url": "/guide/apscheduler-timers/",
-    "description": "7- and 14-day after follow-ups that survive restarts: DueTimerScanner.run_once as an APScheduler cron or interval job, scheduler role."
+    "url": "/guide/apscheduler-timers/"
   },
   {
+    "description": "Background jobs: load, send, persist with optimistic retry on ConflictError, written by hand for RQ, arq and Dramatiq.",
+    "section": "Recipes",
     "title": "Recipe: RQ, arq and Dramatiq workers",
-    "section": "Recipes",
-    "url": "/guide/task-queue-workers/",
-    "description": "Background jobs: load, send, persist with optimistic retry on ConflictError, written by hand for RQ, arq and Dramatiq."
+    "url": "/guide/task-queue-workers/"
   },
   {
+    "description": "Multi-step form from a chart in st.session_state or gr.State; back/forward as events, guarded validation, embedded diagram.",
+    "section": "Recipes",
     "title": "Recipe: Streamlit / Gradio wizard",
-    "section": "Recipes",
-    "url": "/guide/form-wizard/",
-    "description": "Multi-step form from a chart in st.session_state or gr.State; back/forward as events, guarded validation, embedded diagram."
+    "url": "/guide/form-wizard/"
   },
   {
+    "description": "Collect slots in any order with re-entering self-transitions, an allSlotsFilled guard, and an after timeout that nudges then abandons.",
+    "section": "Recipes",
     "title": "Recipe: Chatbot slot filling",
-    "section": "Recipes",
-    "url": "/guide/slot-filling/",
-    "description": "Collect slots in any order with re-entering self-transitions, an allSlotsFilled guard, and an after timeout that nudges then abandons."
+    "url": "/guide/slot-filling/"
   },
   {
+    "description": "disabled, internal, canary 1%, canary 25%, GA, rolled back: after bake times, a metrics guard reading a callable, SimulatedClock tests.",
+    "section": "Recipes",
     "title": "Recipe: Feature-flag rollout",
-    "section": "Recipes",
-    "url": "/guide/feature-flag-rollout/",
-    "description": "disabled, internal, canary 1%, canary 25%, GA, rolled back: after bake times, a metrics guard reading a callable, SimulatedClock tests."
+    "url": "/guide/feature-flag-rollout/"
   },
   {
+    "description": "Reconnect with RetryPolicy jittered backoff and a from_callback socket actor whose cleanup closes it; both engines.",
+    "section": "Recipes",
     "title": "Recipe: WebSocket reconnect",
-    "section": "Recipes",
-    "url": "/guide/websocket-reconnect/",
-    "description": "Reconnect with RetryPolicy jittered backoff and a from_callback socket actor whose cleanup closes it; both engines."
+    "url": "/guide/websocket-reconnect/"
   },
   {
+    "description": "An HTTP client: retry 5xx/429/timeouts with backoff, never 4xx, behind a shared CircuitBreaker that fails fast.",
+    "section": "Recipes",
     "title": "Recipe: Circuit breaker & retry",
-    "section": "Recipes",
-    "url": "/guide/circuit-breaker-retry/",
-    "description": "An HTTP client: retry 5xx/429/timeouts with backoff, never 4xx, behind a shared CircuitBreaker that fails fast."
+    "url": "/guide/circuit-breaker-retry/"
   },
   {
-    "description": "Generate diagrams from machines — Mermaid, PlantUML, ASCII format, statechart visualization.",
+    "description": "Generate diagrams from machines \u2014 Mermaid, PlantUML, ASCII format, statechart visualization.",
     "section": "Advanced",
     "title": "Diagram Export",
     "url": "/guide/diagrams/"
@@ -322,10 +336,10 @@
     "url": "/guide/cli-hierarchy/"
   },
   {
-    "title": "Stately Editor → Python",
+    "description": "Export from the Stately editor, the version key, meta / description / x- keys (meta.publish read by the outbox; meta.tools planned), xsm validate, the VS Code JSON Schema for *.machine.json, the round trip.",
     "section": "CLI Tool",
-    "url": "/guide/stately-export/",
-    "description": "Export from the Stately editor, the version key, meta / description / x- keys (meta.publish read by the outbox; meta.tools planned), xsm validate, the VS Code JSON Schema for *.machine.json, the round trip."
+    "title": "Stately Editor \u2192 Python",
+    "url": "/guide/stately-export/"
   },
   {
     "description": "pytest plugin from the [testing] extra: @pytest.mark.xstate_machine, xsm_interp / xsm_ainterp / xsm_clock / xsm_ran / xsm_store fixtures, xstate_guards_false, xsm_send_all, xsm_snapshot with --xsm-update-snapshots.",
@@ -343,11 +357,7 @@
     "description": "Live inspector: InspectorPlugin speaks the @statelyai/inspect protocol; SseSink, JsonLinesSink, WebSocketSink; xsm inspect --live, xsm sim --record, xsm replay; token, loopback and context allow-list.",
     "section": "Integrations",
     "title": "Live inspector",
-    "url": "/guide/integration-inspector/",
-    "description": "Event-driven core: CloudEvents Envelope, BrokerAdapter / FakeBrokerAdapter, InboundDispatcher (dedup, per-subject order, poison to DLQ), transactional outbox (meta.publish, SQLiteOutboxStore), dead letters and xsm dlq replay, SagaBuilder, ChoreographyRouter, AsyncAPI, [cloudevents] extra.",
-    "section": "Integrations",
-    "title": "Event-driven (EDA)",
-    "url": "/guide/integration-eda/"
+    "url": "/guide/integration-inspector/"
   },
   {
     "description": "Broker adapters: Redis Streams, Kafka (aiokafka), RabbitMQ (aio-pika), NATS JetStream, Amazon SQS (boto3) -- at-least-once, per-subject order, redelivery counts as attempts, poison to DLQ, choosing a broker.",
@@ -362,7 +372,7 @@
     "url": "/guide/integration-celery/"
   },
   {
-    "description": "Complete reference — create_machine, Interpreter, SyncInterpreter, MachineLogic, State, StateMachine, MachineBuilder, Event, exceptions.",
+    "description": "Complete reference \u2014 create_machine, Interpreter, SyncInterpreter, MachineLogic, State, StateMachine, MachineBuilder, Event, exceptions.",
     "section": "Reference",
     "title": "API Reference",
     "url": "/api/"

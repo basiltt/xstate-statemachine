@@ -571,7 +571,7 @@ Step arguments are plain strings from `parsers.parse`; nothing in a `.feature` f
 
 | pytest | Python | Tested in CI |
 |:--|:--|:--|
-| 8.x – 9.x | 3.9 – 3.14 | ✅ `[testing]` cell (Linux); the repository's own suite runs with the plugin loaded on every matrix cell |
+| 8.x – 9.x | 3.9 – 3.15 | ✅ `[testing]` cell (Linux); the repository's own suite runs with the plugin loaded on every matrix cell |
 
 ## Troubleshooting
 
