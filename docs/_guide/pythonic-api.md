@@ -617,10 +617,11 @@ loaded = State("loaded")
 error = State("error")
 
 # ── Define Transitions ─────────────────────────────────────
-idle.to(loading, event="FETCH")
-loaded.to(loading, event="REFRESH")
-error.to(loading, event="RETRY", guard="hasRetriesLeft")
-error.to(idle, event="CANCEL")
+# `.to()` RETURNS a Transition; hand them to build_machine(transitions=...)
+fetch = idle.to(loading, event="FETCH")
+refresh = loaded.to(loading, event="REFRESH")
+retry = error.to(loading, event="RETRY", guard="hasRetriesLeft")
+cancel = error.to(idle, event="CANCEL")
 
 
 # ── Define Logic ────────────────────────────────────────────
@@ -631,7 +632,7 @@ def store_items(interpreter, context, event, action_def):
 
 @action
 def store_error(interpreter, context, event, action_def):
-    context["error"] = str(event.data)
+    context["error"] = str(event.error)
 
 
 @guard
@@ -641,16 +642,20 @@ def has_retries_left(context, event):
 
 @service
 def fetch_items(interpreter, context, event):
-    import requests
-
-    resp = requests.get("https://api.example.com/items")
-    return resp.json()
+    # In real code: an HTTP call. Its return value becomes `event.data`.
+    return [
+        {
+            "id": 1,
+            "name": "widget",
+        }
+    ]
 
 
 # ── Build and Run ───────────────────────────────────────────
 machine = build_machine(
     id="itemLoader",
     states=[idle, loading, loaded, error],
+    transitions=[fetch, refresh, retry, cancel],
     actions=[store_items, store_error],
     guards=[has_retries_left],
     services=[fetch_items],
@@ -663,7 +668,8 @@ machine = build_machine(
 
 interp = SyncInterpreter(machine).start()
 interp.send("FETCH")
-print(interp.active_state_ids)
+print(interp.active_state_ids)  # {'itemLoader.loaded'}
+print(interp.context["items"])  # [{'id': 1, 'name': 'widget'}]
 interp.stop()
 ```
 
@@ -673,7 +679,7 @@ interp.stop()
 |-----------|------|:--------:|-------------|
 | `id` | `str` | **Yes** | Machine identifier. |
 | `states` | `list[State]` | **Yes** | All top-level states. |
-| `transitions` | `list[Transition]` | No | Additional transitions (beyond those created by `.to()`). |
+| `transitions` | `list[Transition]` | No | The machine's transitions. `State.to()` only *builds* a `Transition` object; it is not registered until listed here (inside a `StateMachine` class the metaclass does this for you). |
 | `actions` | `list[callable]` | No | Action functions (decorated with `@action` or raw). |
 | `guards` | `list[callable]` | No | Guard functions (decorated with `@guard` or raw). |
 | `services` | `list[callable]` | No | Service functions (decorated with `@service` or raw). |
