@@ -62,6 +62,18 @@ charts may need their expected lists updated.
   transition declared on the machine root likewise runs the root's own
   `exit` and `entry` actions. Drop `reenter: true` where the source's
   `entry` / `exit` actions must not run again.
+- **Completing the machine runs the remaining exit actions.** When the
+  machine reaches a top-level final state, the `exit` actions of every
+  state still active -- the final state just entered and the machine root
+  included -- now run in reverse document order, after the final state's
+  `entry` actions and after `output` is resolved (`x_a`, `e_done`,
+  `x_done`, `x_root`). This also happens when `start()` lands directly on
+  a final state. Before, completion ran no further exit actions. XState
+  v5 does this as part of the step that completes the machine; the
+  configuration is unchanged (a done machine still reports its final
+  state). Cleanup that should run only on cancellation, not on normal
+  completion, belongs in an `exit` action of a non-final state, or check
+  the triggering event in the action.
 
 ### Fixed
 

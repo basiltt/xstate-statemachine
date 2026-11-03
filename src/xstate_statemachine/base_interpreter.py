@@ -4897,7 +4897,7 @@ class BaseInterpreter(Generic[TContext]):
 
             # 🎉 If we entered a final state, check if its parent is now complete.
             if state.is_final:
-                await self._check_and_fire_on_done(state)
+                await self._check_and_fire_on_done(state, trigger_event)
 
     @staticmethod
     def _complete_entry_set(to_enter: Set[StateNode[Any]]) -> None:
@@ -5181,7 +5181,9 @@ class BaseInterpreter(Generic[TContext]):
         return False
 
     async def _check_and_fire_on_done(
-        self, final_state: StateNode[Any]
+        self,
+        final_state: StateNode[Any],
+        event: Optional[AnyEvent] = None,
     ) -> None:
         """Bubbles up from a final state to fire parent `onDone` transitions.
 
@@ -5190,8 +5192,15 @@ class BaseInterpreter(Generic[TContext]):
         according to `_is_state_done`. If so, it dispatches the corresponding
         `done.state.*` event to trigger the `onDone` transition.
 
+        A top-level final state completes the machine: the output is
+        resolved, every active state's ``exit`` actions run (reverse
+        document order, root last -- XState v5) and the status becomes
+        ``"done"``.
+
         Args:
             final_state (StateNode): The final state that was just entered.
+            event (Optional[Event]): The event of the step that entered it;
+                handed to the exit actions run on completion.
         """
         ancestor = final_state.parent
         while ancestor:
@@ -5217,11 +5226,28 @@ class BaseInterpreter(Generic[TContext]):
         #    own, matching XState: the machine describes what the *actor*
         #    produces, the final state only contributes done-data upward.
         if final_state.parent is self.machine or final_state.parent is None:
+            if self.status != "running":
+                return
             machine_output = getattr(self.machine, "machine_output", None)
-            if machine_output is not None:
-                self._complete(self._resolve_output_value(machine_output))
-            else:
-                self._complete(self._resolve_output(final_state))
+            output = (
+                self._resolve_output_value(machine_output)
+                if machine_output is not None
+                else self._resolve_output(final_state)
+            )
+            # 🚪 XState v5 microstep: once the machine is done, the exit
+            #    actions of EVERY still-active state -- the final state just
+            #    entered and the root included -- run, in reverse document
+            #    order, after the output was resolved. The configuration is
+            #    kept (a done snapshot still reports its final state).
+            trigger_event = event or _EXIT_EVENT
+            for state in sorted(
+                self._active_state_nodes, key=_doc_order_key, reverse=True
+            ):
+                if state.exit:
+                    await self._execute_lifecycle_actions(
+                        state.exit, trigger_event
+                    )
+            self._complete(output)
 
     def _resolve_output_value(self, output: Any) -> Any:
         """Resolves an `output` declaration to a concrete value.

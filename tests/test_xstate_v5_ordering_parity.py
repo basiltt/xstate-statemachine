@@ -323,5 +323,67 @@ class TestReenterHasDomainAboveTheSource(_Parity):
         )
 
 
+class TestExitActionsRunOnCompletion(_Parity):
+    """Reaching a top-level final state runs every remaining exit action."""
+
+    CONFIG = {
+        "id": "m",
+        "initial": "a",
+        "exit": "x_root",
+        "states": {
+            "a": {"exit": "x_a", "on": {"END": "done"}},
+            "done": {"type": "final", "entry": "e_done", "exit": "x_done"},
+        },
+    }
+
+    def test_final_state_and_root_exit_after_entry(self) -> None:
+        self.check(
+            self.CONFIG,
+            ["END"],
+            [[], ["x_a", "e_done", "x_done", "x_root"]],
+            state_ids=["m.done"],
+            status="done",
+        )
+
+    def test_starting_in_a_final_state_also_exits(self) -> None:
+        """xstate 5.33.3: e_root, e_done, x_done, x_root at start."""
+        config = {
+            "id": "m",
+            "initial": "done",
+            "entry": "e_root",
+            "exit": "x_root",
+            "states": {
+                "done": {"type": "final", "entry": "e_done", "exit": "x_done"}
+            },
+        }
+        self.check(
+            config,
+            [],
+            [["e_root", "e_done", "x_done", "x_root"]],
+            state_ids=["m.done"],
+            status="done",
+        )
+
+    def test_output_is_resolved_before_the_exit_actions(self) -> None:
+        config = {
+            "id": "m",
+            "initial": "a",
+            "context": {"n": 1},
+            "output": lambda args: args["context"]["n"],
+            "exit": {
+                "type": "xstate.assign",
+                "params": {"assignment": {"n": 99}},
+            },
+            "states": {
+                "a": {"on": {"END": "done"}},
+                "done": {"type": "final"},
+            },
+        }
+        _, interp = _run_sync(config, ["END"])
+        self.assertEqual("done", interp.status)
+        self.assertEqual(1, interp.output)
+        self.assertEqual({"n": 99}, interp.context)
+
+
 if __name__ == "__main__":
     unittest.main()
