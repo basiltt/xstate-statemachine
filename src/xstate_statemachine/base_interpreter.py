@@ -5332,13 +5332,32 @@ class BaseInterpreter(Generic[TContext]):
         would be surprising and would break existing machines. Only a total
         absence of `onError` counts as unhandled.
 
+        A ``"*"`` or partial descriptor matching ``error.platform.<id>``
+        (``"error.*"``, ``"error.platform.*"``) on any active state counts
+        as well: since XState v5 parity those descriptors receive engine
+        events, so the failure is consumed there and the machine keeps
+        running, as it does in XState.
+
         Args:
             invocation (Any): The `InvokeDefinition` that failed.
 
         Returns:
-            bool: `True` if any `onError` transition is declared.
+            bool: `True` if any `onError` transition -- or a wildcard /
+            partial descriptor that receives the failure -- is declared.
         """
-        return bool(getattr(invocation, "on_error", None))
+        if getattr(invocation, "on_error", None):
+            return True
+        invoke_id = getattr(invocation, "id", None)
+        if not invoke_id:
+            return False
+        event_type = f"error.platform.{invoke_id}"
+        for state in list(self._active_state_nodes):
+            if (state._on_partials or state._on_has_wildcard) and any(
+                key != event_type
+                for key in self._matching_descriptors(state, event_type)
+            ):
+                return True
+        return False
 
     # 📨 Maximum events held under ``onUnhandled: "defer"`` before the
     #    oldest is evicted. A permanently-unhandled event type must not
@@ -5721,10 +5740,14 @@ class BaseInterpreter(Generic[TContext]):
         - the bare wildcard ``"*"`` matches anything and is always last.
 
         🏛️ Architecture decision: ordering matters -- SCXML and XState both
-        require the most specific descriptor to win. Engine-synthesised
-        events (`done.*`, `error.*`, `after.*`, `xstate.*`) match ONLY an
-        exact key: a user's ``"*"`` means "any event I might receive", not
-        "swallow my own timers and service results".
+        require the most specific descriptor to win.
+
+        ``system=True`` returns the exact key only. The selection walk uses
+        it for engine-synthesised events (`done.*`, `error.*`, `after.*`,
+        `xstate.*`) so that a state's OWN `onDone` / `after` / `onError`
+        handler -- which is not an `on` key -- is ranked before its
+        ``"*"`` and partial descriptors; it then offers those descriptors
+        to the engine event too, as XState's ``getCandidates`` does.
 
         ⚡ #55 part 2: reads the index `StateNode` precompiles at build
         time (`_on_partials`, `_on_has_wildcard`) instead of scanning the
@@ -5737,10 +5760,6 @@ class BaseInterpreter(Generic[TContext]):
         matches: List[str] = []
         if event_type in on_map:
             matches.append(event_type)
-        # 🏛️ #79: engine-synthesised events match ONLY an exact key -- a
-        #    `"*"` handler must not swallow `done.invoke.*`. Decided by
-        #    provenance: a user event that merely LOOKS reserved still
-        #    reaches `"*"` and `"prefix.*"` descriptors.
         if system:
             return matches
         for key, prefix in node._on_partials:  # already longest-first
@@ -5806,6 +5825,31 @@ class BaseInterpreter(Generic[TContext]):
         system = is_system_event(event)
         is_after = system and isinstance(event, AfterEvent)
 
+        def _scan(node: StateNode[Any], keys: Sequence[str]) -> bool:
+            """Collect `node.on[key]` for *keys*; True if a forbidden
+            transition consumed the event (stop the upward walk)."""
+            on_map = node.on
+            for key in keys:
+                for t in on_map[key]:
+                    # 🚫 A forbidden transition consumes the event here so
+                    #    no ancestor handler can see it.
+                    if t.forbidden:
+                        return True
+                    if _passes(t):
+                        eligible.append(t)
+                    elif (
+                        t.guard_def is not None
+                        and self._pending_guard_error is None
+                    ):
+                        # 🚦 #153: declared, matched, refused by guard.
+                        # 🧯 #170: a guard that CRASHED under
+                        #    guardErrorPolicy="raise" is not a denial;
+                        #    `Receipt.error` carries that case and
+                        #    `denied` stays False, as documented ("the
+                        #    guard returned False").
+                        self._guard_denied_this_step = True
+            return False
+
         current: Optional[StateNode[Any]] = state
         while current:
             # 📨 Standard `on` event transitions, including wildcard and
@@ -5829,28 +5873,8 @@ class BaseInterpreter(Generic[TContext]):
                     keys = self._matching_descriptors(
                         current, event_type, system=system
                     )
-                for key in keys:
-                    for t in on_map[key]:
-                        # 🚫 A forbidden transition consumes the event here so
-                        #    no ancestor handler can see it.
-                        if t.forbidden:
-                            blocked = True
-                            break
-                        if _passes(t):
-                            eligible.append(t)
-                        elif (
-                            t.guard_def is not None
-                            and self._pending_guard_error is None
-                        ):
-                            # 🚦 #153: declared, matched, refused by guard.
-                            # 🧯 #170: a guard that CRASHED under
-                            #    guardErrorPolicy="raise" is not a denial;
-                            #    `Receipt.error` carries that case and
-                            #    `denied` stays False, as documented ("the
-                            #    guard returned False").
-                            self._guard_denied_this_step = True
-                    if blocked:
-                        break
+                if keys:
+                    blocked = _scan(current, keys)
                 if blocked:
                     logger.debug(
                         "🚫 Event '%s' forbidden at '%s'; stopping upward "
@@ -5927,6 +5951,28 @@ class BaseInterpreter(Generic[TContext]):
                         for t in inv.on_error:
                             if _passes(t):
                                 eligible.append(t)
+
+            # ✳️ XState v5 `getCandidates`: `"*"` and `"prefix.*"` match
+            #    engine-generated events too (`done.invoke.*`,
+            #    `error.platform.*`, `after.*`, `done.state.*`). They rank
+            #    after this state's own exact handlers above -- an `onDone`
+            #    / `after` / `onError` on the SAME state still wins -- but a
+            #    wildcard on a deeper state outranks an ancestor's handler,
+            #    exactly as for user events. Up to 0.12 engine events never
+            #    reached a wildcard, so a service failure caught only by
+            #    `"*"` put the machine into `error`.
+            if system and (current._on_partials or current._on_has_wildcard):
+                if _scan(
+                    current,
+                    [
+                        key
+                        for key in self._matching_descriptors(
+                            current, event_type
+                        )
+                        if key != event_type
+                    ],
+                ):
+                    break
 
             current = current.parent
 

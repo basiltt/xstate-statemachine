@@ -3062,13 +3062,18 @@ class TestModelRepr(unittest.TestCase):
 # 🔒 Wildcards Must Not Swallow Internal Events
 # -----------------------------------------------------------------------------
 class TestWildcardExcludesInternalEvents(unittest.IsolatedAsyncioTestCase):
-    """Pins that `*` never intercepts engine-generated lifecycle events.
+    """Pins that `*` never outranks a state's own lifecycle handler.
 
     🐛 Regression: adding wildcard support made `on: {"*": ...}` match the
     synthetic `done.invoke.*`, `done.state.*`, `error.platform.*` and
-    `after.*` events the engine raises to drive `onDone`, `onError` and
-    `after`. A single wildcard therefore silently broke every invoke and
-    delayed transition in that state.
+    `after.*` events AHEAD of the `onDone`, `onError` and `after` handlers
+    they exist to drive. A single wildcard therefore silently broke every
+    invoke and delayed transition in that state.
+
+    Since XState v5 parity `*` DOES receive engine events (XState's
+    `getCandidates` applies it to every event), but -- as in XState -- only
+    when the state declares no exact handler for them; see
+    `tests/test_xstate_v5_ordering_parity.py::TestWildcardMatchesEngineEvents`.
     """
 
     def test_wildcard_does_not_hijack_invoke_on_done(self) -> None:

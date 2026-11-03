@@ -385,5 +385,126 @@ class TestExitActionsRunOnCompletion(_Parity):
         self.assertEqual({"n": 99}, interp.context)
 
 
+class TestWildcardMatchesEngineEvents(_Parity):
+    """`*` / `prefix.*` receive engine events (XState `getCandidates`)."""
+
+    CONFIG = {
+        "id": "w",
+        "initial": "a",
+        "states": {
+            "a": {
+                "invoke": {"src": "ok", "id": "ok"},
+                "on": {"*": {"actions": "starA"}, "NEXT": "b"},
+            },
+            "b": {
+                "invoke": {"src": "boom", "id": "boom"},
+                "on": {"*": {"actions": "starB"}},
+            },
+        },
+    }
+
+    @staticmethod
+    def _logic(ran: List[str]) -> Any:
+        logic = stub_logic(
+            TestWildcardMatchesEngineEvents.CONFIG,
+            ran=ran,
+            service_results={"ok": 1},
+        )
+
+        def boom(*_args: Any, **_kw: Any) -> Any:
+            raise RuntimeError("kaboom")
+
+        logic.services["boom"] = boom  # type: ignore[index]
+        return logic
+
+    def test_done_and_error_reach_the_wildcard_on_both_engines(self) -> None:
+        # Sync engine.
+        ran: List[str] = []
+        machine = create_machine(self.CONFIG, logic=self._logic(ran))
+        interp = SyncInterpreter(machine).start()
+        self.assertEqual(["starA"], ran)  # done.invoke.ok
+        del ran[:]
+        interp.send("NEXT")
+        self.assertEqual(["starB"], ran)  # error.platform.boom
+        self.assertEqual("running", interp.status)
+        self.assertEqual({"w.b"}, interp.current_state_ids)
+        del ran[:]
+        interp.send("PING")
+        self.assertEqual(["starB"], ran)
+
+        # Async engine.
+        async def main() -> None:
+            ran2: List[str] = []
+            m2 = create_machine(self.CONFIG, logic=self._logic(ran2))
+            i2 = Interpreter(m2)
+            await i2.start()
+            await i2.await_settled(2.0)
+            self.assertEqual(["starA"], ran2)
+            del ran2[:]
+            await i2.send("NEXT", wait=True)
+            await i2.await_settled(2.0)
+            self.assertEqual(["starB"], ran2)
+            self.assertEqual("running", i2.status)
+            await i2.stop()
+
+        asyncio.run(main())
+
+    def test_partial_descriptor_catches_a_service_failure(self) -> None:
+        config = {
+            "id": "w",
+            "initial": "b",
+            "states": {
+                "b": {
+                    "invoke": {"src": "boom", "id": "boom"},
+                    "on": {"error.platform.*": "failed"},
+                },
+                "failed": {},
+            },
+        }
+        logic = stub_logic(config)
+
+        def boom(*_args: Any, **_kw: Any) -> Any:
+            raise RuntimeError("kaboom")
+
+        logic.services["boom"] = boom  # type: ignore[index]
+        interp = SyncInterpreter(create_machine(config, logic=logic)).start()
+        self.assertEqual("running", interp.status)
+        self.assertEqual({"w.failed"}, interp.current_state_ids)
+
+    def test_own_on_done_still_outranks_the_wildcard(self) -> None:
+        config = {
+            "id": "m",
+            "initial": "l",
+            "states": {
+                "l": {
+                    "invoke": {"src": "s", "id": "s", "onDone": "ok"},
+                    "on": {"*": "wild"},
+                },
+                "ok": {},
+                "wild": {},
+            },
+        }
+        _, interp = _run_sync(config, [])
+        self.assertEqual({"m.ok"}, interp.current_state_ids)
+
+    def test_deeper_wildcard_outranks_an_ancestor_handler(self) -> None:
+        """As in XState: the deepest matching state wins, `*` included."""
+        config = {
+            "id": "m",
+            "initial": "p",
+            "states": {
+                "p": {
+                    "invoke": {"src": "s", "id": "s", "onDone": "#m.ok"},
+                    "initial": "c",
+                    "states": {"c": {"on": {"*": {"actions": "star"}}}},
+                },
+                "ok": {},
+            },
+        }
+        trace, interp = _run_sync(config, [])
+        self.assertEqual([["star"]], trace)
+        self.assertEqual({"m.p.c"}, interp.current_state_ids)
+
+
 if __name__ == "__main__":
     unittest.main()

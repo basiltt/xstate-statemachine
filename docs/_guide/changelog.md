@@ -78,6 +78,19 @@ charts may need their expected lists updated.
   state). Cleanup that should run only on cancellation, not on normal
   completion, belongs in an `exit` action of a non-final state, or check
   the triggering event in the action.
+- **`"*"` and `"prefix.*"` also receive engine events.** Wildcard and
+  partial descriptors now match the events the engine generates
+  (`done.invoke.*`, `error.platform.*`, `after.*`, `done.state.*`), as
+  XState v5's descriptor matching does. A state's own `onDone`, `onError`
+  or `after` handler still outranks a `"*"` on the same state; a `"*"` on
+  a deeper state outranks an ancestor's handler, exactly as for ordinary
+  events. A service failure that only a `"*"` (or `"error.*"`) handler
+  catches is now consumed there and the machine keeps running; before,
+  the wildcard never saw it and the machine went to `status == "error"`.
+  If a catch-all handler should ignore engine events, give it a guard
+  that checks the event type (for example
+  `lambda ctx, ev: not ev.type.startswith(("done.", "error.", "after."))`)
+  or declare explicit `onDone` / `onError` handlers.
 
 ### Fixed
 
