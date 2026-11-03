@@ -72,25 +72,58 @@ def logic_names(
         a, g, s = extract_logic_names(dict(config_or_machine))
         return set(a), set(g), set(s)
 
-    from .actions import is_builtin
     from .validation import transitions_of, walk
 
     actions: Set[str] = set()
     guards: Set[str] = set()
     services: Set[str] = set()
     for node in walk(config_or_machine):
-        for act in list(node.entry) + list(node.exit):
-            if not is_builtin(act.type):
-                actions.add(act.type)
+        _action_names(list(node.entry) + list(node.exit), actions, guards)
         for inv in node.invoke:
             if inv.src:
                 services.add(inv.src)
         for _label, t in transitions_of(node):
-            for act in t.actions:
-                if not is_builtin(act.type):
-                    actions.add(act.type)
+            _action_names(t.actions, actions, guards)
             _guard_names(t.guard_def, guards)
     return actions, guards, services
+
+
+def _action_names(
+    action_defs: Any, actions: Set[str], guards: Set[str], depth: int = 0
+) -> None:
+    """Collect user action names, descending into static `choose` branches
+    (their actions AND their guards) -- the engine looks those up by name
+    when the branch runs."""
+    from .actions import CHOOSE, choose_branches, is_builtin, resolve_builtin
+    from .models import ActionDefinition, GuardDefinition
+
+    if depth > 32:  # a hand-built self-referencing choose; stop quietly
+        return
+    for act in action_defs:
+        if not isinstance(act, ActionDefinition):
+            try:
+                act = ActionDefinition(act)
+            except Exception:  # noqa: BLE001 -- not a static action
+                continue
+        if not is_builtin(act.type):
+            actions.add(act.type)
+            continue
+        if resolve_builtin(act.type) != CHOOSE:
+            continue
+        for branch in choose_branches(act.params):
+            raw = branch.get("actions", [])
+            _action_names(
+                raw if isinstance(raw, list) else [raw],
+                actions,
+                guards,
+                depth + 1,
+            )
+            guard_cfg = branch.get("guard", branch.get("cond"))
+            if guard_cfg is not None and not callable(guard_cfg):
+                try:
+                    _guard_names(GuardDefinition(guard_cfg), guards)
+                except Exception:  # noqa: BLE001 -- not a static guard
+                    pass
 
 
 def stub_logic(

@@ -108,6 +108,7 @@ from .actions import (
     LOG,
     PURE,
     ActionEnqueuer,
+    choose_branches,
 )
 from .models import (
     SPAWN_BLOCKING_PREFIX,
@@ -4095,12 +4096,13 @@ class BaseInterpreter(Generic[TContext]):
             return produced if isinstance(produced, list) else [produced]
 
         if canonical == CHOOSE:
-            conditions = (
-                params.get("conditions", [])
-                if isinstance(params, dict)
-                else []
-            )
-            for branch in conditions:
+            # 🔀 First branch whose guard passes (or that has none) wins --
+            #    XState's `enqueueActions(({check}) => ...)` translation of
+            #    `choose`. `params.branches` is the JSON dialect (the
+            #    conformance fixtures, the Rust engine); `params.conditions`
+            #    is what `choose()` builds. Up to 0.12 only `conditions`
+            #    was read, so a JSON `choose` silently ran no branch.
+            for branch in choose_branches(params):
                 guard_cfg = branch.get("guard", branch.get("cond"))
                 if guard_cfg is None or self._is_guard_satisfied(
                     GuardDefinition(guard_cfg), event
@@ -6658,7 +6660,8 @@ class BaseInterpreter(Generic[TContext]):
 
         Args:
             guard (GuardDefinition): The `stateIn` guard, whose params carry
-                the state id under `state` (or `value`).
+                the state id under `stateValue` (XState's own key, which the
+                structural hash already reads), `state` or `value`.
             event (AnyEvent): The current event,
                 used only to resolve callable params.
 
@@ -6668,7 +6671,9 @@ class BaseInterpreter(Generic[TContext]):
         params = self._resolve_params(guard.params, event)
         target = None
         if isinstance(params, dict):
-            target = params.get("state", params.get("value"))
+            target = params.get("stateValue")
+            if target is None:
+                target = params.get("state", params.get("value"))
         elif isinstance(params, str):
             target = params
         if not isinstance(target, str) or not target:

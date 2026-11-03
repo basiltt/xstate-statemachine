@@ -103,6 +103,21 @@ charts may need their expected lists updated.
   exports use the first target, so the hash of every chart that built
   before is unchanged and matches the Rust engine. The `[pydantic]`
   config gate and the published JSON schema accept a list of strings.
+- **The JSON `choose` action runs its first matching branch.** A
+  `{"type": "xstate.choose", "params": {"branches": [{"guard": ...,
+  "actions": ...}, ...]}}` action now evaluates its branches in order
+  and runs the actions of the first whose guard passes (a branch without
+  a guard always passes); branch guards may be composite (`and` / `or` /
+  `not`) or `stateIn`. Before, only the `params.conditions` spelling that
+  the `choose()` helper builds was read, so a JSON `choose` silently ran
+  no branch. This is how the XState translation of `choose`
+  (`enqueueActions` with `check`) and the Rust engine behave. The
+  `stateIn` guard also reads XState's own `params.stateValue` key (as
+  well as `state` / `value`); before, `{"type": "stateIn", "params":
+  {"stateValue": "#m.p.mode.night"}}` was always false. `choose()` and
+  `params.conditions` keep working unchanged, and `stub_logic()` /
+  `logic_names()` now include the action and guard names inside `choose`
+  branches.
 
 ### Fixed
 

@@ -598,5 +598,140 @@ class TestMultiTargetParallelEntry(_Parity):
             create_machine(chart(["#m.p.r1.x", 7]))  # type: ignore[list-item]
 
 
+class TestJsonChooseWithCompositeGuards(_Parity):
+    """JSON `choose` (`params.branches`) with `and`/`or`/`not`/`stateIn`."""
+
+    CONFIG = {
+        "id": "m",
+        "initial": "p",
+        "states": {
+            "p": {
+                "type": "parallel",
+                "states": {
+                    "mode": {
+                        "initial": "day",
+                        "states": {
+                            "day": {"on": {"NIGHT": "night"}},
+                            "night": {},
+                        },
+                    },
+                    "work": {
+                        "initial": "idle",
+                        "states": {
+                            "idle": {
+                                "on": {
+                                    "PING": {
+                                        "actions": [
+                                            {
+                                                "type": "choose",
+                                                "params": {
+                                                    "branches": [
+                                                        {
+                                                            "guard": {
+                                                                "type": "stateIn",
+                                                                "params": {
+                                                                    "stateValue": "#m.p.mode.night"
+                                                                },
+                                                            },
+                                                            "actions": "atNight",
+                                                        },
+                                                        {
+                                                            "guard": {
+                                                                "type": "and",
+                                                                "params": {
+                                                                    "guards": [
+                                                                        "isAdmin",
+                                                                        {
+                                                                            "type": "not",
+                                                                            "params": {
+                                                                                "guard": "isBanned"
+                                                                            },
+                                                                        },
+                                                                    ]
+                                                                },
+                                                            },
+                                                            "actions": "adminByDay",
+                                                        },
+                                                        {
+                                                            "actions": "otherwise"
+                                                        },
+                                                    ]
+                                                },
+                                            }
+                                        ]
+                                    },
+                                    "LOCK": {
+                                        "target": "locked",
+                                        "guard": {
+                                            "type": "or",
+                                            "params": {
+                                                "guards": [
+                                                    "isAdmin",
+                                                    "isBanned",
+                                                ]
+                                            },
+                                        },
+                                    },
+                                }
+                            },
+                            "locked": {},
+                        },
+                    },
+                },
+            }
+        },
+    }
+
+    def test_first_matching_branch_runs(self) -> None:
+        self.check(
+            self.CONFIG,
+            ["PING", "NIGHT", "PING", "LOCK"],
+            [[], ["adminByDay"], [], ["atNight"], []],
+            state_ids=["m.p.mode.night", "m.p.work.locked"],
+            guards={"isAdmin": True, "isBanned": False},
+        )
+
+    def test_fallback_branch_without_guard(self) -> None:
+        trace, _ = _run_sync(
+            self.CONFIG, ["PING"], guards={"isAdmin": False, "isBanned": False}
+        )
+        self.assertEqual(["otherwise"], trace[1])
+
+    def test_stub_logic_sees_branch_actions_and_guards(self) -> None:
+        from src.xstate_statemachine.testing_utils import logic_names
+
+        actions, guards, _ = logic_names(
+            create_machine(self.CONFIG, logic=stub_logic(self.CONFIG))
+        )
+        self.assertLessEqual({"atNight", "adminByDay", "otherwise"}, actions)
+        self.assertLessEqual({"isAdmin", "isBanned"}, guards)
+
+    def test_python_choose_helper_still_uses_conditions(self) -> None:
+        from src.xstate_statemachine import choose
+
+        config = {
+            "id": "c",
+            "initial": "a",
+            "states": {
+                "a": {
+                    "on": {
+                        "GO": {
+                            "actions": [
+                                choose(
+                                    [
+                                        {"guard": "no", "actions": "first"},
+                                        {"actions": ["second"]},
+                                    ]
+                                )
+                            ]
+                        }
+                    }
+                }
+            },
+        }
+        trace, _ = _run_sync(config, ["GO"], guards={"no": False})
+        self.assertEqual(["second"], trace[1])
+
+
 if __name__ == "__main__":
     unittest.main()

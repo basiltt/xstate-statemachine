@@ -388,6 +388,11 @@ def pure(fn: Callable[..., Any]) -> Dict[str, Any]:
 def choose(conditions: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Builds a `choose` action selecting the first matching branch.
 
+    The JSON form is ``{"type": "xstate.choose", "params": {"branches":
+    [...]}}`` (``"conditions"`` is accepted as a synonym of ``"branches"``);
+    a branch guard may be any guard form, composite ``and`` / ``or`` /
+    ``not`` and ``stateIn`` included.
+
     Args:
         conditions (List[Dict[str, Any]]): Entries of
             `{"guard": ..., "actions": ...}`. The first whose guard passes
@@ -397,6 +402,30 @@ def choose(conditions: List[Dict[str, Any]]) -> Dict[str, Any]:
         Dict[str, Any]: The action definition.
     """
     return {"type": CHOOSE, "params": {"conditions": conditions}}
+
+
+def choose_branches(params: Any) -> List[Dict[str, Any]]:
+    """The branches of a `choose` action, in evaluation order.
+
+    Reads ``params["branches"]`` (the JSON dialect the XState translation
+    and the Rust engine use) or ``params["conditions"]`` (what
+    :func:`choose` builds). Entries that are not mappings are ignored.
+
+    Args:
+        params (Any): The action's (resolved) ``params``.
+
+    Returns:
+        List[Dict[str, Any]]: ``{"guard"|"cond": ..., "actions": ...}``
+        mappings; ``[]`` when there are none.
+    """
+    if not isinstance(params, dict):
+        return []
+    branches = params.get("branches")
+    if branches is None:
+        branches = params.get("conditions")
+    if not isinstance(branches, (list, tuple)):
+        return []
+    return [branch for branch in branches if isinstance(branch, dict)]
 
 
 def enqueue_actions(fn: Callable[..., Any]) -> Dict[str, Any]:
@@ -533,6 +562,7 @@ __all__ = [
     "assign",
     "cancel",
     "choose",
+    "choose_branches",
     "emit",
     "enqueue_actions",
     "escalate",
