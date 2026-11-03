@@ -255,5 +255,73 @@ class TestCrossRegionTargetHasParallelDomain(_Parity):
         )
 
 
+class TestReenterHasDomainAboveTheSource(_Parity):
+    """reenter: true -- the source exits and re-enters before its child."""
+
+    CONFIG = {
+        "id": "m",
+        "initial": "p",
+        "states": {
+            "p": {
+                "initial": "a",
+                "entry": "e_p",
+                "exit": "x_p",
+                "on": {
+                    "SOFT": {"target": ".b", "actions": "soft"},
+                    "HARD": {
+                        "target": ".a",
+                        "reenter": True,
+                        "actions": "hard",
+                    },
+                },
+                "states": {
+                    "a": {"entry": "e_a", "exit": "x_a"},
+                    "b": {"entry": "e_b", "exit": "x_b"},
+                },
+            }
+        },
+    }
+
+    def test_descendant_target_reenters_the_source(self) -> None:
+        self.check(
+            self.CONFIG,
+            ["SOFT", "HARD"],
+            [
+                ["e_p", "e_a"],
+                ["x_a", "soft", "e_b"],
+                ["x_b", "x_p", "hard", "e_p", "e_a"],
+            ],
+            state_ids=["m.p.a"],
+        )
+
+    def test_reentering_root_transition_reenters_the_root(self) -> None:
+        """XState: a re-entering transition on the root exits and enters
+        the root itself; a plain one does not."""
+        config = {
+            "id": "m",
+            "initial": "a",
+            "entry": "e_root",
+            "exit": "x_root",
+            "on": {
+                "R": {"target": ".b", "reenter": True, "actions": "t"},
+                "S": {"target": ".b", "actions": "s"},
+            },
+            "states": {
+                "a": {"entry": "e_a", "exit": "x_a"},
+                "b": {"entry": "e_b", "exit": "x_b"},
+            },
+        }
+        self.check(
+            config,
+            ["R", "S"],
+            [
+                ["e_root", "e_a"],
+                ["x_a", "x_root", "t", "e_root", "e_b"],
+                ["x_b", "s", "e_b"],
+            ],
+            state_ids=["m.b"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -55,6 +55,17 @@ charts may need their expected lists updated.
   event inside that region (every region sees every event, so
   `r2.c: {on: {E: "d"}}` keeps `r1` untouched), or `raise` an event that
   region handles.
+- **`reenter: true` re-enters the source even when the target is its
+  child.** A re-entering transition from `p` to its own child `.a` now
+  exits `p`'s active child and `p` itself, runs the transition actions,
+  then enters `p` and `a` again (`x_b`, `x_p`, `hard`, `e_p`, `e_a`).
+  Before, `reenter` only mattered for a transition targeting its own
+  source, and this one left `p` active (`x_b`, `hard`, `e_a`). In XState
+  v5 `reenter: true` moves the transition domain above the source, so the
+  source exits and re-enters whatever the target. A re-entering
+  transition declared on the machine root likewise runs the root's own
+  `exit` and `entry` actions. Drop `reenter: true` where the source's
+  `entry` / `exit` actions must not run again.
 
 ### Fixed
 

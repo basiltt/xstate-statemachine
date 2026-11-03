@@ -6118,14 +6118,19 @@ class BaseInterpreter(Generic[TContext]):
     ) -> Optional[StateNode[Any]]:
         """XState v5's ``getTransitionDomain``.
 
-        * a transition whose targets all lie inside its source (the source
-          itself included) has the SOURCE as its domain -- unless it
-          re-enters, see below;
+        * a transition that does NOT re-enter and whose targets all lie
+          inside its source (the source itself included) has the SOURCE as
+          its domain: the source stays active;
         * otherwise the domain is the least common ancestor of the source
           and the targets, i.e. the nearest PROPER ancestor of the source
           that contains every target. That ancestor may be a parallel
           state: a transition from one region into a sibling region has
-          the parallel state as its domain.
+          the parallel state as its domain. With ``reenter: true`` the
+          domain is therefore always ABOVE the source, so the source exits
+          and re-enters even when the target is one of its descendants;
+        * a re-entering transition on the machine root has no such
+          ancestor: the domain is ``None`` ("above the root") and the root
+          itself exits and re-enters.
 
         Args:
             transition (TransitionDefinition): The transition to analyse.
@@ -6141,17 +6146,17 @@ class BaseInterpreter(Generic[TContext]):
             else target_state
         )
         source = transition.source
-        if all(
+        if not transition.reenter and all(
             t is source or self._is_proper_descendant(t, source)
             for t in targets
-        ) and not (transition.reenter and source in targets):
+        ):
             return source
         node = source.parent
         while node is not None:
             if all(self._is_proper_descendant(t, node) for t in targets):
                 return node
             node = node.parent
-        return self.machine
+        return None if transition.reenter else self.machine
 
     @staticmethod
     def _is_proper_descendant(
