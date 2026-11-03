@@ -909,6 +909,7 @@ class StateNode(Generic[TContext]):
     exit: List[ActionDefinition]
     invoke: List[InvokeDefinition]
     states: Dict[str, "StateNode[Any]"]
+    doc_order: int
 
     def __init__(
         self,
@@ -1008,6 +1009,17 @@ class StateNode(Generic[TContext]):
         # genuinely deeper state with a terse one. Caching an int also removes
         # repeated string work from the hot event-processing path.
         self.depth: int = parent.depth + 1 if parent else 0
+
+        # 📑 Document order: the node's position in a pre-order walk of the
+        #    config (the root is 0, then each child before its own children,
+        #    siblings in declaration order). XState / SCXML order the entry
+        #    set by it and the exit set by its reverse, so parallel regions
+        #    are entered and exited one whole region at a time, in the order
+        #    the chart declares them. Assigned here, before the children are
+        #    built, so the numbering is pre-order by construction.
+        order = getattr(machine, "_doc_order_next", 0)
+        self.doc_order: int = order
+        machine._doc_order_next = order + 1
 
         # ⚙️ Determine and strictly type the state's `type` attribute.
         self.type = self._determine_state_type(raw_states, cfg_type)
@@ -1687,6 +1699,8 @@ class MachineNode(StateNode[TContext]):
     # ✅ FIX: Pre-declare instance attributes for this subclass as well.
     logic: MachineLogic[TContext]
     initial_context: TContext
+    #: Next free `StateNode.doc_order`; advanced while the tree is parsed.
+    _doc_order_next: int
 
     def __init__(self, config: Dict[str, Any], logic: MachineLogic[TContext]):
         """Initializes the root MachineNode and builds the state tree.

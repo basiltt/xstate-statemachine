@@ -146,6 +146,11 @@ _UNLABELLED_WARNED_MAX = 4096
 AnyEvent = Union[Event, DoneEvent, AfterEvent, ErrorEvent]
 
 
+def _doc_order_key(node: "StateNode[Any]") -> int:
+    """Sort key: a node's document (pre-order) position, see `doc_order`."""
+    return node.doc_order
+
+
 # -----------------------------------------------------------------------------
 # 🏛️ BaseInterpreter Class Definition
 # -----------------------------------------------------------------------------
@@ -4237,18 +4242,19 @@ class BaseInterpreter(Generic[TContext]):
                 # ⚡ A single state to exit (every flat transition and most
                 #    nested ones) needs no sort.
                 #
-                # 🔀 Depth alone leaves ties between sibling parallel
-                #    regions, so set iteration order decided which exited
-                #    first -- the same machine and event could emit exit
-                #    actions in a different order between runs, which is
-                #    untestable and makes cleanup logic subtly unreliable.
-                #    `id` is a stable secondary key.
+                # 🔀 XState / SCXML `exitStates`: REVERSE DOCUMENT ORDER.
+                #    Descendants exit before their ancestors and parallel
+                #    regions exit one whole region at a time, the region
+                #    declared last first. (Up to 0.12 the key was
+                #    `(depth, id)` descending, which interleaved regions --
+                #    every leaf, then every region -- and let an id's
+                #    spelling decide which region went first.)
                 (
                     list(states_to_exit)
                     if len(states_to_exit) <= 1
                     else sorted(
                         states_to_exit,
-                        key=lambda s: (s.depth, s.id),
+                        key=_doc_order_key,
                         reverse=True,
                     )
                 ),

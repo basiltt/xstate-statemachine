@@ -9,6 +9,28 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
 
 ## [Unreleased]
 
+### Changed
+
+**Behaviour change: the next release notes must call this section out.**
+The statechart algorithm now matches XState v5 in the places listed below,
+where it used to give a different answer. Each item was checked against
+xstate 5.33.3 by the conformance cases the Rust engine shares with this
+library. Both engines (`Interpreter` and `SyncInterpreter`) change
+together. Machines that never relied on the old answers are unaffected;
+tests that pin the order of entry or exit actions in parallel or nested
+charts may need their expected lists updated.
+
+- **Exit actions run in reverse document order, one region at a time.**
+  When a transition leaves several states, they now exit in reverse
+  document order: descendants before their ancestors, and in a parallel
+  state the whole region declared last before the region declared above
+  it (for regions `zeta` then `alpha`: `a1`, `alpha`, `z1`, `zeta`).
+  Before, every leaf exited first and then every region, with ties broken
+  by how the state ids sort, so regions interleaved and renaming a state
+  could reorder cleanup. XState and SCXML define the exit order this way.
+  If one region's exit actions must run before another's, declare that
+  region later in the chart.
+
 ### Fixed
 
 - **XState parity: an `invoke` without `input` passes the actor nothing.**
