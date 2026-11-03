@@ -1141,5 +1141,87 @@ class TestGuardEvaluationOrder(unittest.TestCase):
         self.assertEqual(["gA1", "gA2", "gC"], log)
 
 
+class TestAssignComputesAgainstThePriorContext(unittest.TestCase):
+    """One `assign` computes every property against the context BEFORE it.
+
+    XState v5 `assign({a: ({context}) => context.b, b: 1})` gives `a` the
+    OLD `b`: all properties are resolved first, then merged. Consecutive
+    assigns still see each other's writes (case
+    `043_assign_actions_apply_in_order`).
+    """
+
+    def setUp(self) -> None:
+        logging.disable(logging.CRITICAL)
+        self.addCleanup(logging.disable, logging.NOTSET)
+
+    @staticmethod
+    def _config(*actions: Any) -> Dict[str, Any]:
+        return {
+            "id": "m",
+            "initial": "a",
+            "context": {"a": 0, "b": 0},
+            "states": {"a": {"on": {"GO": {"actions": list(actions)}}}},
+        }
+
+    def _run(self, engine: str, *actions: Any) -> Dict[str, Any]:
+        config = self._config(*actions)
+        machine = create_machine(config, logic=stub_logic(config))
+        if engine == "sync":
+            interp = SyncInterpreter(machine).start()
+            interp.send("GO")
+            return dict(interp.context)
+
+        async def main() -> Dict[str, Any]:
+            interp = Interpreter(machine)
+            await interp.start()
+            await interp.send("GO", wait=True)
+            ctx = dict(interp.context)
+            await interp.stop()
+            return ctx
+
+        return asyncio.run(main())
+
+    def test_later_property_does_not_see_an_earlier_one(self) -> None:
+        from src.xstate_statemachine import assign
+
+        action = assign(
+            {
+                "b": 1,
+                "a": lambda args: args["context"]["b"] + 10,
+            }
+        )
+        for engine in ("sync", "async"):
+            with self.subTest(engine=engine):
+                self.assertEqual({"a": 10, "b": 1}, self._run(engine, action))
+
+    def test_properties_swap_without_a_temporary(self) -> None:
+        from src.xstate_statemachine import assign
+
+        action = assign(
+            {
+                "a": lambda args: args["context"]["b"],
+                "b": lambda args: args["context"]["a"],
+            }
+        )
+        config = self._config(action)
+        config["context"] = {"a": "x", "b": "y"}
+        interp = SyncInterpreter(
+            create_machine(config, logic=stub_logic(config))
+        ).start()
+        interp.send("GO")
+        self.assertEqual({"a": "y", "b": "x"}, interp.context)
+
+    def test_consecutive_assigns_see_each_other(self) -> None:
+        from src.xstate_statemachine import assign
+
+        first = assign({"b": 5})
+        second = assign({"a": lambda args: args["context"]["b"] * 2})
+        for engine in ("sync", "async"):
+            with self.subTest(engine=engine):
+                self.assertEqual(
+                    {"a": 10, "b": 5}, self._run(engine, first, second)
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

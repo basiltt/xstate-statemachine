@@ -514,6 +514,57 @@ config — each returns a plain action definition, so they also work as raw JSON
 | `escalate` | Raise an error to the parent |
 | `forward_to` | Forward the current event to another actor |
 
+### `assign` — update context
+
+`assign({...})` maps context keys to new values; a value may be a callable of
+`{context, event}`. As in XState v5, **every** property of one `assign` is
+computed against the context as it was *before* that action, and the
+results are merged afterwards — a property never sees what another property
+of the same `assign` just wrote, so two keys can swap without a temporary:
+
+```python
+from xstate_statemachine import SyncInterpreter, assign, create_machine
+
+config = {
+    "id": "m",
+    "initial": "a",
+    "context": {
+        "left": "x",
+        "right": "y",
+    },
+    "states": {
+        "a": {
+            "on": {
+                "SWAP": {
+                    "actions": assign(
+                        {
+                            "left": lambda args: args["context"]["right"],
+                            "right": lambda args: args["context"]["left"],
+                        }
+                    ),
+                },
+            },
+        },
+    },
+}
+
+interp = SyncInterpreter(create_machine(config)).start()
+interp.send("SWAP")
+assert interp.context == {
+    "left": "y",
+    "right": "x",
+}
+```
+
+Separate `assign` actions run in order, each seeing what the previous ones
+wrote (exit actions, then the transition's actions, then entry actions).
+To derive one key from another key's *new* value, use two `assign`s or a
+single callable `assign(lambda args: {...})` that returns the whole update.
+
+> **Changed after 0.12:** the properties of one `assign` used to be written
+> one at a time, so a later property's callable saw an earlier property's
+> new value.
+
 ### `choose` — branch on guards
 
 ```python

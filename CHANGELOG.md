@@ -171,6 +171,17 @@ charts may need their expected lists updated.
   hook see the new count and order; `can(event)` evaluates exactly what
   `send(event)` would. `stub_logic()` takes a new `guard_log=` list that
   records every guard evaluation.
+- **One `assign` computes every property against the context before it.**
+  `assign({"a": lambda args: args["context"]["b"], "b": 1})` now gives `a`
+  the *old* `b`: all property values (plain or callables of
+  `{context, event}`) are resolved first and then merged into the context,
+  as XState v5's `assign` does, so two keys can swap without a temporary.
+  Before, each property was written as soon as it was computed and later
+  callables of the same `assign` saw the earlier writes. Separate `assign`
+  actions are unchanged: they run in order (exit, transition, entry) and
+  each sees what the previous ones wrote. To derive a key from another
+  key's new value, split the `assign` in two or return the whole update
+  from one callable (`assign(lambda args: {...})`).
 
 ### Fixed
 

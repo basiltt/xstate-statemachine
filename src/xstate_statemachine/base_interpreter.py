@@ -4044,8 +4044,16 @@ class BaseInterpreter(Generic[TContext]):
                 ctx.update(produced)
             return
         if isinstance(assignment, dict):
-            for key, value in assignment.items():
-                ctx[key] = value(args) if callable(value) else value
+            # 🧮 XState v5 `assign`: EVERY property is computed against the
+            #    context as it was BEFORE this action, then all are merged --
+            #    `{"a": lambda a: a["context"]["b"], "b": 1}` gives `a` the
+            #    old `b`. Up to 0.12 each property was written as soon as it
+            #    was computed, so later ones saw earlier ones' writes.
+            updates = {
+                key: value(args) if callable(value) else value
+                for key, value in assignment.items()
+            }
+            ctx.update(updates)
 
     def _collect_builtin_followups(
         self,
