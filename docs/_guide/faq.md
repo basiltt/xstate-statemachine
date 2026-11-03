@@ -307,7 +307,7 @@ Since 0.8.0 both interpreters settle `always` transitions *before* `send()` retu
 
 ### In what order do actions run when a transition fires?
 
-Exit actions of the source, then transition actions, then entry actions of the target — always, in every interpreter. For nested states the exits run innermost-first and the entries outermost-first. See [Actions → Execution Order](../actions/#execution-order).
+Exit actions of the source, then transition actions, then entry actions of the target — always, in every interpreter. For nested states the exits run innermost-first and the entries outermost-first; parallel regions are exited and entered one whole region at a time (exit: the last-declared region first; entry: in declaration order), exactly as in XState v5. See [Actions → Execution Order](../actions/#execution-order).
 
 ---
 

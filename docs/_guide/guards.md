@@ -333,7 +333,7 @@ interp.stop()
 
 <div class="stately" data-machine="0bb758473f" data-height="320" data-title="wizard"></div>
 
-The state id accepts both the `#machine.a.b` and bare `machine.a.b` spellings.
+The state id accepts both the `#machine.a.b` and bare `machine.a.b` spellings. It may be given under `params.stateValue` (XState's own key, which Stately exports use), `params.state` or `params.value`, or as a bare string `params`.
 
 > **Note:** If you register your own guard named `stateIn` in `MachineLogic.guards`, your implementation takes precedence over the built-in — the same resolution order used for built-in actions.
 

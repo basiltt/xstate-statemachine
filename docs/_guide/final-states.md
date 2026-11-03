@@ -134,6 +134,7 @@ When a final state is entered, several things happen:
 2. **The machine signals completion** — no further event processing occurs for this branch
 3. **`done.state.*` event fires on the parent** — if the final state is inside a compound state, the parent receives a `DoneEvent`
 4. **All `after` timers are cancelled** — any pending delayed transitions in the machine/region are cleaned up
+5. **A top-level final state completes the machine** — the machine's `output` is resolved, then the `exit` actions of every state that is still active (the final state itself and the machine root included) run, innermost first, and `status` becomes `"done"`. The configuration is kept: a done machine still reports its final state. This matches XState v5; up to 0.12 no exit actions ran on completion.
 
 ```python
 # Note: `DoneEvent` is not re-exported from the top-level package — import it

@@ -68,6 +68,28 @@ This order is guaranteed and consistent across all interpreter types.
 # 4. showSpinner   (entry action on "submitting")
 ```
 
+### Nested and parallel states
+
+When a transition leaves or enters several states at once, the engine
+follows XState v5 (and SCXML) exactly:
+
+- **Exit actions** run in *reverse document order*: innermost states
+  first, ancestors after their descendants, and in a parallel state one
+  whole region at a time, the region declared last first.
+- **Transition actions** run next, in the order they are listed.
+- **Entry actions** run in *document order*: ancestors before their
+  descendants, regions one at a time in the order they are declared —
+  including the region that holds the target.
+- With `"reenter": true` the source state itself exits and re-enters, even
+  when the target is one of its own children.
+- When the machine reaches a **top-level final state**, the `exit` actions
+  of every state still active — the final state and the machine root
+  included — run after the final state's `entry` actions, innermost first,
+  and then `status` becomes `"done"`.
+
+[Parallel States → Entry and Exit Order](../parallel/#entry-and-exit-order)
+has a worked example.
+
 ## 📄 JSON Actions
 
 ### Single Action (String)
@@ -543,6 +565,54 @@ interp = SyncInterpreter(create_machine(config, logic=logic)).start()
 interp.send("CLASSIFY")
 print(interp.context["tier"])  # gold
 ```
+
+The same action in plain JSON (the form a Stately export or a hand-written
+config uses) is `xstate.choose` with `params.branches`. The branches are
+tried in order and the first whose guard passes runs; a branch without a
+guard always passes. Branch guards may be composite (`and` / `or` / `not`)
+or the built-in `stateIn`:
+
+```json
+{
+  "type": "xstate.choose",
+  "params": {
+    "branches": [
+      {
+        "guard": {
+          "type": "stateIn",
+          "params": {
+            "stateValue": "#m.p.mode.night"
+          }
+        },
+        "actions": "atNight"
+      },
+      {
+        "guard": {
+          "type": "and",
+          "params": {
+            "guards": [
+              "isAdmin",
+              {
+                "type": "not",
+                "params": {
+                  "guard": "isBanned"
+                }
+              }
+            ]
+          }
+        },
+        "actions": "adminByDay"
+      },
+      {
+        "actions": "otherwise"
+      }
+    ]
+  }
+}
+```
+
+`params.conditions` (what the `choose()` helper builds) is accepted as a
+synonym of `params.branches`.
 
 ### `enqueue_actions` — imperative queueing
 

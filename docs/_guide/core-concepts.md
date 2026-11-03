@@ -92,21 +92,22 @@ interpreter.send_events(["STEP_1", "STEP_2", "STEP_3"])
 
 > **Tip:** Event names are conventionally UPPER_CASE (`"TOGGLE"`, `"SUBMIT"`, `"FETCH"`). State names are lowercase (`"idle"`, `"loading"`, `"done"`). This makes it easy to tell them apart at a glance.
 
-> **Engine events vs. your events — decided by provenance, not by name.** The engine synthesises `done.invoke.<id>`, `error.platform.<id>`, `after.<ms>`, `xstate.error.actor.<id>` and the init/exit sentinels. Everywhere the library has to ask "is this the machine's own traffic, or a user event it forgot to handle?" — the `"*"` / `"prefix.*"` wildcard matcher, the `onUnhandled` policy and `strict` mode — it checks **who minted the event**, not what it is called. So a user event you name `done.review` is ordinary user traffic: it reaches `"*"`, it trips `onUnhandled: "error"` if nothing handles it, and `strict` rejects it unless declared. (Before 0.9.0 this was a prefix test on the name, and such an event silently got system-event semantics — #79.) The engine's name shapes are still importable as `xstate_statemachine.events.ENGINE_EVENT_SHAPES` for documentation and build-time checks; there is no longer any reason to avoid the prefixes, though `review.done` reads better than `done.review`.
+> **Engine events vs. your events — decided by provenance, not by name.** The engine synthesises `done.invoke.<id>`, `error.platform.<id>`, `after.<ms>`, `xstate.error.actor.<id>` and the init/exit sentinels. Everywhere the library has to ask "is this the machine's own traffic, or a user event it forgot to handle?" — the `onUnhandled` policy and `strict` mode — it checks **who minted the event**, not what it is called. So a user event you name `done.review` is ordinary user traffic: it trips `onUnhandled: "error"` if nothing handles it, and `strict` rejects it unless declared. (`"*"` and `"prefix.*"` descriptors match both kinds, as in XState v5.) (Before 0.9.0 this was a prefix test on the name, and such an event silently got system-event semantics — #79.) The engine's name shapes are still importable as `xstate_statemachine.events.ENGINE_EVENT_SHAPES` for documentation and build-time checks; there is no longer any reason to avoid the prefixes, though `review.done` reads better than `done.review`.
 
 ---
 
 ## 🏷️ Engine events and provenance
 
-Some events are minted by the engine itself: `done.invoke.<id>` / `done.state.<id>` (`DoneEvent`), `error.platform.<id>` and `xstate.error.actor.<id>` (`ErrorEvent`), `after.<ms>` (`AfterEvent`), and the init/exit sentinels. Three behaviours turn on the distinction between those and *your* events:
+Some events are minted by the engine itself: `done.invoke.<id>` / `done.state.<id>` (`DoneEvent`), `error.platform.<id>` and `xstate.error.actor.<id>` (`ErrorEvent`), `after.<ms>` (`AfterEvent`), and the init/exit sentinels. Two behaviours turn on the distinction between those and *your* events:
 
 | Behaviour | Engine event | Your event |
 |---|---|---|
-| `"*"` / `"prefix.*"` wildcard | matched only by an exact `on` key | matched by wildcards |
 | `onUnhandled: "error"` / `"defer"` | exempt | applies |
 | `strict=True` | never rejected | must be declared |
 
-The decision is made by **provenance — who created the event — not by its name**. `is_system_event(event)` is the single predicate all three consult; `system_event(type, **payload)` is the only way to mint a plain `Event` that passes it. Both are exported from the package root. A user event you happen to name `done.review` is user traffic; the marker cannot be forged from a name, and it survives `deepcopy`, `pickle`, `send(wait=True)` and a snapshot round-trip.
+Wildcard descriptors do **not** distinguish them: as in XState v5, `"*"` and `"prefix.*"` match engine events too. A state's own `onDone`, `onError` or `after` handler still outranks a `"*"` on the same state, and a `"*"` on a deeper state outranks an ancestor's handler. So a service failure caught only by a `"*"` (or `"error.*"`) handler is consumed there and the machine keeps running. (Up to 0.12 engine events never reached a wildcard.)
+
+The decision is made by **provenance — who created the event — not by its name**. `is_system_event(event)` is the single predicate both consult; `system_event(type, **payload)` is the only way to mint a plain `Event` that passes it. Both are exported from the package root. A user event you happen to name `done.review` is user traffic; the marker cannot be forged from a name, and it survives `deepcopy`, `pickle`, `send(wait=True)` and a snapshot round-trip.
 
 ```python
 from xstate_statemachine import Event, is_system_event, system_event
