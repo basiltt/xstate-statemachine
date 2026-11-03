@@ -1223,5 +1223,94 @@ class TestAssignComputesAgainstThePriorContext(unittest.TestCase):
                 )
 
 
+class TestCompoundSelfTargetWithoutReenter(_Parity):
+    """A compound targeting itself (no `reenter`) resets its children.
+
+    Case `044_compound_self_target_without_reenter`: the domain is the
+    source, so its active descendants exit and its initial child is
+    entered again; the source itself stays (no `x_p` / `e_p`).
+    """
+
+    CONFIG = {
+        "id": "m",
+        "initial": "p",
+        "states": {
+            "p": {
+                "initial": "a",
+                "entry": "e_p",
+                "exit": "x_p",
+                "on": {
+                    "RESET": {"target": "p", "actions": "t"},
+                    "HARD": {"target": "p", "reenter": True, "actions": "h"},
+                },
+                "states": {
+                    "a": {"entry": "e_a", "exit": "x_a", "on": {"NEXT": "b"}},
+                    "b": {"entry": "e_b", "exit": "x_b"},
+                },
+            }
+        },
+    }
+
+    def test_children_exit_and_the_initial_child_is_reentered(self) -> None:
+        self.check(
+            self.CONFIG,
+            ["NEXT", "RESET", "NEXT", "HARD"],
+            [
+                ["e_p", "e_a"],
+                ["x_a", "e_b"],
+                ["x_b", "t", "e_a"],
+                ["x_a", "e_b"],
+                ["x_b", "x_p", "h", "e_p", "e_a"],
+            ],
+            state_ids=["m.p.a"],
+        )
+
+    def test_parallel_self_target_resets_every_region(self) -> None:
+        config = {
+            "id": "m",
+            "initial": "p",
+            "states": {
+                "p": {
+                    "type": "parallel",
+                    "entry": "e_p",
+                    "on": {"RESET": {"target": "p", "actions": "t"}},
+                    "states": {
+                        "r1": {
+                            "initial": "a",
+                            "states": {
+                                "a": {"entry": "e_a", "on": {"GO": "b"}},
+                                "b": {"exit": "x_b"},
+                            },
+                        },
+                        "r2": {
+                            "initial": "c",
+                            "states": {"c": {"entry": "e_c", "exit": "x_c"}},
+                        },
+                    },
+                }
+            },
+        }
+        self.check(
+            config,
+            ["GO", "RESET"],
+            [["e_p", "e_a", "e_c"], [], ["x_c", "x_b", "t", "e_a", "e_c"]],
+            state_ids=["m.p.r1.a", "m.p.r2.c"],
+        )
+
+    def test_atomic_self_target_still_runs_only_its_actions(self) -> None:
+        config = {
+            "id": "s",
+            "initial": "a",
+            "states": {
+                "a": {
+                    "entry": "e_a",
+                    "exit": "x_a",
+                    "on": {"SOFT": {"target": "a", "actions": "soft"}},
+                }
+            },
+        }
+        self.check(config, ["SOFT"], [["e_a"], ["soft"]], state_ids=["s.a"])
+
+
 if __name__ == "__main__":
     unittest.main()

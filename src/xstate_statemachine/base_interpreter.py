@@ -4252,13 +4252,15 @@ class BaseInterpreter(Generic[TContext]):
             assert resolved is not None  # narrowed: the call above raised
             target_state = targets = resolved
 
-        # 3. A self-transition without `reenter: True` is an "internal"
-        #    transition: it executes actions but does not exit or re-enter
-        #    the source state.
+        # 3. ⚡ An ATOMIC self-transition without `reenter: True` changes
+        #    nothing: it only executes actions. (A compound or parallel
+        #    source exits and re-enters its children -- see
+        #    `_compute_entry_set` -- so it takes the general path.)
         if (
             not multi
-            and target_state == transition.source
+            and target_state is transition.source
             and not transition.reenter
+            and not target_state.states
         ):
             return None
 
@@ -4269,8 +4271,11 @@ class BaseInterpreter(Generic[TContext]):
         domain, states_to_enter = self._transition_geometry(
             transition, targets
         )
+        states_to_exit = self._compute_states_to_exit(domain)
+        if not states_to_exit and not states_to_enter:
+            return None  # nothing exits or enters: actions only
         return _StepPlan(
-            self._compute_states_to_exit(domain),
+            states_to_exit,
             states_to_enter,
             multi or target_state.type == "history",
         )
@@ -6329,6 +6334,19 @@ class BaseInterpreter(Generic[TContext]):
         """
         to_enter: Set[StateNode[Any]] = set()
         for target in targets:
+            if target is domain:
+                # 🔁 A transition targeting its own source without
+                #    `reenter` (the only way a target IS the domain): the
+                #    source is neither exited nor entered, but its active
+                #    descendants exit and its default descendants are
+                #    entered again (XState `computeEntrySet` /
+                #    `addDescendantStatesToEnter`). Up to 0.12 a compound
+                #    source ran the transition's actions and nothing else.
+                implied: Set[StateNode[Any]] = {target}
+                self._complete_entry_set(implied)
+                implied.discard(target)
+                to_enter |= implied
+                continue
             node: Optional[StateNode[Any]] = target
             while node is not None and node is not domain:
                 to_enter.add(node)

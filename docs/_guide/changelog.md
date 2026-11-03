@@ -186,6 +186,17 @@ charts may need their expected lists updated.
   each sees what the previous ones wrote. To derive a key from another
   key's new value, split the `assign` in two or return the whole update
   from one callable (`assign(lambda args: {...})`).
+- **A compound state targeting itself resets its children.** A transition
+  from a compound (or parallel) state `p` to `p` without `reenter` now
+  exits `p`'s active descendants, runs the transition's actions and
+  enters `p`'s `initial` child again (`x_b`, `t`, `e_a`); `p` itself is
+  neither exited nor entered, so its own `entry` / `exit` actions do not
+  run and its `after` timers keep running. Before, such a transition only
+  ran its actions and the active child stayed. This is XState v5's
+  transition domain (the source) and `computeEntrySet`. An atomic state
+  targeting itself is unchanged (actions only), and `reenter: true` still
+  exits and re-enters `p` as well. To keep the children where they are,
+  make the transition targetless (drop `target`).
 
 ### Fixed
 

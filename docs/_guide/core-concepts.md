@@ -284,6 +284,14 @@ counting.to(counting, event="INCREMENT", actions="addOne")
 }
 ```
 
+Without `"reenter": true` the state itself is not exited or entered again:
+its own `entry` / `exit` actions do not run and its `after` timers keep
+running. A **compound** (or parallel) state targeting itself does reset its
+children, though, as in XState v5: its active child states exit and its
+`initial` child is entered again (`x_b`, `t`, `e_a` for a state `p` whose
+active child was `b`). With `"reenter": true` the state itself exits and
+re-enters too (`x_b`, `x_p`, `t`, `e_p`, `e_a`).
+
 ---
 
 ## 🏷️ State Types

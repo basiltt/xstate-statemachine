@@ -993,7 +993,7 @@ With `reenter=True`, sending `REFRESH` while in `"polling"` will:
 1. Run exit actions on `"polling"`
 2. Run entry actions on `"polling"` (e.g., restart a timer)
 
-Without `reenter=True`, the state would stay in `"polling"` and **no entry/exit actions would fire**.
+Without `reenter=True`, the state would stay in `"polling"` and **no entry/exit actions would fire**. (For a state *with children*, a self-transition without `reenter` still resets the children: the active child exits and the `initial` child is entered again, while the state itself stays — XState v5 semantics. See [Core Concepts → Self-Transitions](../core-concepts/#self-transitions).)
 
 ---
 

@@ -309,7 +309,7 @@ Add a `target`, `guard`, and/or `actions`:
 | `target` | `string \| string[]` | Destination state name. A list is a multi-target transition: every entry must lie in a different region of one parallel state (see [Parallel States](../parallel/#entering-several-regions-at-once-multi-target)). |
 | `guard` | `string` | Guard function name — transition only fires if this returns `true`. `cond` is accepted as an alias (XState v4 spelling); if both are present `guard` wins. |
 | `actions` | `string \| string[]` | Action(s) to execute during the transition. |
-| `reenter` | `bool` | Default `false`. When `true` the source state exits and re-enters (running `exit` / `entry` and restarting `after` timers and `invoke`s) — for a self-transition, and also when the target is one of the source's own descendants (XState v5). `internal` is accepted as the inverted XState v4 alias: `"internal": false` means `reenter: true`. |
+| `reenter` | `bool` | Default `false`. When `true` the source state exits and re-enters (running `exit` / `entry` and restarting `after` timers and `invoke`s) — for a self-transition, and also when the target is one of the source's own descendants (XState v5). Without it a self-transition keeps the source active; a compound or parallel source still exits its active children and re-enters its default (`initial`) children. `internal` is accepted as the inverted XState v4 alias: `"internal": false` means `reenter: true`. |
 | `meta` / `description` / `tags` | `object` / `string` / `string[]` | Metadata on the transition itself; never behavioural. |
 
 ### Format 3: Array Form (Multiple Transitions)
