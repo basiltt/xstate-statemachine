@@ -1546,9 +1546,16 @@ class SyncInterpreter(BaseInterpreter[TContext]):
     def _dispatch_internal(  # type: ignore[override]
         self, event: Any
     ) -> "_Done[None]":
-        # Onto our own queue; the macrostep loop already running will take
-        # it (a `done.state.*` is raised from INSIDE `_enter_states`).
-        self._event_queue.append(event)
+        # 🔁 A `done.state.*` is raised from INSIDE `_enter_states`. It is
+        #    an INTERNAL event (XState v5 `internalQueue`): the macrostep
+        #    loop already running processes it before any external event
+        #    that is waiting in the inbox -- `send_events(["FINISH",
+        #    "NEXT"])` takes the `onDone` transition before `NEXT`. Up to
+        #    0.12 it was appended to the inbox, behind `NEXT`.
+        if self._is_processing:
+            self._internal_queue.append(event)
+        else:
+            self._event_queue.append(event)
         return _Done(None)
 
     def _stop_actor_leaf(  # type: ignore[override]

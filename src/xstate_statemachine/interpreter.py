@@ -2519,6 +2519,15 @@ class Interpreter(BaseInterpreter[TContext]):
         return task is not None and task in self._action_tasks
 
     async def _dispatch_internal(self, event: Any) -> None:
+        # 🔁 A `done.state.*` raised while a macrostep is running is an
+        #    INTERNAL event (XState v5 `internalQueue`), processed before
+        #    any external event already waiting -- and, like a `raise`,
+        #    self-generated work counted toward the chain budget. Up to 0.12
+        #    it went to the inbox, behind the events queued there.
+        if self._processing:
+            self._raise_depth += 1
+            self._internal_queue.append(event)
+            return
         self._enqueue(event)
 
     async def _stop_actor_leaf(self, actor: Any) -> None:

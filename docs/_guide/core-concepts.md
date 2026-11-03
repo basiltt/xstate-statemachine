@@ -729,6 +729,10 @@ Processing a single external event is a **macrostep**, made of one or more
 2. The machine evaluates transitions and runs their actions. An action can
    itself `raise()` a new event **to this same machine** -- that event does
    **not** go back onto the external inbox. It goes onto an internal queue.
+   The `done.state.<id>` event the engine generates when a compound or
+   parallel state completes goes onto the same internal queue, so its
+   `onDone` transition is taken before any external event that is already
+   waiting (up to 0.12 it was appended to the inbox, behind such events).
 3. Before the interpreter looks at the next *external* event, it drains the
    internal queue completely, one microstep at a time, in the order events
    were raised. Each internal event may itself raise further internal

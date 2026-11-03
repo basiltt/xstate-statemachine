@@ -132,7 +132,7 @@ When a final state is entered, several things happen:
 
 1. **Entry actions** on the final state execute (if any are defined)
 2. **The machine signals completion** — no further event processing occurs for this branch
-3. **`done.state.*` event fires on the parent** — if the final state is inside a compound state, the parent receives a `DoneEvent`
+3. **`done.state.*` event fires on the parent** — if the final state is inside a compound state, the parent receives a `DoneEvent`. It is an *internal* event, like a `raise`: it is processed right after the current step, before any external event already waiting in the queue (`send_events(["FINISH", "NEXT"])` takes the parent's `onDone` transition before `NEXT`, as XState v5 does)
 4. **All `after` timers are cancelled** — any pending delayed transitions in the machine/region are cleaned up
 5. **A top-level final state completes the machine** — the machine's `output` is resolved, then the `exit` actions of every state that is still active (the final state itself and the machine root included) run, innermost first, and `status` becomes `"done"`. The configuration is kept: a done machine still reports its final state. This matches XState v5; up to 0.12 no exit actions ran on completion.
 

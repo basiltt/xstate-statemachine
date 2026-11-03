@@ -128,6 +128,9 @@ def _replay(case: Dict[str, Any]) -> List[Dict[str, Any]]:
             else:
                 payload = {k: v for k, v in event.items() if k != "type"}
                 interp.send(event["type"], **payload)
+        elif "send_batch" in step:
+            # Queued together, then processed in one drain.
+            interp.send_events(list(step["send_batch"]))
         elif "advance_ms" in step:
             clock.increment(step["advance_ms"])
         else:  # pragma: no cover - a malformed fixture

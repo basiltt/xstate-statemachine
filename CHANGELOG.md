@@ -139,6 +139,19 @@ charts may need their expected lists updated.
   regions, not deepest-first. A rollback (`actionErrorPolicy`) undoes the
   whole microstep, and `on_transition` fires once per transition taken,
   after all of them, with the configuration before and after the step.
+- **`done.state.*` is an internal event.** When a final state completes
+  its compound (or parallel) parent, the generated `done.state.<id>` event
+  now goes onto the internal queue, like a `raise`, so the parent's
+  `onDone` transition is taken before any external event that is already
+  waiting. With `send_events(["FINISH", "NEXT"])` (or two `send()` calls
+  queued on the async engine before it runs), `FINISH` completes the
+  state, `onDone` runs, and `NEXT` is handled in the `onDone` target;
+  before, the done event was appended to the inbox behind `NEXT`, so
+  `NEXT` was handled in the completed state first. XState v5 raises it
+  into its `internalQueue`. A rollback (`actionErrorPolicy`) of the step
+  that entered the final state now also withdraws the done event it
+  queued, and on the async engine the event counts toward the
+  `maxIterations` chain budget like any other self-generated event.
 
 ### Fixed
 

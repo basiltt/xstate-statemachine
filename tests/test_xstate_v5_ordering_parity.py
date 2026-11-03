@@ -926,5 +926,87 @@ class TestConflictingTransitionsShareOneMicrostep(_Parity):
         self.assertEqual([("m.p.r1.a", after), ("m.p.r3.d", after)], seen)
 
 
+class TestDoneStateIsAnInternalEvent(unittest.TestCase):
+    """`done.state.*` goes to the internal queue (XState `internalQueue`).
+
+    Case `041_done_state_before_queued_external_event`: with FINISH and
+    NEXT queued together, the `onDone` transition is taken before NEXT.
+    """
+
+    CONFIG = {
+        "id": "m",
+        "initial": "work",
+        "states": {
+            "work": {
+                "initial": "step",
+                "onDone": {"target": "after", "actions": "onDoneTaken"},
+                "on": {"NEXT": {"actions": "nextInWork"}},
+                "states": {
+                    "step": {"on": {"FINISH": "end"}},
+                    "end": {"type": "final", "entry": "enterEnd"},
+                },
+            },
+            "after": {"on": {"NEXT": {"actions": "nextInAfter"}}},
+        },
+    }
+
+    EXPECTED = ["enterEnd", "onDoneTaken", "nextInAfter"]
+
+    def setUp(self) -> None:
+        logging.disable(logging.CRITICAL)
+        self.addCleanup(logging.disable, logging.NOTSET)
+
+    def test_sync_batch_runs_on_done_before_the_queued_event(self) -> None:
+        ran: List[str] = []
+        logic = stub_logic(self.CONFIG, ran=ran)
+        interp = SyncInterpreter(create_machine(self.CONFIG, logic=logic))
+        interp.start()
+        interp.send_events(["FINISH", "NEXT"])
+        self.assertEqual(self.EXPECTED, ran)
+        self.assertEqual({"m.after"}, interp.current_state_ids)
+
+    def test_async_queued_sends_run_on_done_first(self) -> None:
+        async def main() -> Tuple[List[str], Any]:
+            ran: List[str] = []
+            logic = stub_logic(self.CONFIG, ran=ran)
+            interp = Interpreter(create_machine(self.CONFIG, logic=logic))
+            await interp.start()
+            # Both land in the inbox before the run loop takes either.
+            interp.send("FINISH")
+            await interp.send("NEXT", wait=True)
+            await interp.await_settled(2.0)
+            ids = set(interp.current_state_ids)
+            await interp.stop()
+            return ran, ids
+
+        ran, ids = asyncio.run(main())
+        self.assertEqual(self.EXPECTED, ran)
+        self.assertEqual({"m.after"}, ids)
+
+    def test_rollback_withdraws_the_done_event_it_queued(self) -> None:
+        def boom(*_: Any) -> None:
+            raise RuntimeError("boom")
+
+        config = json.loads(json.dumps(self.CONFIG))
+        config["actionErrorPolicy"] = "rollback"
+        config["states"]["work"]["states"]["step"]["on"]["FINISH"] = {
+            "target": "end",
+            "actions": "explode",
+        }
+        config["states"]["work"]["states"]["end"]["entry"] = [
+            "enterEnd",
+            "explodeLater",
+        ]
+        ran: List[str] = []
+        logic = stub_logic(config, ran=ran)
+        logic.actions["explodeLater"] = boom
+        interp = SyncInterpreter(create_machine(config, logic=logic)).start()
+        interp.send("FINISH")
+        # The entry action failed: the step is undone and the done event
+        # the final state queued is withdrawn with it.
+        self.assertEqual({"m.work.step"}, interp.current_state_ids)
+        self.assertNotIn("onDoneTaken", ran)
+
+
 if __name__ == "__main__":
     unittest.main()
