@@ -495,8 +495,27 @@ def _accepts_kwarg(fn: Callable[..., Any], name: str) -> bool:
 
 _ACCEPTS_KWARG_KEEPALIVE: List[Any] = []
 
-#: ⚡ Shared empty actor-id set for `_execute_transition` (never mutated).
+#: ⚡ Shared empty actor-id set for `_execute_microstep` (never mutated).
 _NO_IDS: FrozenSet[str] = frozenset()
+
+#: ⚡ Shared empty exit set of a transition that exits nothing.
+_NO_STATES: FrozenSet["StateNode[Any]"] = frozenset()
+
+
+class _StepPlan(NamedTuple):
+    """What one transition of a microstep exits and enters.
+
+    Attributes:
+        exit: The active states it exits (XState ``computeExitSet``).
+        entry: The states it enters, in document order.
+        opaque: A multi or history target -- may run actions the static
+            entry set does not show; the rollback checkpoint is taken.
+    """
+
+    exit: Set["StateNode[Any]"]
+    entry: List["StateNode[Any]"]
+    opaque: bool
+
 
 #: ⚡ The init / exit trigger events are constant, payload-less sentinels;
 #: `Event` is an immutable NamedTuple, so one instance each is safe to share
@@ -524,9 +543,9 @@ class PendingInvocation(NamedTuple):
 class _RollbackRequested(Exception):
     """Internal signal: an action raised and the policy is not ``continue``.
 
-    Raised inside `_execute_transition`'s atomic block so the EXISTING
+    Raised inside `_execute_microstep`'s atomic block so the EXISTING
     rollback path (built for transition-resolution failures in 0.6.0) is
-    reused for action failures. Never escapes `_execute_transition`.
+    reused for action failures. Never escapes `_execute_microstep`.
     """
 
     def __init__(
@@ -3635,7 +3654,8 @@ class BaseInterpreter(Generic[TContext]):
         """Executes a single, complete "step" of the SCXML algorithm.
 
         Selects the optimal transition set for `event` — one transition per
-        orthogonal region — and executes each in turn.
+        orthogonal region — and executes it as ONE microstep
+        (`_execute_microstep`).
 
         Args:
             event (AnyEvent): The event to process.
@@ -3650,22 +3670,11 @@ class BaseInterpreter(Generic[TContext]):
             if guard_error is None:
                 self._handle_unhandled_event(event)
                 return
-        # 2. Execute each selected transition in isolation. A transition may
-        #    be invalidated by an earlier one in the same macrostep (its source
-        #    is no longer active), so re-check liveness before executing.
-        #    (⚡ Inlined rather than a helper coroutine: on the sync engine's
-        #    trampoline every extra `async def` frame is ~0.7 µs per event.)
-        for transition in transitions:
-            if (
-                len(transitions) > 1
-                and transition.source not in self._active_state_nodes
-            ):
-                logger.debug(
-                    "⏭️  Skipping stale transition from '%s'.",
-                    transition.source.id,
-                )
-                continue
-            await self._execute_transition(transition, event)
+        # 2. Execute the selected set as one microstep: conflicting
+        #    transitions are dropped first, then every exit, every
+        #    transition's actions, every entry (XState v5 `microstep`).
+        else:
+            await self._execute_microstep(transitions, event)
 
         # -------------------------------------------------------------------------
         # 🎬 Built-in Action Support
@@ -4170,7 +4179,7 @@ class BaseInterpreter(Generic[TContext]):
         transition: TransitionDefinition,
         event: AnyEvent,
     ) -> None:
-        """Executes one selected transition, mutating the active configuration.
+        """Executes one selected transition as its own microstep.
 
         Args:
             transition (TransitionDefinition): The transition to execute.
@@ -4179,14 +4188,25 @@ class BaseInterpreter(Generic[TContext]):
         Raises:
             StateNotFoundError: If the transition's target cannot be resolved.
         """
-        # 1. A "targetless" transition only executes actions without changing state.
+        await self._execute_microstep((transition,), event)
+
+    def _plan_transition(
+        self, transition: TransitionDefinition, event: AnyEvent
+    ) -> Optional[_StepPlan]:
+        """The exit and entry sets of one transition, or ``None``.
+
+        ``None`` means the transition changes no state: it is targetless,
+        or an internal self-transition. Computed against the CURRENT
+        configuration, before anything in the microstep runs -- which is
+        what XState's `removeConflictingTransitions` compares, and what
+        makes a history target expand to the pre-transition configuration.
+
+        Raises:
+            StateNotFoundError: If the transition's target cannot be resolved.
+        """
+        # 1. A "targetless" transition only executes actions.
         if not transition.target_str:
-            logger.debug(
-                "🎬 Executing targetless transition for event '%s'.",
-                event.type,
-            )
-            await self._execute_internal_transition(transition, event)
-            return
+            return None
 
         # 2. Resolve the target state node. ⚡ Build-time validation already
         #    resolved and memoised it on the transition; only a target the
@@ -4212,31 +4232,16 @@ class BaseInterpreter(Generic[TContext]):
             assert resolved is not None  # narrowed: the call above raised
             target_state = targets = resolved
 
-        # 3. A self-transition without `reenter: True` is an "internal" transition.
-        # It executes actions but does not exit or re-enter the source state.
+        # 3. A self-transition without `reenter: True` is an "internal"
+        #    transition: it executes actions but does not exit or re-enter
+        #    the source state.
         if (
             not multi
             and target_state == transition.source
             and not transition.reenter
         ):
-            logger.debug(
-                "🎬 Executing internal self-transition for event '%s'.",
-                event.type,
-            )
-            await self._execute_internal_transition(transition, event)
-            return
+            return None
 
-        # 4. All other transitions are "external" and will cause a state change.
-        snapshot_before = self._active_state_nodes.copy()
-        # 👶 #60 review: remember which actors already existed so a rollback
-        #    can tell which ones a `spawn_*` action in THIS transition's
-        #    action list created. Without this snapshot, a spawn that
-        #    succeeds and is followed by a later action that raises left the
-        #    child running and registered even after the whole transition was
-        #    undone -- orphaned from any active state and reachable only
-        #    until the parent itself eventually stopped.
-        # ⚡ Most machines spawn nothing; share one empty set then.
-        actor_ids_before = set(self._actors) if self._actors else _NO_IDS
         # 🧭 Domain and the COMPLETE entry set (targets, their ancestors
         #    below the domain, and every default descendant), in document
         #    order. A history target is expanded here, *before* exiting, so
@@ -4244,30 +4249,136 @@ class BaseInterpreter(Generic[TContext]):
         domain, states_to_enter = self._transition_geometry(
             transition, targets
         )
-        states_to_exit = self._compute_states_to_exit(domain, target_state)
+        return _StepPlan(
+            self._compute_states_to_exit(domain),
+            states_to_enter,
+            multi or target_state.type == "history",
+        )
+
+    def _remove_conflicting_transitions(
+        self, plans: List[Tuple[TransitionDefinition, Optional[_StepPlan]]]
+    ) -> List[Tuple[TransitionDefinition, Optional[_StepPlan]]]:
+        """XState v5's ``removeConflictingTransitions`` (SCXML Appendix D).
+
+        Two transitions conflict when their exit sets intersect. The later
+        one (in selection order, i.e. document order) wins only when its
+        source is a descendant of the earlier one's source; otherwise it is
+        preempted. A transition that exits nothing never conflicts.
+
+        Args:
+            plans: ``(transition, plan)`` pairs in selection order.
+
+        Returns:
+            The pairs to execute, in selection order.
+        """
+        filtered: List[Tuple[TransitionDefinition, Optional[_StepPlan]]] = []
+        for t1, plan1 in plans:
+            exit1 = plan1.exit if plan1 is not None else _NO_STATES
+            preempted = False
+            to_remove: List[TransitionDefinition] = []
+            for t2, plan2 in filtered:
+                exit2 = plan2.exit if plan2 is not None else _NO_STATES
+                if exit1.isdisjoint(exit2):
+                    continue
+                if self._is_proper_descendant(t1.source, t2.source):
+                    to_remove.append(t2)
+                else:
+                    preempted = True
+                    break
+            if preempted:
+                logger.debug(
+                    "⏭️  Transition from '%s' preempted by a conflicting one.",
+                    t1.source.id,
+                )
+                continue
+            if to_remove:
+                filtered = [p for p in filtered if p[0] not in to_remove]
+            filtered.append((t1, plan1))
+        return filtered
+
+    async def _execute_microstep(
+        self,
+        transitions: Sequence[TransitionDefinition],
+        event: AnyEvent,
+    ) -> None:
+        """Executes the transitions selected for one event as ONE microstep.
+
+        XState v5 / SCXML ``microstep``: conflicting transitions are
+        dropped (`_remove_conflicting_transitions`), then every state the
+        remaining ones exit is exited (reverse document order), then each
+        transition's actions run (selection order), then every state they
+        enter is entered (document order).
+
+        🏛️ Architecture decision: up to 0.12 each selected transition ran
+        as its own exit → actions → entry sequence, one after the other,
+        re-checking only that the next one's source was still active. Two
+        regions' transitions interleaved their actions, and a transition
+        whose source the first one had exited AND re-entered ran anyway.
+
+        Args:
+            transitions: The selected transitions, in selection order.
+            event (AnyEvent): The triggering event.
+
+        Raises:
+            StateNotFoundError: If a transition's target cannot be resolved.
+        """
+        plans = [(t, self._plan_transition(t, event)) for t in transitions]
+        if len(plans) > 1:
+            plans = self._remove_conflicting_transitions(plans)
+        steps = [plan for _, plan in plans if plan is not None]
+        if not steps:
+            # 🎬 Nothing exits or enters: actions only, each transition its
+            #    own context transaction (`_execute_internal_transition`).
+            for transition, _ in plans:
+                await self._execute_internal_transition(transition, event)
+            return
+        selected = [transition for transition, _ in plans]
+        states_to_exit: Set[StateNode[Any]]
+        states_to_enter: List[StateNode[Any]]
+        if len(steps) == 1:
+            states_to_exit = steps[0].exit
+            states_to_enter = steps[0].entry
+        else:
+            states_to_exit = set().union(*(step.exit for step in steps))
+            states_to_enter = sorted(
+                {s for step in steps for s in step.entry}, key=_doc_order_key
+            )
+
+        snapshot_before = self._active_state_nodes.copy()
+        # 👶 #60 review: remember which actors already existed so a rollback
+        #    can tell which ones a `spawn_*` action in THIS microstep's
+        #    action lists created. Without this snapshot, a spawn that
+        #    succeeds and is followed by a later action that raises left the
+        #    child running and registered even after the whole transition was
+        #    undone -- orphaned from any active state and reachable only
+        #    until the parent itself eventually stopped.
+        # ⚡ Most machines spawn nothing; share one empty set then.
+        actor_ids_before = set(self._actors) if self._actors else _NO_IDS
 
         # 🧷 Context is snapshotted only when a rollback could need it: a
         #    deepcopy per transition on the "continue" hot path would be a
         #    measurable tax for a feature the machine has opted out of.
         # ⚡ #27 follow-up: ...and only when a user action can actually
         #    RUN. The checkpoint cost ~22% throughput on an idle `rollback`
-        #    machine whose transitions had no actions at all. History
-        #    targets are conservatively treated as "may run actions".
+        #    machine whose transitions had no actions at all. History and
+        #    multi targets are conservatively treated as "may run actions".
         context_before: Optional[TContext] = (
             copy.deepcopy(self.context)
             if self.machine.action_error_policy != "continue"
             and (
-                transition.actions
-                or target_state.type == "history"
-                or multi
+                any(t.actions for t in selected)
+                or any(step.opaque for step in steps)
                 or any(s.exit for s in states_to_exit)
                 or any(s.subtree_has_actions for s in states_to_enter)
             )
             else None
         )
         internal_depth_before = self._internal_queue_depth()
+        # 🧾 The transition a failure is reported against: the one whose
+        #    actions are running, else the first of the microstep.
+        current = selected[0]
 
-        # 5. Execute the transition sequence in the correct SCXML order.
+        # Execute the microstep in the correct SCXML order.
         #
         # 🏛️ Architecture decision: `_exit_states` and `_enter_states` are the
         # sole authorities on `_active_state_nodes` membership — they discard
@@ -4289,7 +4400,7 @@ class BaseInterpreter(Generic[TContext]):
         #    `_enter_states`/`_exit_states` report their action failures via
         #    this stack instead of raising, so the policy is applied once,
         #    here, for every action slot. See `_execute_lifecycle_actions`.
-        self._lifecycle_failures.append((transition, []))
+        self._lifecycle_failures.append((current, []))
         try:
             await self._exit_states(
                 # ⚡ A single state to exit (every flat transition and most
@@ -4313,13 +4424,16 @@ class BaseInterpreter(Generic[TContext]):
                 ),
                 event,
             )
-            failed_actions: List[Tuple[ActionDefinition, BaseException]] = (
-                await self._execute_actions(transition.actions, event)
-                if transition.actions  # ⚡ no coroutine for an empty list
-                else []
-            )
-            if failed_actions:
-                self._apply_action_error_policy(transition, failed_actions)
+            failed_actions: List[Tuple[ActionDefinition, BaseException]] = []
+            for transition in selected:
+                if not transition.actions:  # ⚡ no coroutine for an empty list
+                    continue
+                current = transition
+                failed = await self._execute_actions(transition.actions, event)
+                if failed:
+                    failed_actions.extend(failed)
+                    self._apply_action_error_policy(transition, failed)
+            current = selected[0]
             # 🗺️ ONE flat pass over the precomputed entry set, in document
             #    order (XState / SCXML `enterStates`): a parallel state's
             #    regions are entered in declaration order whichever of them
@@ -4333,7 +4447,7 @@ class BaseInterpreter(Generic[TContext]):
             #    configuration while `"rollback"`/`"fail"` undo all of it.
             lifecycle_failed = self._lifecycle_failures[-1][1]
             if lifecycle_failed:
-                self._apply_action_error_policy(transition, lifecycle_failed)
+                self._apply_action_error_policy(current, lifecycle_failed)
             failed_actions = failed_actions or lifecycle_failed
         except Exception as rollback_cause:
             requested = isinstance(rollback_cause, _RollbackRequested)
@@ -4341,7 +4455,7 @@ class BaseInterpreter(Generic[TContext]):
                 logging.WARNING if requested else logging.ERROR,
                 "💥 Transition on '%s' failed; rolling back to the "
                 "pre-transition configuration.",
-                transition.source.id,
+                current.source.id,
                 exc_info=not requested,
             )
             # ⏱️ Tear down what a PARTIAL entry armed. States entered before
@@ -4367,7 +4481,7 @@ class BaseInterpreter(Generic[TContext]):
                     self._schedule_state_tasks(node)
 
             # 👶 #60 review: stop and unregister any actor a `spawn_*`
-            #    action in THIS transition's action list created before a
+            #    action in THIS microstep's action lists created before a
             #    LATER action raised. Left alone, the child interpreter's
             #    event loop task kept running and it stayed reachable via
             #    `self._actors`/the system registry even though the
@@ -4387,7 +4501,7 @@ class BaseInterpreter(Generic[TContext]):
 
             if self._finish_rollback(
                 rollback_cause,
-                transition,
+                current,
                 context_before,
                 internal_depth_before,
             ):
@@ -4396,17 +4510,18 @@ class BaseInterpreter(Generic[TContext]):
         finally:
             self._lifecycle_failures.pop()
 
-        # 6. Notify plugins and subscribers of the completed transition.
+        # Notify plugins and subscribers of the completed microstep.
         if not failed_actions:
             self.last_transition_ok = True
         self._publish_soft_step_error()  # #133
         for plug in self._plugins:
-            plug.on_transition(
-                self,
-                snapshot_before,
-                self._active_state_nodes.copy(),
-                transition,
-            )
+            for transition in selected:
+                plug.on_transition(
+                    self,
+                    snapshot_before,
+                    self._active_state_nodes.copy(),
+                    transition,
+                )
         self._notify_subscribers()
 
     async def _execute_internal_transition(
@@ -6093,9 +6208,11 @@ class BaseInterpreter(Generic[TContext]):
         #    ancestor common to several regions is guard-evaluated exactly once.
         guard_cache: Dict[int, bool] = {}
 
-        # 🔽 Deterministic ordering: deepest leaves first, then by id.
+        # 🔽 Document order of the leaves -- XState's selection order, which
+        #    decides which of two conflicting transitions is kept
+        #    (`_remove_conflicting_transitions`).
         if len(leaves) > 1:
-            leaves.sort(key=lambda s: (-s.depth, s.id))
+            leaves.sort(key=_doc_order_key)
         for leaf in leaves:
             eligible = self._collect_eligible_transitions(
                 leaf, event, guard_cache
@@ -6113,9 +6230,6 @@ class BaseInterpreter(Generic[TContext]):
                 seen.add(id(winner))
                 selected.append(winner)
 
-        # 🔽 Execute deepest-source-first for predictable action ordering.
-        if len(selected) > 1:
-            selected.sort(key=lambda t: -t.source.depth)
         return selected
 
     def _compute_states_to_exit(

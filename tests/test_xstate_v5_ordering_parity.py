@@ -733,5 +733,198 @@ class TestJsonChooseWithCompositeGuards(_Parity):
         self.assertEqual(["second"], trace[1])
 
 
+class TestConflictingTransitionsShareOneMicrostep(_Parity):
+    """removeConflictingTransitions + exit → actions → entry per microstep.
+
+    Cases `038_conflict_document_order_preemption`,
+    `039_microstep_groups_exit_actions_entry` and
+    `040_eventless_descendant_preempts_ancestor`.
+    """
+
+    PREEMPT = {
+        "id": "m",
+        "initial": "p",
+        "states": {
+            "p": {
+                "type": "parallel",
+                "states": {
+                    "r1": {
+                        "initial": "a",
+                        "states": {
+                            "a": {
+                                "entry": "e_a",
+                                "exit": "x_a",
+                                "on": {
+                                    "E": {
+                                        "target": "#m.p.r2.x",
+                                        "actions": "t1",
+                                    }
+                                },
+                            }
+                        },
+                    },
+                    "r2": {
+                        "initial": "x",
+                        "states": {
+                            "x": {
+                                "entry": "e_x",
+                                "exit": "x_x",
+                                "on": {"E": {"target": "y", "actions": "t2"}},
+                            },
+                            "y": {"entry": "e_y"},
+                        },
+                    },
+                },
+            }
+        },
+    }
+
+    GROUPED = {
+        "id": "m",
+        "initial": "p",
+        "states": {
+            "p": {
+                "type": "parallel",
+                "on": {"E": {"target": "#m.out", "actions": "tp"}},
+                "states": {
+                    "r1": {
+                        "initial": "a",
+                        "states": {
+                            "a": {
+                                "exit": "x_a",
+                                "on": {"E": {"target": "b", "actions": "ta"}},
+                            },
+                            "b": {"entry": "e_b"},
+                        },
+                    },
+                    "r2": {"initial": "c", "states": {"c": {"exit": "x_c"}}},
+                    "r3": {
+                        "initial": "d",
+                        "states": {
+                            "d": {
+                                "exit": "x_d",
+                                "on": {"E": {"target": "f", "actions": "td"}},
+                            },
+                            "f": {"entry": "e_f"},
+                        },
+                    },
+                },
+            },
+            "out": {"entry": "e_out"},
+        },
+    }
+
+    EVENTLESS = {
+        "id": "m",
+        "initial": "p",
+        "states": {
+            "p": {
+                "type": "parallel",
+                "always": {
+                    "target": "#m.out",
+                    "guard": {
+                        "type": "stateIn",
+                        "params": {"stateValue": "#m.p.r2.c"},
+                    },
+                    "actions": "tp",
+                },
+                "states": {
+                    "r1": {"initial": "a", "states": {"a": {}}},
+                    "r2": {
+                        "initial": "b",
+                        "states": {
+                            "b": {"on": {"GO": "c"}},
+                            "c": {
+                                "exit": "x_c",
+                                "always": {"target": "d", "actions": "tc"},
+                            },
+                            "d": {"entry": "e_d"},
+                        },
+                    },
+                },
+            },
+            "out": {"entry": "e_out"},
+        },
+    }
+
+    def test_first_selected_wins_a_conflict_in_document_order(self) -> None:
+        # r1's transition exits (and re-enters) r2's source: r2's
+        # transition is preempted instead of running on the re-entered x.
+        self.check(
+            self.PREEMPT,
+            ["E"],
+            [["e_a", "e_x"], ["x_x", "x_a", "t1", "e_a", "e_x"]],
+            state_ids=["m.p.r1.a", "m.p.r2.x"],
+        )
+
+    def test_exits_then_actions_then_entries(self) -> None:
+        # p's own handler loses to the regions; the two region transitions
+        # are one microstep, not two interleaved ones.
+        self.check(
+            self.GROUPED,
+            ["E"],
+            [[], ["x_d", "x_a", "ta", "td", "e_b", "e_f"]],
+            state_ids=["m.p.r1.b", "m.p.r2.c", "m.p.r3.f"],
+        )
+
+    def test_descendant_eventless_transition_preempts_the_ancestor(
+        self,
+    ) -> None:
+        self.check(
+            self.EVENTLESS,
+            ["GO"],
+            [[], ["x_c", "tc", "e_d"]],
+            state_ids=["m.p.r1.a", "m.p.r2.d"],
+        )
+
+    def test_rollback_restores_every_region_of_the_microstep(self) -> None:
+        def boom(*_: Any) -> None:
+            raise RuntimeError("boom")
+
+        config = json.loads(json.dumps(self.GROUPED))
+        config["actionErrorPolicy"] = "rollback"
+        ran: List[str] = []
+        logic = stub_logic(config, ran=ran)
+        logic.actions["td"] = boom
+        interp = SyncInterpreter(create_machine(config, logic=logic)).start()
+        interp.send("E")
+        # td failed after both regions had exited: the whole microstep is
+        # undone, not only r3's half of it.
+        self.assertEqual(["x_d", "x_a", "ta"], ran)
+        self.assertEqual(
+            {"m.p.r1.a", "m.p.r2.c", "m.p.r3.d"}, interp.current_state_ids
+        )
+        self.assertFalse(interp.last_transition_ok)
+
+    def test_plugins_see_every_transition_of_the_microstep(self) -> None:
+        from src.xstate_statemachine import PluginBase
+
+        seen: List[Tuple[str, List[str]]] = []
+
+        class Spy(PluginBase[Any]):
+            def on_transition(
+                self,
+                interpreter: Any,
+                from_states: Any,
+                to_states: Any,
+                transition: Any,
+            ) -> None:
+                seen.append(
+                    (
+                        transition.source.id,
+                        sorted(s.id for s in to_states if not s.states),
+                    )
+                )
+
+        logic = stub_logic(self.GROUPED)
+        interp = SyncInterpreter(create_machine(self.GROUPED, logic=logic))
+        interp.use(Spy())
+        interp.start()
+        del seen[:]  # the initial transition
+        interp.send("E")
+        after = ["m.p.r1.b", "m.p.r2.c", "m.p.r3.f"]
+        self.assertEqual([("m.p.r1.a", after), ("m.p.r3.d", after)], seen)
+
+
 if __name__ == "__main__":
     unittest.main()

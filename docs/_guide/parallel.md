@@ -758,6 +758,66 @@ instead — every region receives every event, so `right.c: {"on": {"JUMP":
 "d"}}` leaves `left` untouched. (Up to 0.12 a cross-region target exited and
 re-entered only the targeted region.)
 
+## When Several Regions Handle the Same Event
+
+Every region that handles an event contributes one transition, and the
+transitions taken for one event form **one microstep** (XState v5 / SCXML):
+
+1. every state any of them exits is exited (reverse document order),
+2. then each transition's own actions run, region by region in document
+   order,
+3. then every state any of them enters is entered (document order).
+
+```python
+from xstate_statemachine import SyncInterpreter, create_machine
+from xstate_statemachine.testing_utils import stub_logic
+
+config = {
+    "id": "m",
+    "initial": "p",
+    "states": {
+        "p": {
+            "type": "parallel",
+            "states": {
+                "left": {
+                    "initial": "a",
+                    "states": {
+                        "a": {"exit": "exitA", "on": {"E": {"target": "b", "actions": "left"}}},
+                        "b": {"entry": "enterB"},
+                    },
+                },
+                "right": {
+                    "initial": "c",
+                    "states": {
+                        "c": {"exit": "exitC", "on": {"E": {"target": "d", "actions": "right"}}},
+                        "d": {"entry": "enterD"},
+                    },
+                },
+            },
+        },
+    },
+}
+
+ran = []
+machine = create_machine(config, logic=stub_logic(config, ran=ran))
+interp = SyncInterpreter(machine).start()
+interp.send("E")
+assert ran == ["exitC", "exitA", "left", "right", "enterB", "enterD"]
+```
+
+Two of those transitions **conflict** when their exit sets overlap — for
+example when one region's transition targets a state in another region
+(its domain is the parallel state, so it exits every region). Only one of
+them is taken: the one selected first in document order, unless the later
+one's source is a *descendant* of the earlier one's source, in which case
+the more deeply nested transition wins. The other transition is dropped,
+not run afterwards on whatever state the winner left behind.
+
+> **Changed after 0.12:** each selected transition used to run as its own
+> exit → actions → entry sequence, one region after another (`exitA`,
+> `left`, `enterB`, `exitC`, `right`, `enterD`), and a transition whose
+> source an earlier one had exited and re-entered still ran.
+
 ## Entering Several Regions at Once (Multi-Target)
 
 `target` may be a **list** of states that lie in *different regions of one

@@ -82,6 +82,12 @@ follows XState v5 (and SCXML) exactly:
   including the region that holds the target.
 - With `"reenter": true` the source state itself exits and re-enters, even
   when the target is one of its own children.
+- When **several regions** of a parallel state take a transition for the
+  same event, all of them form one step: every exit first, then each
+  transition's actions (regions in document order), then every entry. Two
+  transitions whose exits overlap conflict, and only one of them runs
+  ([Parallel States → When Several Regions Handle the Same
+  Event](../parallel/#when-several-regions-handle-the-same-event)).
 - When the machine reaches a **top-level final state**, the `exit` actions
   of every state still active — the final state and the machine root
   included — run after the final state's `entry` actions, innermost first,

@@ -118,6 +118,27 @@ charts may need their expected lists updated.
   `params.conditions` keep working unchanged, and `stub_logic()` /
   `logic_names()` now include the action and guard names inside `choose`
   branches.
+- **Transitions taken for one event form one microstep; conflicting ones
+  are dropped.** When several parallel regions take a transition for the
+  same event, every state any of them exits is now exited first (reverse
+  document order), then each transition's actions run (regions in document
+  order), then every state any of them enters is entered (`exitC`,
+  `exitA`, `left`, `right`, `enterB`, `enterD`). Before, each transition
+  ran its own exit, actions and entry before the next one started
+  (`exitA`, `left`, `enterB`, `exitC`, `right`, `enterD`). Two of those
+  transitions *conflict* when their exit sets overlap -- a region whose
+  transition targets another region exits every region -- and only one is
+  taken: the one selected first in document order, unless the later one's
+  source is a descendant of the earlier one's, in which case the more
+  deeply nested transition wins. Before, the second transition still ran
+  whenever its source was active again after the first one (for example
+  after the first transition had exited and re-entered it), and a parallel
+  state's own handler leaving the parallel state could still run after
+  its regions' transitions. This is XState v5's `removeConflictingTransitions` and
+  `microstep`. The transitions are also selected in document order of the
+  regions, not deepest-first. A rollback (`actionErrorPolicy`) undoes the
+  whole microstep, and `on_transition` fires once per transition taken,
+  after all of them, with the configuration before and after the step.
 
 ### Fixed
 
