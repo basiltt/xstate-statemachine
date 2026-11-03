@@ -87,6 +87,22 @@ charts may need their expected lists updated.
   that checks the event type (for example
   `lambda ctx, ev: not ev.type.startswith(("done.", "error.", "after."))`)
   or declare explicit `onDone` / `onError` handlers.
+- **Multi-target transitions are supported.** `target` may now be a list
+  of states that lie in different regions of one parallel state
+  (`"target": ["#m.p.r1.x", "#m.p.r2.y"]`); each region enters its
+  target instead of its `initial` state, in document order. Before, a
+  list target was rejected with `InvalidConfigError ... multi-target
+  lists are not supported`. XState v5 and SCXML allow exactly this
+  shape. Any other list -- two targets in one compound region, a target
+  and its own descendant, the same state twice, targets not under one
+  parallel state -- is still an `InvalidConfigError` at `create_machine`
+  (not downgradable by `strict_targets=False`); a one-element list is a
+  plain target. `TransitionDefinition.target_strs` (new) holds every
+  target and `resolved_targets` their resolved nodes; `target_str`,
+  `resolved_target`, the structural hash (`machine_hash`) and diagram
+  exports use the first target, so the hash of every chart that built
+  before is unchanged and matches the Rust engine. The `[pydantic]`
+  config gate and the published JSON schema accept a list of strings.
 
 ### Fixed
 

@@ -74,10 +74,11 @@ class TransitionConfig(_Loose):
     metadata).
     """
 
-    # 📝 #266 battle: a LIST target (XState v5 multi-target) is not
-    #    implemented by the parser -- it crashed with AttributeError. The
-    #    gate refuses it with a path instead of passing it through.
-    target: Optional[str] = None
+    # 🎯 A LIST target is an XState v5 multi-target transition (each
+    #    target in a different region of one parallel state). The gate
+    #    checks the shape -- strings only; whether the targets can be
+    #    entered together needs the whole tree and is the parser's check.
+    target: Optional[Union[str, List[str]]] = None
     actions: Optional[Actions] = None
     guard: Optional[GuardSpec] = None
     cond: Optional[GuardSpec] = None  # XState v4 alias

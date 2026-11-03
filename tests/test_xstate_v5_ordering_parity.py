@@ -14,6 +14,7 @@
 """XState v5 parity of the microstep: ordering, domains, completion."""
 
 import asyncio
+import json
 import logging
 import unittest
 from typing import Any, Dict, List, Sequence, Tuple, Union
@@ -504,6 +505,97 @@ class TestWildcardMatchesEngineEvents(_Parity):
         trace, interp = _run_sync(config, [])
         self.assertEqual([["star"]], trace)
         self.assertEqual({"m.p.c"}, interp.current_state_ids)
+
+
+class TestMultiTargetParallelEntry(_Parity):
+    """`target: [a, b]` in different regions of one parallel state."""
+
+    CONFIG = {
+        "id": "m",
+        "initial": "idle",
+        "states": {
+            "idle": {"on": {"GO": {"target": ["#m.p.r1.x", "#m.p.r2.y"]}}},
+            "p": {
+                "type": "parallel",
+                "states": {
+                    "r1": {
+                        "initial": "a",
+                        "states": {
+                            "a": {"entry": "e_a"},
+                            "x": {"entry": "e_x"},
+                        },
+                    },
+                    "r2": {
+                        "initial": "c",
+                        "states": {
+                            "c": {"entry": "e_c"},
+                            "y": {"entry": "e_y"},
+                        },
+                    },
+                },
+            },
+        },
+    }
+
+    def test_both_targets_replace_the_initial_states(self) -> None:
+        self.check(
+            self.CONFIG,
+            ["GO"],
+            [[], ["e_x", "e_y"]],
+            state_ids=["m.p.r1.x", "m.p.r2.y"],
+        )
+
+    def test_single_element_list_is_a_plain_target(self) -> None:
+        config = {
+            "id": "m",
+            "initial": "a",
+            "states": {"a": {"on": {"GO": {"target": ["b"]}}}, "b": {}},
+        }
+        _, interp = _run_sync(config, ["GO"])
+        self.assertEqual({"m.b"}, interp.current_state_ids)
+
+    def test_hash_of_a_multi_target_transition_uses_the_first_target(
+        self,
+    ) -> None:
+        """The structure hash renders a transition's FIRST target, as the
+        Rust engine's `machine_hash` does (cross-language fixtures)."""
+        from src.xstate_statemachine.persistence.snapshot import (
+            structure_hash,
+        )
+
+        def chart(target: Any) -> Dict[str, Any]:
+            cfg = json.loads(json.dumps(self.CONFIG))
+            cfg["states"]["idle"]["on"]["GO"]["target"] = target
+            return cfg
+
+        multi_cfg = chart(["#m.p.r1.x", "#m.p.r2.y"])
+        multi = create_machine(multi_cfg, logic=stub_logic(multi_cfg))
+        single_cfg = chart("#m.p.r1.x")
+        single = create_machine(single_cfg, logic=stub_logic(single_cfg))
+        self.assertEqual(structure_hash(single), structure_hash(multi))
+
+    def test_incompatible_target_shapes_are_rejected(self) -> None:
+        from src.xstate_statemachine import InvalidConfigError
+
+        def chart(targets: List[str]) -> Dict[str, Any]:
+            cfg = json.loads(json.dumps(self.CONFIG))
+            cfg["states"]["idle"]["on"]["GO"]["target"] = targets
+            return cfg
+
+        bad = [
+            ["#m.p.r1.a", "#m.p.r1.x"],  # one compound region
+            ["#m.p.r1", "#m.p.r1.x"],  # a target and its descendant
+            ["#m.p.r1.x", "#m.p.r1.x"],  # the same state twice
+            ["#m.idle", "#m.p.r1.x"],  # not under one parallel state
+            [],  # empty
+        ]
+        for targets in bad:
+            with self.subTest(targets=targets):
+                with self.assertRaises(InvalidConfigError):
+                    cfg = chart(targets)
+                    create_machine(cfg, logic=stub_logic(cfg))
+        with self.assertRaises(InvalidConfigError):
+            create_machine(chart(["#m.p.r1.x", 7]))  # type: ignore[list-item]
 
 
 if __name__ == "__main__":

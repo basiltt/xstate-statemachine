@@ -3493,13 +3493,64 @@ class BaseInterpreter(Generic[TContext]):
     # ⚙️ Core State Transition Logic (The Template Method)
     # -------------------------------------------------------------------------
 
+    def _raise_unresolved_target(
+        self,
+        transition: TransitionDefinition,
+        target_str: Optional[str],
+        event: AnyEvent,
+    ) -> None:
+        """Raise (and report) `StateNotFoundError` for *target_str*."""
+        # Name the SOURCE too, so the failing transition is identifiable
+        # from the exception alone (the sync engine always did this).
+        exc = StateNotFoundError(target_str, transition.source.id)
+        # 🔔 #134: fire `on_resolve_error` HERE, at the one place both
+        #    engines raise it, so the hook cannot fire on one engine and
+        #    not the other (it used to live in the async loop only).
+        self._report_resolve_error(exc, event)
+        raise exc
+
+    def _resolve_multi_target(
+        self, transition: TransitionDefinition, event: AnyEvent
+    ) -> Tuple[StateNode[Any], ...]:
+        """Live-resolve every target of a multi-target transition.
+
+        Only reached when build-time validation could not resolve them all
+        (``strict_targets=False``). Raises `StateNotFoundError` for the
+        first target that still does not resolve, and `InvalidConfigError`
+        when the resolved targets are not in different regions of one
+        parallel state.
+        """
+        from .validation import multi_target_problem
+
+        nodes: List[StateNode[Any]] = []
+        for target_str in transition.target_strs:
+            node = self._resolve_target_state_node(transition, target_str)
+            if node is None:
+                self._raise_unresolved_target(transition, target_str, event)
+            assert node is not None  # narrowed: the call above raised
+            nodes.append(node)
+        problem = multi_target_problem(nodes)
+        if problem is not None:
+            raise InvalidConfigError(
+                f"Transition '{transition.event}' on state "
+                f"'{transition.source.id}': {problem}."
+            )
+        return tuple(nodes)
+
     def _resolve_target_state_node(
-        self, transition: TransitionDefinition
+        self,
+        transition: TransitionDefinition,
+        target_str: Optional[str] = None,
     ) -> Optional[StateNode[Any]]:
-        """Resolves a transition's target string to a concrete StateNode."""
+        """Resolves a transition's target string to a concrete StateNode.
+
+        *target_str* defaults to the transition's (first) target; a
+        multi-target transition resolves each of its `target_strs`.
+        """
         root = self.machine
         parent = transition.source.parent
-        target_str = transition.target_str
+        if target_str is None:
+            target_str = transition.target_str
 
         if not target_str:
             return None
@@ -4139,25 +4190,33 @@ class BaseInterpreter(Generic[TContext]):
         #    resolved and memoised it on the transition; only a target the
         #    validator could not resolve (`strict_targets=False`) takes the
         #    slow multi-strategy path here.
-        target_state = (
-            transition.resolved_target
-            or self._resolve_target_state_node(transition)
-        )
-        if target_state is None:
-            # Name the SOURCE too, so the failing transition is identifiable
-            # from the exception alone (the sync engine always did this).
-            exc = StateNotFoundError(
-                transition.target_str, transition.source.id
+        multi = len(transition.target_strs) > 1
+        targets: Union[StateNode[Any], Tuple[StateNode[Any], ...]]
+        if multi:
+            targets = (
+                transition.resolved_targets
+                or self._resolve_multi_target(transition, event)
             )
-            # 🔔 #134: fire `on_resolve_error` HERE, at the one place both
-            #    engines raise it, so the hook cannot fire on one engine and
-            #    not the other (it used to live in the async loop only).
-            self._report_resolve_error(exc, event)
-            raise exc
+            target_state = targets[0]
+        else:
+            resolved = (
+                transition.resolved_target
+                or self._resolve_target_state_node(transition)
+            )
+            if resolved is None:
+                self._raise_unresolved_target(
+                    transition, transition.target_str, event
+                )
+            assert resolved is not None  # narrowed: the call above raised
+            target_state = targets = resolved
 
         # 3. A self-transition without `reenter: True` is an "internal" transition.
         # It executes actions but does not exit or re-enter the source state.
-        if target_state == transition.source and not transition.reenter:
+        if (
+            not multi
+            and target_state == transition.source
+            and not transition.reenter
+        ):
             logger.debug(
                 "🎬 Executing internal self-transition for event '%s'.",
                 event.type,
@@ -4181,7 +4240,7 @@ class BaseInterpreter(Generic[TContext]):
         #    order. A history target is expanded here, *before* exiting, so
         #    the remembered configuration is the pre-transition one.
         domain, states_to_enter = self._transition_geometry(
-            transition, target_state
+            transition, targets
         )
         states_to_exit = self._compute_states_to_exit(domain, target_state)
 
@@ -4198,6 +4257,7 @@ class BaseInterpreter(Generic[TContext]):
             and (
                 transition.actions
                 or target_state.type == "history"
+                or multi
                 or any(s.exit for s in states_to_exit)
                 or any(s.subtree_has_actions for s in states_to_enter)
             )

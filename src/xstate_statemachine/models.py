@@ -480,7 +480,9 @@ class TransitionDefinition:
     Attributes:
         event: The name of the event that triggers this transition.
         source: The source `StateNode` where this transition originates.
-        target_str: The string representation of the target state.
+        target_str: The string representation of the target state (the
+                    first one of a multi-target transition).
+        target_strs: Every target string, in declaration order.
         actions: A list of `ActionDefinition` objects to execute.
         guard: The name of the guard condition to evaluate.
         reenter: A flag indicating if a self-transition should exit and
@@ -512,16 +514,39 @@ class TransitionDefinition:
         self.event: str = event
         self.source: "StateNode[Any]" = source
         target = config.get("target")
-        if target is not None and not isinstance(target, str):
-            # 🛡️ #266 battle: a list / number target escaped as a bare
-            #    AttributeError from the resolver. Multi-target transitions
-            #    are not implemented; say so.
+        targets: Tuple[str, ...] = ()
+        if isinstance(target, (list, tuple)):
+            # 🎯 XState v5 multi-target: `target: ["#m.p.r1.x", "#m.p.r2.y"]`
+            #    enters several states at once. The targets must lie in
+            #    different regions of one parallel state; that is checked
+            #    once they are resolved (`validation.multi_target_problem`).
+            if not target or not all(
+                isinstance(item, str) and item for item in target
+            ):
+                raise InvalidConfigError(
+                    f"Transition '{event}' on state '{source.id}': a "
+                    f"'target' list must hold one or more non-empty "
+                    f"strings, got {list(target)!r}"
+                )
+            targets = tuple(target)
+            target = targets[0]
+        elif target is not None and not isinstance(target, str):
+            # 🛡️ #266 battle: a number / dict target escaped as a bare
+            #    AttributeError from the resolver; say what is accepted.
             raise InvalidConfigError(
                 f"Transition '{event}' on state '{source.id}': 'target' "
-                f"must be a string (multi-target lists are not supported), "
-                f"got {type(target).__name__}"
+                f"must be a string or a list of strings, got "
+                f"{type(target).__name__}"
             )
+        elif target:
+            targets = (target,)
+        #: The (first) target string. For a multi-target transition this is
+        #: the FIRST target only -- every target is in `target_strs`.
+        #: Diagram exports and the structural hash read this field.
         self.target_str: Optional[str] = target
+        #: Every target string, in declaration order (``()`` when the
+        #: transition is targetless).
+        self.target_strs: Tuple[str, ...] = targets
         self.actions: List[ActionDefinition] = actions or []
         #: ⚡ Perf: the target `StateNode`, resolved ONCE at build time by
         #: `validation.validate_machine` (which already has to resolve it to
@@ -533,6 +558,10 @@ class TransitionDefinition:
         #: runtime falls back to resolving live. The resolver stays the single
         #: authority: this only memoises its result.
         self.resolved_target: Optional["StateNode[Any]"] = None
+        #: Every resolved target of a multi-target transition, in
+        #: declaration order (``None`` for a single-target transition, or
+        #: when one of them did not resolve at build time).
+        self.resolved_targets: Optional[Tuple["StateNode[Any]", ...]] = None
         #: ⚡ Perf: static transition GEOMETRY, memoised on first execution
         #: by `BaseInterpreter._transition_geometry`. For a given resolved
         #: target the domain (LCCA) and the entry path from the domain down
@@ -611,9 +640,14 @@ class TransitionDefinition:
 
     def __repr__(self) -> str:
         """Provides a developer-friendly string representation."""
+        target: Any = (
+            list(self.target_strs)
+            if len(self.target_strs) > 1
+            else f"'{self.target_str}'"
+        )
         return (
             f"Transition(event='{self.event}', "
-            f"target='{self.target_str}', reenter={self.reenter})"
+            f"target={target}, reenter={self.reenter})"
         )
 
 

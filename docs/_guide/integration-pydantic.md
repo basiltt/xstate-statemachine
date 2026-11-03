@@ -162,7 +162,7 @@ assert (
 | `KeyError` from write-back on a field with `exclude=True` (pre-0.11) | `model_dump()` omits excluded fields | fixed: excluded fields keep the instance's value; computed fields are never injected |
 | `RuntimeWarning: PydanticCodec stored a context the model refuses` | the snapshot being saved fails the codec's model | the blob is stored unchanged; the next `TypedContextPlugin` restore fails loudly -- fix the model or the writer |
 | a card token / secret visible in a log line or a receipt after a validation failure (pre-0.11) | pydantic's error text embeds `input_value=` and custom-validator messages interpolate the value | fixed: errors are rebuilt value-free (path, type, allow-listed `ctx` rule keys only); raise exceptions whose text does not embed the value anyway |
-| `InvalidConfigError: ... 'target' must be a string (multi-target lists are not supported)` | an XState v5 multi-target transition | not implemented; use one target per transition |
+| `InvalidConfigError: ... multi-target transition(s) whose targets cannot be entered together` | a `target` list whose entries are not in different regions of one parallel state | multi-target transitions are supported (XState v5) only for targets in different regions of one parallel state; split the transition otherwise |
 | `MissingExtraError: … pip install "xstate-statemachine[pydantic]"` | extra not installed | run the command |
 | Restored machine's action fails with `unsupported operand type(s) for +: 'str' and 'Decimal'` | a snapshot stores `Decimal` as text | attach `TypedContextPlugin(Model)` (and use `PydanticCodec` on the store) |
 | `ContextValidationError` but the context kept the bad value | `actionErrorPolicy` is `"continue"` | set `"rollback"` on the machine |

@@ -32,6 +32,7 @@ from typing import (
     Iterator,
     List,
     Optional,
+    Sequence,
     Tuple,
 )
 
@@ -197,61 +198,135 @@ def _is_dead_always_loop(
     )
 
 
+def _branch_below(
+    node: "StateNode[Any]", ancestor: "StateNode[Any]"
+) -> "Optional[StateNode[Any]]":
+    """The child of *ancestor* on *node*'s path (``None`` if not below)."""
+    current: "Optional[StateNode[Any]]" = node
+    while current is not None and current.parent is not ancestor:
+        current = current.parent
+    return current
+
+
+def multi_target_problem(
+    targets: "Sequence[StateNode[Any]]",
+) -> Optional[str]:
+    """Why a multi-target transition's targets cannot be entered together.
+
+    XState v5 / SCXML allow several targets only when every two of them
+    lie in DIFFERENT regions of a common parallel state (each region then
+    enters its target instead of its initial state). Anything else --
+    two targets in one compound state, a target and its own descendant,
+    the same state twice -- would activate two states of one region.
+
+    Returns:
+        ``None`` when the targets are compatible, else a short reason.
+    """
+    for i, first in enumerate(targets):
+        for second in targets[i + 1 :]:
+            common = first.parent
+            while common is not None and _branch_below(second, common) is None:
+                common = common.parent
+            if (
+                common is None
+                or common.type != "parallel"
+                or _branch_below(first, common)
+                is _branch_below(second, common)
+            ):
+                return (
+                    f"targets {first.id!r} and {second.id!r} are not in "
+                    f"different regions of one parallel state"
+                )
+    return None
+
+
 def _collect_findings(
     machine: "MachineNode[Any]",
-) -> Tuple[List[str], List[str], List[str]]:
-    """Walk the tree once; gather ``(unresolved, dead_loops, root_targets)``.
+) -> Tuple[List[str], List[str], List[str], List[str]]:
+    """Walk the tree once; gather the build-time findings.
 
-    The three lists have different severities downstream: `unresolved` is
-    downgradable to a warning by ``strict_targets=False``; `dead_loops`
-    and `root_targets` are not (#147) -- both describe a machine that
-    cannot run, not a transition that will merely no-op.
+    Returns ``(unresolved, dead_loops, root_targets, bad_multi_targets)``.
+    The lists have different severities downstream: `unresolved` is
+    downgradable to a warning by ``strict_targets=False``; the others are
+    not (#147) -- they describe a machine that cannot run, not a
+    transition that will merely no-op.
     """
     unresolved: List[str] = []
     dead_loops: List[str] = []
     root_targets: List[str] = []
+    bad_multi: List[str] = []
 
     for node in walk(machine):
         for label, t in _targeted_transitions(node):
-            target_str = t.target_str
-            assert target_str is not None  # narrowed by _targeted_transitions
             # 🎯 #30: every target must resolve at build time. Uses the
             #    resolver's standard strategies only -- NOT the interpreter's
             #    last-segment fallbacks, which are what let a typo bind to an
             #    unrelated state (#34).
-            target = resolve_strict(target_str, t.source, machine)
+            resolved = [
+                (target_str, resolve_strict(target_str, t.source, machine))
+                for target_str in t.target_strs
+            ]
             # ⚡ Memoise for the runtime (see TransitionDefinition.resolved_target).
-            t.resolved_target = target
-            if target is None:
-                unresolved.append(
-                    f"  {node.id}: {label} -> target {target_str!r} "
-                    f"does not resolve{_suggest(target_str, machine)}"
+            t.resolved_target = resolved[0][1]
+            if len(resolved) > 1 and all(r is not None for _, r in resolved):
+                nodes = tuple(r for _, r in resolved if r is not None)
+                t.resolved_targets = nodes
+                problem = multi_target_problem(nodes)
+                if problem is not None:
+                    bad_multi.append(f"  {node.id}: {label} -> {problem}")
+            for target_str, target in resolved:
+                _check_one_target(
+                    machine,
+                    node,
+                    label,
+                    t,
+                    target_str,
+                    target,
+                    (unresolved, dead_loops, root_targets),
                 )
-            elif target is machine:
-                # 🛑 #108: entering the ROOT enters nothing below it; the
-                #    configuration ends up EMPTY while `status` stays
-                #    "running" -- a silently inert machine on both engines.
-                #    XState/SCXML: entering a compound state enters its
-                #    initial child, so "target the root" has no meaning.
-                # 🛑 #147: kept SEPARATE from `unresolved` so that
-                #    `strict_targets=False` (which downgrades unresolvable
-                #    targets to a warning) cannot reopen this hole.
-                root_targets.append(
-                    f"  {node.id}: {label} -> target {t.target_str!r} is the "
-                    f"machine root; entering it empties the configuration. "
-                    f"Target the root's initial child "
-                    f"('#{machine.id}.{machine.initial}') or a specific "
-                    f"state."
-                )
-            elif _is_dead_always_loop(label, t, target):
-                dead_loops.append(
-                    f"  {node.id}: always self-target can never make "
-                    f"progress -- the transition does not re-enter the "
-                    f"state, so 'entry' will not re-run. Add "
-                    f'"reenter": true, route via an intermediate state, '
-                    f"or give the transition actions that mutate context."
-                )
-    return unresolved, dead_loops, root_targets
+    return unresolved, dead_loops, root_targets, bad_multi
+
+
+def _check_one_target(
+    machine: "MachineNode[Any]",
+    node: "StateNode[Any]",
+    label: str,
+    t: "TransitionDefinition",
+    target_str: str,
+    target: "Optional[StateNode[Any]]",
+    findings: Tuple[List[str], List[str], List[str]],
+) -> None:
+    """Record what is wrong with one resolved target of *t*, if anything."""
+    unresolved, dead_loops, root_targets = findings
+    if target is None:
+        unresolved.append(
+            f"  {node.id}: {label} -> target {target_str!r} "
+            f"does not resolve{_suggest(target_str, machine)}"
+        )
+    elif target is machine:
+        # 🛑 #108: entering the ROOT enters nothing below it; the
+        #    configuration ends up EMPTY while `status` stays
+        #    "running" -- a silently inert machine on both engines.
+        #    XState/SCXML: entering a compound state enters its
+        #    initial child, so "target the root" has no meaning.
+        # 🛑 #147: kept SEPARATE from `unresolved` so that
+        #    `strict_targets=False` (which downgrades unresolvable
+        #    targets to a warning) cannot reopen this hole.
+        root_targets.append(
+            f"  {node.id}: {label} -> target {target_str!r} is the "
+            f"machine root; entering it empties the configuration. "
+            f"Target the root's initial child "
+            f"('#{machine.id}.{machine.initial}') or a specific "
+            f"state."
+        )
+    elif len(t.target_strs) == 1 and _is_dead_always_loop(label, t, target):
+        dead_loops.append(
+            f"  {node.id}: always self-target can never make "
+            f"progress -- the transition does not re-enter the "
+            f"state, so 'entry' will not re-run. Add "
+            f'"reenter": true, route via an intermediate state, '
+            f"or give the transition actions that mutate context."
+        )
 
 
 def _static_raise_event_type(action: "ActionDefinition") -> Optional[str]:
@@ -519,11 +594,14 @@ def validate_machine(
             hatch, removed in 1.0.
 
     Raises:
-        InvalidConfigError: One or more targets do not resolve, or an
-            ``always`` self-target cannot make progress. The message lists
-            every finding.
+        InvalidConfigError: One or more targets do not resolve, an
+            ``always`` self-target cannot make progress, or a multi-target
+            transition's targets are not in different regions of one
+            parallel state. The message lists every finding.
     """
-    unresolved, dead_loops, root_targets = _collect_findings(machine)
+    unresolved, dead_loops, root_targets, bad_multi = _collect_findings(
+        machine
+    )
 
     # 🛑 #108 / #147: a root target is a typed, NON-downgradable error on
     #    every flag setting. `RootTargetError` is an `InvalidConfigError`,
@@ -532,6 +610,17 @@ def validate_machine(
         raise RootTargetError(
             f"Machine '{machine.id}' has transition(s) targeting the "
             f"machine root:\n" + "\n".join(root_targets)
+        )
+
+    # 🎯 A multi-target transition whose targets are not in different
+    #    regions of one parallel state would activate two states of one
+    #    region; never downgradable.
+    if bad_multi:
+        raise InvalidConfigError(
+            f"Machine '{machine.id}' has multi-target transition(s) whose "
+            f"targets cannot be entered together (each target must lie in "
+            f"a different region of one parallel state):\n"
+            + "\n".join(bad_multi)
         )
 
     # 🛡️ #51 follow-up: a strict machine must not be able to raise, from a
