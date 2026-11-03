@@ -166,5 +166,44 @@ class TestExitOrderIsReverseDocumentOrder(_Parity):
         self.assertEqual(["x_z1", "x_zeta", "x_a1", "x_alpha"], trace[1])
 
 
+class TestParallelEntryIsDocumentOrder(_Parity):
+    """Entry set: document order; the targeted region is not entered last."""
+
+    CONFIG = {
+        "id": "m",
+        "initial": "idle",
+        "states": {
+            "idle": {"on": {"GO": "#m.p.first.f2"}},
+            "p": {
+                "type": "parallel",
+                "entry": "e_p",
+                "states": {
+                    "first": {
+                        "initial": "f1",
+                        "entry": "e_first",
+                        "states": {
+                            "f1": {"entry": "e_f1"},
+                            "f2": {"entry": "e_f2"},
+                        },
+                    },
+                    "second": {
+                        "initial": "s1",
+                        "entry": "e_second",
+                        "states": {"s1": {"entry": "e_s1"}},
+                    },
+                },
+            },
+        },
+    }
+
+    def test_targeted_region_is_entered_in_declaration_order(self) -> None:
+        self.check(
+            self.CONFIG,
+            ["GO"],
+            [[], ["e_p", "e_first", "e_f2", "e_second", "e_s1"]],
+            state_ids=["m.p.first.f2", "m.p.second.s1"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

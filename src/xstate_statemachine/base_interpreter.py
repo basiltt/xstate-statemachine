@@ -4176,7 +4176,11 @@ class BaseInterpreter(Generic[TContext]):
         #    until the parent itself eventually stopped.
         # ⚡ Most machines spawn nothing; share one empty set then.
         actor_ids_before = set(self._actors) if self._actors else _NO_IDS
-        domain, path_to_enter = self._transition_geometry(
+        # 🧭 Domain and the COMPLETE entry set (targets, their ancestors
+        #    below the domain, and every default descendant), in document
+        #    order. A history target is expanded here, *before* exiting, so
+        #    the remembered configuration is the pre-transition one.
+        domain, states_to_enter = self._transition_geometry(
             transition, target_state
         )
         states_to_exit = self._compute_states_to_exit(domain, target_state)
@@ -4195,24 +4199,11 @@ class BaseInterpreter(Generic[TContext]):
                 transition.actions
                 or target_state.type == "history"
                 or any(s.exit for s in states_to_exit)
-                or any(s.subtree_has_actions for s in path_to_enter)
+                or any(s.subtree_has_actions for s in states_to_enter)
             )
             else None
         )
         internal_depth_before = self._internal_queue_depth()
-
-        # 🕰️ A history pseudo-state is never entered itself. Replace it with
-        #    the remembered configuration (or the default), computed *before*
-        #    exiting so the recorded history is the pre-transition one.
-        history_targets: List[StateNode[Any]] = []
-        if target_state.type == "history":
-            history_targets = self._resolve_history_target(target_state)
-            # Enter down to the history node's parent, then the remembered
-            # set. The parent is entered as part of each remembered node's own
-            # path, so entering it here as well would trigger its default
-            # `initial` descent and activate the wrong child alongside the
-            # restored one.
-            path_to_enter = []
 
         # 5. Execute the transition sequence in the correct SCXML order.
         #
@@ -4267,28 +4258,14 @@ class BaseInterpreter(Generic[TContext]):
             )
             if failed_actions:
                 self._apply_action_error_policy(transition, failed_actions)
-            await self._enter_states(path_to_enter, event)
-
-            # 🕰️ Restore the remembered configuration for a history target.
-            #
-            # 🏛️ Architecture decision: build ONE combined entry path and make
-            #    a SINGLE `_enter_states` call. The explicit-child guard inside
-            #    `_enter_states` is computed per call, so entering each
-            #    remembered leaf separately meant each call saw only its own
-            #    path: restoring `r1.y` walked through `r1`, which could not
-            #    tell that `y` was explicitly targeted and so ALSO ran its
-            #    default `initial` descent into `r1.x`. Deep history into a
-            #    parallel state therefore activated TWO leaves in one region —
-            #    a configuration SCXML forbids and that breaks the
-            #    one-state-per-region invariant the whole library rests on.
-            if target_state.type == "history":
-                combined_path: List[StateNode[Any]] = []
-                for node in history_targets:
-                    for step in self._get_path_to_state(node, stop_at=domain):
-                        if step not in combined_path:
-                            combined_path.append(step)
-                if combined_path:
-                    await self._enter_states(combined_path, event)
+            # 🗺️ ONE flat pass over the precomputed entry set, in document
+            #    order (XState / SCXML `enterStates`): a parallel state's
+            #    regions are entered in declaration order whichever of them
+            #    holds the target, and a history target's remembered
+            #    configuration is part of the same set -- so no compound
+            #    is ever entered twice or descended into a default child
+            #    alongside the restored one.
+            await self._enter_state_set(states_to_enter, event)
             # 🧾 Entry/exit failures surface here, after the whole sequence
             #    ran, so `"continue"` still commits the complete new
             #    configuration while `"rollback"`/`"fail"` undo all of it.
@@ -4852,48 +4829,57 @@ class BaseInterpreter(Generic[TContext]):
         states_to_enter: List[StateNode[Any]],
         event: Optional[AnyEvent] = None,
     ) -> None:
-        """Enters a list of states in order, running actions and tasks.
+        """Enters *states_to_enter* plus their default descendants.
 
-        This method follows the SCXML algorithm for state entry. For each
-        state, it:
-        1.  Adds the state to the active configuration.
-        2.  Executes all 'entry' actions.
-        3.  Schedules any `after` timers or `invoke` services defined on the state.
-        4.  If the state is a final state, it checks if its parent is now "done".
-        5.  Recursively enters the initial substate of a compound state or all
-            substates of a parallel state.
+        The given states are completed with every default descendant they
+        imply (a compound's ``initial`` child unless one of its children is
+        already listed; every region of a parallel state not already
+        listed) and the whole set is entered in DOCUMENT ORDER, exactly
+        like XState's ``enterStates``. ``start()`` calls this with
+        ``[machine]``; transitions use the precomputed set from
+        `_transition_geometry` and call `_enter_state_set` directly.
 
         Args:
-            states_to_enter (List[StateNode]): An ordered list of states to
-                enter, from the outermost ancestor to the innermost child.
-            event (Optional[Event]): The event that triggered this state entry.
+            states_to_enter (List[StateNode]): States to enter, e.g. an
+                entry path from an ancestor down to a target.
+            event (Optional[Event]): The event that triggered this entry.
+
+        Raises:
+            InvalidConfigError: A compound state on the way has no
+                resolvable ``initial`` child.
+        """
+        to_enter: Set[StateNode[Any]] = set(states_to_enter)
+        self._complete_entry_set(to_enter)
+        await self._enter_state_set(
+            sorted(to_enter, key=_doc_order_key), event
+        )
+
+    async def _enter_state_set(
+        self,
+        ordered: Sequence[StateNode[Any]],
+        event: Optional[AnyEvent] = None,
+    ) -> None:
+        """Enters an already complete, document-ordered set of states.
+
+        For each state, in order: add it to the configuration, run its
+        ``entry`` actions, arm its ``after`` timers / record its invokes,
+        and -- for a final state -- raise ``done.state.*`` or complete the
+        machine (`_check_and_fire_on_done`). No default descent happens
+        here; the set already contains every state to enter.
+
+        🏛️ Architecture decision: entry used to recurse -- a parallel
+        state entered the regions NOT on the entry path first and the
+        targeted region last, and every caller had to pass "explicit
+        child" hints so a compound did not also descend into its default
+        child next to the target. XState / SCXML compute the entry set
+        first and enter it in document order; doing the same makes the
+        order the chart's declaration order and removes the hints.
         """
         trigger_event = event or _INIT_EVENT  # ⚡ shared immutable sentinel
-
-        # 🗺️ Index the remaining path so a compound state can tell whether the
-        #    caller already named which child to descend into.
-        #
-        # 🏛️ Architecture decision: `_enter_states` used to descend into a
-        # compound's `initial` child unconditionally, *in addition* to walking
-        # the explicit entry path. When the path already named a deeper sibling
-        # (e.g. an external transition targeting `B.b2` while `B.initial` is
-        # `b1`), both `b1` and `b2` ended up active — two simultaneously active
-        # leaves inside one non-parallel region, which SCXML forbids. The
-        # phantom leaf then participated in the next selection pass and could
-        # win, executing the wrong transition and duplicating its actions.
-        explicit_children = {
-            state.parent.id: state
-            for state in states_to_enter
-            if state.parent is not None
-        }
-        explicit_child_ids = {
-            state.id for state in states_to_enter if state.parent is not None
-        }
-
         # ⚡ One level check per call, not one per state: `logger.debug`
         #    costs ~0.4 us even when disabled, and this runs per entered node.
         debug = logger.isEnabledFor(logging.DEBUG)
-        for state in states_to_enter:
+        for state in ordered:
             self._active_state_nodes.add(state)
             if debug:
                 logger.debug("➡️  Entering state: '%s'.", state.id)
@@ -4913,20 +4899,35 @@ class BaseInterpreter(Generic[TContext]):
             if state.is_final:
                 await self._check_and_fire_on_done(state)
 
-            # 🗺️ Handle automatic entry into child states.
+    @staticmethod
+    def _complete_entry_set(to_enter: Set[StateNode[Any]]) -> None:
+        """Adds every default descendant *to_enter* implies, in place.
+
+        XState's ``addDescendantStatesToEnter``: a compound state with none
+        of its children in the set gets its ``initial`` child (recursively);
+        a parallel state gets every region not already in the set. Callers
+        put each target's ancestors in the set first, so "a child is in the
+        set" is exactly "the path already names which child to enter".
+
+        Raises:
+            InvalidConfigError: A compound state has children but no
+                resolvable ``initial`` child -- entering it would leave the
+                machine without an active leaf.
+        """
+        stack = list(to_enter)
+        while stack:
+            state = stack.pop()
             if state.type == "compound" and state.initial:
-                # ⏭️ Skip the default descent when the entry path already
-                #    specifies which child of this state to enter.
-                if state.id in explicit_children:
+                if any(child in to_enter for child in state.states.values()):
                     continue
                 initial_child = state.states.get(state.initial)
-                if initial_child:
-                    await self._enter_states([initial_child], trigger_event)
-                else:
+                if initial_child is None:
                     raise InvalidConfigError(
                         f"❌ Initial state '{state.initial}' not found in "
                         f"compound state '{state.id}'."
                     )
+                to_enter.add(initial_child)
+                stack.append(initial_child)
             elif state.type == "compound" and state.states:
                 # 🚨 A compound state with children but no resolvable
                 #    `initial` cannot produce an active leaf. Left unchecked
@@ -4938,20 +4939,12 @@ class BaseInterpreter(Generic[TContext]):
                     "'initial' explicitly."
                 )
             elif state.type == "parallel":
-                # For parallel states, enter all child regions simultaneously.
-                # 🌐 Enter every region EXCEPT one already named by the entry
-                #    path (that region is walked explicitly, and entering
-                #    it again would trigger its default `initial` descent
-                #    and activate the wrong child alongside the target).
-                #    History pseudo-states are never entered as regions.
-                regions = [
-                    child
-                    for child in state.states.values()
-                    if child.type != "history"
-                    and child.id not in explicit_child_ids
-                ]
-                if regions:
-                    await self._enter_states(regions, trigger_event)
+                # 🌐 Every region not already on the entry path. History
+                #    pseudo-states are never entered as regions.
+                for region in state.states.values():
+                    if region.type != "history" and region not in to_enter:
+                        to_enter.add(region)
+                        stack.append(region)
 
     def _record_history(self, states_to_exit: List[StateNode[Any]]) -> None:
         """Remembers the active configuration of states being exited.
@@ -6044,11 +6037,15 @@ class BaseInterpreter(Generic[TContext]):
     ) -> Tuple[Optional[StateNode[Any]], List[StateNode[Any]]]:
         """The static part of a transition's execution plan, memoised.
 
-        ⚡ Returns ``(domain, path_to_enter)``. Both depend only on the
-        machine tree and the resolved target, never on the live
-        configuration, so they are computed once per transition and served
-        from `TransitionDefinition._geometry` thereafter. History targets
-        are handled by the caller (their entry path is resolved live).
+        ⚡ Returns ``(domain, states_to_enter)``: the transition domain and
+        the COMPLETE entry set -- the target, its ancestors below the
+        domain and every default descendant -- in document order. Both
+        depend only on the machine tree and the resolved target, never on
+        the live configuration, so they are computed once per transition
+        and served from `TransitionDefinition._geometry` thereafter.
+
+        A history target depends on the recorded history, so it is
+        expanded (and the result not memoised) on every call.
 
         The memo is keyed on ``id(target_state)``: a transition that is
         resolved at run time (unresolvable at build under
@@ -6056,18 +6053,49 @@ class BaseInterpreter(Generic[TContext]):
         later, and must not be served the first answer.
 
         Returns:
-            Tuple[Optional[StateNode], List[StateNode]]: the LCCA (``None``
-            when the machine root is the domain) and the parent-to-child
-            entry path from the domain down to the target. The list is a
-            fresh copy so callers may mutate it.
+            Tuple[Optional[StateNode], List[StateNode]]: the domain and the
+            states to enter, outermost first. The list is a fresh copy so
+            callers may mutate it.
         """
+        is_history = target_state.type == "history"
         memo = transition._geometry
-        if memo is not None and memo[0] == id(target_state):
+        if not is_history and memo is not None and memo[0] == id(target_state):
             return memo[1], list(memo[2])
         domain = self._find_transition_domain(transition, target_state)
-        path = self._get_path_to_state(target_state, stop_at=domain)
-        transition._geometry = (id(target_state), domain, tuple(path))
-        return domain, path
+        targets = (
+            self._resolve_history_target(target_state)
+            if is_history
+            else [target_state]
+        )
+        entry = self._compute_entry_set(targets, domain)
+        if not is_history:
+            transition._geometry = (id(target_state), domain, tuple(entry))
+        return domain, entry
+
+    def _compute_entry_set(
+        self,
+        targets: Sequence[StateNode[Any]],
+        domain: Optional[StateNode[Any]],
+    ) -> List[StateNode[Any]]:
+        """XState's ``computeEntrySet`` for one transition, document-ordered.
+
+        Every target and each of its ancestors strictly below *domain*
+        (every ancestor, root included, when *domain* is ``None``), then
+        every default descendant those imply (`_complete_entry_set`).
+
+        Args:
+            targets: The EFFECTIVE targets (a history node already replaced
+                by the configuration it restores).
+            domain: The transition domain; ``None`` means "above the root".
+        """
+        to_enter: Set[StateNode[Any]] = set()
+        for target in targets:
+            node: Optional[StateNode[Any]] = target
+            while node is not None and node is not domain:
+                to_enter.add(node)
+                node = node.parent
+        self._complete_entry_set(to_enter)
+        return sorted(to_enter, key=_doc_order_key)
 
     def _find_transition_domain(
         self, transition: TransitionDefinition, target_state: StateNode[Any]

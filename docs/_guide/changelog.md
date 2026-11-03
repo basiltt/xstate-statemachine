@@ -34,6 +34,14 @@ charts may need their expected lists updated.
   could reorder cleanup. XState and SCXML define the exit order this way.
   If one region's exit actions must run before another's, declare that
   region later in the chart.
+- **States are entered in document order.** A transition's whole entry
+  set (the target, its ancestors and every default child) is computed
+  first and entered in the order the chart declares the states. A
+  transition into one region of a parallel state used to enter the
+  *other* regions first and the targeted region last (`e_p`, `e_second`,
+  `e_s1`, `e_first`, `e_f2`); it now runs `e_p`, `e_first`, `e_f2`,
+  `e_second`, `e_s1`, as XState and SCXML do. To make one region's entry
+  actions run before another's, declare it earlier.
 
 ### Fixed
 
