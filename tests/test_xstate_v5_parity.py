@@ -4430,17 +4430,20 @@ class TestCliExtractionAndDelays(unittest.TestCase):
 # ⚡ Transient Selection Uses The Memoised Path
 # -----------------------------------------------------------------------------
 class TestTransientGuardMemoisation(unittest.TestCase):
-    """Pins that an `always` guard on a shared ancestor is not multiplied.
+    """Pins how often an `always` guard on a shared ancestor is evaluated.
 
-    🐛 Regression: transient transitions were selected by a legacy
-    single-winner scan that walked up from every active leaf WITHOUT the
-    guard memo, so a guard on an ancestor shared by N parallel regions was
-    evaluated N times per microstep — multiplying any side effect and firing
-    the `on_guard_evaluated` hook N times for one logical decision.
+    XState v5's `selectEventlessTransitions` walks up from EVERY active
+    atomic state to its first enabled `always`, so a guard on an ancestor
+    shared by N regions is evaluated once per region whose walk reaches it
+    -- N times per eventless pass, no more (conformance case
+    `guard_evaluation_order`). Up to 0.12 the engine memoised it per pass
+    and then selected a second time to execute; neither is XState's count.
     """
 
-    def test_shared_ancestor_always_guard_is_not_multiplied(self) -> None:
-        """Three regions must not triple the ancestor's guard evaluations."""
+    def test_shared_ancestor_always_guard_is_evaluated_once_per_region(
+        self,
+    ) -> None:
+        """Three regions: three evaluations, as in XState."""
         # Arrange
         calls: List[int] = []
 
@@ -4471,11 +4474,11 @@ class TestTransientGuardMemoisation(unittest.TestCase):
             guards={"g": counting_guard},
         )
 
-        # Assert — one evaluation per microstep, not one per region.
+        # Assert — one evaluation per region's walk, none to execute it.
         self.assertEqual({"m.done"}, interpreter.current_state_ids)
-        self.assertLessEqual(
-            len(calls),
+        self.assertEqual(
             3,
+            len(calls),
             f"shared ancestor guard evaluated {len(calls)}x for 3 regions",
         )
 
@@ -4485,7 +4488,7 @@ class TestTransientGuardMemoisation(unittest.TestCase):
         self.assertFalse(
             hasattr(SyncInterpreter, "_find_optimal_transition"),
             "_find_optimal_transition was reintroduced; transient selection "
-            "must use the memoised _select_transitions path",
+            "must use the _select_transitions path",
         )
 
 

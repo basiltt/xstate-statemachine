@@ -573,6 +573,32 @@ If a user is both VIP *and* adult, they go to `vip_lounge` because `isVIP` is ev
 
 > **Warning:** Placing the fallback (no-guard) transition before guarded transitions means the fallback always wins and the guards are never checked. Always put fallbacks last.
 
+### Nested and parallel states
+
+Which guards run, and how often, follows XState v5 exactly:
+
+- **Deepest state first.** For each active region, the innermost active
+  state's candidates are tried first (in order, stopping at the first that
+  is enabled). Its parent's handlers for the same event are consulted —
+  and their guards evaluated — only when nothing below matched.
+- **Parallel states.** Every region is asked, in the order the chart
+  declares them. The parallel state's own handlers (and anything above it)
+  are consulted only when **no** region had an enabled transition for the
+  event; a region that matched keeps them from running at all.
+- **`always` transitions.** After every step, each active innermost state
+  walks up to the first `always` whose guard holds. A guard on an
+  `always` that several regions share (declared on the parallel state or
+  above it) is therefore evaluated once **per region** whose walk reaches
+  it.
+- Apart from that, one selection never evaluates a guard twice, and
+  `interp.can(event)` evaluates exactly the guards `send(event)` would.
+
+> **Changed after 0.12:** every active leaf used to evaluate the guard of
+> every matching transition up to the root (memoised per pass), and an
+> eventless pass selected its transitions twice. Guards with side effects —
+> counters, metrics, the `on_guard_evaluated` hook — now see XState's
+> evaluation count and order.
+
 ## 🧠 Guards with Context
 
 Guards commonly read context to make decisions:

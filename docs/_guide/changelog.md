@@ -156,6 +156,25 @@ charts may need their expected lists updated.
   that entered the final state now also withdraws the done event it
   queued, and on the async engine the event counts toward the
   `maxIterations` chain budget like any other self-generated event.
+- **Guards are evaluated in XState's order, and only when needed.**
+  Transition selection now follows XState v5's `selectTransitions`: the
+  active tree is descended region by region (document order); in each
+  region the innermost active state's candidates are tried in order and
+  evaluation stops at the first enabled one; a state's own handlers are
+  consulted only when nothing below it matched, and a parallel state's
+  only when no region matched. Before, every active leaf walked up to the
+  root evaluating the guard of every matching transition on the way
+  (memoised per pass), so guards XState never evaluates ran -- an
+  ancestor's, or a later candidate's on the same state -- and a parallel
+  state's own targetless handler for an event ran next to a region's
+  transition for it. `always` transitions follow `selectEventlessTransitions`:
+  each active leaf walks up to its first enabled `always`, so a guard on an
+  `always` shared by N regions is evaluated N times per pass (XState's
+  count); before it was evaluated once and the pass then selected a second
+  time to execute. Guards with side effects and the `on_guard_evaluated`
+  hook see the new count and order; `can(event)` evaluates exactly what
+  `send(event)` would. `stub_logic()` takes a new `guard_log=` list that
+  records every guard evaluation.
 
 ### Fixed
 

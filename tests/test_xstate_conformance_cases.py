@@ -26,7 +26,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import pytest
 
@@ -48,7 +48,7 @@ _SIBLING = (
 CASES_DIR = Path(os.environ.get("XSM_CONFORMANCE_CASES") or _SIBLING)
 
 #: The keys of an observation the comparison covers (as the generator's).
-OBSERVATION_KEYS = ("state_ids", "context", "actions", "status")
+OBSERVATION_KEYS = ("state_ids", "context", "actions", "status", "guards")
 
 
 def _load_cases() -> List[Dict[str, Any]]:
@@ -72,7 +72,9 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-def _build(case: Dict[str, Any], ran: List[str]) -> Any:
+def _build(
+    case: Dict[str, Any], ran: List[str], guard_log: Optional[List[str]]
+) -> Any:
     """The case's machine with the generator's stub logic."""
     config = json.loads(json.dumps(case["machine"]))  # private deep copy
     spec = case.get("logic", {})
@@ -86,6 +88,7 @@ def _build(case: Dict[str, Any], ran: List[str]) -> Any:
             for name, entry in services.items()
             if "error" not in entry
         },
+        guard_log=guard_log,
     )
     for name, entry in services.items():
         if "error" in entry:
@@ -103,8 +106,12 @@ def _build(case: Dict[str, Any], ran: List[str]) -> Any:
 def _replay(case: Dict[str, Any]) -> List[Dict[str, Any]]:
     """Observations after `start()` and after every step."""
     ran: List[str] = []
+    # `logic.record_guards`: every guard evaluation, in order.
+    guard_log: Optional[List[str]] = (
+        [] if case.get("logic", {}).get("record_guards") is True else None
+    )
     clock = SimulatedClock()
-    interp = SyncInterpreter(_build(case, ran), clock=clock)
+    interp = SyncInterpreter(_build(case, ran, guard_log), clock=clock)
 
     def observe() -> Dict[str, Any]:
         out = {
@@ -116,6 +123,9 @@ def _replay(case: Dict[str, Any]) -> List[Dict[str, Any]]:
         del ran[:]
         if interp.status == "done":
             out["output"] = getattr(interp, "output", None)
+        if guard_log is not None:
+            out["guards"] = guard_log[:]
+            del guard_log[:]
         return out
 
     interp.start()
@@ -160,9 +170,9 @@ def test_python_engine_observes_what_xstate_observed(
     for index, (observed, oracle) in enumerate(zip(got, want)):
         label = "initial" if index == 0 else f"step {index - 1}"
         for key in OBSERVATION_KEYS:
-            assert observed[key] == oracle[key], (
+            assert observed.get(key) == oracle.get(key), (
                 f"{case['name']} {label}: {key}: "
-                f"xstate={oracle[key]!r} python={observed[key]!r}"
+                f"xstate={oracle.get(key)!r} python={observed.get(key)!r}"
             )
         if oracle["status"] == "done":
             assert observed.get("output") == oracle.get(

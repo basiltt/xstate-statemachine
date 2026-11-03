@@ -38,6 +38,7 @@ from typing import (
     cast,
     Any,
     Iterable,
+    Iterator,
     Awaitable,
     NamedTuple,
     Callable,
@@ -3650,7 +3651,11 @@ class BaseInterpreter(Generic[TContext]):
         )
         return None
 
-    async def _process_event(self, event: AnyEvent) -> None:
+    async def _process_event(
+        self,
+        event: AnyEvent,
+        selected: Optional[List[TransitionDefinition]] = None,
+    ) -> None:
         """Executes a single, complete "step" of the SCXML algorithm.
 
         Selects the optimal transition set for `event` — one transition per
@@ -3659,10 +3664,17 @@ class BaseInterpreter(Generic[TContext]):
 
         Args:
             event (AnyEvent): The event to process.
+            selected: Transitions the caller already selected for *event*
+                (the eventless settle loop), so no guard is evaluated a
+                second time; the caller reset `_pending_guard_error` before
+                selecting.
         """
         # 1. Select every transition this event triggers (one per region).
-        self._pending_guard_error = None
-        transitions = self._select_transitions(event)
+        if selected is None:
+            self._pending_guard_error = None
+            transitions = self._select_transitions(event)
+        else:
+            transitions = selected
         guard_error = self._pending_guard_error
         if guard_error is not None:
             self._pending_guard_error = None
@@ -5946,290 +5958,249 @@ class BaseInterpreter(Generic[TContext]):
             matches.append("*")
         return matches
 
-    def _collect_eligible_transitions(
-        self,
-        state: StateNode[Any],
-        event: AnyEvent,
-        guard_cache: Optional[Dict[int, bool]] = None,
-    ) -> List[TransitionDefinition]:
-        """Collects every eligible transition on one state's ancestor chain.
+    def _node_candidates(
+        self, node: StateNode[Any], event: AnyEvent
+    ) -> Iterator[TransitionDefinition]:
+        """Every transition declared on *node* that matches *event*.
 
-        Walks from `state` up to the machine root, gathering transitions that
-        match `event` and whose guard is satisfied. This is the per-leaf half
-        of transition selection; callers decide how to rank the results.
+        XState's ``getCandidates`` for one state, in priority order: the
+        exact ``on`` key, then partial descriptors (longest first), then
+        ``"*"``; for an engine event the state's own ``onDone`` / ``after``
+        / ``onError`` handler comes right after the exact key and the
+        wildcard descriptors last. Guards are NOT evaluated here -- see
+        `_first_enabled`. A forbidden transition is yielded like any other.
 
         Args:
-            state (StateNode): The active state to start the upward walk from.
-            event (AnyEvent): The event being
-                processed.
-            guard_cache (Optional[Dict[int, bool]]): Memo of guard results for
-                the current selection pass, keyed by transition identity. When
-                several parallel regions share an ancestor, this ensures that
-                ancestor's guard is evaluated exactly once. Pass `None` to
-                disable memoisation.
+            node (StateNode): The state whose handlers are listed.
+            event (AnyEvent): The (named) event being processed.
+
+        Yields:
+            TransitionDefinition: The candidates, in order.
+        """
+        event_type = event.type
+        on_map = node.on
+        system = is_system_event(event)
+
+        # 📨 Standard `on` event transitions, including wildcard and partial
+        #    descriptors, most specific first. ⚡ Inline the exact-key case
+        #    (no partial descriptors, no wildcard -- the overwhelming
+        #    majority of nodes): no method call, no list allocation.
+        #    `_matching_descriptors` stays the authority for every other
+        #    shape (and returns only the exact key for an engine event).
+        if not node._on_partials and not node._on_has_wildcard:
+            if event_type and event_type in on_map:
+                yield from on_map[event_type]
+        else:
+            for key in self._matching_descriptors(
+                node, event_type, system=system
+            ):
+                yield from on_map[key]
+
+        # 🏁 `onDone` transitions for compound/parallel states.
+        if node.on_done and node.on_done.event == event_type:
+            yield node.on_done
+        if not system:
+            return
+
+        # ⏰ `after` transitions for timed events.
+        #
+        # 🛡️ #203: matched on PROVENANCE, like `done` / `error` below
+        #    (#195). A hand-built or forged-record `AfterEvent` is user
+        #    traffic and must not fire a timer whose deadline has not
+        #    elapsed; only the engine's own `_fire` (which mints via
+        #    `_engine_after`) may drive an `after` transition.
+        if node.after and isinstance(event, AfterEvent):
+            for transitions in node.after.values():
+                for t in transitions:
+                    if t.event == event_type:
+                        yield t
+
+        # 🤖 `onDone`/`onError` for invoked services. `ErrorEvent` (#80) is
+        #    a distinct type so consumers can branch on it, but it routes
+        #    through `inv.on_error` the same way.
+        if node.invoke and isinstance(event, (DoneEvent, ErrorEvent)):
+            for inv in node.invoke:
+                if event.src != inv.id:
+                    continue
+                # 🛡️ #195: a completion drives `onDone` / `onError` only for
+                #    an invocation that is OUTSTANDING. A `done.invoke.<id>`
+                #    naming a finished, never-started or foreign invocation
+                #    -- however it was produced -- matches nothing (SCXML
+                #    6.4.2: events from a cancelled invocation are ignored).
+                if not self._completion_is_for_live_invocation(
+                    node, inv, event
+                ):
+                    continue
+                for t in inv.on_done + inv.on_error:
+                    if t.event == event_type:
+                        yield t
+                # 🎯 #130: an `escalate` from the invoked child arrives as
+                #    `_engine_error(type="xstate.error.actor.<runtime id>")`,
+                #    not `error.platform.<id>`. It is a failure of THIS
+                #    invocation and XState routes it to `onError`; match
+                #    the declared `onError` transitions by `src` alone.
+                if isinstance(event, ErrorEvent) and event_type.startswith(
+                    "xstate.error.actor."
+                ):
+                    yield from inv.on_error
+
+        # ✳️ XState v5 `getCandidates`: `"*"` and `"prefix.*"` match engine-
+        #    generated events too (`done.invoke.*`, `error.platform.*`,
+        #    `after.*`, `done.state.*`). They rank after this state's own
+        #    exact handlers above -- an `onDone` / `after` / `onError` on
+        #    the SAME state still wins -- but a wildcard on a deeper state
+        #    outranks an ancestor's handler, exactly as for user events.
+        if node._on_partials or node._on_has_wildcard:
+            for key in self._matching_descriptors(node, event_type):
+                if key != event_type:
+                    yield from on_map[key]
+
+    def _first_enabled(
+        self, node: StateNode[Any], event: AnyEvent
+    ) -> Optional[TransitionDefinition]:
+        """XState's ``StateNode.next``: *node*'s first enabled candidate.
+
+        Guards are evaluated in candidate order and evaluation STOPS at the
+        first transition whose guard holds (or that has none): later
+        candidates' guards never run. A forbidden transition is returned
+        as is -- it consumes the event (the caller drops it from the
+        selection).
+
+        Args:
+            node (StateNode): The state whose handlers are tried.
+            event (AnyEvent): The event being processed.
 
         Returns:
-            List[TransitionDefinition]: Eligible transitions, ordered from the
-            deepest source state upward.
+            Optional[TransitionDefinition]: The enabled transition, or
+            ``None`` when *node* does not handle *event*.
         """
-        eligible: List[TransitionDefinition] = []
+        for t in self._node_candidates(node, event):
+            # 🚫 A forbidden transition consumes the event here so no
+            #    ancestor handler can see it.
+            if t.forbidden:
+                return t
+            if self._is_guard_satisfied(t.guard_def, event):
+                return t
+            if t.guard_def is not None and self._pending_guard_error is None:
+                # 🚦 #153: declared, matched, refused by guard.
+                # 🧯 #170: a guard that CRASHED under
+                #    guardErrorPolicy="raise" is not a denial; `Receipt.error`
+                #    carries that case and `denied` stays False, as
+                #    documented ("the guard returned False").
+                self._guard_denied_this_step = True
+        return None
 
-        def _passes(transition: TransitionDefinition) -> bool:
-            """Evaluates a transition's guard, memoised per selection pass.
+    def _transition_node(
+        self,
+        node: StateNode[Any],
+        event: AnyEvent,
+        active: Set[StateNode[Any]],
+    ) -> List[TransitionDefinition]:
+        """XState v5's ``transitionNode``: descend the active tree.
 
-            🏛️ Architecture decision: guards are documented as pure predicates,
-            but in practice users write ones with side effects (counters,
-            metrics, logging). Evaluating a shared ancestor's guard once per
-            region would multiply those side effects by the region count and
-            fire `on_guard_evaluated` plugin hooks N times for a single logical
-            decision. Memoising keeps evaluation count independent of the
-            machine's parallel width.
-            """
-            if guard_cache is None:
-                return self._is_guard_satisfied(transition.guard_def, event)
-            key = id(transition)
-            if key not in guard_cache:
-                guard_cache[key] = self._is_guard_satisfied(
-                    transition.guard_def, event
-                )
-            return guard_cache[key]
+        A compound state asks its active child first and consults its own
+        handlers only when the child (and everything below it) had none; a
+        parallel state asks every active region, in document order, and
+        consults its own handlers only when NO region had one.
 
-        # 🧭 Determine which transition flavours are in play for this event.
-        is_explicit_transient_event = event.type == ""
-        # ⚡ Hot path: the event's kind does not change while walking the
-        #    ancestor chain; decide it once per call, not once per level.
-        event_type = event.type
-        system = is_system_event(event)
-        is_after = system and isinstance(event, AfterEvent)
-
-        def _scan(node: StateNode[Any], keys: Sequence[str]) -> bool:
-            """Collect `node.on[key]` for *keys*; True if a forbidden
-            transition consumed the event (stop the upward walk)."""
-            on_map = node.on
-            for key in keys:
-                for t in on_map[key]:
-                    # 🚫 A forbidden transition consumes the event here so
-                    #    no ancestor handler can see it.
-                    if t.forbidden:
-                        return True
-                    if _passes(t):
-                        eligible.append(t)
-                    elif (
-                        t.guard_def is not None
-                        and self._pending_guard_error is None
-                    ):
-                        # 🚦 #153: declared, matched, refused by guard.
-                        # 🧯 #170: a guard that CRASHED under
-                        #    guardErrorPolicy="raise" is not a denial;
-                        #    `Receipt.error` carries that case and
-                        #    `denied` stays False, as documented ("the
-                        #    guard returned False").
-                        self._guard_denied_this_step = True
-            return False
-
-        current: Optional[StateNode[Any]] = state
-        while current:
-            # 📨 Standard `on` event transitions, including wildcard and
-            #    partial descriptors, most specific first.
-            if not is_explicit_transient_event:
-                blocked = False
-                on_map = current.on
-                # ⚡ Inline the exact-key case (no partial descriptors, no
-                #    wildcard -- the overwhelming majority of nodes) so a
-                #    flat machine skips a method call and a list allocation
-                #    per ancestor level. `_matching_descriptors` stays the
-                #    authority for every other shape.
-                keys: Sequence[str]
-                if not current._on_partials and not current._on_has_wildcard:
-                    keys = (
-                        (event_type,)
-                        if event_type and event_type in on_map
-                        else ()
-                    )
-                else:
-                    keys = self._matching_descriptors(
-                        current, event_type, system=system
-                    )
-                if keys:
-                    blocked = _scan(current, keys)
-                if blocked:
-                    logger.debug(
-                        "🚫 Event '%s' forbidden at '%s'; stopping upward "
-                        "search.",
-                        event.type,
-                        current.id,
-                    )
-                    break
-
-            # ⚡ Transient `""` ("always") transitions.
-            #
-            # 🏛️ #196: eligible ONLY for the eventless selection pass
-            #    (`event.type == ""`, run by `_settle_transient_transitions`
-            #    after every macrostep), never as a candidate for a NAMED
-            #    event. SCXML 3.13: eventless transitions are selected in
-            #    their own microstep once the event's own transitions have
-            #    been taken. Letting an `always` compete for a named event
-            #    meant a deeper `always` OUTRANKED a shallower handler for
-            #    that event (deepest-source wins), so the event was
-            #    consumed by a transition that had nothing to do with it and
-            #    its own handler's actions never ran -- under a spinning
-            #    `always` every external event silently "applied" nothing.
-            if is_explicit_transient_event and "" in current.on:
-                for t in current.on[""]:
-                    if _passes(t):
-                        eligible.append(t)
-
-            # 🏁 `onDone` transitions for compound/parallel states.
-            if current.on_done and current.on_done.event == event_type:
-                if _passes(current.on_done):
-                    eligible.append(current.on_done)
-
-            # ⏰ `after` transitions for timed events.
-            #
-            # 🛡️ #203: matched on PROVENANCE, like `done` / `error` below
-            #    (#195). A hand-built or forged-record `AfterEvent` is user
-            #    traffic and must not fire a timer whose deadline has not
-            #    elapsed; only the engine's own `_fire` (which mints via
-            #    `_engine_after`) may drive an `after` transition.
-            if is_after and current.after:
-                for transitions in current.after.values():
-                    for t in transitions:
-                        if t.event == event_type and _passes(t):
-                            eligible.append(t)
-
-            # 🤖 `onDone`/`onError` for invoked services. `ErrorEvent`
-            #    (#80) is a distinct type so consumers can branch on it,
-            #    but it routes through `inv.on_error` the same way.
-            if isinstance(event, (DoneEvent, ErrorEvent)) and current.invoke:
-                for inv in current.invoke:
-                    if event.src != inv.id:
-                        continue
-                    # 🛡️ #195: a completion drives `onDone` / `onError`
-                    #    only for an invocation that is OUTSTANDING. A
-                    #    `done.invoke.<id>` naming a finished, never-
-                    #    started or foreign invocation -- however it was
-                    #    produced -- matches nothing (SCXML 6.4.2: events
-                    #    from a cancelled invocation are ignored).
-                    if not self._completion_is_for_live_invocation(
-                        current, inv, event
-                    ):
-                        continue
-                    for t in inv.on_done + inv.on_error:
-                        if t.event == event.type and _passes(t):
-                            eligible.append(t)
-                    # 🎯 #130: an `escalate` from the invoked child arrives as
-                    #    `_engine_error(type="xstate.error.actor.<runtime id>")`,
-                    #    not `error.platform.<id>`. It is a failure of THIS
-                    #    invocation and XState routes it to `onError`; match
-                    #    the declared `onError` transitions by `src` alone.
-                    if isinstance(event, ErrorEvent) and event.type.startswith(
-                        "xstate.error.actor."
-                    ):
-                        for t in inv.on_error:
-                            if _passes(t):
-                                eligible.append(t)
-
-            # ✳️ XState v5 `getCandidates`: `"*"` and `"prefix.*"` match
-            #    engine-generated events too (`done.invoke.*`,
-            #    `error.platform.*`, `after.*`, `done.state.*`). They rank
-            #    after this state's own exact handlers above -- an `onDone`
-            #    / `after` / `onError` on the SAME state still wins -- but a
-            #    wildcard on a deeper state outranks an ancestor's handler,
-            #    exactly as for user events. Up to 0.12 engine events never
-            #    reached a wildcard, so a service failure caught only by
-            #    `"*"` put the machine into `error`.
-            if system and (current._on_partials or current._on_has_wildcard):
-                if _scan(
-                    current,
-                    [
-                        key
-                        for key in self._matching_descriptors(
-                            current, event_type
-                        )
-                        if key != event_type
-                    ],
-                ):
-                    break
-
-            current = current.parent
-
-        return eligible
+        Returns:
+            List[TransitionDefinition]: The transitions selected below and
+            at *node*, in document order (forbidden ones included).
+        """
+        selected: List[TransitionDefinition] = []
+        for child in node.states.values():
+            if child in active:
+                selected.extend(self._transition_node(child, event, active))
+        if selected:
+            return selected
+        own = self._first_enabled(node, event)
+        return [own] if own is not None else selected
 
     def _select_transitions(
         self, event: AnyEvent
     ) -> List[TransitionDefinition]:
-        """Selects the optimal transition set for an event, one per region.
+        """Selects the transitions an event (or the eventless pass) enables.
 
-        Implements the SCXML `selectTransitions` rule. For each active atomic
-        state, the most deeply nested eligible transition is chosen. Because
-        orthogonal (parallel) regions each contribute their own active leaf,
-        this naturally yields one transition *per region* rather than a single
-        winner for the whole machine.
+        A named event: XState v5's ``selectTransitions`` (``transitionNode``,
+        see `_transition_node`) -- at most one transition per region, from
+        the deepest state that handles the event; a state's own handlers
+        are consulted only when nothing below it matched. Eventless
+        (``event.type == ""``): `_select_eventless_transitions`.
 
-        🏛️ Architecture decision: a previous implementation returned a single
-        `max(...)` across the entire configuration, so an event handled by two
-        parallel regions advanced only one of them. Selecting per leaf and then
-        de-duplicating fixes that while preserving the single-fire behaviour
-        for a transition defined on a shared ancestor — the same object is
-        selected by several leaves but executed only once.
+        Guards are evaluated lazily: for each state, candidates are tried in
+        order and the walk stops at the first enabled one, so a guard is
+        evaluated only when its transition could actually be taken.
+
+        🏛️ Architecture decision: up to 0.12 every active leaf walked up to
+        the root evaluating EVERY matching candidate's guard (memoised per
+        pass), and the deepest eligible transition per leaf won. That ran
+        guards XState never evaluates (an ancestor's, a later candidate's
+        on the same state), and let a parallel state's own handler be
+        selected next to a region's transition for the same event.
 
         Args:
-            event (AnyEvent): The event being
-                processed.
+            event (AnyEvent): The event being processed.
 
         Returns:
-            List[TransitionDefinition]: The transitions to execute, ordered
-            deepest-source-first and free of duplicates.
+            List[TransitionDefinition]: The selected transitions in document
+            order, free of duplicates; forbidden transitions are not listed
+            (they only stop the search).
         """
-        # 🍃 Only atomic/final leaves seed selection; ancestors are reached by
-        #    the upward walk inside `_collect_eligible_transitions`.
+        if event.type == "":
+            return self._select_eventless_transitions(event)
         active = self._active_state_nodes
-        # ⚡ Hot path (#307 benchmark): a non-parallel machine has exactly
-        #    ONE active leaf. Skip the leaf filter, both sorts and the
-        #    de-dup set. `_collect_eligible_transitions` walks UP from the
-        #    leaf, so its list is already deepest-source first and the
-        #    winner is its first entry -- the same element `max` by depth
-        #    returns (`max` keeps the first of equal keys).
-        if len(active) == 1:
-            (leaf,) = active
-            return self._collect_eligible_transitions(leaf, event, {})[:1]
-
-        leaves = [
-            s for s in active if s.is_atomic or s.is_final or not s.states
+        leaves = [s for s in active if not s.states or s.is_final]
+        if len(leaves) == 1:
+            # ⚡ Hot path: a configuration without an active parallel state
+            #    is one chain, so the descent is the walk UP from the leaf --
+            #    the first state with an enabled transition wins.
+            node: Optional[StateNode[Any]] = leaves[0]
+            while node is not None:
+                own = self._first_enabled(node, event)
+                if own is not None:
+                    return [] if own.forbidden else [own]
+                node = node.parent
+            return []
+        return [
+            t
+            for t in self._transition_node(self.machine, event, active)
+            if not t.forbidden
         ]
-        # 🛟 Fallback: if the configuration has no leaf (defensive), consider
-        #    every active node so behaviour degrades gracefully.
-        if not leaves:
-            leaves = list(active)
 
-        selected: List[TransitionDefinition] = []
-        seen: Set[int] = set()
-        # 🧠 Memo shared across all leaves in this pass, so a transition on an
-        #    ancestor common to several regions is guard-evaluated exactly once.
-        guard_cache: Dict[int, bool] = {}
+    def _select_eventless_transitions(
+        self, event: AnyEvent
+    ) -> List[TransitionDefinition]:
+        """XState v5's ``selectEventlessTransitions``.
 
-        # 🔽 Document order of the leaves -- XState's selection order, which
-        #    decides which of two conflicting transitions is kept
-        #    (`_remove_conflicting_transitions`).
+        For every active atomic state, in document order: walk up from it
+        and take the first ``always`` transition whose guard holds,
+        stopping the walk there. A guard on an ancestor shared by several
+        regions is therefore evaluated once per region whose walk reaches
+        it -- exactly as often as XState evaluates it. Conflicts are
+        resolved by the microstep (`_remove_conflicting_transitions`).
+
+        Args:
+            event (AnyEvent): The eventless pseudo-event (type ``""``).
+
+        Returns:
+            List[TransitionDefinition]: The enabled ``always`` transitions,
+            in document order of the states that selected them.
+        """
+        leaves = [s for s in self._active_state_nodes if not s.states]
         if len(leaves) > 1:
             leaves.sort(key=_doc_order_key)
+        selected: List[TransitionDefinition] = []
         for leaf in leaves:
-            eligible = self._collect_eligible_transitions(
-                leaf, event, guard_cache
-            )
-            if not eligible:
-                continue
-
-            # 🏆 This leaf's winner is the transition on its deepest ancestor:
-            #    the first entry of the upward walk (see the fast path above).
-            winner = eligible[0]
-
-            # 🧹 De-duplicate by identity so an ancestor transition shared by
-            #    several regions fires exactly once.
-            if id(winner) not in seen:
-                seen.add(id(winner))
-                selected.append(winner)
-
+            node: Optional[StateNode[Any]] = leaf
+            found: Optional[TransitionDefinition] = None
+            while node is not None and found is None:
+                for t in node.on.get("", ()):
+                    if self._is_guard_satisfied(t.guard_def, event):
+                        found = t
+                        break
+                node = node.parent
+            if found is not None and found not in selected:
+                selected.append(found)
         return selected
 
     def _compute_states_to_exit(

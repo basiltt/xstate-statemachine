@@ -137,6 +137,7 @@ def stub_logic(
     ran: Optional[List[str]] = None,
     guards: Union[bool, Mapping[str, bool]] = True,
     service_results: Optional[Mapping[str, Any]] = None,
+    guard_log: Optional[List[str]] = None,
 ) -> MachineLogic[Any]:
     """A `MachineLogic` that satisfies every name the chart declares.
 
@@ -152,6 +153,9 @@ def stub_logic(
             service returns (becomes ``event.data`` on ``onDone``). Unlisted
             services return ``None``. Services complete synchronously, so
             ``onDone`` fires within the same macrostep on both engines.
+        guard_log: If given, every guard evaluation appends the guard's
+            name here, in order -- which guards the engine evaluated, and
+            how often (the conformance cases' ``record_guards``).
 
     Returns:
         A `MachineLogic` ready for `create_machine(config, logic=...)`.
@@ -226,6 +230,8 @@ def stub_logic(
         """
 
         def _guard(c: Any, e: Any) -> bool:
+            if guard_log is not None:
+                guard_log.append(name)
             return bool(guard_table.get(name, default_guard))
 
         _guard.__name__ = f"stub_guard_{name}"

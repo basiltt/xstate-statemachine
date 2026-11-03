@@ -1008,5 +1008,138 @@ class TestDoneStateIsAnInternalEvent(unittest.TestCase):
         self.assertNotIn("onDoneTaken", ran)
 
 
+class TestGuardEvaluationOrder(unittest.TestCase):
+    """XState `selectTransitions` / `selectEventlessTransitions` guard order.
+
+    Case `042_guard_evaluation_order` (`logic.record_guards`): per region
+    the deepest state's candidates are tried in order and evaluation stops
+    at the first enabled one; a region's own handlers are consulted only
+    when its active child had none, the parallel ancestor only when no
+    region matched; every active leaf walks up to its first enabled
+    `always`, so a shared ancestor's `always` guard runs once per region.
+    """
+
+    CONFIG = {
+        "id": "m",
+        "initial": "p",
+        "states": {
+            "p": {
+                "type": "parallel",
+                "always": {"target": "#m.out", "guard": "gAlways"},
+                "on": {
+                    "E": {"actions": "pTook", "guard": "gP"},
+                    "F": {"actions": "pF", "guard": "gPF"},
+                },
+                "states": {
+                    "r1": {
+                        "initial": "a",
+                        "on": {"E": {"actions": "r1Took", "guard": "gR1"}},
+                        "states": {
+                            "a": {
+                                "on": {
+                                    "E": [
+                                        {
+                                            "target": "b",
+                                            "guard": "gA1",
+                                            "actions": "a1",
+                                        },
+                                        {"guard": "gA2", "actions": "a2"},
+                                        {"guard": "gA3", "actions": "a3"},
+                                    ]
+                                }
+                            },
+                            "b": {},
+                        },
+                    },
+                    "r2": {
+                        "initial": "c",
+                        "states": {
+                            "c": {
+                                "on": {
+                                    "E": {"guard": "gC", "actions": "cTook"},
+                                    "F": {"guard": "gCF", "actions": "cF"},
+                                }
+                            }
+                        },
+                    },
+                },
+            },
+            "out": {},
+        },
+    }
+
+    GUARDS = {
+        "gAlways": False,
+        "gA1": False,
+        "gA2": True,
+        "gC": False,
+        "gCF": False,
+    }
+
+    #: (actions, guards) after start() and after E, F, G -- xstate 5.33.3.
+    EXPECTED = [
+        ([], ["gAlways", "gAlways"]),
+        (["a2"], ["gA1", "gA2", "gC", "gAlways", "gAlways"]),
+        (["pF"], ["gCF", "gPF", "gAlways", "gAlways"]),
+        ([], ["gAlways", "gAlways"]),
+    ]
+
+    def setUp(self) -> None:
+        logging.disable(logging.CRITICAL)
+        self.addCleanup(logging.disable, logging.NOTSET)
+
+    def test_sync_engine(self) -> None:
+        ran: List[str] = []
+        log: List[str] = []
+        logic = stub_logic(
+            self.CONFIG, ran=ran, guards=self.GUARDS, guard_log=log
+        )
+        interp = SyncInterpreter(create_machine(self.CONFIG, logic=logic))
+        interp.start()
+        trace = [(ran[:], log[:])]
+        for event in ("E", "F", "G"):
+            del ran[:], log[:]
+            interp.send(event)
+            trace.append((ran[:], log[:]))
+        self.assertEqual(self.EXPECTED, trace)
+
+    def test_async_engine(self) -> None:
+        async def main() -> List[Tuple[List[str], List[str]]]:
+            ran: List[str] = []
+            log: List[str] = []
+            logic = stub_logic(
+                self.CONFIG, ran=ran, guards=self.GUARDS, guard_log=log
+            )
+            interp = Interpreter(create_machine(self.CONFIG, logic=logic))
+            await interp.start()
+            await interp.await_settled(2.0)
+            trace = [(ran[:], log[:])]
+            for event in ("E", "F", "G"):
+                del ran[:], log[:]
+                await interp.send(event, wait=True)
+                await interp.await_settled(2.0)
+                trace.append((ran[:], log[:]))
+            await interp.stop()
+            return trace
+
+        self.assertEqual(self.EXPECTED, asyncio.run(main()))
+
+    def test_ancestor_handler_is_not_taken_beside_a_region(self) -> None:
+        # p's targetless handler does not conflict with anything, so only
+        # selection keeps it out: a region handled E.
+        trace, interp = _run_sync(self.CONFIG, ["E"], guards=self.GUARDS)
+        self.assertNotIn("pTook", trace[1])
+        self.assertNotIn("r1Took", trace[1])
+
+    def test_can_evaluates_like_a_send(self) -> None:
+        log: List[str] = []
+        logic = stub_logic(self.CONFIG, guards=self.GUARDS, guard_log=log)
+        interp = SyncInterpreter(create_machine(self.CONFIG, logic=logic))
+        interp.start()
+        del log[:]
+        self.assertTrue(interp.can("E"))
+        self.assertEqual(["gA1", "gA2", "gC"], log)
+
+
 if __name__ == "__main__":
     unittest.main()

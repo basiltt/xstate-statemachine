@@ -760,8 +760,11 @@ re-entered only the targeted region.)
 
 ## When Several Regions Handle the Same Event
 
-Every region that handles an event contributes one transition, and the
-transitions taken for one event form **one microstep** (XState v5 / SCXML):
+Every region that handles an event contributes one transition — from the
+deepest active state in that region that handles it. The parallel state's
+own handler for the event (or an ancestor's) is used only when **no**
+region handled it. The transitions taken for one event form **one
+microstep** (XState v5 / SCXML):
 
 1. every state any of them exits is exited (reverse document order),
 2. then each transition's own actions run, region by region in document

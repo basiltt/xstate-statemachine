@@ -2383,17 +2383,17 @@ class Interpreter(BaseInterpreter[TContext]):
                 self._repair_configuration()
                 break
             transient_event = Event(type="")
-            # 🧠 Use the memoised selection path so a transient transition on
-            #    a shared ancestor evaluates its guard ONCE, not once per
-            #    active leaf. The legacy single-winner scan re-evaluated it
-            #    per region, multiplying any guard side effects.
+            # 🎯 XState `selectEventlessTransitions`: each active leaf walks
+            #    up to its first enabled `always`. Selected ONCE and handed
+            #    to `_process_event`, so no guard is evaluated twice.
+            self._pending_guard_error = None
             selected = self._select_transitions(transient_event)
             if selected and any(t.event == "" for t in selected):
                 logger.info(
                     "⚡ Processing transient (event-less) transition in '%s'.",
                     self.id,
                 )
-                await self._process_event(transient_event)
+                await self._process_event(transient_event, selected)
             else:
                 break  # No more transient transitions; state is stable.
         # 📞 #204 (SCXML 6.1): the macrostep is stable -- arm the invokes of

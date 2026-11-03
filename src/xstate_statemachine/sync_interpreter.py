@@ -1478,9 +1478,10 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             # 👻 Use a dummy event for guard evaluation in "always" transitions.
             transient_event = Event(type="")  # Empty type signifies "always".
 
-            # 🎯 Find transient transitions via the memoised selection path,
-            #    so a guard on a shared ancestor is evaluated once rather than
-            #    once per active leaf.
+            # 🎯 XState `selectEventlessTransitions`: each active leaf walks
+            #    up to its first enabled `always`. Selected ONCE and handed
+            #    to `_process_event`, so no guard is evaluated twice.
+            self._pending_guard_error = None
             selected = self._select_transitions(transient_event)
 
             # ⚡ An event-less transition is one with an empty event string ("").
@@ -1488,8 +1489,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 logger.info(
                     "🚀 Processing transient transition(s) in '%s'", self.id
                 )
-                # 🔄 Directly process the *found* transition, which is more efficient.
-                self._drive(self._process_event(transient_event))
+                self._drive(self._process_event(transient_event, selected))
             else:
                 # ✅ No more transient transitions found. The state is stable.
                 logger.debug(
