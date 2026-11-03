@@ -782,15 +782,35 @@ config = {
                 "left": {
                     "initial": "a",
                     "states": {
-                        "a": {"exit": "exitA", "on": {"E": {"target": "b", "actions": "left"}}},
-                        "b": {"entry": "enterB"},
+                        "a": {
+                            "exit": "exitA",
+                            "on": {
+                                "E": {
+                                    "target": "b",
+                                    "actions": "left",
+                                },
+                            },
+                        },
+                        "b": {
+                            "entry": "enterB",
+                        },
                     },
                 },
                 "right": {
                     "initial": "c",
                     "states": {
-                        "c": {"exit": "exitC", "on": {"E": {"target": "d", "actions": "right"}}},
-                        "d": {"entry": "enterD"},
+                        "c": {
+                            "exit": "exitC",
+                            "on": {
+                                "E": {
+                                    "target": "d",
+                                    "actions": "right",
+                                },
+                            },
+                        },
+                        "d": {
+                            "entry": "enterD",
+                        },
                     },
                 },
             },
