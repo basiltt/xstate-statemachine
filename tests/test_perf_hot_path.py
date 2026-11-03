@@ -134,10 +134,15 @@ class TestGeometryMemo(_Quiet):
         t = i.machine.states["A"].on["NEXT"][0]
         b = i.machine.states["B"]
         a = i.machine.states["A"]
-        _, path_b = i._transition_geometry(t, b)
-        _, path_a = i._transition_geometry(t, a)
+        domain_b, path_b = i._transition_geometry(t, b)
+        domain_a, path_a = i._transition_geometry(t, a)
         self.assertEqual([b], path_b)
-        self.assertEqual([a], path_a)
+        self.assertIs(i.machine, domain_b)
+        # Re-resolved onto its own source, the (non-reentering) transition
+        # has the source as its domain and enters nothing -- XState v5's
+        # getTransitionDomain. The memo must not serve `[b]` for it.
+        self.assertEqual([], path_a)
+        self.assertIs(a, domain_a)
 
     def test_nested_and_parallel_traces_unchanged(self) -> None:
         """Same event script, geometry memo warm vs cold: identical trace."""

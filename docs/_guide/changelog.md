@@ -42,6 +42,19 @@ charts may need their expected lists updated.
   `e_s1`, `e_first`, `e_f2`); it now runs `e_p`, `e_first`, `e_f2`,
   `e_second`, `e_s1`, as XState and SCXML do. To make one region's entry
   actions run before another's, declare it earlier.
+- **A transition into a sibling region resets the whole parallel state's
+  regions.** A transition whose target lies in another region of the same
+  parallel state (`#m.p.r2.d` from `m.p.r1.a`) has the parallel state as
+  its domain: every region exits (reverse document order) and every
+  region is entered again -- the targeted one through the target, the
+  others through their `initial` state. The parallel state itself is
+  neither exited nor re-entered. Before, only the targeted region exited
+  and re-entered, and the source region kept its state. This is the
+  XState v5 / SCXML transition domain (the least common ancestor, which
+  may be a parallel state). To move only the other region, handle the
+  event inside that region (every region sees every event, so
+  `r2.c: {on: {E: "d"}}` keeps `r1` untouched), or `raise` an event that
+  region handles.
 
 ### Fixed
 

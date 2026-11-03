@@ -205,5 +205,55 @@ class TestParallelEntryIsDocumentOrder(_Parity):
         )
 
 
+class TestCrossRegionTargetHasParallelDomain(_Parity):
+    """A target in a sibling region: the parallel state is the domain."""
+
+    CONFIG = {
+        "id": "m",
+        "initial": "p",
+        "states": {
+            "p": {
+                "type": "parallel",
+                "entry": "e_p",
+                "exit": "x_p",
+                "states": {
+                    "r1": {
+                        "initial": "a",
+                        "entry": "e_r1",
+                        "exit": "x_r1",
+                        "states": {
+                            "a": {
+                                "entry": "e_a",
+                                "exit": "x_a",
+                                "on": {"E": "#m.p.r2.d"},
+                            }
+                        },
+                    },
+                    "r2": {
+                        "initial": "c",
+                        "entry": "e_r2",
+                        "exit": "x_r2",
+                        "states": {
+                            "c": {"entry": "e_c", "exit": "x_c"},
+                            "d": {"entry": "e_d", "exit": "x_d"},
+                        },
+                    },
+                },
+            }
+        },
+    }
+
+    def test_both_regions_exit_and_reenter_but_not_the_parallel(self) -> None:
+        self.check(
+            self.CONFIG,
+            ["E"],
+            [
+                ["e_p", "e_r1", "e_a", "e_r2", "e_c"],
+                ["x_c", "x_r2", "x_a", "x_r1", "e_r1", "e_a", "e_r2", "e_d"],
+            ],
+            state_ids=["m.p.r1.a", "m.p.r2.d"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -542,7 +542,7 @@ class TransitionDefinition:
         #: transition that resolves differently is not served a stale answer.
         #: The EXIT set stays dynamic -- it depends on the live configuration.
         self._geometry: Optional[
-            Tuple[int, Any, Tuple["StateNode[Any]", ...]]
+            Tuple[Any, Any, Tuple["StateNode[Any]", ...]]
         ] = None
 
         # 🛡️ Guard resolution.

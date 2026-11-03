@@ -5985,91 +5985,97 @@ class BaseInterpreter(Generic[TContext]):
         return selected
 
     def _compute_states_to_exit(
-        self, domain: Optional[StateNode[Any]], target_state: StateNode[Any]
+        self,
+        domain: Optional[StateNode[Any]],
+        target_state: Optional[StateNode[Any]] = None,
     ) -> Set[StateNode[Any]]:
-        """Determines which active states an external transition must exit.
+        """XState's ``computeExitSet``: the active states a transition exits.
 
-        Normally every active descendant of the transition domain is exited.
-        When the domain is a `parallel` state, that would sweep up the *sibling*
-        regions as well — but only the branch containing the target is re-entered
-        by `_get_path_to_state`, so the siblings would be exited and never
-        restored, silently killing them.
+        Every active state that is a proper descendant of the transition
+        domain -- or every active state, the root included, when the domain
+        is ``None`` ("above the root", a re-entering transition on the
+        root). The caller orders them (reverse document order).
 
-        🏛️ Architecture decision: this is why the exit set is scoped to the
-        domain's child that actually contains the target whenever the domain is
-        parallel. Orthogonal regions are independent by definition: a transition
-        inside one region must not disturb the others unless it exits the
-        parallel state itself (in which case the domain is an ancestor of the
-        parallel node, not the node itself, and the full sweep is correct).
+        🏛️ Architecture decision: when the domain is a parallel state (a
+        transition from one region into a sibling region), EVERY region
+        exits, not only the targeted one, and `_compute_entry_set`
+        re-enters the others through their initial states -- XState v5 and
+        SCXML semantics. Up to 0.12 the exit set was scoped to the targeted
+        region, so the source region silently stayed put.
 
         Args:
-            domain (Optional[StateNode]): The transition domain (LCCA), or
-                `None` when the machine root is the domain.
-            target_state (StateNode): The resolved target of the transition.
+            domain (Optional[StateNode]): The transition domain, or `None`
+                when it lies above the machine root.
+            target_state (Optional[StateNode]): Unused; kept so callers of
+                the 0.12 signature keep working.
 
         Returns:
-            Set[StateNode]: The active states to exit, innermost-first ordering
-            applied by the caller.
+            Set[StateNode]: The active states to exit.
         """
-        candidates = {
+        del target_state
+        active = self._active_state_nodes
+        if domain is None:
+            return set(active)
+        return {
             s
-            for s in self._active_state_nodes
-            if self._is_descendant(s, domain) and s is not domain
+            for s in active
+            if s is not domain and self._is_descendant(s, domain)
         }
 
-        # 🌐 Scope to one region when the domain is a parallel state, so
-        #    orthogonal siblings are left untouched.
-        if domain is not None and domain.type == "parallel":
-            branch: Optional[StateNode[Any]] = target_state
-            while branch is not None and branch.parent is not domain:
-                branch = branch.parent
-            if branch is not None:
-                candidates = {
-                    s
-                    for s in candidates
-                    if s is branch or self._is_descendant(s, branch)
-                }
-
-        return candidates
-
     def _transition_geometry(
-        self, transition: TransitionDefinition, target_state: StateNode[Any]
+        self,
+        transition: TransitionDefinition,
+        target_state: Union[StateNode[Any], Sequence[StateNode[Any]]],
     ) -> Tuple[Optional[StateNode[Any]], List[StateNode[Any]]]:
         """The static part of a transition's execution plan, memoised.
 
         ⚡ Returns ``(domain, states_to_enter)``: the transition domain and
-        the COMPLETE entry set -- the target, its ancestors below the
+        the COMPLETE entry set -- the targets, their ancestors below the
         domain and every default descendant -- in document order. Both
-        depend only on the machine tree and the resolved target, never on
+        depend only on the machine tree and the resolved targets, never on
         the live configuration, so they are computed once per transition
         and served from `TransitionDefinition._geometry` thereafter.
 
         A history target depends on the recorded history, so it is
         expanded (and the result not memoised) on every call.
 
-        The memo is keyed on ``id(target_state)``: a transition that is
+        The memo is keyed on the targets' identity: a transition that is
         resolved at run time (unresolvable at build under
         ``strict_targets=False``) may legitimately land on a different node
         later, and must not be served the first answer.
 
+        Args:
+            transition: The transition being taken.
+            target_state: Its resolved target, or every target of a
+                multi-target transition.
+
         Returns:
-            Tuple[Optional[StateNode], List[StateNode]]: the domain and the
-            states to enter, outermost first. The list is a fresh copy so
-            callers may mutate it.
+            Tuple[Optional[StateNode], List[StateNode]]: the domain (``None``
+            when it lies above the root) and the states to enter, outermost
+            first. The list is a fresh copy so callers may mutate it.
         """
-        is_history = target_state.type == "history"
-        memo = transition._geometry
-        if not is_history and memo is not None and memo[0] == id(target_state):
-            return memo[1], list(memo[2])
-        domain = self._find_transition_domain(transition, target_state)
-        targets = (
-            self._resolve_history_target(target_state)
-            if is_history
-            else [target_state]
+        targets: Tuple[StateNode[Any], ...] = (
+            (target_state,)
+            if isinstance(target_state, StateNode)
+            else tuple(target_state)
         )
-        entry = self._compute_entry_set(targets, domain)
-        if not is_history:
-            transition._geometry = (id(target_state), domain, tuple(entry))
+        key: Any = (
+            id(targets[0]) if len(targets) == 1 else tuple(map(id, targets))
+        )
+        has_history = any(t.type == "history" for t in targets)
+        memo = transition._geometry
+        if not has_history and memo is not None and memo[0] == key:
+            return memo[1], list(memo[2])
+        effective: List[StateNode[Any]] = []
+        for target in targets:
+            if target.type == "history":
+                effective.extend(self._resolve_history_target(target))
+            else:
+                effective.append(target)
+        domain = self._find_transition_domain(transition, effective)
+        entry = self._compute_entry_set(effective, domain)
+        if not has_history:
+            transition._geometry = (key, domain, tuple(entry))
         return domain, entry
 
     def _compute_entry_set(
@@ -6080,8 +6086,10 @@ class BaseInterpreter(Generic[TContext]):
         """XState's ``computeEntrySet`` for one transition, document-ordered.
 
         Every target and each of its ancestors strictly below *domain*
-        (every ancestor, root included, when *domain* is ``None``), then
-        every default descendant those imply (`_complete_entry_set`).
+        (every ancestor, root included, when *domain* is ``None``); when
+        the domain is a parallel state, each of its regions that holds no
+        target (re-entered through its initial state); then every default
+        descendant those imply (`_complete_entry_set`).
 
         Args:
             targets: The EFFECTIVE targets (a history node already replaced
@@ -6094,110 +6102,69 @@ class BaseInterpreter(Generic[TContext]):
             while node is not None and node is not domain:
                 to_enter.add(node)
                 node = node.parent
+        if domain is not None and domain.type == "parallel":
+            # 🌐 Every region exits (see `_compute_states_to_exit`); the
+            #    ones holding no target come back through `initial`.
+            for region in domain.states.values():
+                if region.type != "history" and region not in to_enter:
+                    to_enter.add(region)
         self._complete_entry_set(to_enter)
         return sorted(to_enter, key=_doc_order_key)
 
     def _find_transition_domain(
-        self, transition: TransitionDefinition, target_state: StateNode[Any]
+        self,
+        transition: TransitionDefinition,
+        target_state: Union[StateNode[Any], Sequence[StateNode[Any]]],
     ) -> Optional[StateNode[Any]]:
-        """Calculates the transition domain (LCCA) for an external transition.
+        """XState v5's ``getTransitionDomain``.
 
-        The "domain" is the least common compound ancestor (LCCA) of the source
-        and target states. It determines which states are exited and entered.
-
-        For a self-transition (including re-entering ones), the domain is
-        always the parent state, which ensures the source state is correctly
-        exited and re-entered.
+        * a transition whose targets all lie inside its source (the source
+          itself included) has the SOURCE as its domain -- unless it
+          re-enters, see below;
+        * otherwise the domain is the least common ancestor of the source
+          and the targets, i.e. the nearest PROPER ancestor of the source
+          that contains every target. That ancestor may be a parallel
+          state: a transition from one region into a sibling region has
+          the parallel state as its domain.
 
         Args:
-            transition (TransitionDefinition): The external transition to analyze.
-            target_state (StateNode): The pre-resolved target state node.
+            transition (TransitionDefinition): The transition to analyse.
+            target_state: Its effective target(s) (history already
+                expanded).
 
         Returns:
-            Optional[StateNode]: The state node that is the LCCA, or None if the
-            root is the domain.
+            Optional[StateNode]: The domain.
         """
-        parent = transition.source.parent or self.machine
-
-        # For any self-transition, the domain is the parent. This forces an
-        # exit/re-entry cycle for the source state.
-        if target_state == transition.source:
-            return parent
-
-        # Standard case: Compute the Least Common Compound Ancestor (LCCA).
-        source_ancestors = self._get_ancestors(transition.source)
-        target_ancestors = self._get_ancestors(target_state)
-        common_ancestors = source_ancestors & target_ancestors
-
-        # 🎯 When the target is an ancestor of the source, the LCCA *is* the
-        # target. Using it directly as the domain would make
-        # `_get_path_to_state(target, stop_at=domain)` return an empty path,
-        # so the machine would exit down to the target and never re-enter it —
-        # left on a non-atomic ancestor with no active leaf.
-        #
-        # 🏛️ Architecture decision: step up to the target's PARENT rather than
-        # discarding the target from the candidate set. Discarding re-ran
-        # `max()` over the remaining common ancestors, which for a region of a
-        # `parallel` state selected the parallel node itself — placing every
-        # *sibling* region in `states_to_exit` while the entry path only
-        # re-entered the targeted region. The siblings were exited and never
-        # restored, permanently killing them. The parent is the correct domain:
-        # it exits and re-enters exactly the target subtree.
-        if target_state in source_ancestors:
-            return target_state.parent or self.machine
-
-        if not common_ancestors:
-            # Fallback to parent (or machine root) if no commonality is found.
-            return parent
-
-        # The LCCA is the deepest common ancestor.
-        return max(common_ancestors, key=lambda n: n.depth)
+        targets: Sequence[StateNode[Any]] = (
+            (target_state,)
+            if isinstance(target_state, StateNode)
+            else target_state
+        )
+        source = transition.source
+        if all(
+            t is source or self._is_proper_descendant(t, source)
+            for t in targets
+        ) and not (transition.reenter and source in targets):
+            return source
+        node = source.parent
+        while node is not None:
+            if all(self._is_proper_descendant(t, node) for t in targets):
+                return node
+            node = node.parent
+        return self.machine
 
     @staticmethod
-    def _get_path_to_state(
-        to_state: StateNode[Any], *, stop_at: Optional[StateNode[Any]] = None
-    ) -> List[StateNode[Any]]:
-        """Builds the ordered list of states to enter to reach a target.
-
-        This method traces the ancestry from the target state (`to_state`) up
-        to, but not including, a specified `stop_at` ancestor (typically the
-        transition domain). The resulting path is then reversed to provide the
-        correct parent-to-child entry order.
-
-        Args:
-            to_state (StateNode): The destination state.
-            stop_at (Optional[StateNode]): The ancestor at which to stop
-                traversing.
-
-        Returns:
-            List[StateNode]: A list of states to be entered, from outermost
-            to innermost.
-        """
-        path: List[StateNode[Any]] = []
-        current: Optional[StateNode[Any]] = to_state
-        while current and current is not stop_at:
-            path.append(current)
-            current = current.parent
-        # Reverse to get parent -> child order for correct state entry.
-        path.reverse()
-        return path
-
-    @staticmethod
-    def _get_ancestors(node: StateNode[Any]) -> Set[StateNode[Any]]:
-        """Gets the set of all ancestors of a node, including the node itself.
-
-        Args:
-            node (StateNode): The node from which to find ancestors.
-
-        Returns:
-            Set[StateNode]: A set containing the node and all of its parents.
-        """
-        ancestors: Set[StateNode[Any]] = set()
+    def _is_proper_descendant(
+        node: StateNode[Any], ancestor: StateNode[Any]
+    ) -> bool:
+        """True when *ancestor* lies strictly above *node* in the tree."""
+        steps = node.depth - ancestor.depth
+        if steps <= 0:
+            return False
         current: Optional[StateNode[Any]] = node
-        while current:
-            ancestors.add(current)
-            current = current.parent
-        return ancestors
+        for _ in range(steps):
+            current = current.parent if current is not None else None
+        return current is ancestor
 
     @staticmethod
     def _is_descendant(
