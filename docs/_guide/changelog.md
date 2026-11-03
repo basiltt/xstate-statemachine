@@ -197,6 +197,15 @@ charts may need their expected lists updated.
   targeting itself is unchanged (actions only), and `reenter: true` still
   exits and re-enters `p` as well. To keep the children where they are,
   make the transition targetless (drop `target`).
+- **A JSON `assign` without the `assignment` wrapper updates the
+  context.** `{"type": "xstate.assign", "params": {"count": 1}}` (or
+  `"type": "assign"`) now assigns `count`; `params.assignment` is used
+  when present, otherwise `params` itself is the property mapping -- the
+  spellings the Rust engine and the XState translation of the dialect
+  accept. Before, only `{"params": {"assignment": {...}}}` (what `assign()`
+  builds) was read and the bare form was silently ignored, so the same
+  chart produced a different context on this engine. A chart that
+  relied on the bare form being a no-op should remove the action.
 
 ### Fixed
 

@@ -4025,11 +4025,19 @@ class BaseInterpreter(Generic[TContext]):
         """Applies an `assign` action to the machine context.
 
         Args:
-            params (Any): The action's params, carrying `assignment`.
+            params (Any): The action's params: ``{"assignment": ...}`` (what
+                `assign()` builds), or -- JSON form -- the property mapping
+                itself.
             event (AnyEvent): The triggering event.
         """
+        # 📝 `params.assignment` when present, else `params` itself: the
+        #    spellings the Rust engine and the XState translation accept
+        #    (`{"type": "xstate.assign", "params": {"count": 1}}`). Up to
+        #    0.12 the bare form was silently ignored.
         assignment = (
-            params.get("assignment") if isinstance(params, dict) else params
+            params.get("assignment", params)
+            if isinstance(params, dict)
+            else params
         )
         if assignment is None:
             return

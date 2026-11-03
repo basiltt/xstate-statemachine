@@ -1312,5 +1312,112 @@ class TestCompoundSelfTargetWithoutReenter(_Parity):
         self.check(config, ["SOFT"], [["e_a"], ["soft"]], state_ids=["s.a"])
 
 
+class TestJsonAssignWithoutAssignmentWrapper(unittest.TestCase):
+    """`{"type": "assign", "params": {...}}` assigns `params` itself.
+
+    Case `045_assign_without_assignment_wrapper`; the spelling the Rust
+    engine and the XState oracle accept (`params.assignment` when present,
+    else `params`).
+    """
+
+    CONFIG = {
+        "id": "m",
+        "initial": "a",
+        "context": {"count": 0, "label": "start"},
+        "states": {
+            "a": {
+                "on": {
+                    "SET": {
+                        "target": "b",
+                        "actions": [
+                            {
+                                "type": "xstate.assign",
+                                "params": {"count": 1, "label": "first"},
+                            },
+                            "between",
+                            {"type": "assign", "params": {"label": "second"}},
+                        ],
+                    }
+                }
+            },
+            "b": {
+                "entry": [
+                    {
+                        "type": "assign",
+                        "params": {"assignment": {"count": 2}},
+                    },
+                    {"type": "assign", "params": {"flag": True}},
+                ]
+            },
+        },
+    }
+
+    EXPECTED = {"count": 2, "label": "second", "flag": True}
+
+    def setUp(self) -> None:
+        logging.disable(logging.CRITICAL)
+        self.addCleanup(logging.disable, logging.NOTSET)
+
+    def test_both_spellings_on_both_engines(self) -> None:
+        trace, interp = _run_sync(self.CONFIG, ["SET"])
+        self.assertEqual(self.EXPECTED, interp.context)
+        self.assertEqual(["between"], trace[1])
+
+        async def main() -> Dict[str, Any]:
+            config = self.CONFIG
+            interp = Interpreter(
+                create_machine(config, logic=stub_logic(config))
+            )
+            await interp.start()
+            await interp.send("SET", wait=True)
+            ctx = dict(interp.context)
+            await interp.stop()
+            return ctx
+
+        self.assertEqual(self.EXPECTED, asyncio.run(main()))
+
+    def test_bare_params_may_hold_property_functions(self) -> None:
+        config = {
+            "id": "m",
+            "initial": "a",
+            "context": {"n": 1},
+            "states": {
+                "a": {
+                    "on": {
+                        "GO": {
+                            "actions": [
+                                {
+                                    "type": "assign",
+                                    "params": {
+                                        "n": lambda args: args["context"]["n"]
+                                        + args["event"].payload["by"]
+                                    },
+                                }
+                            ]
+                        }
+                    }
+                }
+            },
+        }
+        interp = SyncInterpreter(
+            create_machine(config, logic=stub_logic(config))
+        ).start()
+        interp.send("GO", by=4)
+        self.assertEqual({"n": 5}, interp.context)
+
+    def test_assign_without_params_changes_nothing(self) -> None:
+        config = {
+            "id": "m",
+            "initial": "a",
+            "context": {"n": 1},
+            "states": {"a": {"on": {"GO": {"actions": [{"type": "assign"}]}}}},
+        }
+        interp = SyncInterpreter(
+            create_machine(config, logic=stub_logic(config))
+        ).start()
+        interp.send("GO")
+        self.assertEqual({"n": 1}, interp.context)
+
+
 if __name__ == "__main__":
     unittest.main()

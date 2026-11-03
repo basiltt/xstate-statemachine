@@ -561,9 +561,16 @@ wrote (exit actions, then the transition's actions, then entry actions).
 To derive one key from another key's *new* value, use two `assign`s or a
 single callable `assign(lambda args: {...})` that returns the whole update.
 
+In JSON, `assign` is `{"type": "xstate.assign", "params": {"assignment":
+{...}}}` (what `assign()` builds) or, equivalently, the property mapping
+directly as `params`: `{"type": "xstate.assign", "params": {"count": 1}}`.
+`"assign"` works as the type too. When `params` has an `assignment` key,
+that key is the mapping.
+
 > **Changed after 0.12:** the properties of one `assign` used to be written
 > one at a time, so a later property's callable saw an earlier property's
-> new value.
+> new value; and the JSON form without the `assignment` wrapper was
+> silently ignored.
 
 ### `choose` — branch on guards
 
