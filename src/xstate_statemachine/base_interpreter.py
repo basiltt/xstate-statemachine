@@ -3503,7 +3503,7 @@ class BaseInterpreter(Generic[TContext]):
         """Raise (and report) `StateNotFoundError` for *target_str*."""
         # Name the SOURCE too, so the failing transition is identifiable
         # from the exception alone (the sync engine always did this).
-        exc = StateNotFoundError(target_str, transition.source.id)
+        exc = StateNotFoundError(target_str or "", transition.source.id)
         # 🔔 #134: fire `on_resolve_error` HERE, at the one place both
         #    engines raise it, so the hook cannot fire on one engine and
         #    not the other (it used to live in the async loop only).
@@ -6188,10 +6188,14 @@ class BaseInterpreter(Generic[TContext]):
             when it lies above the root) and the states to enter, outermost
             first. The list is a fresh copy so callers may mutate it.
         """
+        # 📝 A sequence means several targets. Tested on the CONTAINER, not
+        #    with `isinstance(x, StateNode)`: a process that imported the
+        #    package twice (`src.xstate_statemachine` and
+        #    `xstate_statemachine`) holds nodes of the other copy's class.
         targets: Tuple[StateNode[Any], ...] = (
-            (target_state,)
-            if isinstance(target_state, StateNode)
-            else tuple(target_state)
+            tuple(target_state)
+            if isinstance(target_state, (list, tuple))
+            else (cast(StateNode[Any], target_state),)
         )
         key: Any = (
             id(targets[0]) if len(targets) == 1 else tuple(map(id, targets))
@@ -6275,9 +6279,9 @@ class BaseInterpreter(Generic[TContext]):
             Optional[StateNode]: The domain.
         """
         targets: Sequence[StateNode[Any]] = (
-            (target_state,)
-            if isinstance(target_state, StateNode)
-            else target_state
+            target_state
+            if isinstance(target_state, (list, tuple))
+            else (cast(StateNode[Any], target_state),)
         )
         source = transition.source
         if not transition.reenter and all(

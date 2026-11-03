@@ -100,11 +100,16 @@ def _action_names(
     if depth > 32:  # a hand-built self-referencing choose; stop quietly
         return
     for act in action_defs:
-        if not isinstance(act, ActionDefinition):
+        # 📝 Duck-typed: a parsed action from ANOTHER import of the package
+        #    (`src.xstate_statemachine` vs `xstate_statemachine`) is not an
+        #    instance of this copy's `ActionDefinition`.
+        if isinstance(act, (str, dict)):
             try:
                 act = ActionDefinition(act)
             except Exception:  # noqa: BLE001 -- not a static action
                 continue
+        elif not isinstance(getattr(act, "type", None), str):
+            continue
         if not is_builtin(act.type):
             actions.add(act.type)
             continue
