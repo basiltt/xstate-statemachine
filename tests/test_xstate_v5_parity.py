@@ -49,6 +49,7 @@ from src.xstate_statemachine import (
     emit,
     enqueue_actions,
     escalate,
+    event_payload,
     forward_to,
     get_next_snapshot,
     initial_transition,
@@ -5192,6 +5193,73 @@ class TestReleaseReadiness(unittest.IsolatedAsyncioTestCase):
 
         # Assert
         self.assertEqual("0 0", result.stdout.strip())
+
+
+class TestInvokeInputParity(unittest.IsolatedAsyncioTestCase):
+    """`invoke` without `input` passes the actor nothing, as XState v5 does.
+
+    Verified against xstate 5.33.3: `fromPromise` / `fromCallback` see
+    `input === undefined` when the chart declares no `input`, and a
+    declared `input: ({event}) => ...` factory sees the triggering event.
+    0.12.0 briefly forwarded the triggering payload implicitly, which made
+    the same Stately export behave differently under this engine.
+    """
+
+    CONFIG: Dict[str, Any] = {
+        "id": "m",
+        "initial": "idle",
+        "states": {
+            "idle": {"on": {"START": "plain", "START2": "factory"}},
+            "plain": {"invoke": {"src": "svc", "onDone": "done"}},
+            "factory": {
+                "invoke": {
+                    "src": "svc",
+                    "input": lambda ctx, ev: {"from": ev.type, **ev.payload},
+                    "onDone": "done",
+                }
+            },
+            "done": {"type": "final"},
+        },
+    }
+
+    def _logic(self, seen: List[Any]) -> MachineLogic:
+        def svc(interpreter: Any, context: Any, event: Any) -> int:
+            seen.append(event.payload["input"])
+            return 1
+
+        return MachineLogic(services={"svc": svc})
+
+    def test_sync_engine_matches_xstate(self) -> None:
+        seen: List[Any] = []
+        m = create_machine(self.CONFIG, logic=self._logic(seen))
+        i = SyncInterpreter(m)
+        i.start()
+        i.send("START", url="https://x", amount=3)
+        self.assertEqual(seen, [{}], "no `input` declared: nothing forwarded")
+        seen.clear()
+        n = create_machine(self.CONFIG, logic=self._logic(seen))
+        j = SyncInterpreter(n)
+        j.start()
+        j.send("START2", url="https://y")
+        self.assertEqual(seen, [{"from": "START2", "url": "https://y"}])
+
+    async def test_async_engine_matches_xstate(self) -> None:
+        seen: List[Any] = []
+        i = await Interpreter(
+            create_machine(self.CONFIG, logic=self._logic(seen))
+        ).start()
+        await i.send("START", url="https://x", amount=3, wait=True)
+        await i.stop()
+        self.assertEqual(seen, [{}])
+
+    def test_event_payload_is_the_explicit_opt_in(self) -> None:
+        cfg = json.loads(json.dumps(self.CONFIG, default=str))
+        cfg["states"]["plain"]["invoke"]["input"] = event_payload
+        seen: List[Any] = []
+        i = SyncInterpreter(create_machine(cfg, logic=self._logic(seen)))
+        i.start()
+        i.send("START", url="https://x")
+        self.assertEqual(seen, [{"url": "https://x"}])
 
 
 if __name__ == "__main__":  # pragma: no cover

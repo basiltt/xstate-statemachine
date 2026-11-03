@@ -462,7 +462,7 @@ pip install --upgrade xstate-statemachine
 - A `StateMachine` subclass is a running machine when instantiated. If you had a custom `__init__`, call `super().__init__()` (or keep using `create_machine()`, which is unchanged).
 - `send`, `state`, `configuration`, `context`, `status`, `can`, `matches`, `allowed_events`, `machine`, `interpreter`, `engine`, `strict`, `plugins`, `validate_logic` are reserved attribute names in a `StateMachine` body; a state or transition using one raises `InvalidConfigError` (keep the event name with `event=`). A transition named `start` or `stop` is allowed but gets no `sm.stop()` sugar.
 - Undecorated methods whose names match a referenced guard / action / service are bound automatically; a method named `on_enter_<state>`, `on_<event>`, `before_<event>` or `after_<event>` is now a hook. Rename helpers that collide.
-- Invoked services receive the triggering event's payload as their default `input` (previously `{}`).
+- A declared `invoke.input` factory now receives the triggering event, as in XState. (0.12.0 also forwarded the payload when no `input` was declared; that was reverted for XState parity -- declare `"input": event_payload` to forward it.)
 
 **From v0.10.x to v0.11.0:**
 

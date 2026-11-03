@@ -478,9 +478,9 @@ class State(metaclass=_StateMeta):
                 async def fetch_url(self, url):
                     ...
 
-        The service receives the triggering event's payload as its input
-        (``url`` above comes from ``sm.start(url=...)``), unless ``input``
-        is given explicitly.
+        As in XState, the service receives no input unless ``input`` is
+        given; pass ``input=event_payload`` to forward the triggering
+        event's payload (``url`` above then comes from ``sm.start(url=...)``).
 
         Args:
             fn: The method, when used bare as ``@state.service``.

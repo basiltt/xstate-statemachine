@@ -642,6 +642,34 @@ def _required_positional_arity(fn: Any) -> Optional[int]:
     )
 
 
+def event_payload(context: Any, event: Any) -> Dict[str, Any]:
+    """An ``invoke.input`` factory that forwards the triggering event's payload.
+
+    XState passes an invoked actor no input unless the chart declares one;
+    this is the explicit, portable way to hand a service the fields of the
+    event that entered the state -- the JSON equivalent is
+    ``"input": ({event}) => event`` in XState. ``send("START", url=...)``
+    then arrives as ``event.payload["input"]["url"]`` (or as a ``url``
+    parameter with argument injection)::
+
+        State(invoke={"src": "fetchUrl", "input": event_payload, "onDone": "done"})
+
+        @loading.service(input=event_payload, on_done="done")
+        def fetch_url(self, url): ...
+
+    Args:
+        context: The parent's context (unused).
+        event: The event whose transition entered the invoking state.
+
+    Returns:
+        Dict[str, Any]: A copy of the event's payload (``{}`` when it has
+        none, or when the state was entered without an event).
+    """
+    del context
+    payload = getattr(event, "payload", None)
+    return dict(payload) if isinstance(payload, dict) else {}
+
+
 def _call_input_factory(fn: Any, context: Any, event: Any) -> Any:
     """Invoke an ``input`` factory using the arity it actually requires.
 

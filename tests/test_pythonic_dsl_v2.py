@@ -23,6 +23,7 @@ from xstate_statemachine import (
     InvalidConfigError,
     SyncInterpreter,
     UnknownEventError,
+    event_payload,
 )
 from xstate_statemachine.exceptions import TransitionNotAllowedError
 from xstate_statemachine.pythonic import (
@@ -1162,13 +1163,39 @@ class TestReviewRegressions(unittest.TestCase):
 # 8c. Services see the triggering event; @state.service decorator
 # =========================================================================
 class TestServiceInput(unittest.TestCase):
+    def test_no_declared_input_means_no_input_like_xstate(self):
+        """XState passes an invoked actor nothing unless `input` is declared
+        (verified against xstate 5.33.3); the triggering payload is NOT
+        forwarded implicitly, so a Stately export behaves the same here."""
+        seen = {}
+
+        class Fetch(StateMachine):
+            idle = State(initial=True)
+            loading = State(invoke={"src": "fetchUrl", "onDone": "done"})
+            done = State()
+            start = idle.to(loading)
+
+            @service
+            def fetch_url(self, interpreter, context, event):
+                seen["input"] = event.payload["input"]
+                return "ok"
+
+        with Fetch() as sm:
+            sm.send("START", url="http://x", retries=2)
+            self.assertEqual(seen["input"], {})
+            self.assertEqual(sm.state, "done")
+
     def test_service_receives_triggering_payload_as_input(self):
         seen = {}
 
         class Fetch(StateMachine):
             idle = State(initial=True)
             loading = State(
-                invoke={"src": "fetchUrl", "onDone": "done"},
+                invoke={
+                    "src": "fetchUrl",
+                    "input": event_payload,
+                    "onDone": "done",
+                },
             )
             done = State()
             start = idle.to(loading)
@@ -1188,7 +1215,13 @@ class TestServiceInput(unittest.TestCase):
 
         class Fetch(StateMachine):
             idle = State(initial=True)
-            loading = State(invoke={"src": "fetchUrl", "onDone": "done"})
+            loading = State(
+                invoke={
+                    "src": "fetchUrl",
+                    "input": event_payload,
+                    "onDone": "done",
+                }
+            )
             done = State()
             start = idle.to(loading)
 
@@ -1249,7 +1282,9 @@ class TestServiceInput(unittest.TestCase):
             failed = State()
             start = idle.to(loading)
 
-            @loading.service(on_done="done", on_error="failed")
+            @loading.service(
+                input=event_payload, on_done="done", on_error="failed"
+            )
             def fetch_url(self, url):
                 if url == "bad":
                     raise ValueError("bad url")
@@ -1279,7 +1314,7 @@ class TestServiceInput(unittest.TestCase):
             done = State()
             start = idle.to(loading)
 
-            @loading.service(on_done="done")
+            @loading.service(input=event_payload, on_done="done")
             async def fetch_url(self, url):
                 await asyncio.sleep(0)
                 return url.upper()
@@ -1416,7 +1451,14 @@ class TestInjectionCorners(unittest.TestCase):
 
         class M(StateMachine):
             a = State(initial=True)
-            b = State(invoke={"src": "svc", "onDone": "c", "onError": "d"})
+            b = State(
+                invoke={
+                    "src": "svc",
+                    "input": event_payload,
+                    "onDone": "c",
+                    "onError": "d",
+                }
+            )
             c = State()
             d = State()
             go = a.to(b, actions=[{"type": "act", "params": {"limit": 3}}])

@@ -847,9 +847,9 @@ class BaseInterpreter(Generic[TContext]):
         self._states_to_invoke: List[StateNode[Any]] = []
         #: 📨 0.12.0: the event that ENTERED each state awaiting invocation,
         #: by state id, so a deferred `invoke` can still see it -- its
-        #: `input` factory receives it (XState: `input: ({event}) => ...`)
-        #: and, with no `input` declared, the service gets the event's
-        #: payload as its input instead of an empty dict.
+        #: `input` factory receives it (XState: `input: ({event}) => ...`).
+        #: With no `input` declared the service receives `{}`, as XState
+        #: passes `undefined`; the payload is never forwarded implicitly.
         self._invoke_trigger: Dict[str, AnyEvent] = {}
         #: ⏱️ #128: re-arm `after` timers of the restored configuration on
         #: the next `start()`.
@@ -3128,30 +3128,29 @@ class BaseInterpreter(Generic[TContext]):
     ) -> Any:
         """The ``input`` a service receives on its ``invoke.<id>`` event.
 
-        🏛️ 0.12.0: a declared ``input`` is resolved against the parent's
-        context AND the event that entered the state, so an XState-style
-        ``input: ({context, event}) => ...`` factory finally sees the
-        event. With no ``input`` declared, the service gets the triggering
-        event's payload: ``send("START", url=...)`` arrives as
-        ``event.payload["input"]["url"]`` instead of an empty dict, so a
-        machine no longer needs an extra action just to copy the payload
-        into ``context`` for its service. Child MACHINES keep the old rule
-        (no input unless declared): their ``context`` factory must not
-        start receiving surprise input.
+        🏛️ XState v5 contract (verified against xstate 5.33.3): a declared
+        ``input`` -- static or ``input: ({context, event}) => ...`` -- is
+        resolved against the parent's context AND the event that entered
+        the state, so the factory sees the triggering event. With no
+        ``input`` declared the actor receives *nothing* (``undefined`` in
+        XState; ``{}`` here, the 0.7.x convention). 0.12.0 briefly forwarded
+        the triggering event's payload instead; that made a Stately export
+        behave differently under this engine than under XState and was
+        reverted. A chart that wants the payload declares it:
+        ``"input": event_payload`` (`xstate_statemachine.event_payload`) or
+        ``lambda ctx, ev: ev.payload``. Child MACHINES follow the same
+        rule.
 
         Args:
             invocation: The invoke being armed.
             trigger: The event whose transition entered the state, if any.
 
         Returns:
-            Any: The resolved input; ``{}`` when there is nothing to pass.
+            Any: The resolved input; ``{}`` when none is declared.
         """
         resolved = invocation.resolve_input(self.context, trigger)
         if resolved is not None:
             return resolved
-        payload = getattr(trigger, "payload", None)
-        if isinstance(payload, dict) and payload:
-            return copy.deepcopy(payload)
         return {}
 
     def _invoke_service(

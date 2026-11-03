@@ -49,7 +49,7 @@ The `invoke` property on a state defines which service to call and how to handle
 |-----|------|-------------|
 | `src` | `string` | The service name (must match a registered service function) |
 | `id` | `string` | Optional unique identifier (defaults to the state's ID) |
-| `input` | `any` \| `callable` | Static data (or a `fn(context, event)` / `fn({"context": ..., "event": ...})` callable, resolved fresh on every spawn) forwarded to the invoked service or child. A callable service receives it at `event.payload["input"]`; a spawned child machine receives it at `context["input"]`. |
+| `input` | `any` \| `callable` | Static data (or a `fn(context, event)` / `fn({"context": ..., "event": ...})` callable, resolved fresh on every spawn) forwarded to the invoked service or child. A callable service receives it at `event.payload["input"]`; a spawned child machine receives it at `context["input"]`. | Without `input` the actor receives nothing (`{}`), exactly as XState passes `undefined`; the triggering event is never forwarded implicitly. To hand a service the event that entered the state, declare `"input": event_payload` (exported from the package root; the XState equivalent is `input: ({event}) => event`). |
 | `systemId` | `string` | Registers the invocation under a global actor address so it can be addressed from anywhere in the tree with `send_to` — see [Actors](../actors/). |
 | `onDone` | `object` | Transition to take on successful completion |
 | `onError` | `object` | Transition to take on failure (exception) |

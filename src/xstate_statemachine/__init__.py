@@ -116,7 +116,12 @@ from .events import (
     re_mint,
     system_event,
 )
-from .models import ActionDefinition, MachineNode, OverflowPolicy
+from .models import (
+    ActionDefinition,
+    MachineNode,
+    OverflowPolicy,
+    event_payload,
+)
 
 # -----------------------------------------------------------------------------
 # 🔌 Extensibility & Plugins
@@ -395,6 +400,7 @@ __all__ = [
     # 🐍 Pythonic API
     "State",
     "StateMachine",
+    "event_payload",
     "MachineBuilder",
     "build_machine",
     "transition",

@@ -13,6 +13,24 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ## [Unreleased]
 
+### Fixed
+
+- **XState parity: an `invoke` without `input` passes the actor nothing.**
+  0.12.0 made a service whose state declares no `input` receive the
+  triggering event's payload. XState v5 passes `undefined` there (verified
+  against xstate 5.33.3 with `fromPromise` and `fromCallback`), so the same
+  Stately export behaved differently under this engine, and a machine
+  written against the shortcut would silently receive nothing under
+  XState or the Rust engine. The shortcut is reverted on both engines: a
+  service with no declared `input` receives `{}` again (the 0.11 behaviour).
+  The XState-faithful half of the 0.12.0 change stays: a declared `input`
+  factory still sees the triggering event. To forward the payload, declare
+  it -- `"input": event_payload` (new, exported from the package root; the
+  JSON equivalent is `input: ({event}) => event`) or any
+  `lambda ctx, ev: ...` factory. `@state.service(input=event_payload, ...)`
+  is the class-DSL spelling; argument injection of payload fields into a
+  service's parameters works through that declared input.
+
 ## [0.12.0] - 2026-10-20
 
 ### Added
