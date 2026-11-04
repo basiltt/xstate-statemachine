@@ -150,8 +150,10 @@ assert [
 ] == [  # the audit trail, same transaction
     "CHECKOUT",
     "LEGAL_OK",
+    "done.state.order.review.legal",  # a region finished (engine event)
     "FINANCE_OK",
-    "done.state.order.review",
+    "done.state.order.review.finance",
+    "done.state.order.review",  # ... and so did the parallel state
     "PAY",
 ]
 ```

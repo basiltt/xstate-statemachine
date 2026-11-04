@@ -1893,5 +1893,127 @@ class TestUnchangedEventlessMicrostepIsNotReselected(_GuardParity):
         self.assertEqual({"n": 3}, interp.context)
 
 
+class TestDoneStatePropagation(_Parity):
+    """Which ancestors receive `done.state.*` (XState v5 `enterStates`).
+
+    Case `049_done_state_propagation`: the final state's compound parent,
+    then every parallel ancestor whose regions are all final (a history
+    child is not a region) -- each raised whether or not it has `onDone`,
+    in that order. A compound grandparent is never notified.
+    """
+
+    CONFIG: Dict[str, Any] = {
+        "id": "m",
+        "initial": "outer",
+        "on": {"*": {"actions": "anyRoot"}},
+        "states": {
+            "outer": {
+                "initial": "p",
+                "onDone": {"actions": "outerDone"},
+                "states": {
+                    "p": {
+                        "type": "parallel",
+                        "onDone": {"target": "#m.after", "actions": "pDone"},
+                        "states": {
+                            "hp": {"type": "history", "history": "deep"},
+                            "r1": {
+                                "initial": "a1",
+                                "onDone": {"actions": "r1Done"},
+                                "states": {
+                                    "a1": {"on": {"FIN1": "f1"}},
+                                    "f1": {"type": "final"},
+                                },
+                            },
+                            "r2": {
+                                "type": "parallel",
+                                "onDone": {"actions": "r2Done"},
+                                "states": {
+                                    "x": {
+                                        "initial": "x1",
+                                        "onDone": {"actions": "xDone"},
+                                        "states": {
+                                            "x1": {"on": {"FIN2": "xf"}},
+                                            "xf": {"type": "final"},
+                                        },
+                                    },
+                                    "y": {
+                                        "initial": "y1",
+                                        "states": {
+                                            "y1": {"on": {"FIN2": "yf"}},
+                                            "yf": {"type": "final"},
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    }
+                },
+            },
+            "after": {"entry": "e_after", "on": {"NEST": "#m.a"}},
+            "a": {
+                "initial": "b",
+                "onDone": {"actions": "aDone"},
+                "states": {
+                    "b": {
+                        "initial": "c",
+                        "states": {
+                            "c": {"on": {"FIN": "f"}},
+                            "f": {"type": "final"},
+                        },
+                    }
+                },
+            },
+        },
+    }
+
+    def test_parent_then_every_completed_parallel_ancestor(self) -> None:
+        # xstate 5.33.3, case 049: done.state.y has no handler and reaches
+        # the root's wildcard; a's onDone never runs.
+        self.check(
+            self.CONFIG,
+            ["FIN1", "FIN2", "NEST", "FIN"],
+            [
+                [],
+                ["r1Done"],
+                ["xDone", "anyRoot", "r2Done", "pDone", "e_after"],
+                [],
+                ["anyRoot"],
+            ],
+            state_ids=["m.a.b.f"],
+        )
+
+    def test_a_parallel_root_completes_the_machine(self) -> None:
+        config = {
+            "id": "m",
+            "type": "parallel",
+            "states": {
+                "r1": {
+                    "initial": "a",
+                    "onDone": {"actions": "r1Done"},
+                    "states": {
+                        "a": {"on": {"FIN": "f"}},
+                        "f": {"type": "final"},
+                    },
+                },
+                "r2": {
+                    "initial": "c",
+                    "exit": "x_r2",
+                    "states": {
+                        "c": {"on": {"FIN2": "g"}},
+                        "g": {"type": "final"},
+                    },
+                },
+            },
+        }
+        # xstate 5.33.3: status "done" after FIN2, exit actions run.
+        self.check(
+            config,
+            ["FIN", "FIN2"],
+            [[], ["r1Done"], ["x_r2"]],
+            state_ids=["m.r1.f", "m.r2.g"],
+            status="done",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

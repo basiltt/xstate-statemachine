@@ -132,7 +132,7 @@ When a final state is entered, several things happen:
 
 1. **Entry actions** on the final state execute (if any are defined)
 2. **The machine signals completion** — no further event processing occurs for this branch
-3. **`done.state.*` event fires on the parent** — if the final state is inside a compound state, the parent receives a `DoneEvent`. It is an *internal* event, like a `raise`: it is processed right after the current step, before any external event already waiting in the queue (`send_events(["FINISH", "NEXT"])` takes the parent's `onDone` transition before `NEXT`, as XState v5 does)
+3. **`done.state.*` event fires on the parent** — if the final state is inside a compound state, the parent receives a `DoneEvent` (and a parallel ancestor whose regions are now all final receives one too; see [Which states are told they are done](#which-states-are-told-they-are-done)). It is an *internal* event, like a `raise`: it is processed right after the current step, before any external event already waiting in the queue (`send_events(["FINISH", "NEXT"])` takes the parent's `onDone` transition before `NEXT`, as XState v5 does)
 4. **All `after` timers are cancelled** — any pending delayed transitions in the machine/region are cleaned up
 5. **A top-level final state completes the machine** — the machine's `output` is resolved, then the `exit` actions of every state that is still active (the final state itself and the machine root included) run, innermost first, and `status` becomes `"done"`. The configuration is kept: a done machine still reports its final state. This matches XState v5; up to 0.12 no exit actions ran on completion.
 
@@ -141,9 +141,10 @@ When a final state is entered, several things happen:
 # from the `xstate_statemachine.events` submodule, as shown below.
 from xstate_statemachine.events import DoneEvent
 
-# When "confirmation" (a final state inside "checkout") is entered:
-# Event type: "done.state.checkout.confirmation"
-# This fires on the parent compound state
+# "confirmation" is a top-level final state: entering it completes the
+# machine. A final state inside a compound state "review" of this machine
+# would instead raise a DoneEvent of type "done.state.checkout.review" --
+# the PARENT's id -- which "review"'s `onDone` handles.
 ```
 
 ## 🪆 Final States in Compound States
@@ -451,6 +452,18 @@ interp.stop()
 <div class="stately" data-machine="a3ea16cc2d" data-height="520" data-title="parallelFinal"></div>
 
 > **Note:** The `onDone` on `processing` only fires when **both** `upload` and `validate` have reached their final states. This is how parallel states enable "wait for all" patterns.
+
+### Which states are told they are done
+
+Entering a final state raises `done.state.*` events exactly as XState v5 does:
+
+1. Its **parent**, when that is a compound state (a region, or any other compound), receives `done.state.<parent>` carrying the final state's `output`.
+2. Then, walking up from there: while the next ancestor is a **parallel** state whose regions are all in a final state, that parallel state receives `done.state.<parallel>` too (a `history` child is not a region). A region that finishes last therefore produces two events in a row, the region's and the parallel state's, and both `onDone` handlers run, in that order. Nested parallel states continue the chain.
+3. Nothing else is notified. In particular a compound state whose *grandchild* is final is not done: for `a → b → f` (`f` final inside `b`), `b`'s `onDone` runs, `a`'s does not — `a` completes only when one of its own final children is entered.
+
+Every event is raised whether or not the state declares `onDone`; one nobody handles reaches a `"*"` handler (or is dropped like any unhandled engine event). When the walk reaches the root — a final state directly under it, or a parallel root whose regions are all final — the machine completes.
+
+> **Changed after 0.12:** only the first ancestor with an `onDone` that was "done" was notified (a compound counted as done when its active child was, recursively), so a grandparent's `onDone` fired in step 3, a parallel state's `onDone` was skipped when the finishing region had its own, and a parallel root never completed the machine.
 
 ## 🔀 Multiple Final States: Success/Failure Patterns
 

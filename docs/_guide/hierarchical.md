@@ -689,7 +689,7 @@ interp.stop()
 
 ## 🏁 onDone for Compound States
 
-When a compound state's child reaches a **final** state, a `done.state.*` event fires on the parent. Use `onDone` to react:
+When a compound state's child reaches a **final** state, a `done.state.*` event fires on the parent. Use `onDone` to react (the grandparent is not notified: it is done only when one of its *own* final children is entered — see [Final States → Which states are told they are done](../final-states/#which-states-are-told-they-are-done)):
 
 ```json
 {

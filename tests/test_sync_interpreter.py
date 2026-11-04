@@ -1125,7 +1125,11 @@ class TestSyncInterpreter(unittest.TestCase):
         self.assertEqual(interpreter.current_state_ids, {"deep.b"})
 
     def test_deeply_nested_parallel_state_on_done(self) -> None:
-        """Tests that `onDone` correctly fires from a deeply nested parallel state."""
+        """`onDone` fires from a nested parallel state -- and stops where
+        XState stops: `p_final` completes `p_wrapper`, which has no `onDone`;
+        `s1` is not done (its own child is not final), so `s1.onDone` never
+        runs (xstate 5.33.3; conformance case `049_done_state_propagation`).
+        Up to 0.12 the completion bubbled on to `s1` and reached `s2`."""
         logger.info("🧪 Testing `onDone` from a nested parallel state...")
         # 🤖 Arrange: A machine where a parallel state is inside another state.
         machine_config: Dict[str, Any] = {  # noqa: DuplicatedCode
@@ -1170,8 +1174,10 @@ class TestSyncInterpreter(unittest.TestCase):
         # ⚡ Act: The machine should auto-transition upon start.
         interpreter = SyncInterpreter(machine).start()
 
-        # ✨ Assert: The machine correctly cascaded through all `onDone` events.
-        self.assertEqual(interpreter.current_state_ids, {"m.s2"})
+        # ✨ Assert: p's onDone ran (p_final); s1 is not done.
+        self.assertEqual(
+            interpreter.current_state_ids, {"m.s1.p_wrapper.p_final"}
+        )
 
     def test_final_state_in_parallel_machine_triggers_on_done(self) -> None:
         """Tests one final region in a parallel state does not trigger onDone."""

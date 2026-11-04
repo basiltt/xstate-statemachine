@@ -5249,6 +5249,8 @@ class BaseInterpreter(Generic[TContext]):
         stamp = (
             self.machine.has_always_transitions and not self._keep_entry_order
         )
+        # 🎉 Parallel states already reported done by this pass.
+        completed: Optional[Set[StateNode[Any]]] = None
         for state in ordered:
             self._active_state_nodes.add(state)
             if stamp and not state.states:
@@ -5270,7 +5272,11 @@ class BaseInterpreter(Generic[TContext]):
 
             # 🎉 If we entered a final state, check if its parent is now complete.
             if state.is_final:
-                await self._check_and_fire_on_done(state, trigger_event)
+                if completed is None:
+                    completed = set()
+                await self._check_and_fire_on_done(
+                    state, trigger_event, completed
+                )
 
     @staticmethod
     def _complete_entry_set(to_enter: Set[StateNode[Any]]) -> None:
@@ -5485,119 +5491,128 @@ class BaseInterpreter(Generic[TContext]):
     # 🔎 State Evaluation & Pathfinding Helpers
     # -------------------------------------------------------------------------
 
-    def _is_state_done(self, state_node: StateNode[Any]) -> bool:
-        """Recursively determines if a compound or parallel state is "done".
+    def _is_in_final_state(self, state_node: StateNode[Any]) -> bool:
+        """XState v5's ``isInFinalState`` over the active configuration.
 
-        This is a key part of the SCXML algorithm for `onDone` transitions.
-        - A state with `type: 'final'` is always done.
-        - A `compound` state is done if its currently active child state is done.
-        - A `parallel` state is done only if ALL of its child regions are done.
+        - A ``compound`` state is in a final state when one of its own
+          ``final`` children is active -- not when a deeper descendant is.
+        - A ``parallel`` state is when every region is. A history child is
+          a pseudo-state, not a region, and is skipped (a parallel state
+          with a history child used to never complete).
+        - Any other state is when it is itself ``final``.
 
         Args:
             state_node (StateNode): The state to check for completion.
 
         Returns:
-            bool: `True` if the state is considered "done", otherwise `False`.
+            bool: `True` if the state is in a final state.
         """
-        # 🏁 Base case: A final state is inherently "done".
-        if state_node.is_final:
-            return True
-
-        # 🧠 Compound state: Its "doneness" is determined by its active child.
         if state_node.type == "compound":
-            active_child = next(
-                (
-                    s
-                    for s in self._active_state_nodes
-                    if s.parent == state_node
-                ),
-                None,
+            active = self._active_state_nodes
+            return any(
+                child.is_final and child in active
+                for child in state_node.states.values()
             )
-            # If no child is active, it cannot be done.
-            if not active_child:
-                return False
-            # Recursively check the child, handling nested complex states.
-            return self._is_state_done(active_child)
-
-        # 🌐 Parallel state: All child regions must be independently "done".
         if state_node.type == "parallel":
-            for region in state_node.states.values():
-                # 🕰️ A history child is a pseudo-state, not a region. It is
-                #    never entered, so demanding that it be "done" made a
-                #    parallel state with a history child NEVER complete —
-                #    `onDone` silently never fired.
-                if region.type == "history":
-                    continue
-                active_in_region = [
-                    d
-                    for d in self._active_state_nodes
-                    if self._is_descendant(d, region)
-                ]
-                # If a region is not active, the parallel state is not done.
-                if not active_in_region:
-                    return False
-                # The region itself is "done" if any of its active states are done.
-                if not any(self._is_state_done(d) for d in active_in_region):
-                    return False
-            # If all regions passed the check, the parallel state is done.
-            return True
+            return all(
+                self._is_in_final_state(region)
+                for region in state_node.states.values()
+                if region.type != "history"
+            )
+        return bool(state_node.is_final)
 
-        # For atomic, non-final states.
-        return False
+    async def _raise_done_state(self, node: StateNode[Any], data: Any) -> None:
+        """Queues the internal ``done.state.<node id>`` event."""
+        logger.info("🎉 State '%s' is done.", node.id)
+        await self._dispatch_internal(
+            _engine_done(type=f"done.state.{node.id}", data=data, src=node.id)
+        )
 
     async def _check_and_fire_on_done(
         self,
         final_state: StateNode[Any],
         event: Optional[AnyEvent] = None,
+        completed: Optional[Set[StateNode[Any]]] = None,
     ) -> None:
-        """Bubbles up from a final state to fire parent `onDone` transitions.
+        """Raises the ``done.state.*`` events a newly entered final state
+        causes, or completes the machine (XState v5 ``enterStates``).
 
-        When a state machine enters a `final` state, this method is called to
-        check if the parent (or any ancestor) is now considered "done"
-        according to `_is_state_done`. If so, it dispatches the corresponding
-        `done.state.*` event to trigger the `onDone` transition.
+        1. The final state's parent, when it is a compound state, receives
+           ``done.state.<parent>`` carrying the final state's ``output``.
+        2. Then, starting at the parent if it is a parallel state (else the
+           grandparent): while that ancestor is a parallel state whose
+           regions are all in final states (`_is_in_final_state`),
+           ``done.state.<ancestor>`` is raised and the walk moves up.
+           *completed* (one set per entry pass) keeps a parallel state from
+           being reported twice when several of its regions finish in the
+           same microstep.
+        3. If the walk ran past the root, the machine completes: the output
+           is resolved, every active state's ``exit`` actions run (reverse
+           document order, root last) and the status becomes ``"done"``.
 
-        A top-level final state completes the machine: the output is
-        resolved, every active state's ``exit`` actions run (reverse
-        document order, root last -- XState v5) and the status becomes
-        ``"done"``.
+        Every raised event is queued, whether or not the state declares an
+        ``onDone`` -- one nobody handles reaches a ``"*"`` handler or is
+        dropped like any unhandled engine event.
+
+        🏛️ Architecture decision: up to 0.12 the ancestors were walked for
+        the FIRST one with an ``onDone`` that was "done" (a compound counted
+        as done when its active child was, recursively), only that one was
+        notified, and only a final state directly under the root completed
+        the machine. A compound grandparent therefore fired ``onDone`` when
+        a nested compound finished (XState never completes it), and a
+        parallel state's ``onDone`` was skipped when the finishing region
+        had its own.
 
         Args:
             final_state (StateNode): The final state that was just entered.
             event (Optional[Event]): The event of the step that entered it;
                 handed to the exit actions run on completion.
+            completed (Optional[Set[StateNode]]): Parallel states already
+                reported by this entry pass.
         """
-        ancestor = final_state.parent
-        while ancestor:
-            if ancestor.on_done and self._is_state_done(ancestor):
-                logger.info(
-                    "🎉 State '%s' is done, firing onDone event.", ancestor.id
-                )
-                # 📨 Create and send the synthetic `done.state.*` event,
-                #    carrying the final state's `output` as done data.
-                done_event = _engine_done(
-                    type=f"done.state.{ancestor.id}",
-                    data=self._resolve_output(final_state),
-                    src=ancestor.id,
-                )
-                await self._dispatch_internal(done_event)
-                # Per SCXML, only fire for the first completed ancestor.
-                return
-            ancestor = ancestor.parent
+        parent = final_state.parent
+        if parent is None:  # pragma: no cover - the root is never final
+            return
+        if completed is None:
+            completed = set()
+        marker = parent if parent.type == "parallel" else parent.parent
+        if parent.type == "compound" and parent.parent is not None:
+            # 📨 (XState also raises one for the root; the machine is done
+            #    by then and never processes it.)
+            await self._raise_done_state(
+                parent, self._resolve_output(final_state)
+            )
+        reached_parallel_root = False
+        while (
+            marker is not None
+            and marker.type == "parallel"
+            and marker not in completed
+            and self._is_in_final_state(marker)
+        ):
+            completed.add(marker)
+            if marker.parent is None:
+                reached_parallel_root = True
+            else:
+                await self._raise_done_state(marker, None)
+            marker = marker.parent
+        if marker is not None:
+            return
 
         # 🏁 A top-level final state completes the machine itself.
         #
         # 📝 A machine-level `output` declaration wins over the final state's
         #    own, matching XState: the machine describes what the *actor*
         #    produces, the final state only contributes done-data upward.
-        if final_state.parent is self.machine or final_state.parent is None:
-            if self.status != "running":
-                return
+        if self.status == "running":
             machine_output = getattr(self.machine, "machine_output", None)
             output = (
                 self._resolve_output_value(machine_output)
                 if machine_output is not None
-                else self._resolve_output(final_state)
+                else (
+                    None
+                    if reached_parallel_root
+                    else self._resolve_output(final_state)
+                )
             )
             # 🚪 XState v5 microstep: once the machine is done, the exit
             #    actions of EVERY still-active state -- the final state just

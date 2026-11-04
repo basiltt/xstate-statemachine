@@ -247,6 +247,25 @@ charts may need their expected lists updated.
   place counts as a change (Python's equivalent of `assign`), so a guarded
   counting `always` still loops until its guard fails; an uncopyable
   context is conservatively treated as changed.
+- **`done.state.*` reaches the states XState notifies, and only those.**
+  Entering a final state now raises `done.state.<parent>` for its compound
+  parent and then, walking up, `done.state.<p>` for every parallel state
+  `p` whose regions are all in final states (a history child is not a
+  region), in that order and whether or not the state declares `onDone`
+  -- XState v5's `enterStates`. Before, only the FIRST ancestor that had an
+  `onDone` and counted as "done" was notified, and a compound counted as
+  done when its active child did, recursively. So: when the last region of
+  a parallel state finishes, the region's `onDone` and the parallel
+  state's `onDone` now both run (before, only the region's); a compound
+  state whose child compound completes (`a` → `b` → final `f`) no longer
+  runs `onDone` (`b`'s runs, `a`'s does not, as in XState); a `done.state`
+  event without a handler reaches a `"*"` handler; and a machine whose root
+  is a parallel state completes when every region is final (before, it
+  stayed running). Plugin hooks and audit trails (the transition log,
+  the Django/DRF history) now also see the `done.state.*` event of every
+  region that finishes. To react to a nested completion higher up, put the
+  `onDone` on the state that owns the final child, or transition to a
+  final child of the outer state from there.
 
 ### Fixed
 
