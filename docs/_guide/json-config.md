@@ -680,7 +680,7 @@ When a final state is entered inside a compound state, it triggers a `done.state
 
 ### History
 
-A `history` state is never entered itself — targeting it restores whichever child of its parent was active when the parent was last exited. `history` (the config key, default `"shallow"`) controls the depth: `"shallow"` restores only the immediate child, `"deep"` restores the full nested configuration. If the parent has never been exited before, the parent's own `initial` state is entered instead.
+A `history` state is never entered itself — targeting it restores whichever child of its parent was active when the parent was last exited. `history` (the config key, default `"shallow"`) controls the depth: `"shallow"` restores only the immediate child, `"deep"` restores the full nested configuration. If the parent has never been exited before, the parent's own `initial` state is entered instead (or the history node's `target`) — even when the parent is active and its children have changed since: only the parent's own exit records history.
 
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter

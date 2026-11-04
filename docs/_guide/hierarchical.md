@@ -341,6 +341,8 @@ interp.stop()
 
 A history node is never itself an active state — it is only ever a transition *target* that gets expanded into the remembered child (or the declared `initial` child, the first time the parent is entered). See [services.md](../services/) for another way to model "resume" behavior across invoked actors.
 
+**When history is recorded.** The configuration is remembered only when the state that declares the history node is itself **exited**. Moving between its children (`paused` → `running` above) records nothing, so a transition that targets the history node from *inside* the parent, before the parent was ever left, enters the history default (the history node's `target`, else the parent's `initial`) — not the child that was active a moment ago. This is XState v5's (and SCXML's) `exitStates`. Up to 0.12 every transition that left any descendant of the parent overwrote its history.
+
 ### Parent-Level Transitions (Catch-All)
 
 Transitions defined on the parent apply to **all** children. If a child doesn't handle an event, it bubbles up to the parent:

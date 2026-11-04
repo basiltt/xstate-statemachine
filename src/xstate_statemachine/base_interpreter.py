@@ -5251,10 +5251,10 @@ class BaseInterpreter(Generic[TContext]):
     def _record_history(self, states_to_exit: List[StateNode[Any]]) -> None:
         """Remembers the active configuration of states being exited.
 
-        Called immediately before exit actions run. For every state that owns
-        at least one `type: "history"` child, the currently active descendants
-        are stored so a later transition targeting that history node can
-        restore them.
+        Called immediately before exit actions run. For every EXITED state
+        that owns at least one `type: "history"` child, the currently active
+        descendants are stored so a later transition targeting that history
+        node can restore them.
 
         🏛️ Architecture decision: history is keyed by the *parent* id rather
         than by the history node itself. A parent may declare both a shallow
@@ -5262,29 +5262,21 @@ class BaseInterpreter(Generic[TContext]):
         configuration — the shallow/deep distinction is applied at restore
         time, not at record time.
 
+        🏛️ Architecture decision: only the owner's OWN exit records, as in
+        XState v5 / SCXML ``exitStates``. Up to 0.12 every ancestor of an
+        exited state was a candidate, so a transition between two states
+        inside the owner (which never leaves it) overwrote its history, and
+        a later transition to the history node from inside the owner
+        restored that instead of the history default.
+
         Args:
             states_to_exit (List[StateNode]): The states about to be exited.
         """
         if not self.machine.has_history_states:
             return  # ⚡ nothing to remember for; see MachineNode.has_history_states
-        exiting = set(states_to_exit)
-        # 🕰️ Candidates are the exiting states *and* their ancestors: a
-        #    transition out of a nested leaf exits the leaf and its parents,
-        #    and it is the history-owning ancestor whose configuration must be
-        #    remembered. Walking up from each exiting node covers both the
-        #    "parent is exiting too" and "only descendants are exiting" cases.
-        candidates: Set[StateNode[Any]] = set()
-        for node in exiting:
-            current: Optional[StateNode[Any]] = node
-            while current is not None:
-                candidates.add(current)
-                current = current.parent
-
-        for state in candidates:
-            # 🕰️ Only parents that actually declare a history child matter.
-            if not any(
-                child.type == "history" for child in state.states.values()
-            ):
+        for state in states_to_exit:
+            # 🕰️ Only exited states that actually declare a history child.
+            if not _owns_history(state):
                 continue
             remembered = [
                 node

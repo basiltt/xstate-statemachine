@@ -1696,5 +1696,64 @@ class TestAlwaysOrderFollowsEntryOrder(_GuardParity):
         self.assertEqual(["gD", "gB"], log)
 
 
+class TestHistoryRecordsOnlyOnOwnerExit(_Parity):
+    """History is recorded only when its owner is exited (`exitStates`).
+
+    Case `047_history_records_only_on_owner_exit`: NEXT and TOK leave
+    states inside `s` but never `s`, so BACK (k -> s.h) finds nothing
+    recorded and enters the history default; after OUT exits `s`, IN
+    restores what was active then.
+    """
+
+    CONFIG: Dict[str, Any] = {
+        "id": "m",
+        "initial": "s",
+        "states": {
+            "s": {
+                "initial": "g",
+                "on": {"OUT": "#m.out"},
+                "states": {
+                    "h": {"type": "history", "history": "deep"},
+                    "g": {
+                        "initial": "g1",
+                        "on": {"TOK": "k"},
+                        "states": {
+                            "g1": {"entry": "e_g1", "on": {"NEXT": "g2"}},
+                            "g2": {"entry": "e_g2"},
+                        },
+                    },
+                    "k": {"on": {"BACK": "h"}},
+                },
+            },
+            "out": {"on": {"IN": "#m.s.h"}},
+        },
+    }
+
+    def test_inner_transitions_do_not_record(self) -> None:
+        # xstate 5.33.3.
+        self.check(
+            self.CONFIG,
+            ["NEXT", "TOK", "BACK"],
+            [["e_g1"], ["e_g2"], [], ["e_g1"]],
+            state_ids=["m.s.g.g1"],
+        )
+
+    def test_the_owner_exit_records(self) -> None:
+        self.check(
+            self.CONFIG,
+            ["NEXT", "TOK", "BACK", "NEXT", "OUT", "IN"],
+            [["e_g1"], ["e_g2"], [], ["e_g1"], ["e_g2"], [], ["e_g2"]],
+            state_ids=["m.s.g.g2"],
+        )
+
+    def test_no_history_entry_until_the_owner_exits(self) -> None:
+        _, interp = _run_sync(self.CONFIG, ["NEXT", "TOK"])
+        self.assertEqual({}, json.loads(interp.get_snapshot())["history"])
+        interp.send("BACK")
+        interp.send("OUT")
+        history = json.loads(interp.get_snapshot())["history"]
+        self.assertEqual(["m.s"], list(history))
+
+
 if __name__ == "__main__":
     unittest.main()

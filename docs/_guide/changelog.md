@@ -222,6 +222,17 @@ charts may need their expected lists updated.
   `transition()` carry the order to the next call. The snapshot format is
   unchanged. If one region's `always` must win a conflict, make the guards
   exclusive instead of relying on the order.
+- **History is recorded only when its owner is exited.** A history
+  node's state now remembers its active descendants only when that state
+  itself is exited, as XState v5 and SCXML (`exitStates`) do. Before, every
+  transition that exited any descendant of it recorded too, so after
+  `g1` → `g2` inside `s` and `g` → `k` (still inside `s`), a transition
+  from `k` to `s`'s deep history restored `g2`; it now enters the history
+  default (`s`'s `initial` chain, `g1`), because `s` was never left. Once
+  `s` is exited, its history is recorded and restored exactly as before.
+  Snapshots are unchanged in shape; one taken after such an inner
+  transition no longer carries the extra `history` entry. To resume an
+  inner state from inside the parent, target that state directly.
 
 ### Fixed
 
