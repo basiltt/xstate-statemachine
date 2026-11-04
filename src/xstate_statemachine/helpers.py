@@ -189,6 +189,7 @@ class PureSnapshot:
         "output",
         "_nodes",
         "_history",
+        "_entry_order",
     )
 
     def __init__(
@@ -226,6 +227,11 @@ class PureSnapshot:
         #: the cached probe's own memory served both -- correct for one
         #: chain, silently wrong across independent calls.
         self._history: Optional[Dict[str, List[Any]]] = None
+        #: When each active leaf was entered (`BaseInterpreter._leaf_entry`),
+        #: so a chained call visits `always` transitions in the order XState's
+        #: snapshot holds its states. None on hand-built snapshots (document
+        #: order, as XState's `resolveState`).
+        self._entry_order: Optional[Dict[Any, int]] = None
 
     def matches(self, state_id: str) -> bool:
         """Reports whether a state is active in this snapshot.
@@ -383,6 +389,13 @@ def _reset_probe(probe: Any, snapshot: Optional[PureSnapshot]) -> None:
     probe._history.clear()
     if snapshot is not None and snapshot._history:
         probe._history.update(snapshot._history)
+    # 🔢 Entry order is snapshot state too (same reasoning as history).
+    probe._leaf_entry.clear()
+    if snapshot is not None and snapshot._entry_order:
+        probe._leaf_entry.update(snapshot._entry_order)
+        probe._leaf_entry_seq = max(
+            probe._leaf_entry_seq, max(snapshot._entry_order.values())
+        )
     probe.output = None
     probe.error = None
     probe.last_transition_ok = True
@@ -436,6 +449,12 @@ def _capture(probe: Any) -> PureSnapshot:
     )
     snap._nodes = set(probe._active_state_nodes)
     snap._history = {k: list(v) for k, v in probe._history.items()}
+    entry = probe._leaf_entry
+    snap._entry_order = {
+        node: entry[node]
+        for node in probe._active_state_nodes
+        if node in entry
+    }
     return snap
 
 

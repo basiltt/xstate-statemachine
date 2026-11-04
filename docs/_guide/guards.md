@@ -589,7 +589,16 @@ Which guards run, and how often, follows XState v5 exactly:
   walks up to the first `always` whose guard holds. A guard on an
   `always` that several regions share (declared on the parallel state or
   above it) is therefore evaluated once **per region** whose walk reaches
-  it.
+  it. The innermost states are visited in the order they were **entered**,
+  not in the order the chart declares them: a state that stayed active
+  comes before one a later step entered (states entered in the same step
+  keep the chart's order). After region `r2` moved to `d` and then region
+  `r1` moved to `b`, `d`'s `always` is checked before `b`'s, and if both
+  are enabled and conflict, `d`'s is taken. A step that leaves the states
+  exactly as they were (a self-transition with `reenter: true` on a state
+  that owns no history node) does not change that order; a restored
+  snapshot starts again in the chart's order. This is XState v5's
+  `selectEventlessTransitions`.
 - Apart from that, one selection never evaluates a guard twice, and
   `interp.can(event)` evaluates exactly the guards `send(event)` would.
 

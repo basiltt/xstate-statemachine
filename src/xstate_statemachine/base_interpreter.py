@@ -153,6 +153,11 @@ def _doc_order_key(node: "StateNode[Any]") -> int:
     return node.doc_order
 
 
+def _owns_history(node: "StateNode[Any]") -> bool:
+    """True when *node* declares a ``type: "history"`` child."""
+    return any(child.type == "history" for child in node.states.values())
+
+
 # -----------------------------------------------------------------------------
 # 🏛️ BaseInterpreter Class Definition
 # -----------------------------------------------------------------------------
@@ -612,6 +617,9 @@ class BaseInterpreter(Generic[TContext]):
         "_guard_denied_this_step",
         "_history",
         "_internal_queue",
+        "_keep_entry_order",
+        "_leaf_entry",
+        "_leaf_entry_seq",
         "_interpreter_class",
         "_invoked_as",
         "_last_action_error",
@@ -740,6 +748,22 @@ class BaseInterpreter(Generic[TContext]):
 
         # 🌳 State & Actor Management
         self._active_state_nodes: Set[StateNode[Any]] = set()
+        #: 🔢 When each active leaf was entered: a stamp from
+        #: `_leaf_entry_seq`, larger = entered later. XState keeps the active
+        #: states as a list (`snapshot._nodes`) -- the states a microstep
+        #: leaves in place keep their position, the states it enters are
+        #: appended in document order -- and `selectEventlessTransitions`
+        #: visits the leaves in that order. Sorting the leaves by
+        #: ``(stamp, doc_order)`` reproduces it. A leaf without a stamp (a
+        #: restored configuration) sorts first, in document order, which is
+        #: the order XState rebuilds on `restoreSnapshot`. Stale entries of
+        #: exited leaves are harmless: a leaf is stamped again on entry.
+        self._leaf_entry: Dict[StateNode[Any], int] = {}
+        self._leaf_entry_seq: int = 0
+        #: True while a microstep re-enters exactly what it exited without
+        #: recording history: XState then keeps the previous snapshot, so
+        #: the re-entered leaves keep their stamps.
+        self._keep_entry_order: bool = False
         #: Remembered configurations for history pseudo-states, keyed by the
         #: *parent* state id. Recorded on exit, replayed when a transition
         #: targets a `type: "history"` child of that parent.
@@ -2501,6 +2525,10 @@ class BaseInterpreter(Generic[TContext]):
         #    ancestors); fall back to leaf ids for snapshots written by
         #    older versions.
         interpreter._active_state_nodes.clear()
+        # 🔢 No entry order is persisted: XState's `restoreSnapshot` rebuilds
+        #    its state list from the state value, i.e. leaves in document
+        #    order -- what unstamped leaves sort as (`_leaf_entry`).
+        interpreter._leaf_entry.clear()
         restore_ids = snapshot.get("configuration") or snapshot["state_ids"]
         for state_id in restore_ids:
             node = machine.get_state_by_id(state_id)
@@ -4294,9 +4322,10 @@ class BaseInterpreter(Generic[TContext]):
         """XState v5's ``removeConflictingTransitions`` (SCXML Appendix D).
 
         Two transitions conflict when their exit sets intersect. The later
-        one (in selection order, i.e. document order) wins only when its
-        source is a descendant of the earlier one's source; otherwise it is
-        preempted. A transition that exits nothing never conflicts.
+        one (in selection order: document order for an event, entry order
+        for the eventless pass) wins only when its source is a descendant
+        of the earlier one's source; otherwise it is preempted. A
+        transition that exits nothing never conflicts.
 
         Args:
             plans: ``(transition, plan)`` pairs in selection order.
@@ -4328,6 +4357,36 @@ class BaseInterpreter(Generic[TContext]):
                 filtered = [p for p in filtered if p[0] not in to_remove]
             filtered.append((t1, plan1))
         return filtered
+
+    def _configuration_preserved(
+        self,
+        states_to_exit: Set[StateNode[Any]],
+        states_to_enter: Sequence[StateNode[Any]],
+    ) -> bool:
+        """True when a microstep re-enters exactly the states it exits and
+        records no history.
+
+        That is XState's "nothing changed" test at the end of ``microstep``
+        (same set of state nodes, same ``historyValue`` object): the
+        previous snapshot is kept. A history value is recorded whenever an
+        exited state owns a history node, even if it records the same
+        states again.
+
+        Args:
+            states_to_exit: The microstep's exit set.
+            states_to_enter: The microstep's entry set.
+
+        Returns:
+            bool: Whether the configuration and the history are unchanged.
+        """
+        if len(states_to_exit) != len(states_to_enter):
+            return False
+        if not states_to_exit.issuperset(states_to_enter):
+            return False
+        return not (
+            self.machine.has_history_states
+            and any(_owns_history(s) for s in states_to_exit)
+        )
 
     async def _execute_microstep(
         self,
@@ -4378,6 +4437,22 @@ class BaseInterpreter(Generic[TContext]):
             )
 
         snapshot_before = self._active_state_nodes.copy()
+        # 🔢 Entry order (`_leaf_entry`): XState keeps the previous snapshot
+        #    -- and the position of every state in it -- when a microstep
+        #    re-enters exactly the states it exited and records no history.
+        #    The stamps of the exited leaves are kept for a rollback.
+        keep_order = False
+        exited_stamps: Optional[List[Tuple[StateNode[Any], Optional[int]]]]
+        exited_stamps = None
+        if self.machine.has_always_transitions:
+            keep_order = self._configuration_preserved(
+                states_to_exit, states_to_enter
+            )
+            exited_stamps = [
+                (s, self._leaf_entry.get(s))
+                for s in states_to_exit
+                if not s.states
+            ]
         # 👶 #60 review: remember which actors already existed so a rollback
         #    can tell which ones a `spawn_*` action in THIS microstep's
         #    action lists created. Without this snapshot, a spawn that
@@ -4474,7 +4549,11 @@ class BaseInterpreter(Generic[TContext]):
             #    configuration is part of the same set -- so no compound
             #    is ever entered twice or descended into a default child
             #    alongside the restored one.
-            await self._enter_state_set(states_to_enter, event)
+            self._keep_entry_order = keep_order
+            try:
+                await self._enter_state_set(states_to_enter, event)
+            finally:
+                self._keep_entry_order = False
             # 🧾 Entry/exit failures surface here, after the whole sequence
             #    ran, so `"continue"` still commits the complete new
             #    configuration while `"rollback"`/`"fail"` undo all of it.
@@ -4502,6 +4581,11 @@ class BaseInterpreter(Generic[TContext]):
                     await _maybe
             self._active_state_nodes.clear()
             self._active_state_nodes.update(snapshot_before)
+            for node, stamp in exited_stamps or ():
+                if stamp is None:
+                    self._leaf_entry.pop(node, None)
+                else:
+                    self._leaf_entry[node] = stamp
 
             # ⏱️ Re-arm what exiting tore down. `_exit_states` cancels each
             #    exited state's `after` timers and invoked services, so a
@@ -5089,8 +5173,16 @@ class BaseInterpreter(Generic[TContext]):
         # ⚡ One level check per call, not one per state: `logger.debug`
         #    costs ~0.4 us even when disabled, and this runs per entered node.
         debug = logger.isEnabledFor(logging.DEBUG)
+        # 🔢 Entry order of the leaves (see `_leaf_entry`). ⚡ Only a machine
+        #    with `always` transitions ever reads it.
+        stamp = (
+            self.machine.has_always_transitions and not self._keep_entry_order
+        )
         for state in ordered:
             self._active_state_nodes.add(state)
+            if stamp and not state.states:
+                self._leaf_entry_seq += 1
+                self._leaf_entry[state] = self._leaf_entry_seq
             if debug:
                 logger.debug("➡️  Entering state: '%s'.", state.id)
 
@@ -6193,23 +6285,32 @@ class BaseInterpreter(Generic[TContext]):
     ) -> List[TransitionDefinition]:
         """XState v5's ``selectEventlessTransitions``.
 
-        For every active atomic state, in document order: walk up from it
-        and take the first ``always`` transition whose guard holds,
-        stopping the walk there. A guard on an ancestor shared by several
-        regions is therefore evaluated once per region whose walk reaches
-        it -- exactly as often as XState evaluates it. Conflicts are
-        resolved by the microstep (`_remove_conflicting_transitions`).
+        For every active atomic state, in ENTRY order (see `_leaf_entry`):
+        walk up from it and take the first ``always`` transition whose
+        guard holds, stopping the walk there. A guard on an ancestor shared
+        by several regions is therefore evaluated once per region whose walk
+        reaches it -- exactly as often as XState evaluates it. Conflicts are
+        resolved by the microstep (`_remove_conflicting_transitions`) in the
+        same order, so the leaf entered first wins a conflict.
+
+        🏛️ Architecture decision: up to 0.12 the leaves were visited in
+        document order. XState visits them in the order its snapshot holds
+        them -- the states a microstep keeps stay in place, the ones it
+        enters are appended -- so after one region moved, a guard of the
+        OTHER region was evaluated first, and a conflict between two
+        regions' ``always`` transitions could go the other way.
 
         Args:
             event (AnyEvent): The eventless pseudo-event (type ``""``).
 
         Returns:
             List[TransitionDefinition]: The enabled ``always`` transitions,
-            in document order of the states that selected them.
+            in entry order of the states that selected them.
         """
         leaves = [s for s in self._active_state_nodes if not s.states]
         if len(leaves) > 1:
-            leaves.sort(key=_doc_order_key)
+            entry = self._leaf_entry
+            leaves.sort(key=lambda s: (entry.get(s, 0), s.doc_order))
         selected: List[TransitionDefinition] = []
         for leaf in leaves:
             node: Optional[StateNode[Any]] = leaf

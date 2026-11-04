@@ -206,6 +206,22 @@ charts may need their expected lists updated.
   builds) was read and the bare form was silently ignored, so the same
   chart produced a different context on this engine. A chart that
   relied on the bare form being a no-op should remove the action.
+- **`always` transitions are checked in the order their states were
+  entered.** After a step, the eventless pass now visits the active
+  innermost states in the order they were entered -- a state that stayed
+  active before one the step entered, states entered together in the
+  chart's order -- as XState v5's `selectEventlessTransitions` does (it
+  walks its snapshot's state list, to which a microstep appends what it
+  enters). Before, they were visited in document order. This changes the
+  order in which `always` guards run and, when `always` transitions of two
+  regions conflict, which one is taken: after region `r2` moved to `d` and
+  then `r1` moved to `b`, `d`'s transition now wins over `b`'s. A step that
+  re-enters exactly the states it left without recording history keeps
+  the previous order, and a restored snapshot (or a hand-built
+  `PureSnapshot`) starts in document order; snapshots produced by the pure
+  `transition()` carry the order to the next call. The snapshot format is
+  unchanged. If one region's `always` must win a conflict, make the guards
+  exclusive instead of relying on the order.
 
 ### Fixed
 

@@ -17,12 +17,14 @@ import asyncio
 import json
 import logging
 import unittest
-from typing import Any, Dict, List, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from src.xstate_statemachine import (
     Interpreter,
     SyncInterpreter,
     create_machine,
+    initial_transition,
+    pure_transition,
 )
 from src.xstate_statemachine.testing_utils import stub_logic
 
@@ -1417,6 +1419,281 @@ class TestJsonAssignWithoutAssignmentWrapper(unittest.TestCase):
         ).start()
         interp.send("GO")
         self.assertEqual({"n": 1}, interp.context)
+
+
+# -----------------------------------------------------------------------------
+# 🔢 Guard / action traces on both engines (record_guards cases 046-050)
+# -----------------------------------------------------------------------------
+Trace = List[Tuple[List[str], List[str]]]
+
+
+def _guard_trace_sync(
+    config: Dict[str, Any],
+    steps: Sequence[Step],
+    guards: Dict[str, bool],
+) -> Tuple[Trace, SyncInterpreter]:
+    """``(actions, guards evaluated)`` after start() and every step."""
+    ran: List[str] = []
+    log: List[str] = []
+    logic = stub_logic(config, ran=ran, guards=guards, guard_log=log)
+    interp = SyncInterpreter(create_machine(config, logic=logic)).start()
+    trace = [(ran[:], log[:])]
+    for step in steps:
+        del ran[:], log[:]
+        interp.send(step)
+        trace.append((ran[:], log[:]))
+    return trace, interp
+
+
+def _guard_trace_async(
+    config: Dict[str, Any],
+    steps: Sequence[Step],
+    guards: Dict[str, bool],
+) -> Trace:
+    """Same as `_guard_trace_sync` on the asyncio engine."""
+
+    async def main() -> Trace:
+        ran: List[str] = []
+        log: List[str] = []
+        logic = stub_logic(config, ran=ran, guards=guards, guard_log=log)
+        interp = Interpreter(create_machine(config, logic=logic))
+        await interp.start()
+        await interp.await_settled(2.0)
+        trace = [(ran[:], log[:])]
+        for step in steps:
+            del ran[:], log[:]
+            await interp.send(step, wait=True)
+            await interp.await_settled(2.0)
+            trace.append((ran[:], log[:]))
+        if interp.status == "running":
+            await interp.stop()
+        return trace
+
+    return asyncio.run(main())
+
+
+class _GuardParity(unittest.TestCase):
+    """Compares a guard/action trace on both engines with XState's."""
+
+    GUARDS: Dict[str, bool] = {}
+
+    def setUp(self) -> None:
+        logging.disable(logging.CRITICAL)
+        self.addCleanup(logging.disable, logging.NOTSET)
+
+    def check_trace(
+        self,
+        config: Dict[str, Any],
+        steps: Sequence[Step],
+        expected: Trace,
+        guards: Optional[Dict[str, bool]] = None,
+    ) -> None:
+        stubs = self.GUARDS if guards is None else guards
+        with self.subTest(engine="sync"):
+            self.assertEqual(
+                expected, _guard_trace_sync(config, steps, stubs)[0]
+            )
+        with self.subTest(engine="async"):
+            self.assertEqual(
+                expected, _guard_trace_async(config, steps, stubs)
+            )
+
+
+def _guard_in(name: str, state: str) -> Dict[str, Any]:
+    """``and(name, stateIn(state))`` in the JSON dialect."""
+    return {
+        "type": "and",
+        "params": {
+            "guards": [
+                name,
+                {"type": "stateIn", "params": {"stateValue": state}},
+            ]
+        },
+    }
+
+
+class TestAlwaysOrderFollowsEntryOrder(_GuardParity):
+    """`selectEventlessTransitions` visits the leaves in ENTRY order.
+
+    Cases `046_always_order_follows_entry_order` and
+    `050_always_order_after_reentry`: XState keeps its active states as a
+    list (`snapshot._nodes`); a microstep removes what it exits and appends
+    what it enters (document order). When a microstep re-enters exactly
+    what it exited and records no history, the previous snapshot -- and
+    order -- is kept. The leaf entered first is visited first and wins a
+    conflict between two regions' `always` transitions.
+    """
+
+    CONFIG: Dict[str, Any] = {
+        "id": "m",
+        "initial": "p",
+        "on": {"RESET": ".p"},
+        "states": {
+            "p": {
+                "type": "parallel",
+                "states": {
+                    "r1": {
+                        "initial": "a",
+                        "states": {
+                            "a": {"on": {"E": "b"}},
+                            "b": {
+                                "always": {
+                                    "target": "#m.x",
+                                    "guard": _guard_in("gB", "#m.p.r2.d"),
+                                    "actions": "tB",
+                                }
+                            },
+                        },
+                    },
+                    "r2": {
+                        "initial": "c",
+                        "states": {
+                            "c": {"on": {"F": "d"}},
+                            "d": {
+                                "always": {
+                                    "target": "#m.y",
+                                    "guard": _guard_in("gD", "#m.p.r1.b"),
+                                    "actions": "tD",
+                                }
+                            },
+                        },
+                    },
+                },
+            },
+            "x": {"entry": "e_x"},
+            "y": {"entry": "e_y"},
+        },
+    }
+
+    REENTRY: Dict[str, Any] = {
+        "id": "m",
+        "initial": "p",
+        "states": {
+            "p": {
+                "type": "parallel",
+                "states": {
+                    "r1": {
+                        "initial": "s",
+                        "states": {
+                            "s": {
+                                "initial": "s1",
+                                "on": {"RS": {"target": "s", "reenter": True}},
+                                "states": {
+                                    "h": {"type": "history"},
+                                    "s1": {
+                                        "always": {
+                                            "target": "#m.x",
+                                            "guard": _guard_in(
+                                                "g1", "#m.p.r3.armed"
+                                            ),
+                                            "actions": "tX",
+                                        }
+                                    },
+                                },
+                            }
+                        },
+                    },
+                    "r2": {
+                        "initial": "t",
+                        "states": {
+                            "t": {
+                                "initial": "t1",
+                                "on": {"RT": {"target": "t", "reenter": True}},
+                                "states": {
+                                    "t1": {
+                                        "always": {
+                                            "target": "#m.y",
+                                            "guard": _guard_in(
+                                                "g2", "#m.p.r3.armed"
+                                            ),
+                                            "actions": "tY",
+                                        }
+                                    }
+                                },
+                            }
+                        },
+                    },
+                    "r3": {
+                        "initial": "idle",
+                        "states": {
+                            "idle": {"on": {"ARM": "armed"}},
+                            "armed": {},
+                        },
+                    },
+                },
+            },
+            "x": {"entry": "e_x", "on": {"BACK": "#m.p"}},
+            "y": {"entry": "e_y", "on": {"BACK": "#m.p"}},
+        },
+    }
+
+    def test_the_leaf_entered_first_is_visited_first_and_wins(self) -> None:
+        # xstate 5.33.3, case 046.
+        self.check_trace(
+            self.CONFIG,
+            ["F", "E", "RESET", "E", "F"],
+            [
+                ([], []),
+                ([], ["gD"]),
+                (["tD", "e_y"], ["gD", "gB"]),
+                ([], []),
+                ([], ["gB"]),
+                (["tB", "e_x"], ["gB", "gD"]),
+            ],
+        )
+
+    def test_reentry_moves_a_leaf_only_when_the_snapshot_changes(
+        self,
+    ) -> None:
+        # xstate 5.33.3, case 050: RS records s's history (new snapshot,
+        # s1 moves behind t1); RT records nothing (old order kept).
+        self.check_trace(
+            self.REENTRY,
+            ["RS", "RT", "ARM", "BACK", "ARM"],
+            [
+                ([], ["g1", "g2"]),
+                ([], ["g2", "g1"]),
+                ([], ["g2", "g1"]),
+                (["tY", "e_y"], ["g2", "g1"]),
+                ([], ["g1", "g2"]),
+                (["tX", "e_x"], ["g1", "g2"]),
+            ],
+        )
+
+    def test_a_restored_snapshot_visits_leaves_in_document_order(
+        self,
+    ) -> None:
+        # XState's `restoreSnapshot` rebuilds `_nodes` from the state value,
+        # i.e. in document order; the live actor keeps its entry order.
+        guards = {"gB": False, "gD": False}
+        _, live = _guard_trace_sync(self.CONFIG, ["F", "E"], guards)
+        log: List[str] = []
+        logic = stub_logic(self.CONFIG, guards=guards, guard_log=log)
+        machine = create_machine(self.CONFIG, logic=logic)
+        restored = SyncInterpreter.from_snapshot(
+            live.get_snapshot(), machine
+        ).start()
+        del log[:]
+        restored.send("X")
+        self.assertEqual(["gB", "gD"], log)
+
+    def test_the_live_actor_keeps_its_entry_order(self) -> None:
+        guards = {"gB": False, "gD": False}
+        trace, _ = _guard_trace_sync(self.CONFIG, ["F", "E", "X"], guards)
+        self.assertEqual(["gD", "gB"], trace[-1][1])
+
+    def test_pure_transitions_carry_the_entry_order(self) -> None:
+        log: List[str] = []
+        logic = stub_logic(
+            self.CONFIG, guards={"gB": False, "gD": False}, guard_log=log
+        )
+        machine = create_machine(self.CONFIG, logic=logic)
+        snap, _ = initial_transition(machine)
+        for event in ("F", "E"):
+            snap, _ = pure_transition(machine, snap, event)
+        del log[:]
+        pure_transition(machine, snap, "X")
+        self.assertEqual(["gD", "gB"], log)
 
 
 if __name__ == "__main__":

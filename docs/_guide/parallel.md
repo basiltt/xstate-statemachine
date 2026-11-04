@@ -834,7 +834,10 @@ example when one region's transition targets a state in another region
 them is taken: the one selected first in document order, unless the later
 one's source is a *descendant* of the earlier one's source, in which case
 the more deeply nested transition wins. The other transition is dropped,
-not run afterwards on whatever state the winner left behind.
+not run afterwards on whatever state the winner left behind. For `always`
+transitions "selected first" means the region whose active state was
+entered first (see [Guards → Guard Evaluation
+Order](../guards/#guard-evaluation-order)).
 
 > **Changed after 0.12:** each selected transition used to run as its own
 > exit → actions → entry sequence, one region after another (`exitA`,
