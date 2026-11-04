@@ -418,6 +418,8 @@ When the machine enters `"checking"`:
 
 > **Note:** Eventless transitions happen **synchronously** during state entry. The machine never "rests" in the `"checking"` state — it passes through instantly.
 
+**When are they checked again?** After every step that changed something — the active states, the recorded history, the context (an `assign`, or an action that mutates `context` in place) or the spawned actors — and after every internal event (a `raise`, a `done.state.*`). An `always` transition whose step changes *nothing* is not re-selected straight away: a targetless `always` with a plain action, or one that targets its own state (`"always": {"target": "a"}`, with or without `reenter`, or on a compound state, whose children then exit and re-enter), runs **once** per step, not in a loop up to `maxIterations`. This is XState v5's `macrostep`. A guarded `always` that keeps changing the context (`n < 3` → `n += 1`) still runs until its guard fails.
+
 ### Eventless with Actions
 
 ```json

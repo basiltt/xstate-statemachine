@@ -1489,7 +1489,14 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 logger.info(
                     "🚀 Processing transient transition(s) in '%s'", self.id
                 )
+                self._microstep_changed = True
                 self._drive(self._process_event(transient_event, selected))
+                if not self._microstep_changed:
+                    # 🧘 XState `macrostep`: a microstep that left the
+                    #    snapshot as it was (a self-targeting `always`) is
+                    #    not re-selected until an internal event has been
+                    #    processed -- the drain settles again after each.
+                    break
             else:
                 # ✅ No more transient transitions found. The state is stable.
                 logger.debug(

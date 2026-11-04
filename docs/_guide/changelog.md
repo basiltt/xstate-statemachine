@@ -233,6 +233,20 @@ charts may need their expected lists updated.
   Snapshots are unchanged in shape; one taken after such an inner
   transition no longer carries the extra `history` entry. To resume an
   inner state from inside the parent, target that state directly.
+- **An `always` transition that changes nothing runs once, not in a
+  loop.** After an eventless microstep that left the active states, the
+  recorded history, the context and the spawned actors as they were, the
+  `always` transitions are not selected again until an internal event has
+  been processed, as XState v5's `macrostep` does (it re-selects only when
+  the microstep produced a new snapshot). An `always` that targets its own
+  state -- atomic, with `reenter: true`, or compound (its children exit and
+  re-enter) -- or a targetless one with a plain action now runs its actions
+  once per step (once more per `raise`d or `done.state.*` event). Before,
+  it ran again and again until `maxIterations` tripped a
+  `RunawayChainError` on every step. An action that mutates `context` in
+  place counts as a change (Python's equivalent of `assign`), so a guarded
+  counting `always` still loops until its guard fails; an uncopyable
+  context is conservatively treated as changed.
 
 ### Fixed
 

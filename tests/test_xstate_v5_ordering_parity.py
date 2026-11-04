@@ -21,6 +21,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
 from src.xstate_statemachine import (
     Interpreter,
+    MachineLogic,
     SyncInterpreter,
     create_machine,
     initial_transition,
@@ -1753,6 +1754,143 @@ class TestHistoryRecordsOnlyOnOwnerExit(_Parity):
         interp.send("OUT")
         history = json.loads(interp.get_snapshot())["history"]
         self.assertEqual(["m.s"], list(history))
+
+
+class TestUnchangedEventlessMicrostepIsNotReselected(_GuardParity):
+    """An `always` microstep that changes nothing runs once, not forever.
+
+    Case `048_always_self_target`: XState's `macrostep` re-selects
+    eventless transitions only after a microstep that produced a new
+    snapshot (configuration, history, context or actors changed) or after
+    an internal event. A self-targeting `always` -- atomic, atomic with
+    `reenter`, or compound (children exit and re-enter) -- therefore runs
+    once per macrostep plus once per internal event.
+    """
+
+    CONFIG: Dict[str, Any] = {
+        "id": "m",
+        "initial": "a",
+        "on": {
+            "E": {"actions": "rootE"},
+            "R": {
+                "actions": {
+                    "type": "raise",
+                    "params": {"event": {"type": "PING"}},
+                }
+            },
+            "GO_B": "#m.b",
+            "GO_P": "#m.p",
+        },
+        "states": {
+            "a": {
+                "entry": "e_a",
+                "exit": "x_a",
+                "always": {"target": "a", "guard": "gA", "actions": "tA"},
+            },
+            "b": {
+                "entry": "e_b",
+                "exit": "x_b",
+                "always": {
+                    "target": "b",
+                    "reenter": True,
+                    "guard": "gB",
+                    "actions": "tB",
+                },
+            },
+            "p": {
+                "initial": "c",
+                "entry": "e_p",
+                "exit": "x_p",
+                "always": {"target": "p", "guard": "gP", "actions": "tP"},
+                "states": {"c": {"entry": "e_c", "exit": "x_c"}},
+            },
+        },
+    }
+
+    def test_self_targets_run_once_per_macrostep(self) -> None:
+        # xstate 5.33.3, case 048.
+        self.check_trace(
+            self.CONFIG,
+            ["X", "E", "R", "GO_B", "X", "GO_P", "X", "R"],
+            [
+                (["e_a", "tA"], ["gA"]),
+                (["tA"], ["gA"]),
+                (["rootE", "tA"], ["gA"]),
+                (["tA", "tA"], ["gA", "gA"]),
+                (["x_a", "e_b", "x_b", "tB", "e_b"], ["gB"]),
+                (["x_b", "tB", "e_b"], ["gB"]),
+                (["x_b", "e_p", "e_c", "x_c", "tP", "e_c"], ["gP"]),
+                (["x_c", "tP", "e_c"], ["gP"]),
+                (["x_c", "tP", "e_c", "x_c", "tP", "e_c"], ["gP", "gP"]),
+            ],
+        )
+
+    def test_no_runaway_is_reported(self) -> None:
+        _, interp = _guard_trace_sync(self.CONFIG, ["X", "GO_P", "X"], {})
+        self.assertEqual(0, interp.chain_trips)
+        self.assertTrue(interp.last_transition_ok)
+
+    def _counter(self, mutate: Any) -> Dict[str, Any]:
+        config = {
+            "id": "m",
+            "initial": "a",
+            "context": {"n": 0},
+            "states": {
+                "a": {"always": {"guard": "below3", "actions": "inc"}},
+            },
+        }
+        logic = MachineLogic(
+            actions={"inc": mutate},
+            guards={"below3": lambda ctx, evt: ctx["n"] < 3},
+        )
+        return {"config": config, "logic": logic}
+
+    def test_an_action_mutating_context_in_place_is_a_change(self) -> None:
+        # Python's analogue of XState's `assign`: the targetless `always`
+        # keeps being re-selected while it changes the context.
+        def inc(interp: Any, ctx: Dict[str, Any], *_: Any) -> None:
+            ctx["n"] += 1
+
+        spec = self._counter(inc)
+        interp = SyncInterpreter(
+            create_machine(spec["config"], logic=spec["logic"])
+        ).start()
+        self.assertEqual({"n": 3}, interp.context)
+
+        async def run_async() -> Any:
+            machine = create_machine(spec["config"], logic=spec["logic"])
+            actor = Interpreter(machine)
+            await actor.start()
+            await actor.await_settled(2.0)
+            ctx = dict(actor.context)
+            await actor.stop()
+            return ctx
+
+        self.assertEqual({"n": 3}, asyncio.run(run_async()))
+
+    def test_an_assign_is_a_change(self) -> None:
+        from src.xstate_statemachine import assign
+
+        config = {
+            "id": "m",
+            "initial": "a",
+            "context": {"n": 0},
+            "states": {
+                "a": {
+                    "always": {
+                        "guard": "below3",
+                        "actions": [
+                            assign(
+                                {"n": lambda args: args["context"]["n"] + 1}
+                            )
+                        ],
+                    }
+                },
+            },
+        }
+        logic = MachineLogic(guards={"below3": lambda ctx, evt: ctx["n"] < 3})
+        interp = SyncInterpreter(create_machine(config, logic=logic)).start()
+        self.assertEqual({"n": 3}, interp.context)
 
 
 if __name__ == "__main__":

@@ -2393,7 +2393,12 @@ class Interpreter(BaseInterpreter[TContext]):
                     "⚡ Processing transient (event-less) transition in '%s'.",
                     self.id,
                 )
+                self._microstep_changed = True
                 await self._process_event(transient_event, selected)
+                if not self._microstep_changed:
+                    # 🧘 XState `macrostep`: an unchanged snapshot is not
+                    #    re-selected until an internal event is processed.
+                    break
             else:
                 break  # No more transient transitions; state is stable.
         # 📞 #204 (SCXML 6.1): the macrostep is stable -- arm the invokes of

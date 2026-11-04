@@ -36,6 +36,7 @@ import time
 import warnings
 from typing import (
     cast,
+    AbstractSet,
     Any,
     Iterable,
     Iterator,
@@ -620,6 +621,7 @@ class BaseInterpreter(Generic[TContext]):
         "_keep_entry_order",
         "_leaf_entry",
         "_leaf_entry_seq",
+        "_microstep_changed",
         "_interpreter_class",
         "_invoked_as",
         "_last_action_error",
@@ -764,6 +766,10 @@ class BaseInterpreter(Generic[TContext]):
         #: recording history: XState then keeps the previous snapshot, so
         #: the re-entered leaves keep their stamps.
         self._keep_entry_order: bool = False
+        #: Whether the last eventless microstep changed anything (see
+        #: `_watch_eventless`); the settle loops stop re-selecting `always`
+        #: transitions after one that did not, as XState's `macrostep` does.
+        self._microstep_changed: bool = True
         #: Remembered configurations for history pseudo-states, keyed by the
         #: *parent* state id. Recorded on exit, replayed when a transition
         #: targets a `type: "history"` child of that parent.
@@ -4388,6 +4394,63 @@ class BaseInterpreter(Generic[TContext]):
             and any(_owns_history(s) for s in states_to_exit)
         )
 
+    def _watch_eventless(
+        self,
+        event: AnyEvent,
+        selected: Sequence[TransitionDefinition],
+        states_to_exit: AbstractSet[StateNode[Any]],
+        states_to_enter: Sequence[StateNode[Any]],
+        preserved: bool,
+    ) -> Optional[Tuple[Any, int]]:
+        """Starts deciding whether an eventless microstep changes anything.
+
+        XState's ``macrostep`` selects eventless transitions again only
+        after a microstep that produced a NEW snapshot (or after an internal
+        event): a microstep that re-enters exactly what it exited, records
+        no history, starts or stops no actor and assigns nothing keeps the
+        snapshot, so a self-targeting ``always`` runs once instead of
+        looping. Configuration, history and invokes are known before the
+        microstep runs; context (Python actions may mutate it in place, the
+        analogue of XState's ``assign``) and spawned actors are compared
+        afterwards by `_settle_eventless_watch`.
+
+        Args:
+            event: The microstep's event; only the eventless one is watched.
+            selected: The transitions the microstep takes.
+            states_to_exit: Its exit set.
+            states_to_enter: Its entry set.
+            preserved: `_configuration_preserved` for those sets.
+
+        Returns:
+            ``None`` when the answer is already "changed" (or the event is
+            not eventless), else ``(context before-image, actor count)``.
+        """
+        self._microstep_changed = True
+        if event.type != "" or not preserved:
+            return None
+        if any(s.invoke for s in states_to_exit) or any(
+            s.invoke for s in states_to_enter
+        ):
+            return None
+        may_mutate = (
+            any(t.actions for t in selected)
+            or any(s.exit for s in states_to_exit)
+            or any(s.entry for s in states_to_enter)
+        )
+        image = self._context_before_image() if may_mutate else None
+        return image, len(self._actors)
+
+    def _settle_eventless_watch(
+        self, watch: Optional[Tuple[Any, int]]
+    ) -> None:
+        """Completes `_watch_eventless` once the microstep has run."""
+        if watch is None:
+            return
+        image, actors = watch
+        self._microstep_changed = self._context_changed(image) or (
+            len(self._actors) != actors
+        )
+
     async def _execute_microstep(
         self,
         transitions: Sequence[TransitionDefinition],
@@ -4421,8 +4484,12 @@ class BaseInterpreter(Generic[TContext]):
         if not steps:
             # 🎬 Nothing exits or enters: actions only, each transition its
             #    own context transaction (`_execute_internal_transition`).
+            watch = self._watch_eventless(
+                event, [t for t, _ in plans], _NO_STATES, (), True
+            )
             for transition, _ in plans:
                 await self._execute_internal_transition(transition, event)
+            self._settle_eventless_watch(watch)
             return
         selected = [transition for transition, _ in plans]
         states_to_exit: Set[StateNode[Any]]
@@ -4462,6 +4529,9 @@ class BaseInterpreter(Generic[TContext]):
         #    until the parent itself eventually stopped.
         # ⚡ Most machines spawn nothing; share one empty set then.
         actor_ids_before = set(self._actors) if self._actors else _NO_IDS
+        watch = self._watch_eventless(
+            event, selected, states_to_exit, states_to_enter, keep_order
+        )
 
         # 🧷 Context is snapshotted only when a rollback could need it: a
         #    deepcopy per transition on the "continue" hot path would be a
@@ -4626,6 +4696,7 @@ class BaseInterpreter(Generic[TContext]):
             raise
         finally:
             self._lifecycle_failures.pop()
+        self._settle_eventless_watch(watch)
 
         # Notify plugins and subscribers of the completed microstep.
         if not failed_actions:
