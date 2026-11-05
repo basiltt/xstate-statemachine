@@ -240,15 +240,22 @@ class TestBudgetPlugin:
         i = _sink(p)
         i.send("AGENT_DONE", usage=usage, agent_id="x")
         tot = i.context["total_usage"]
-        assert all(v == 0 for v in tot.values())
+        # review CM-06: a hostile TOKEN count fails closed (exhausting) but
+        #    never poisons the dimensions that were not budgeted here
+        assert tot["turns"] == 0 and tot["cost_usd"] == 0
         assert not i.context.get("budget_exceeded")
         i.stop()
 
     def test_fixed_usage_by_agent_sanitised(self) -> None:
         p = BudgetPlugin(max_total_usd=1.0)
         i = _sink(p)
-        i.send("AGENT_DONE", usage={"turns": float("nan"), "x": 1}, agent_id=7)
+        i.send(
+            "AGENT_DONE",
+            usage={"turns": float("nan"), "input_tokens": 3, "x": 1},
+            agent_id=7,
+        )
         assert i.context["usage_by_agent"]["7"]["turns"] == 0
+        assert i.context["usage_by_agent"]["7"]["input_tokens"] == 3
         assert "x" not in i.context["usage_by_agent"]["7"]
         i.stop()
 

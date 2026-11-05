@@ -355,6 +355,11 @@ class InboundDispatcher:
                 )
             return self._failed(env, topic, exc, machine)
         except Exception as exc:  # noqa: BLE001 - user code / store
+            if _is_store_outage(exc):
+                # 🏛️ review M4: a state-store / inbox OUTAGE inside the run
+                #    is not the message's fault either -- hand it to
+                #    `handle`, which requeues without counting an attempt.
+                raise
             return self._failed(env, topic, exc, machine)
         err = getattr(receipt, "error", None)
         if getattr(receipt, "duplicate", False):
@@ -446,7 +451,18 @@ class InboundDispatcher:
     ) -> str:
         n = self._bump(env)
         if n >= self.max_attempts:
-            return self._dead_letter(env, topic, "max_attempts", exc, machine)
+            try:
+                return self._dead_letter(
+                    env, topic, "max_attempts", exc, machine
+                )
+            except Exception:  # noqa: BLE001 - DLQ down: keep the message
+                # 🔥 The attempt was already counted above; letting the
+                #    error escape to `handle` would count it a second time.
+                logger.exception(
+                    "🔥 dead-lettering envelope %s failed; requeueing",
+                    env.id,
+                )
+                raise _Retry() from exc
         raise _Retry() from exc
 
     def _dead_letter(
@@ -619,8 +635,15 @@ def _const(value: Any) -> Callable[[Any], Any]:
 
 
 async def _maybe_await(value: Any) -> None:
-    if asyncio.iscoroutine(value) or isinstance(value, asyncio.Future):
+    if inspect.isawaitable(value):
         await value
+
+
+def _is_store_outage(exc: BaseException) -> bool:
+    """Tell whether *exc* is a state-store / inbox outage."""
+    from ..exceptions import StoreError
+
+    return isinstance(exc, StoreError)
 
 
 def _by_subject(batch: List[Delivery]) -> "OrderedDict[str, List[Delivery]]":
@@ -673,6 +696,9 @@ def replay_dead_letter(
       a double replay.
     * Refuses when the record's ``machine_hash`` / ``machine_version``
       differ from the machine the dispatcher would use, unless *force*.
+    * Refuses when the stored envelope data holds the redaction sentinel
+      (``"***"``): dead letters are redacted at rest, so such a record is
+      inspect-only unless *force* accepts replaying the masked values.
     * *dry_run* (the default) only reports; otherwise the record is marked
       resolved on success and the action is audited when the store
       supports ``audit()``.
@@ -686,6 +712,16 @@ def replay_dead_letter(
         raise ReplayRefusedError(
             "this dead letter was captured from a chart state, not an "
             "envelope; restore its snapshot instead"
+        )
+    if not force and _holds_redacted_data(rec.envelope.get("data")):
+        # 🔐 The stored copy was redacted at capture time: replaying it
+        #    would feed "***" to the machine as if it were the original
+        #    payload and then resolve the record. Inspect-only unless the
+        #    operator explicitly accepts that.
+        raise ReplayRefusedError(
+            "the stored envelope data was redacted at capture ('***'); "
+            "replaying it would send masked values (use --force to "
+            "replay anyway)"
         )
     env = Envelope.from_dict(dict(rec.envelope))
     ext = {k: v for k, v in env.extensions.items() if k != ATTEMPT_EXTENSION}
@@ -711,6 +747,20 @@ def replay_dead_letter(
             actor=actor,
         )
     return ReplayResult(rec.id, False, outcome, warnings)
+
+
+def _holds_redacted_data(value: Any) -> bool:
+    """Tell whether *value* contains the redaction sentinel as a leaf."""
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            stack.extend(item.values())
+        elif isinstance(item, (list, tuple)):
+            stack.extend(item)
+        elif item == "***":
+            return True
+    return False
 
 
 def _replay_mismatches(rec: DeadLetter, machine: Any) -> List[str]:

@@ -1,0 +1,165 @@
+{
+  "name": "wildcard_vs_engine_events",
+  "description": "Pins down whether the catch-all descriptor matches engine-generated events: a service completion with no onDone handler, and a service failure with no onError handler, each with only a `*` handler available.",
+  "tags": [
+    "events",
+    "wildcard",
+    "invoke",
+    "divergence-probe"
+  ],
+  "machine": {
+    "id": "w",
+    "initial": "a",
+    "states": {
+      "a": {
+        "invoke": {
+          "src": "ok",
+          "id": "ok"
+        },
+        "on": {
+          "*": {
+            "actions": "starA"
+          },
+          "NEXT": "b"
+        }
+      },
+      "b": {
+        "invoke": {
+          "src": "boom",
+          "id": "boom"
+        },
+        "on": {
+          "*": {
+            "actions": "starB"
+          }
+        }
+      }
+    }
+  },
+  "logic": {
+    "services": {
+      "ok": {
+        "result": 1
+      },
+      "boom": {
+        "error": "kaboom"
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "NEXT"
+    },
+    {
+      "send": "PING"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "w.a"
+        ],
+        "context": {},
+        "actions": [
+          "starA"
+        ],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "w.b"
+          ],
+          "context": {},
+          "actions": [
+            "starB"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "w.b"
+          ],
+          "context": {},
+          "actions": [
+            "starB"
+          ],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "w.a"
+        ],
+        "context": {},
+        "actions": [
+          "starA"
+        ],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "w.b"
+          ],
+          "context": {},
+          "actions": [
+            "starB"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "w.b"
+          ],
+          "context": {},
+          "actions": [
+            "starB"
+          ],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "fa529241089d40e3",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "w",
+        "machine_hash": "fa529241089d40e3",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "w.b"
+        ],
+        "value": "b",
+        "configuration": [
+          "w",
+          "w.b"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"w\",\n  \"machine_hash\": \"fa529241089d40e3\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"w.b\"\n  ],\n  \"value\": \"b\",\n  \"configuration\": [\n    \"w\",\n    \"w.b\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

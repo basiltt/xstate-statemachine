@@ -366,6 +366,10 @@ class TestRetryChartSync:
                     **{k: v for k, v in b.items() if k != "id"},
                     "on": {"PING": {"actions": "ping"}},
                 },
+                # A region that never finishes: with A and B both final a
+                # parallel root completes the machine (XState v5), and the
+                # PINGs below would be ignored.
+                "C": {"initial": "alive", "states": {"alive": {}}},
             },
         }
         cfg["states"]["A"].pop("context")

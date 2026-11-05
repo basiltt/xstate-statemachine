@@ -28,6 +28,10 @@ _LOCK_PHRASE = re.compile(
 )
 
 
+#: Postgres ``lock_timeout`` as ``SHOW`` renders it: ``250ms``, ``1s``...
+_TIMEOUT = re.compile(r"(\d+(?:\.\d+)?)\s*(ms|s|min|h|d|)")
+
+
 def _sqlstate(exc: BaseException) -> Optional[str]:
     """The SQLSTATE of *exc* or its driver cause (psycopg 2/3)."""
     seen = 0
@@ -65,14 +69,20 @@ def _lock_timeout_s(using: str) -> float:
                 raw = str(cur.fetchone()[0]).strip().lower()
         except Exception:  # pragma: no cover - aborted txn / no conn
             return 0.0
-        num = raw.rstrip("mins")
-        scale = {"ms": 0.001, "s": 1.0, "min": 60.0}.get(
-            raw[len(num) :], 0.001
-        )
-        try:
-            return float(num) * scale
-        except ValueError:  # pragma: no cover - odd unit
+        # 📝 Anchored unit parse (``rstrip("mins")`` strips a CHARACTER
+        #    set and choked on ``h`` / ``d``).
+        m = _TIMEOUT.fullmatch(raw)
+        if m is None:  # pragma: no cover - odd unit
             return 0.0
+        scale = {
+            "": 0.001,
+            "ms": 0.001,
+            "s": 1.0,
+            "min": 60.0,
+            "h": 3600.0,
+            "d": 86400.0,
+        }[m.group(2)]
+        return float(m.group(1)) * scale
     try:
         return float(opts.get("timeout", 5.0))
     except (TypeError, ValueError):  # pragma: no cover - odd settings

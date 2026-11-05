@@ -6,9 +6,9 @@ Security fixes land on the latest minor release only. Releases follow [Semantic 
 
 | Version | Supported |
 |:--|:--|
-| 0.11.x (current) | ✅ |
-| 0.10.x | fixes for critical issues only, until 0.12.0 |
-| < 0.10 | ❌ |
+| 0.12.x (current) | ✅ |
+| 0.11.x | fixes for critical issues only, until 0.13.0 |
+| < 0.11 | ❌ |
 
 ## Reporting a vulnerability
 

@@ -32,10 +32,13 @@ and invoked services.
 import copy
 import inspect
 import logging
+import math
+import re
 import threading
 from enum import Enum
 from typing import (
     cast,
+    Container,
     Mapping,
     FrozenSet,
     Any,
@@ -77,6 +80,21 @@ from ._typing import TContext as TContext  # noqa: E402
 
 # Define a specific type for state types for clarity and reuse.
 StateType = Literal["atomic", "compound", "parallel", "final", "history"]
+#: Every value `StateType` admits, for validating a config's `type`.
+_STATE_TYPES: Tuple[str, ...] = (
+    "atomic",
+    "compound",
+    "parallel",
+    "final",
+    "history",
+)
+#: The two kinds of history pseudo-state.
+HistoryKind = Literal["shallow", "deep"]
+#: An `after` key made only of digits: whole milliseconds (fast path).
+_DIGITS_DELAY = re.compile(r"\s*\+?\d+\s*")
+#: Any other NUMERIC-looking `after` key (``"1.5"``, ``"-5"``,
+#: ``"1e3"``), which must still be whole, non-negative milliseconds.
+_NUMERIC_DELAY = re.compile(r"\s*[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?\s*")
 
 # -----------------------------------------------------------------------------
 # 🛡️ Failure Policies
@@ -123,10 +141,38 @@ def _validated_policy(
     return str(value)
 
 
-# 👶 Prefixes marking an action as a built-in actor-spawning directive.
-#
-# ⚠️ Order matters: `spawn_blocking_` must be tested before `spawn_`, since the
-# latter is a prefix of the former.
+def _config_bool(value: Any, key: str, where: str, default: bool) -> bool:
+    """Read a boolean config flag, accepting only JSON ``true`` / ``false``.
+
+    🛡️ ``bool(raw)`` made every non-empty string truthy, so ``"strict":
+    "false"`` ENABLED strict mode and ``"reenter": "false"`` forced a
+    re-entry: a mistyped flag silently did the opposite of what it said.
+    The `[pydantic]` config gate already refuses non-bools (#266); the
+    parser now agrees with it. ``None`` (JSON ``null``) means "not set".
+
+    Args:
+        value: The raw config value.
+        key: The config key, for the error message.
+        where: Who declares it (``"Machine 'm'"``, ``"Transition 'E' on
+            state 'm.a'"``), for the error message.
+        default: The value used when *value* is ``None``.
+
+    Returns:
+        bool: The flag.
+
+    Raises:
+        InvalidConfigError: *value* is neither a bool nor ``None``.
+    """
+    if value is None:
+        return default
+    if not isinstance(value, bool):
+        raise InvalidConfigError(
+            f"{where}: {key!r} must be true or false, got "
+            f"{type(value).__name__} {value!r}."
+        )
+    return value
+
+
 class OverflowPolicy(str, Enum):
     """What ``send()`` does when a bounded inbox is full (#38).
 
@@ -144,6 +190,10 @@ class OverflowPolicy(str, Enum):
     DROP_NEWEST = "drop_newest"
 
 
+# 👶 Prefixes marking an action as a built-in actor-spawning directive.
+#
+# ⚠️ Order matters: `spawn_blocking_` must be tested before `spawn_`, since the
+# latter is a prefix of the former.
 SPAWN_BLOCKING_PREFIX = "spawn_blocking_"
 #: Default upper bound (ms) a `spawn_blocking_<key>` waits for its child
 #: when the machine sets no `spawnBlockingTimeout`. Generous enough for any
@@ -230,46 +280,73 @@ class ActionDefinition:
     type: str
     params: Optional[Dict[str, Any]]
 
-    def __init__(self, config: Union[str, Dict[str, Any]]):
+    def __init__(
+        self,
+        config: Union[str, Dict[str, Any]],
+        *,
+        user_actions: Optional[Container[str]] = None,
+    ) -> None:
         """Initializes the ActionDefinition from its configuration.
 
         Args:
             config: The action configuration from the machine definition.
                     It can be a simple `str` (the action name) or a `Dict`
                     (e.g., `{"type": "myAction", "params": {...}}`).
+            user_actions: The action names the machine's `MachineLogic`
+                implements, when known. A name found here is the USER's
+                action even if it is spelled like a built-in, so the
+                built-in's required-params check does not apply to it.
 
         Raises:
-            InvalidConfigError: If the config is not a string or dictionary.
+            InvalidConfigError: If the config is not a string or dictionary,
+                its `type` is missing or not a non-empty string, its
+                `params` is not an object or a callable, or a built-in
+                action lacks a required param.
         """
         if isinstance(config, str):
             # 📝 Handle shorthand string definition: "myAction"
-            logger.debug(
-                "🔧 Parsing action definition from string: '%s'", config
-            )
+            if _PARSE_DEBUG():
+                logger.debug(
+                    "🔧 Parsing action definition from string: '%s'", config
+                )
             self.type = config
             self.params = None
         elif isinstance(config, dict):
             # 📝 Handle object definition: {"type": "myAction", ...}
-            logger.debug("🔧 Parsing action definition from dict: %s", config)
-            action_type = config.get("type", "UnknownAction")
-            if not isinstance(action_type, str):
+            if _PARSE_DEBUG():
+                logger.debug(
+                    "🔧 Parsing action definition from dict: %s", config
+                )
+            action_type = config.get("type")
+            if not isinstance(action_type, str) or not action_type:
                 # 🛡️ #266 battle: `{"type": 1}` escaped as a bare
                 #    AttributeError from `startswith` deep in the parser.
+                # 🛡️ A MISSING type used to become an action literally
+                #    named "UnknownAction" -- a name nobody implements.
                 raise InvalidConfigError(
-                    "Action definition 'type' must be a string, got "
-                    f"{type(action_type).__name__}: {config!r}"
+                    "Action definition 'type' must be a non-empty string, "
+                    f"got {type(action_type).__name__} {action_type!r}: "
+                    f"{config!r}"
+                )
+            params = config.get("params")
+            if params is not None and not (
+                isinstance(params, dict) or callable(params)
+            ):
+                # 🛡️ `params: 5` escaped as a bare "'int' object is not
+                #    iterable" from the built-in check below.
+                raise InvalidConfigError(
+                    f"Action '{action_type}': 'params' must be an object or "
+                    f"a callable, got {type(params).__name__} {params!r}."
                 )
             self.type = action_type
-            self.params = config.get("params")
-            self._validate_builtin_params(config)
+            self.params = params
+            if user_actions is None or action_type not in user_actions:
+                self._validate_builtin_params(config)
         else:
             # ❌ Reject invalid definitions
-            logger.error(
-                "❌ Invalid action configuration type: %s (expected str or dict)",
-                type(config),
-            )
             raise InvalidConfigError(
-                f"Action definition must be a string or a dictionary, got {type(config)}"
+                "Action definition must be a string or a dictionary, got "
+                f"{type(config).__name__} {config!r}."
             )
 
     def _validate_builtin_params(self, config: Dict[str, Any]) -> None:
@@ -280,6 +357,18 @@ class ActionDefinition:
         one check here covers all of them. When the required keys are found
         at the TOP level of the dict instead of under ``params`` (the
         natural mistake), the error says so explicitly.
+
+        📝 Not called for a type the machine's logic implements (see
+        ``user_actions``): user actions resolve BEFORE built-ins, so a user
+        ``cancel`` / ``stop`` / ``log`` taking its own params must not be
+        held to the built-in's signature (AGENTS.md).
+
+        Args:
+            config: The raw action dict, used to spot required keys written
+                at its top level instead of under ``params``.
+
+        Raises:
+            InvalidConfigError: A required param of the built-in is missing.
         """
         canonical = resolve_builtin(self.type)
         if canonical is None:
@@ -361,7 +450,9 @@ class GuardDefinition:
     is_composite: bool
     is_state_in: bool
 
-    def __init__(self, config: Union[str, Dict[str, Any], "GuardDefinition"]):
+    def __init__(
+        self, config: Union[str, Dict[str, Any], "GuardDefinition"]
+    ) -> None:
         """Normalises any supported guard configuration.
 
         Args:
@@ -398,7 +489,7 @@ class GuardDefinition:
             guard_type = config.get("type")
             if not isinstance(guard_type, str) or not guard_type:
                 raise InvalidConfigError(
-                    "❌ Guard object must have a non-empty string 'type', "
+                    "Guard object must have a non-empty string 'type', "
                     f"got: {config!r}"
                 )
             self.type = guard_type
@@ -424,8 +515,8 @@ class GuardDefinition:
                     children_cfg = [nested]
         else:
             raise InvalidConfigError(
-                "❌ Guard must be a string or a dictionary, "
-                f"got {type(config).__name__}"
+                "Guard must be a string or a dictionary, "
+                f"got {type(config).__name__} {config!r}."
             )
 
         # 🏛️ Architecture decision: a *bare string* guard is always a user
@@ -442,7 +533,7 @@ class GuardDefinition:
 
         if self.is_composite and not self.children:
             raise InvalidConfigError(
-                f"❌ Composite guard '{self.type}' requires at least one "
+                f"Composite guard '{self.type}' requires at least one "
                 "nested guard (via 'children', or 'params.guards')."
             )
         if (
@@ -451,7 +542,7 @@ class GuardDefinition:
             and len(self.children) != 1
         ):
             raise InvalidConfigError(
-                "❌ Guard 'not' requires exactly one nested guard, got "
+                "Guard 'not' requires exactly one nested guard, got "
                 f"{len(self.children)}."
             )
 
@@ -480,7 +571,9 @@ class TransitionDefinition:
     Attributes:
         event: The name of the event that triggers this transition.
         source: The source `StateNode` where this transition originates.
-        target_str: The string representation of the target state.
+        target_str: The string representation of the target state (the
+                    first one of a multi-target transition).
+        target_strs: Every target string, in declaration order.
         actions: A list of `ActionDefinition` objects to execute.
         guard: The name of the guard condition to evaluate.
         reenter: A flag indicating if a self-transition should exit and
@@ -493,7 +586,7 @@ class TransitionDefinition:
         config: Dict[str, Any],
         source: "StateNode[Any]",
         actions: Optional[List[ActionDefinition]] = None,
-    ):
+    ) -> None:
         """Initializes the TransitionDefinition.
 
         Args:
@@ -502,8 +595,16 @@ class TransitionDefinition:
                     (e.g., `target`, `guard`, `reenter`).
             source: The `StateNode` where this transition is defined.
             actions: A list of `ActionDefinition` objects to be executed.
+
+        Raises:
+            InvalidConfigError: A malformed `target`, `guard`, `meta`,
+                `reenter` or `internal`; the message names the event and
+                the source state.
         """
-        if _PARSE_DEBUG():  # ⚡ once per transition per build
+        _dbg = getattr(getattr(source, "machine", None), "_parse_debug", None)
+        if _dbg is None:
+            _dbg = _PARSE_DEBUG()
+        if _dbg:
             logger.debug(
                 "🔧 Creating transition for event '%s' from config: %s",
                 event,
@@ -511,17 +612,74 @@ class TransitionDefinition:
             )
         self.event: str = event
         self.source: "StateNode[Any]" = source
-        target = config.get("target")
-        if target is not None and not isinstance(target, str):
-            # 🛡️ #266 battle: a list / number target escaped as a bare
-            #    AttributeError from the resolver. Multi-target transitions
-            #    are not implemented; say so.
+        # ⚡ One pass over the transition's (typically 1-3) keys instead of
+        #    seven `.get` probes; this runs for every transition of every
+        #    build (#307 benchmark). `guard` wins over the v4 `cond` alias
+        #    whenever the key is present, as `config.get("guard",
+        #    config.get("cond"))` did.
+        target = raw_guard = cond = internal = reenter = raw_meta = None
+        has_guard = False
+        forbidden = False
+        for key, value in config.items():
+            if key == "target":
+                target = value
+            elif key == "guard":
+                raw_guard = value
+                has_guard = True
+            elif key == "cond":
+                cond = value
+            elif key == "reenter":
+                reenter = value
+            elif key == "internal":
+                internal = value
+            elif key == "meta":
+                raw_meta = value
+            elif key == "__forbidden__":
+                forbidden = bool(value)
+        if not has_guard:
+            raw_guard = cond
+        targets: Tuple[str, ...] = ()
+        if isinstance(target, (list, tuple)):
+            # 🎯 XState v5 multi-target: `target: ["#m.p.r1.x", "#m.p.r2.y"]`
+            #    enters several states at once. The targets must lie in
+            #    different regions of one parallel state; that is checked
+            #    once they are resolved (`validation.multi_target_problem`).
+            if not target or not all(
+                isinstance(item, str) and item for item in target
+            ):
+                raise InvalidConfigError(
+                    f"Transition '{event}' on state '{source.id}': a "
+                    f"'target' list must hold one or more non-empty "
+                    f"strings, got {list(target)!r}"
+                )
+            targets = tuple(target)
+            target = targets[0]
+        elif target is not None and not isinstance(target, str):
+            # 🛡️ #266 battle: a number / dict target escaped as a bare
+            #    AttributeError from the resolver; say what is accepted.
             raise InvalidConfigError(
                 f"Transition '{event}' on state '{source.id}': 'target' "
-                f"must be a string (multi-target lists are not supported), "
-                f"got {type(target).__name__}"
+                f"must be a string or a list of strings, got "
+                f"{type(target).__name__}"
             )
+        elif target == "":
+            # 🛡️ An empty-string target (`on: {"E": ""}`) was falsy, so it
+            #    silently became a TARGETLESS transition -- the event was
+            #    consumed and nothing moved. Omit `target` for that.
+            raise InvalidConfigError(
+                f"Transition '{event}' on state '{source.id}': 'target' "
+                f"is an empty string. Omit 'target' for a targetless "
+                f"transition, or name the state to enter."
+            )
+        elif target:
+            targets = (target,)
+        #: The (first) target string. For a multi-target transition this is
+        #: the FIRST target only -- every target is in `target_strs`.
+        #: Diagram exports and the structural hash read this field.
         self.target_str: Optional[str] = target
+        #: Every target string, in declaration order (``()`` when the
+        #: transition is targetless).
+        self.target_strs: Tuple[str, ...] = targets
         self.actions: List[ActionDefinition] = actions or []
         #: ⚡ Perf: the target `StateNode`, resolved ONCE at build time by
         #: `validation.validate_machine` (which already has to resolve it to
@@ -533,6 +691,10 @@ class TransitionDefinition:
         #: runtime falls back to resolving live. The resolver stays the single
         #: authority: this only memoises its result.
         self.resolved_target: Optional["StateNode[Any]"] = None
+        #: Every resolved target of a multi-target transition, in
+        #: declaration order (``None`` for a single-target transition, or
+        #: when one of them did not resolve at build time).
+        self.resolved_targets: Optional[Tuple["StateNode[Any]", ...]] = None
         #: ⚡ Perf: static transition GEOMETRY, memoised on first execution
         #: by `BaseInterpreter._transition_geometry`. For a given resolved
         #: target the domain (LCCA) and the entry path from the domain down
@@ -542,7 +704,7 @@ class TransitionDefinition:
         #: transition that resolves differently is not served a stale answer.
         #: The EXIT set stays dynamic -- it depends on the live configuration.
         self._geometry: Optional[
-            Tuple[int, Any, Tuple["StateNode[Any]", ...]]
+            Tuple[Any, Any, Tuple["StateNode[Any]", ...]]
         ] = None
 
         # 🛡️ Guard resolution.
@@ -560,25 +722,40 @@ class TransitionDefinition:
         # transition always fired. That is the most dangerous class of defect
         # a statechart library can have, so the alias is supported rather than
         # rejected.
-        raw_guard = config.get("guard", config.get("cond"))
-        self.guard_def: Optional[GuardDefinition] = (
-            GuardDefinition(raw_guard) if raw_guard is not None else None
-        )
+        self.guard_def: Optional[GuardDefinition] = None
+        if raw_guard is not None:
+            try:
+                self.guard_def = GuardDefinition(raw_guard)
+            except InvalidConfigError as exc:
+                # 🧭 Name the transition: "Guard must be a string" alone
+                #    gives no way to find the offender in a large chart.
+                raise InvalidConfigError(
+                    f"Transition '{event}' on state '{source.id}': "
+                    f"invalid 'guard': {exc}"
+                ) from exc
         # 🔁 `reenter` (XState v5) with `internal` (v4) as an alias:
         #    `internal: False` means "exit and re-enter", i.e. `reenter: True`.
         #    Before 0.8.0 `internal` was silently dropped, so a migrating
         #    user's explicit opt-in vanished with no validation error (#29).
-        if "internal" in config:
-            self.reenter: bool = not bool(config["internal"])
+        # 🛡️ Both flags go through `_config_bool`: ``bool("false")`` is
+        #    True, so a string flag silently did the opposite of what it
+        #    said (``"reenter": "false"`` re-ran entry/exit actions).
+        if internal is None and reenter is None:
+            self.reenter: bool = False  # ⚡ the default, no label needed
         else:
-            self.reenter = bool(config.get("reenter", False))
+            where = f"Transition '{event}' on state '{source.id}'"
+            if internal is not None:
+                self.reenter = not _config_bool(
+                    internal, "internal", where, False
+                )
+            else:
+                self.reenter = _config_bool(reenter, "reenter", where, False)
         #: Marks an explicitly forbidden transition (``on: {"E": None}``).
         #: Selecting it consumes the event without changing state, which stops
         #: the upward walk from reaching an ancestor's handler.
-        self.forbidden: bool = bool(config.get("__forbidden__", False))
+        self.forbidden: bool = forbidden
         #: #293: transition-level ``meta`` (already an accepted key under
         #: ``strictConfig``). The EDA outbox reads ``meta.publish`` here.
-        raw_meta = config.get("meta")
         if raw_meta is not None and not isinstance(raw_meta, dict):
             raise InvalidConfigError(
                 f"Transition '{event}' on '{source.id}' has an invalid "
@@ -600,20 +777,16 @@ class TransitionDefinition:
         """
         return self.guard_def.type if self.guard_def else None
 
-        logger.debug(
-            "✅ Created TransitionDefinition: event='%s', target='%s', actions=%d, guard='%s', reenter=%s",
-            self.event,
-            self.target_str,
-            len(self.actions),
-            self.guard or "None",
-            self.reenter,
-        )
-
     def __repr__(self) -> str:
         """Provides a developer-friendly string representation."""
+        target: Any = (
+            list(self.target_strs)
+            if len(self.target_strs) > 1
+            else f"'{self.target_str}'"
+        )
         return (
             f"Transition(event='{self.event}', "
-            f"target='{self.target_str}', reenter={self.reenter})"
+            f"target={target}, reenter={self.reenter})"
         )
 
 
@@ -640,6 +813,34 @@ def _required_positional_arity(fn: Any) -> Optional[int]:
             inspect.Parameter.POSITIONAL_OR_KEYWORD,
         )
     )
+
+
+def event_payload(context: Any, event: Any) -> Dict[str, Any]:
+    """An ``invoke.input`` factory that forwards the triggering event's payload.
+
+    XState passes an invoked actor no input unless the chart declares one;
+    this is the explicit, portable way to hand a service the fields of the
+    event that entered the state -- the JSON equivalent is
+    ``"input": ({event}) => event`` in XState. ``send("START", url=...)``
+    then arrives as ``event.payload["input"]["url"]`` (or as a ``url``
+    parameter with argument injection)::
+
+        State(invoke={"src": "fetchUrl", "input": event_payload, "onDone": "done"})
+
+        @loading.service(input=event_payload, on_done="done")
+        def fetch_url(self, url): ...
+
+    Args:
+        context: The parent's context (unused).
+        event: The event whose transition entered the invoking state.
+
+    Returns:
+        Dict[str, Any]: A copy of the event's payload (``{}`` when it has
+        none, or when the state was entered without an event).
+    """
+    del context
+    payload = getattr(event, "payload", None)
+    return dict(payload) if isinstance(payload, dict) else {}
 
 
 def _call_input_factory(fn: Any, context: Any, event: Any) -> Any:
@@ -679,7 +880,7 @@ class InvokeDefinition:
         source: "StateNode[Any]",
         on_done: List[TransitionDefinition],
         on_error: List[TransitionDefinition],
-    ):
+    ) -> None:
         """Initializes the InvokeDefinition.
 
         Args:
@@ -688,12 +889,20 @@ class InvokeDefinition:
             source: The `StateNode` that hosts this invocation.
             on_done: A pre-parsed list of 'onDone' transitions.
             on_error: A pre-parsed list of 'onError' transitions.
+
+        Raises:
+            InvalidConfigError: `src` is not a service name, or `systemId`
+                is not a non-empty string.
         """
-        logging.debug(
-            "🔧 Creating invoke definition for state '%s' with config: %s",
-            source.id,
-            config,
-        )
+        # 🪵 Module `logger`, never the `logging.*` helpers: those call
+        #    `logging.basicConfig()` on an unconfigured root and so installed
+        #    a stderr handler in the HOST application (MOD-01).
+        if _PARSE_DEBUG():
+            logger.debug(
+                "🔧 Creating invoke definition for state '%s' with config: %s",
+                source.id,
+                config,
+            )
         self.id: str = invoke_id
         raw_src = config.get("src")
         if raw_src is not None and not isinstance(raw_src, str):
@@ -724,18 +933,29 @@ class InvokeDefinition:
         #: Registers the child in the actor system so `sendTo` can address
         #: it by this name from anywhere in the tree. Was silently dropped
         #: at parse time before 0.8.0.
-        self.system_id: Optional[str] = config.get("systemId")
+        raw_system_id = config.get("systemId")
+        if raw_system_id is not None and (
+            not isinstance(raw_system_id, str) or not raw_system_id
+        ):
+            raise InvalidConfigError(
+                f"State '{source.id}' invoke '{invoke_id}': 'systemId' must "
+                f"be a non-empty string, got {type(raw_system_id).__name__} "
+                f"{raw_system_id!r}."
+            )
+        self.system_id: Optional[str] = raw_system_id
         self.source: "StateNode[Any]" = source
         self.on_done: List[TransitionDefinition] = on_done
         self.on_error: List[TransitionDefinition] = on_error
 
         # ⚠️ Warn if the service source is missing, as it's a common error.
         if not self.src:
-            logging.warning(
-                "⚠️ Invoke definition in state '%s' is missing a 'src' property.",
+            logger.warning(
+                "⚠️ Invoke definition in state '%s' is missing a 'src' "
+                "property.",
                 self.source.id,
             )
-        logging.debug("✅ Created InvokeDefinition with ID '%s'", self.id)
+        if _PARSE_DEBUG():
+            logger.debug("✅ Created InvokeDefinition with ID '%s'", self.id)
 
     def __repr__(self) -> str:
         """Provides a developer-friendly string representation."""
@@ -792,6 +1012,12 @@ _NODE_KEYS: Tuple[str, ...] = (
     "onDone",
     "after",
     "invoke",
+    # ⚡ The scalar keys too, so `StateNode.__init__` probes the dict once.
+    "id",
+    "description",
+    "output",
+    "history",
+    "target",
 )
 _NODE_KEY_INDEX: Dict[str, int] = {k: i for i, k in enumerate(_NODE_KEYS)}
 
@@ -832,23 +1058,38 @@ _config_stack_local = threading.local()
 
 
 class _ConfigStack:
-    """The calling thread's descent set (`set`-like: in / add / discard)."""
+    """The calling thread's descent set (`set`-like: in / add / discard).
+
+    🏛️ A facade over a `threading.local` slot rather than a bare module
+    set: the set must be PER THREAD (#264 battle), and the facade keeps
+    every caller from re-implementing the lazy per-thread creation.
+    `StateNode.__init__` takes the set itself once per node through
+    `descent()` (⚡ one thread-local lookup, not three per child).
+    """
 
     @staticmethod
-    def _set() -> Set[int]:
+    def descent() -> Set[int]:
+        """Return the calling thread's set, creating it on first use.
+
+        Returns:
+            Set[int]: ``id()`` of every config dict on the current descent.
+        """
         s = getattr(_config_stack_local, "s", None)
         if s is None:
             s = _config_stack_local.s = set()
         return s
 
     def __contains__(self, item: int) -> bool:
-        return item in self._set()
+        """Report whether config ``id`` *item* is on the current descent."""
+        return item in self.descent()
 
     def add(self, item: int) -> None:
-        self._set().add(item)
+        """Push config ``id`` *item* onto the current descent."""
+        self.descent().add(item)
 
     def discard(self, item: int) -> None:
-        self._set().discard(item)
+        """Pop config ``id`` *item* from the current descent, if present."""
+        self.descent().discard(item)
 
 
 _config_stack = _ConfigStack()
@@ -862,9 +1103,8 @@ class StateNode(Generic[TContext]):
     This class is the core of the in-memory representation of the statechart.
     """
 
-    # ✅ FIX: Pre-declare all instance attributes at the class level.
-    # This makes the class structure explicit for static analysis tools,
-    # resolving the "Unresolved attribute reference" warnings in IDEs.
+    # 📝 Every instance attribute is pre-declared at class level so the
+    #    class structure is explicit to static analysis tools.
     id: str
     key: str
     parent: Optional["StateNode[Any]"]
@@ -873,6 +1113,8 @@ class StateNode(Generic[TContext]):
     initial: Optional[str]
     on: Dict[str, List[TransitionDefinition]]
     on_done: Optional[TransitionDefinition]
+    #: Every state-level ``onDone`` transition, in declaration order.
+    on_done_transitions: List[TransitionDefinition]
     # 🐛 [Issue #60] Keys may be int (ms delays) or str (named delays,
     # e.g. "TIMEOUT"), matching what `_parse_after` actually returns and
     # assigns to `self.after` below -- keeps this in sync with mypy.
@@ -881,6 +1123,7 @@ class StateNode(Generic[TContext]):
     exit: List[ActionDefinition]
     invoke: List[InvokeDefinition]
     states: Dict[str, "StateNode[Any]"]
+    doc_order: int
 
     def __init__(
         self,
@@ -888,7 +1131,7 @@ class StateNode(Generic[TContext]):
         config: Dict[str, Any],
         key: str,
         parent: Optional["StateNode[Any]"] = None,
-    ):
+    ) -> None:
         """Initializes a StateNode and its subtree from a configuration.
 
         This constructor recursively parses a piece of the configuration
@@ -900,10 +1143,16 @@ class StateNode(Generic[TContext]):
             config: The configuration dictionary for *this specific state*.
             key: The key for this state within its parent's `states` object.
             parent: The parent state node, if any.
+
+        Raises:
+            InvalidConfigError: Any malformed key of this state or of a
+                descendant; the message names the state and the key.
         """
         # ⚡ Two debug records per node add up on a 1,000-machine build;
         #    gate them on the level once instead of formatting args each time.
-        _dbg = _PARSE_DEBUG()
+        _dbg = getattr(machine, "_parse_debug", None)
+        if _dbg is None:  # a bare `StateNode` built outside a MachineNode
+            _dbg = _PARSE_DEBUG()
         if _dbg:
             logger.debug(
                 "🚀 Initializing StateNode: key='%s', parent_id='%s'",
@@ -918,7 +1167,6 @@ class StateNode(Generic[TContext]):
         #    `create_machine()`.
         #    A single `items()` pass over the (typically 1-3 key) config is
         #    ~45% cheaper than probing all 16 optional keys with `.get`.
-        cfg_get = config.get
         (
             raw_states,
             cfg_type,
@@ -932,6 +1180,11 @@ class StateNode(Generic[TContext]):
             raw_on_done,
             raw_after,
             raw_invoke,
+            declared_id,
+            raw_description,
+            raw_output,
+            raw_history,
+            raw_target,
         ) = _prefetch_node_keys(config)
         # 🧍‍♂️ Core Properties
         #
@@ -951,7 +1204,6 @@ class StateNode(Generic[TContext]):
         #    for `#` lookups.
         self.custom_id: Optional[str] = None
         if parent is not None:
-            declared_id = cfg_get("id")
             if declared_id is not None:
                 if not isinstance(declared_id, str) or not declared_id:
                     raise InvalidConfigError(
@@ -981,8 +1233,32 @@ class StateNode(Generic[TContext]):
         # repeated string work from the hot event-processing path.
         self.depth: int = parent.depth + 1 if parent else 0
 
+        # 📑 Document order: the node's position in a pre-order walk of the
+        #    config (the root is 0, then each child before its own children,
+        #    siblings in declaration order). XState / SCXML order the entry
+        #    set by it and the exit set by its reverse, so parallel regions
+        #    are entered and exited one whole region at a time, in the order
+        #    the chart declares them. Assigned here, before the children are
+        #    built, so the numbering is pre-order by construction.
+        order = getattr(machine, "_doc_order_next", 0)
+        self.doc_order: int = order
+        machine._doc_order_next = order + 1
+
         # ⚙️ Determine and strictly type the state's `type` attribute.
-        self.type = self._determine_state_type(raw_states, cfg_type)
+        if cfg_type is None:
+            # ⚡ The inferred type (the common case) without the method
+            #    call; `_determine_state_type` keeps the validation of an
+            #    explicit `type`. Same rule as there: children => compound.
+            self.type: StateType = (
+                "compound"
+                if raw_states
+                or (
+                    raw_states is not None and not isinstance(raw_states, dict)
+                )
+                else "atomic"
+            )
+        else:
+            self.type = self._determine_state_type(raw_states, cfg_type)
         if _dbg:
             logger.debug(
                 "  -> StateNode '%s' identified as type: '%s'",
@@ -992,7 +1268,11 @@ class StateNode(Generic[TContext]):
 
         # ⚙️ Parse all properties from the configuration dictionary.
         # This encapsulates the parsing logic within the model itself.
-        self.initial = self._parse_initial(raw_initial, raw_states)
+        self.initial = (
+            None  # ⚡ a leaf without `initial`: nothing to resolve
+            if raw_initial is None and self.type != "compound"
+            else self._parse_initial(raw_initial, raw_states)
+        )
 
         # 🏷️ Metadata keys. Previously all three were dropped at parse time,
         #    so `tags` (UI-state modelling) and `meta` (arbitrary annotation)
@@ -1034,36 +1314,64 @@ class StateNode(Generic[TContext]):
                     f"'{type(raw_meta).__name__}'. Expected an object/dict."
                 )
             self.meta = raw_meta
-        self.description: Optional[str] = cfg_get("description")
+        if raw_description is not None and not isinstance(
+            raw_description, str
+        ):
+            raise InvalidConfigError(
+                f"State '{self.id}' has an invalid 'description' of type "
+                f"'{type(raw_description).__name__}'. Expected a string."
+            )
+        self.description: Optional[str] = raw_description
 
         # 🏁 Final states may declare `output` (a.k.a. "done data"), which is
         #    surfaced on the `done.state.*` / `done.invoke.*` event.
-        self.output: Any = cfg_get("output")
+        self.output: Any = raw_output
 
         # 🕰️ History configuration. `history` is "shallow" (restore the
         #    immediate child) or "deep" (restore the full nested
         #    configuration). XState defaults to shallow.
-        self.history: Optional[str] = None
+        self.history: Optional[HistoryKind] = None
         if self.type == "history":
-            history_kind = cfg_get("history", "shallow")
-            if history_kind not in ("shallow", "deep"):
-                logger.warning(
-                    "⚠️ Invalid 'history' value '%s' on state '%s'. "
-                    "Defaulting to 'shallow'.",
-                    history_kind,
-                    self.id,
-                )
+            history_kind = raw_history
+            if history_kind is None:
                 history_kind = "shallow"
-            self.history = history_kind
+            elif history_kind not in ("shallow", "deep"):
+                # 🛡️ A typo (`"dep"`) used to fall back to shallow with a
+                #    log line: a deep-history state silently restored only
+                #    its immediate child.
+                raise InvalidConfigError(
+                    f"State '{self.id}': 'history' must be 'shallow' or "
+                    f"'deep', got {history_kind!r}."
+                )
+            self.history = cast(HistoryKind, history_kind)
         #: Default target used when a history state has nothing recorded yet.
-        self.target_str: Optional[str] = cfg_get("target")
+        if raw_target is not None and (
+            not isinstance(raw_target, str) or not raw_target
+        ):
+            raise InvalidConfigError(
+                f"State '{self.id}' has an invalid 'target' "
+                f"{raw_target!r}. A history state's default 'target' must "
+                f"be a non-empty state name."
+            )
+        self.target_str: Optional[str] = raw_target
 
-        self.entry = self._parse_actions(raw_entry)
-        self.exit = self._parse_actions(raw_exit)
-        #: ⚡ #27: does this node OR any descendant declare entry/exit
-        #: actions? Set by `MachineNode._mark_subtree_actions` once the
-        #: tree is complete; conservatively True until then.
-        self.on = self._parse_on(raw_on, raw_always)
+        # ⚡ Each absent key short-circuits here instead of inside its
+        #    `_parse_*` helper: most states declare one or two of these six
+        #    keys, so the method calls for the other four or five were pure
+        #    overhead on every node of every build (#307 benchmark).
+        self.entry = (
+            []
+            if raw_entry is None
+            else self._parse_actions(raw_entry, "entry")
+        )
+        self.exit = (
+            [] if raw_exit is None else self._parse_actions(raw_exit, "exit")
+        )
+        self.on = (
+            {}
+            if raw_on is None and raw_always is None
+            else self._parse_on(raw_on, raw_always)
+        )
         # ⚡ #55 part 2: precompiled descriptor index. `_matching_descriptors`
         #    used to scan every `on` key per event to find partials; for a
         #    typical machine there are none, so the scan was pure overhead
@@ -1071,23 +1379,35 @@ class StateNode(Generic[TContext]):
         # ⚡ Perf: the partial-wildcard table is only non-empty when some
         #    `on` key ends in ".*"; skip the generator + sorted() otherwise
         #    (it ran on every node, sorting an empty list 6 times in 7).
+        on_map = self.on
         self._on_partials: List[Tuple[str, str]] = (
             sorted(
                 (
                     (key, key[:-2])
-                    for key in self.on
+                    for key in on_map
                     if key != "*" and key.endswith(".*")
                 ),
                 key=lambda kv: len(kv[0]),
                 reverse=True,
             )
-            if any(k.endswith(".*") for k in self.on)
+            if on_map and any(k.endswith(".*") for k in on_map)
             else []
         )
-        self._on_has_wildcard: bool = "*" in self.on
-        self.on_done = self._parse_on_done(raw_on_done)
-        self.after = self._parse_after(raw_after)
-        self.invoke = self._parse_invoke(raw_invoke)
+        self._on_has_wildcard: bool = "*" in on_map
+        #: 🏁 XState v5 lets ``onDone`` be a LIST of guarded alternatives
+        #:    (the bundled Stately corpus has one). All of them are kept in
+        #:    `on_done_transitions`; `on_done` stays the FIRST one (or
+        #:    ``None``) for the code that predates the list form.
+        self.on_done_transitions = (
+            [] if raw_on_done is None else self._parse_on_done(raw_on_done)
+        )
+        self.on_done = (
+            self.on_done_transitions[0] if self.on_done_transitions else None
+        )
+        self.after = {} if raw_after is None else self._parse_after(raw_after)
+        self.invoke = (
+            [] if raw_invoke is None else self._parse_invoke(raw_invoke)
+        )
         #: ⚡ Can this state ever OWN a scheduled task (an `after` deadline
         #: or an invoked service/child)? Decided once here so `_enter_states`
         #: / `_exit_states` skip the schedule/cancel round-trip -- two
@@ -1112,6 +1432,13 @@ class StateNode(Generic[TContext]):
                 f"mapping state names to definitions."
             )
         for state_key, state_config in raw_states.items():
+            if not isinstance(state_key, str) or not state_key:
+                # 🛡️ `""` built an id ending in '.', which no target can
+                #    name; a non-string key cannot be addressed at all.
+                raise InvalidConfigError(
+                    f"State '{self.id}' has an invalid child state key "
+                    f"{state_key!r}. State keys must be non-empty strings."
+                )
             if not isinstance(state_config, dict):
                 raise InvalidConfigError(
                     f"State '{self.id}.{state_key}' must be an object/dict, "
@@ -1159,12 +1486,14 @@ class StateNode(Generic[TContext]):
         #      entry/exit (#27 rollback checkpoint gate);
         #    * _subtree_has_history / _subtree_has_always -- feed the
         #      machine-level `has_history_states` / `has_always_transitions`.
+        #    The facts are written once this node's children are complete;
+        #    `subtree_has_actions` is therefore exact, never provisional.
         has_actions = bool(self.entry or self.exit)
         has_history = self.type == "history"
         has_always = "" in self.on
         self.states = {}
         # ⚡ One thread-local lookup per node, not three per child.
-        descent: Set[int] = _config_stack._set()
+        descent: Set[int] = _config_stack.descent()
         for state_key, state_config in raw_states.items():
             cfg_id = id(state_config)
             if cfg_id in descent:
@@ -1199,29 +1528,63 @@ class StateNode(Generic[TContext]):
     def _determine_state_type(
         self, raw_states: Any, cfg_type: Any
     ) -> StateType:
-        """Determines the type of the state based on its configuration."""
-        if raw_states is not None:
-            # A state with children is either compound or parallel
-            state_type = "compound" if cfg_type is None else cfg_type
-            if state_type in ("compound", "parallel"):
-                return state_type  # type: ignore
-            else:
-                logger.warning(
-                    "⚠️ Invalid 'type' ('%s') for state '%s' with children. "
-                    "Defaulting to 'compound'.",
-                    state_type,
-                    self.id,
-                )
-                return "compound"
-        elif cfg_type == "final":
-            return "final"
-        elif cfg_type == "history":
-            # 🕰️ A history pseudo-state. It has no children and is never
-            #    "entered" in the ordinary sense — targeting it restores the
-            #    remembered configuration of its parent instead.
-            return "history"
-        else:
-            return "atomic"
+        """Determines the type of the state based on its configuration.
+
+        An explicit ``type`` must be one of `StateType`'s values and fit
+        the node's shape; otherwise the type is inferred: ``compound`` when
+        the state declares children, ``atomic`` when it does not.
+
+        🛡️ A typo used to change the execution semantics silently: a leaf
+        ``"type": "Final"`` built an ATOMIC state (no ``done.state.*``, so
+        ``onDone`` never fired) and ``"paralel"`` on a parent built a
+        compound one. `strictConfig` cannot catch it -- ``type`` is a known
+        key -- so the value itself is validated here.
+
+        Args:
+            raw_states: The raw ``states`` value (``None`` when absent).
+            cfg_type: The raw ``type`` value (``None`` when absent).
+
+        Returns:
+            StateType: The validated or inferred state type.
+
+        Raises:
+            InvalidConfigError: ``type`` is not a known state type, or a
+                ``compound`` / ``parallel`` state declares no children. (An
+                ``atomic`` / ``final`` / ``history`` state WITH children is
+                built as ``compound`` with a WARNING, for compatibility.)
+        """
+        # 📝 An empty `states: {}` declares no children.
+        has_children = bool(raw_states) or (
+            raw_states is not None and not isinstance(raw_states, dict)
+        )
+        if cfg_type is None:
+            return "compound" if has_children else "atomic"
+        if cfg_type not in _STATE_TYPES:
+            raise InvalidConfigError(
+                f"State '{self.id}' has an invalid 'type' {cfg_type!r}; "
+                f"expected one of {list(_STATE_TYPES)}."
+            )
+        if has_children and cfg_type not in ("compound", "parallel"):
+            # ⚠️ Kept as a compound state for compatibility: real Stately
+            #    exports ship `"type": "final"` on a state WITH children
+            #    (the bundled corpus has one), and 0.11 built those as
+            #    compound. The warning names what is ignored.
+            logger.warning(
+                "⚠️ State '%s' is declared 'type': %r but has child "
+                "'states'; only 'compound' and 'parallel' states may have "
+                "children. Building it as 'compound' and IGNORING the "
+                "declared type.",
+                self.id,
+                cfg_type,
+            )
+            return "compound"
+        if not has_children and cfg_type in ("compound", "parallel"):
+            raise InvalidConfigError(
+                f"State '{self.id}' is declared 'type': {cfg_type!r} but "
+                f"has no child 'states'."
+            )
+        # 📝 Membership in `_STATE_TYPES` proved it is a `StateType`.
+        return cast(StateType, cfg_type)
 
     def _parse_initial(self, initial: Any, raw_states: Any) -> Optional[str]:
         """Parses the initial state key, inferring it where unambiguous.
@@ -1236,15 +1599,24 @@ class StateNode(Generic[TContext]):
         reasonable "single child needs no `initial`" shorthand), resolution is:
 
         1. exactly one non-history child → infer it, and say so at DEBUG;
-        2. several children → raise, because there is no safe guess;
+        2. several children → warn, because there is no safe guess (start()
+           then raises; see the comment below);
         3. no children at all → leave `None`; the state is effectively atomic.
+
+        An explicit ``initial`` on a compound state must name one of its
+        children: XState's ``createMachine`` refuses an unknown one, and
+        here it used to surface only at ``start()``.
+
+        Args:
+            initial: The raw ``initial`` value (``None`` when absent).
+            raw_states: The raw ``states`` value.
 
         Returns:
             Optional[str]: The initial child key, explicit or inferred.
 
         Raises:
-            InvalidConfigError: If a compound state has several children and
-                no way to choose between them.
+            InvalidConfigError: ``initial`` is not a string, or names no
+                child of this compound state.
         """
         # 🛡️ `initial` names a child state, so it must be a string. A non-string
         #    was accepted and then never matched any child, producing a machine
@@ -1255,7 +1627,20 @@ class StateNode(Generic[TContext]):
                 f"'{type(initial).__name__}'. Expected the name of a child "
                 f"state as a string."
             )
-        if self.type != "compound" or initial:
+        if self.type != "compound":
+            return initial
+        if initial:
+            if isinstance(raw_states, dict) and initial not in raw_states:
+                import difflib
+
+                close = difflib.get_close_matches(
+                    initial, [k for k in raw_states if isinstance(k, str)], 1
+                )
+                hint = f" Did you mean {close[0]!r}?" if close else ""
+                raise InvalidConfigError(
+                    f"State '{self.id}': 'initial' {initial!r} is not one of "
+                    f"its child states {sorted(map(str, raw_states))}.{hint}"
+                )
             return initial
         # 🛡️ #266 battle (B): a non-dict `states` reached `.items()` below
         #    as a bare AttributeError before the shape check in `__init__`
@@ -1298,11 +1683,54 @@ class StateNode(Generic[TContext]):
 
         return initial
 
-    def _parse_actions(self, config: Optional[Any]) -> List[ActionDefinition]:
-        """Parses an action or list of actions from config."""
+    def _parse_actions(
+        self, config: Optional[Any], where: str
+    ) -> List[ActionDefinition]:
+        """Parses an action or list of actions from config.
+
+        Args:
+            config: The raw ``entry`` / ``exit`` / ``actions`` value: an
+                action, a list of actions, or ``None``.
+            where: Which key this is (``"entry"``, ``"transition 'E'
+                actions"``), named in any error.
+
+        Returns:
+            List[ActionDefinition]: The parsed actions (``[]`` for none).
+
+        Raises:
+            InvalidConfigError: A malformed action; the message names this
+                state and *where*.
+        """
+        if config is None:
+            return []
+        if not isinstance(config, (str, dict, list)) or config == "":
+            # 🛡️ `if not config` used to swallow `0` / `False` / `""` as
+            #    "no actions" -- an action list that silently vanished.
+            raise InvalidConfigError(
+                f"State '{self.id}' {where}: expected an action name, an "
+                f"action object or a list of them, got "
+                f"{type(config).__name__} {config!r}."
+            )
         if not config:
             return []
-        return [ActionDefinition(a) for a in self._ensure_list(config)]
+        # 📝 User actions resolve BEFORE built-ins (AGENTS.md), so a name the
+        #    logic implements is exempt from the built-in params check.
+        #    `logic` is duck-typed; anything without an `actions` mapping
+        #    simply exempts nothing.
+        user_actions = getattr(
+            getattr(self.machine, "logic", None), "actions", None
+        )
+        if not isinstance(user_actions, Mapping):
+            user_actions = None
+        try:
+            return [
+                ActionDefinition(a, user_actions=user_actions)
+                for a in self._ensure_list(config)
+            ]
+        except InvalidConfigError as exc:
+            raise InvalidConfigError(
+                f"State '{self.id}' {where}: {exc}"
+            ) from exc
 
     def _parse_on(
         self, raw_on: Any, always_config: Any
@@ -1318,6 +1746,9 @@ class StateNode(Generic[TContext]):
         """
         on_map: Dict[str, List[TransitionDefinition]] = {}
         if raw_on is None:
+            if always_config is None:
+                # ⚡ Neither `on` nor `always`: the shape of most leaf states.
+                return on_map
             raw_on = {}
         if not isinstance(raw_on, dict):
             raise InvalidConfigError(
@@ -1325,20 +1756,32 @@ class StateNode(Generic[TContext]):
                 f"'{type(raw_on).__name__}'. Expected an object/dict mapping "
                 f"event names to transitions."
             )
+        create = self._create_transition
         for event, transitions_config in raw_on.items():
-            normalized_configs = self._normalize_transitions(
-                transitions_config
-            )
-            on_map[event] = [
-                self._create_transition(event, t_config)
-                for t_config in normalized_configs
-            ]
+            # ⚡ The two overwhelmingly common shapes -- a target string and
+            #    a single transition object -- are handled inline. Going
+            #    through `_normalize_transitions` cost a method call plus an
+            #    f-string label (used only in its error message) for every
+            #    event of every build (#307 benchmark).
+            if isinstance(transitions_config, str):
+                on_map[event] = [create(event, {"target": transitions_config})]
+            elif isinstance(transitions_config, dict):
+                on_map[event] = [create(event, transitions_config)]
+            else:
+                normalized_configs = self._normalize_transitions(
+                    transitions_config, f"State '{self.id}' on {event!r}"
+                )
+                on_map[event] = [
+                    create(event, t_config) for t_config in normalized_configs
+                ]
 
         # ⚡ Merge `always` into the transient ("") bucket.
         if always_config is not None:
             always_transitions = [
                 self._create_transition("", t_config)
-                for t_config in self._normalize_transitions(always_config)
+                for t_config in self._normalize_transitions(
+                    always_config, f"State '{self.id}' always"
+                )
             ]
             on_map.setdefault("", []).extend(always_transitions)
 
@@ -1346,24 +1789,43 @@ class StateNode(Generic[TContext]):
 
     def _parse_on_done(
         self, on_done_config: Any
-    ) -> Optional[TransitionDefinition]:
-        """Parses the 'onDone' transition for a compound/parallel state."""
-        if not on_done_config:
-            return None
+    ) -> List[TransitionDefinition]:
+        """Parses the 'onDone' transition(s) for a compound/parallel state.
 
-        normalized_list = self._normalize_transitions(on_done_config)
-        if not normalized_list:
-            return None
+        🛡️ Only the FIRST entry of a list used to be kept (the comment said
+        "there can be only one onDone transition"), so with
+        ``[{guard: g, target: b}, {target: c}]`` and ``g`` false the
+        unguarded fallback was dropped and the machine parked. Every entry
+        is parsed now, as for ``on`` and invoke ``onDone``.
 
-        # There can be only one onDone transition, so we take the first.
-        transition = self._create_transition(
-            f"done.state.{self.id}", normalized_list[0]
-        )
-        logger.debug(
-            "  -> Parsed onDone transition with target: '%s'",
-            transition.target_str,
-        )
-        return transition
+        Args:
+            on_done_config: The raw ``onDone`` value.
+
+        Returns:
+            List[TransitionDefinition]: The transitions, in order (``[]``
+            when none is declared).
+
+        Raises:
+            InvalidConfigError: ``onDone`` is malformed.
+        """
+        if on_done_config is None or (
+            isinstance(on_done_config, (dict, list)) and not on_done_config
+        ):
+            return []
+        event = f"done.state.{self.id}"
+        transitions = [
+            self._create_transition(event, t_config, "onDone")
+            for t_config in self._normalize_transitions(
+                on_done_config, f"State '{self.id}' onDone"
+            )
+        ]
+        if _PARSE_DEBUG():
+            logger.debug(
+                "  -> Parsed %d onDone transition(s) for '%s'",
+                len(transitions),
+                self.id,
+            )
+        return transitions
 
     def _parse_after(
         self, raw_after: Any
@@ -1375,41 +1837,116 @@ class StateNode(Generic[TContext]):
         key was coerced with `int()`, so a named delay such as
         ``after: {"TIMEOUT": ...}`` raised a bare `ValueError` at parse time
         with no indication that named delays were the intended feature.
+
+        Args:
+            raw_after: The raw ``after`` mapping (``None`` when absent).
+
+        Returns:
+            Dict[Union[int, str], List[TransitionDefinition]]: Transitions
+            keyed by whole milliseconds (``int``) or delay name (``str``).
+
+        Raises:
+            InvalidConfigError: ``after`` is not a mapping, a key is not a
+                valid delay (see `_normalize_delay_key`), or two keys name
+                the same delay.
         """
         after_map: Dict[Union[int, str], List[TransitionDefinition]] = {}
         if raw_after is None:
-            raw_after = {}
+            return after_map  # ⚡ no `after`: nothing to parse
         if not isinstance(raw_after, dict):
             raise InvalidConfigError(
                 f"State '{self.id}' has an invalid 'after' value of type "
                 f"'{type(raw_after).__name__}'. Expected an object/dict "
                 f"mapping delays to transitions."
             )
+        raw_keys: Dict[Union[int, str], Any] = {}
         for delay, transitions_config in raw_after.items():
+            key = self._normalize_delay_key(delay)
+            if key in raw_keys:
+                # 🛡️ `{"100": ..., " 100": ...}` both coerced to 100 and
+                #    the second silently replaced the first.
+                raise InvalidConfigError(
+                    f"State '{self.id}': 'after' keys {raw_keys[key]!r} and "
+                    f"{delay!r} both name the delay {key!r}."
+                )
+            raw_keys[key] = delay
             normalized_configs = self._normalize_transitions(
-                transitions_config
+                transitions_config, f"State '{self.id}' after[{delay!r}]"
             )
-            try:
-                key: Union[int, str] = int(delay)
-            except (TypeError, ValueError):
-                # 🏷️ A symbolic delay name; resolved by the interpreter.
-                key = str(delay)
             after_map[key] = [
-                self._create_transition(f"after.{delay}.{self.id}", t_config)
+                self._create_transition(
+                    f"after.{key}.{self.id}", t_config, "after", key
+                )
                 for t_config in normalized_configs
             ]
         return after_map
 
+    def _normalize_delay_key(self, delay: Any) -> Union[int, str]:
+        """Validate one ``after`` key: whole milliseconds, or a delay NAME.
+
+        🛡️ ``int(delay)`` used to truncate ``1.5`` to ``1``, accept ``-5``
+        (a deadline in the past) and read ``True`` as ``1``. A numeric key
+        -- an ``int`` or a numeric string such as ``"500"`` -- must now be
+        a whole, non-negative number of milliseconds; any other non-empty
+        string is a named delay resolved from `MachineLogic.delays`.
+
+        Args:
+            delay: The raw key.
+
+        Returns:
+            Union[int, str]: Milliseconds, or the delay name.
+
+        Raises:
+            InvalidConfigError: The key is a bool, a fractional / negative /
+                non-finite number, an empty string, or another type.
+        """
+        value: Any = None
+        if isinstance(delay, bool) or not isinstance(delay, (int, float, str)):
+            value = None
+        elif isinstance(delay, str):
+            if _DIGITS_DELAY.fullmatch(delay):
+                return int(delay)  # ⚡ the common "500" case
+            if _NUMERIC_DELAY.fullmatch(delay):
+                value = float(delay)
+            elif delay.strip():
+                # 🏷️ A symbolic delay name; resolved by the interpreter.
+                return delay
+        else:
+            value = delay
+        if (
+            value is None
+            or not math.isfinite(value)
+            or value < 0
+            or value != int(value)
+        ):
+            raise InvalidConfigError(
+                f"State '{self.id}': 'after' key {delay!r} is not a valid "
+                f"delay. Use a whole, non-negative number of milliseconds "
+                f"or the name of a delay in MachineLogic.delays."
+            )
+        return int(value)
+
     def _parse_invoke(self, raw_invoke: Any) -> List[InvokeDefinition]:
-        """Parses all invoked services from the 'invoke' property."""
-        invoke_configs = self._ensure_list(
-            [] if raw_invoke is None else raw_invoke
-        )
+        """Parses all invoked services from the 'invoke' property.
+
+        Args:
+            raw_invoke: The raw ``invoke`` value: one object or a list.
+
+        Returns:
+            List[InvokeDefinition]: The parsed invocations.
+
+        Raises:
+            InvalidConfigError: An entry is not an object, or its ``id`` is
+                not a non-empty string.
+        """
+        if raw_invoke is None:
+            return []  # ⚡ no `invoke`: the shape of most states
+        invoke_configs = self._ensure_list(raw_invoke)
         invokes: List[InvokeDefinition] = []
         for i_config in invoke_configs:
             # 🛡️ Reject rather than skip. Silently ignoring a malformed
             #    `invoke` produced a state that simply never called its
-            #    service — no error, no log, just a machine that hangs.
+            #    service -- no error, no log, just a machine that hangs.
             if not isinstance(i_config, dict):
                 raise InvalidConfigError(
                     f"State '{self.id}' has an invalid 'invoke' entry of "
@@ -1419,54 +1956,123 @@ class StateNode(Generic[TContext]):
 
             # The invoke ID defaults to the state's ID if not provided.
             invoke_id = i_config.get("id", self.id)
+            if not isinstance(invoke_id, str) or not invoke_id:
+                # 🛡️ `id: 5` built `done.invoke.5` and an actor addressed
+                #    by an int; `sendTo` and snapshots expect a string.
+                raise InvalidConfigError(
+                    f"State '{self.id}' has an invoke with an invalid 'id' "
+                    f"{invoke_id!r}. Expected a non-empty string."
+                )
 
             on_done_transitions = [
-                self._create_transition(f"done.invoke.{invoke_id}", t)
+                self._create_transition(f"done.invoke.{invoke_id}", t, None)
                 for t in self._normalize_transitions(
-                    i_config.get("onDone", [])
+                    i_config.get("onDone", []),
+                    f"State '{self.id}' invoke '{invoke_id}' onDone",
                 )
             ]
             on_error_transitions = [
-                self._create_transition(f"error.platform.{invoke_id}", t)
+                self._create_transition(f"error.platform.{invoke_id}", t, None)
                 for t in self._normalize_transitions(
-                    i_config.get("onError", [])
+                    i_config.get("onError", []),
+                    f"State '{self.id}' invoke '{invoke_id}' onError",
                 )
             ]
-            invokes.append(
-                InvokeDefinition(
-                    invoke_id=invoke_id,
-                    config=i_config,
-                    source=self,
-                    on_done=on_done_transitions,
-                    on_error=on_error_transitions,
-                )
+            invoke = InvokeDefinition(
+                invoke_id=invoke_id,
+                config=i_config,
+                source=self,
+                on_done=on_done_transitions,
+                on_error=on_error_transitions,
             )
+            invokes.append(invoke)
+            # ⚡ Registered here, once `src` is known, so the validator's
+            #    label can name the service (see `_create_transition`).
+            pending = getattr(self.machine, "_targeted_transitions", None)
+            if pending is not None:
+                for t in on_done_transitions:
+                    if t.target_strs:
+                        pending.append((t, "invoke-done", invoke.src))
+                for t in on_error_transitions:
+                    if t.target_strs:
+                        pending.append((t, "invoke-error", invoke.src))
         return invokes
 
     def _create_transition(
-        self, event: str, config: Dict[str, Any]
+        self,
+        event: str,
+        config: Dict[str, Any],
+        kind: Optional[str] = "on",
+        extra: Any = None,
     ) -> TransitionDefinition:
-        """A factory method to create a TransitionDefinition."""
-        actions = self._parse_actions(config.get("actions"))
-        return TransitionDefinition(
+        """A factory method to create a TransitionDefinition.
+
+        Args:
+            event: The event (or engine event type) the transition handles.
+            config: One normalised transition dict.
+            kind: Where the transition is declared, for the validator's
+                finding labels: ``"on"`` (also ``always``), ``"onDone"``,
+                ``"after"`` (*extra* is the delay key) or ``None`` when the
+                caller registers the transition itself (invoke handlers).
+            extra: Label detail for *kind* (see above).
+
+        Returns:
+            TransitionDefinition: The transition, with its actions parsed.
+
+        Raises:
+            InvalidConfigError: A malformed action, target or guard.
+        """
+        raw_actions = config.get("actions")
+        # ⚡ Most transitions carry no actions: skip the call and the label
+        #    f-string (only ever read in an error message) for them.
+        actions = (
+            []
+            if raw_actions is None
+            else self._parse_actions(
+                raw_actions, f"transition {event!r} actions"
+            )
+        )
+        transition = TransitionDefinition(
             event=event, config=config, source=self, actions=actions
         )
+        if kind is not None and transition.target_strs:
+            # ⚡ Hand the validator its work list as the tree is built
+            #    (#307 benchmark): it used to re-walk the whole tree and
+            #    filter every transition for a target.
+            pending = getattr(self.machine, "_targeted_transitions", None)
+            if pending is not None:
+                pending.append((transition, kind, extra))
+        return transition
 
     # -------------------------------------------------------------------------
     # Static Helpers for Configuration Normalization
     # -------------------------------------------------------------------------
 
     @staticmethod
-    def _normalize_transitions(config: Any) -> List[Dict[str, Any]]:
+    def _normalize_transitions(
+        config: Any, where: str = "Transition"
+    ) -> List[Dict[str, Any]]:
         """Ensures transition configs are always a list of dictionaries.
 
         This handles XState's various shorthands for defining transitions.
 
-        📝 `None` denotes a *forbidden* transition (``on: {"E": None}``) — the
+        📝 `None` denotes a *forbidden* transition (``on: {"E": None}``): the
         event is explicitly consumed at this level so no ancestor handler
         runs. It is normalised to a single targetless, action-less transition
         carrying the `forbidden` marker. Previously it produced an empty list,
         so the key disappeared and the ancestor's handler fired anyway.
+
+        Args:
+            config: The raw transition value: a target string, a transition
+                object, a list of either, or ``None``.
+            where: The owning state and key, named in any error.
+
+        Returns:
+            List[Dict[str, Any]]: One dict per transition.
+
+        Raises:
+            InvalidConfigError: *config*, or an item of the list, is of an
+                unsupported type.
         """
         if config is None:
             return [{"__forbidden__": True}]
@@ -1486,39 +2092,36 @@ class StateNode(Generic[TContext]):
                     normalized_list.append(item)
                 else:
                     raise InvalidConfigError(
-                        f"❌ Invalid transition item in list: {item}. "
-                        "Must be a string or dictionary."
+                        f"{where}: invalid transition item in list: "
+                        f"{type(item).__name__} {item!r}. Must be a string "
+                        f"or dictionary."
                     )
             return normalized_list
-        if config is not None:
-            raise InvalidConfigError(
-                f"❌ Invalid transition config: {config}. "
-                "Must be a string, dictionary, or list."
-            )
-        return []
+        raise InvalidConfigError(
+            f"{where}: invalid transition config: {type(config).__name__} "
+            f"{config!r}. Must be a string, dictionary, or list."
+        )
 
     @staticmethod
     def _ensure_list(config_item: Any) -> List[Any]:
-        """A simple helper to ensure a configuration item is always a list."""
+        """Wrap a single configuration item in a list.
+
+        Args:
+            config_item: A value, a list of values, or ``None``.
+
+        Returns:
+            List[Any]: ``[]`` for ``None``, the list itself, or a one-item
+            list holding *config_item*.
+        """
         if config_item is None:
             return []
         return config_item if isinstance(config_item, list) else [config_item]
 
-        # -------------------------------------------------------------------------
-        # Tree Traversal Helpers
-        # -------------------------------------------------------------------------
+    # -------------------------------------------------------------------------
+    # Tree Traversal Helpers
+    # -------------------------------------------------------------------------
 
-    def _get_ancestors(self) -> Set["StateNode[Any]"]:
-        """Gets a set of all ancestors of a node, including the node itself."""
-        ancestors: Set["StateNode[Any]"] = set()
-        # FIX: Changed 'node' back to 'self' to act as an instance method.
-        current: Optional[StateNode[Any]] = self
-        while current:
-            ancestors.add(current)
-            current = current.parent
-        return ancestors
-
-    def _is_descendant(  # noqa
+    def _is_descendant(
         self, node: "StateNode[Any]", ancestor: Optional["StateNode[Any]"]
     ) -> bool:
         """Checks if a node is a descendant of a specified ancestor."""
@@ -1528,7 +2131,7 @@ class StateNode(Generic[TContext]):
             return True
         return node == ancestor or node.id.startswith(f"{ancestor.id}.")
 
-    def _get_path_to_state(  # noqa
+    def _get_path_to_state(
         self,
         to_state: "StateNode[Any]",
         *,
@@ -1562,23 +2165,148 @@ class StateNode(Generic[TContext]):
         return f"StateNode(id='{self.id}', type='{self.type}')"
 
 
-def _root_number(
-    config: Dict[str, Any], key: str, default: Any, kind: Callable[..., Any]
-) -> Any:
-    """Coerce a numeric root policy, naming the key on failure.
+def _root_int(
+    config: Dict[str, Any], key: str, default: int, minimum: int
+) -> int:
+    """Read a whole-number root option, naming the key on failure.
 
     🛡️ #266 battle (B): ``int(config["maxIterations"])`` escaped as a bare
     ``ValueError`` / ``TypeError`` for ``"abc"`` / ``[]``. Coercion stays as
-    lenient as before (``"5"`` still works) -- only the failure is typed.
+    lenient as before for whole numbers (``"5"`` and ``5.0`` still work),
+    but ``int()`` also TRUNCATED ``2.9`` to ``2``, read ``True`` as ``1``
+    and accepted ``0`` / ``-3`` (a budget no chain can satisfy). Those are
+    refused now, matching the `[pydantic]` gate (``ge=1``).
+
+    Args:
+        config: The root machine config.
+        key: The option name.
+        default: The value used when the key is absent.
+        minimum: The smallest accepted value.
+
+    Returns:
+        int: The option value.
+
+    Raises:
+        InvalidConfigError: The value is not a whole number >= *minimum*.
     """
     raw = config.get(key, default)
-    try:
-        return kind(raw)
-    except (TypeError, ValueError):
+    value: Optional[float] = None
+    if not isinstance(raw, bool):
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            value = None
+    if (
+        value is None
+        or not math.isfinite(value)
+        or value != int(value)
+        or value < minimum
+    ):
         raise InvalidConfigError(
-            f"Machine '{config.get('id')}': {key!r} must be a number, got "
-            f"{type(raw).__name__} {raw!r}."
-        ) from None
+            f"Machine '{config.get('id')}': {key!r} must be a whole number "
+            f">= {minimum}, got {type(raw).__name__} {raw!r}."
+        )
+    return int(value)
+
+
+def _root_float(config: Dict[str, Any], key: str) -> Optional[float]:
+    """Read a non-negative, finite numeric root option (``None`` if absent).
+
+    🛡️ ``float(raw)`` accepted ``"nan"`` (a timeout that never compares
+    as elapsed), ``"inf"``, negatives and ``True``; the `[pydantic]` gate
+    already demanded ``ge=0``.
+
+    Args:
+        config: The root machine config.
+        key: The option name.
+
+    Returns:
+        Optional[float]: The value, or ``None`` when the key is absent.
+
+    Raises:
+        InvalidConfigError: The value is not a finite number >= 0.
+    """
+    raw = config.get(key)
+    if raw is None:
+        return None
+    value: Optional[float] = None
+    if not isinstance(raw, bool):
+        try:
+            value = float(raw)
+        except (TypeError, ValueError):
+            value = None
+    if value is None or not math.isfinite(value) or value < 0:
+        raise InvalidConfigError(
+            f"Machine '{config.get('id')}': {key!r} must be a finite "
+            f"number >= 0, got {type(raw).__name__} {raw!r}."
+        )
+    return value
+
+
+def _guarded_label(label: str, transition: TransitionDefinition) -> str:
+    """Append ``[guard]`` to a diagram label when the transition is guarded.
+
+    Args:
+        label: The edge label without any guard annotation.
+        transition: The transition whose guard (if any) is shown.
+
+    Returns:
+        The label, suffixed with ``" [guardName]"`` for guarded transitions.
+    """
+    guard = transition.guard
+    return f"{label} [{guard}]" if guard else label
+
+
+def _diagram_edges(node: StateNode[Any]) -> List[Tuple[StateNode[Any], str]]:
+    """Collect the labelled outgoing edges of *node* for diagram export.
+
+    📝 Shared by `to_mermaid` and `to_plantuml` so both renderers draw the
+    same edges. Order: ``on`` events (eventless ``always`` transitions are
+    labelled ``always``), the compound ``onDone``, delayed ``after``
+    transitions, then ``invoke`` ``onDone`` / ``onError``. ``on`` and
+    ``onDone`` labels are the bare event name; the newer edge kinds carry a
+    ``[guard]`` suffix when guarded, because several guarded alternatives
+    would otherwise be indistinguishable. Targetless transitions and
+    targets that cannot be resolved are skipped.
+
+    Args:
+        node: The source state.
+
+    Returns:
+        ``(target_node, label)`` pairs in drawing order.
+    """
+    candidates: List[Tuple[TransitionDefinition, str]] = []
+    for event, transitions in node.on.items():
+        for t in transitions:
+            label = _guarded_label("always", t) if event == "" else event
+            candidates.append((t, label))
+    for t in node.on_done_transitions:
+        candidates.append((t, "onDone"))
+    for delay, transitions in node.after.items():
+        suffix = f"{delay}ms" if isinstance(delay, int) else str(delay)
+        for t in transitions:
+            candidates.append((t, _guarded_label(f"after {suffix}", t)))
+    for invoke in node.invoke:
+        for t in invoke.on_done:
+            candidates.append((t, _guarded_label("invoke onDone", t)))
+        for t in invoke.on_error:
+            candidates.append((t, _guarded_label("invoke onError", t)))
+
+    edges: List[Tuple[StateNode[Any], str]] = []
+    for t, label in candidates:
+        if not t.target_str:
+            continue
+        # ⚡ Reuse the target `validate_machine` already resolved; only a
+        #    transition it could not resolve (or a hand-built tree that
+        #    was never validated) goes through the resolver again.
+        target = t.resolved_target
+        if target is None:
+            try:
+                target = resolve_target_state(t.target_str, node)
+            except StateNotFoundError:
+                continue
+        edges.append((target, label))
+    return edges
 
 
 class MachineNode(StateNode[TContext]):
@@ -1595,11 +2323,15 @@ class MachineNode(StateNode[TContext]):
                          deep-copied for each new interpreter instance.
     """
 
-    # ✅ FIX: Pre-declare instance attributes for this subclass as well.
+    # 📝 Instance attributes pre-declared for static analysis, as above.
     logic: MachineLogic[TContext]
     initial_context: TContext
+    #: Next free `StateNode.doc_order`; advanced while the tree is parsed.
+    _doc_order_next: int
 
-    def __init__(self, config: Dict[str, Any], logic: MachineLogic[TContext]):
+    def __init__(
+        self, config: Dict[str, Any], logic: MachineLogic[TContext]
+    ) -> None:
         """Initializes the root MachineNode and builds the state tree.
 
         Args:
@@ -1607,7 +2339,9 @@ class MachineNode(StateNode[TContext]):
             logic: The implementation of the machine's business logic.
 
         Raises:
-            InvalidConfigError: If the machine configuration lacks a root 'id'.
+            InvalidConfigError: If the machine configuration lacks a root
+                'id', or any root option or state is malformed (the message
+                names the key and the state).
         """
         # 🛡️ The root of any machine must have a non-empty ID.
         if not config.get("id"):
@@ -1653,17 +2387,23 @@ class MachineNode(StateNode[TContext]):
         self._structure_hash: Optional[str] = None
         #: Upper bound on microsteps when settling transient ("always")
         #: transitions, mirroring XState's `maxIterations` (v5.31.0).
-        self.max_iterations: int = _root_number(
-            config, "maxIterations", 1000, int
+        self.max_iterations: int = _root_int(
+            config, "maxIterations", 1000, minimum=1
         )
         #: 🛡️ #51: `strict` from config; an interpreter may also opt in.
-        self.strict: bool = bool(config.get("strict", False))
+        self.strict: bool = _config_bool(
+            config.get("strict"),
+            "strict",
+            f"Machine '{config['id']}'",
+            False,
+        )
         #: Payload validators keyed by event type; set by `create_machine`.
         self.event_schemas: Dict[str, Any] = {}
         #: Lazily built descriptor set; see `known_events`.
         self._known_events: Optional[FrozenSet[str]] = None
         #: ⚡ Perf: does ANY state in this machine declare a `history` child?
-        #: Filled in by `_index_history()` after the tree is built. When
+        #: Filled in from the post-order `_subtree_has_history` fact once
+        #: the tree is built. When
         #: False the interpreter skips `_record_history` entirely -- it was
         #: walking every exiting state's ancestor chain and scanning each
         #: one's children on every transition, to find nothing, in the
@@ -1676,11 +2416,8 @@ class MachineNode(StateNode[TContext]):
         self.has_always_transitions: bool = False
         #: Upper bound (ms) a `spawn_blocking_<key>` waits for the child to
         #: finish on the async engine; `None` waits indefinitely (#41).
-        raw_timeout = config.get("spawnBlockingTimeout")
-        self.spawn_blocking_timeout_ms: Optional[float] = (
-            None
-            if raw_timeout is None
-            else _root_number(config, "spawnBlockingTimeout", None, float)
+        self.spawn_blocking_timeout_ms: Optional[float] = _root_float(
+            config, "spawnBlockingTimeout"
         )
         #: Machine-level output declaration, resolved when a top-level final
         #: state is reached.
@@ -1719,7 +2456,12 @@ class MachineNode(StateNode[TContext]):
         #: Disables the sibling fallback for `.child` targets (opt-in via the
         #: `strictTargets` config key). Distinct from `create_machine`'s
         #: `strict_targets=` kwarg, which governs UNRESOLVABLE targets.
-        self.strict_targets: bool = bool(config.get("strictTargets", False))
+        self.strict_targets: bool = _config_bool(
+            config.get("strictTargets"),
+            "strictTargets",
+            f"Machine '{config['id']}'",
+            False,
+        )
 
         #: 🏷️ #305: the machine's declared version, from the root ``"version"``
         #: key XState already allows. `validation.py` accepted the key but
@@ -1746,6 +2488,16 @@ class MachineNode(StateNode[TContext]):
         #: the tree is built. Must exist BEFORE `super().__init__` recurses
         #: into the children that register themselves here.
         self._custom_ids: Dict[str, StateNode[Any]] = {}
+        #: ⚡ One DEBUG-level check per build, read by every node and
+        #: transition of the parse instead of one `isEnabledFor` each.
+        self._parse_debug: bool = _PARSE_DEBUG()
+        #: ⚡ Every transition WITH a target, in parse (= document) order,
+        #: as ``(transition, kind, extra)``; the build-time validator reads
+        #: this list instead of walking the finished tree again, and clears
+        #: it once it has run (`validation._pending_targets`).
+        self._targeted_transitions: Optional[
+            List[Tuple[TransitionDefinition, str, Any]]
+        ] = []
 
         # 🚀 Call the parent constructor to build the entire state tree.
         super().__init__(self, config, config["id"])
@@ -1773,25 +2525,10 @@ class MachineNode(StateNode[TContext]):
         #: ⚡ Memo for `LogicLoader.required_names()`: the (actions, guards,
         #: services) the config references. Auto-discovery and alias
         #: resolution both need it; the tree is walked once, not twice.
-        self._required_logic: Optional[Tuple[Set[str], Set[str], Set[str]]] = (
-            None
-        )
+        self._required_logic: Optional[
+            Tuple[Set[str], Set[str], Set[str], Set[str]]
+        ] = None
         # (subtree_has_actions is set per node during the parse.)
-
-    def _mark_subtree_actions(node: "StateNode[Any]") -> bool:
-        """Post-order walk setting `StateNode.subtree_has_actions` (#27).
-
-        True when *node* or any descendant declares `entry` / `exit`
-        actions. `_execute_transition` uses it to skip the rollback
-        context checkpoint when no user action can run -- the checkpoint
-        cost ~22% throughput on an idle `rollback` machine.
-        """
-        flag = bool(node.entry or node.exit)
-        for child in node.states.values():
-            if MachineNode._mark_subtree_actions(child):
-                flag = True
-        node.subtree_has_actions = flag
-        return flag
 
     @property
     def context_is_immutable(self) -> bool:
@@ -1823,29 +2560,13 @@ class MachineNode(StateNode[TContext]):
                 return True
             transitions = [t for tl in node.on.values() for t in tl]
             transitions += [t for tl in node.after.values() for t in tl]
-            if node.on_done is not None:
-                transitions.append(node.on_done)
+            transitions += node.on_done_transitions
             for inv in node.invoke:
                 transitions += list(inv.on_done) + list(inv.on_error)
             if any(t.actions for t in transitions):
                 return True
             stack.extend(node.states.values())
         return False
-
-    def _scan_tree_features(root: "StateNode[Any]") -> Tuple[bool, bool]:
-        """One walk: (any history child anywhere, any `always` anywhere)."""
-        history = False
-        always = "" in root.on
-        stack = [root]
-        while stack:
-            current = stack.pop()
-            for child in current.states.values():
-                if child.type == "history":
-                    history = True
-                if "" in child.on:
-                    always = True
-                stack.append(child)
-        return history, always
 
     @property
     def known_events(self) -> FrozenSet[str]:
@@ -1976,6 +2697,14 @@ class MachineNode(StateNode[TContext]):
 
         This method traverses the state tree to find a specific node.
 
+        🔑 The machine id and state keys may themselves contain dots
+        (``"my.machine"``, ``"v1.0"``) -- the parser and the resolver both
+        allow it -- so the id is matched as a PREFIX and each level takes
+        the run of segments that names a child, instead of a naive
+        ``split(".")`` that could never find such a state. The shortest run
+        is tried first; that is unambiguous because the parser rejects a
+        dotted key whose first segment is also a sibling.
+
         Args:
             state_id: The fully qualified ID of the state to find
                       (e.g., "myMachine.parent.child").
@@ -1983,32 +2712,37 @@ class MachineNode(StateNode[TContext]):
         Returns:
             The `StateNode` if found, otherwise `None`.
         """
-        logger.debug("🔍 Searching for state with ID: '%s'", state_id)
-        path_segments = state_id.split(".")
-
-        # 🛡️ The path must start with the machine's own ID.
-        if not path_segments or path_segments[0] != self.key:
-            logger.warning(
-                "⚠️ State ID '%s' does not start with machine ID '%s'. "
-                "Lookup will fail.",
+        if state_id == self.key:
+            return self
+        prefix = self.key + "."
+        if not isinstance(state_id, str) or not state_id.startswith(prefix):
+            logger.debug(
+                "State ID %r does not start with machine ID %r.",
                 state_id,
                 self.key,
             )
             return None
 
-        # 🌳 Traverse the tree segment by segment.
+        segments = state_id[len(prefix) :].split(".")
         node: StateNode[Any] = self
-        for key in path_segments[1:]:
-            if key not in node.states:
-                logger.warning(
-                    "❌ State not found. Could not find key '%s' in state '%s'.",
-                    key,
+        index = 0
+        while index < len(segments):
+            # ⚡ Shortest match first: an ordinary key is found on the
+            #    first probe.
+            for end in range(index + 1, len(segments) + 1):
+                child = node.states.get(".".join(segments[index:end]))
+                if child is not None:
+                    node = child
+                    index = end
+                    break
+            else:
+                logger.debug(
+                    "State %r not found: no child of %r matches %r.",
+                    state_id,
                     node.id,
+                    segments[index],
                 )
                 return None
-            node = node.states[key]
-
-        logger.debug("✅ Found state: %s", node)
         return node
 
     # -------------------------------------------------------------------------
@@ -2052,8 +2786,9 @@ class MachineNode(StateNode[TContext]):
                             )
                             return {target_node.id}
                         except StateNotFoundError:
-                            # This can happen if a target is valid but the guard
-                            # is what makes it take a different path. Ignore.
+                            # 📝 An unresolvable target (only possible when
+                            #    the machine was built with
+                            #    `strict_targets=False`): try the next one.
                             pass
             current = current.parent
 
@@ -2068,6 +2803,10 @@ class MachineNode(StateNode[TContext]):
 
         This can be used to automatically generate diagrams from your machine
         configuration, ensuring your documentation always stays in sync.
+
+        ⚠️ Limitation: PlantUML aliases are the state ids with ``.``
+        replaced by ``_``, so ids that differ only in that character
+        (``a.b`` vs ``a_b``) share an alias and are drawn as one state.
 
         Returns:
             A string formatted for rendering with PlantUML.
@@ -2090,11 +2829,17 @@ class MachineNode(StateNode[TContext]):
                         ".", "_"
                     )
                     content.append(f"{indent}  [*] --> {initial_target_id}")
-                for child in node.states.values():
+                for index, child in enumerate(node.states.values()):
+                    if index and node.type == "parallel":
+                        # 🔀 `--` separates the concurrent regions.
+                        content.append(f"{indent}  --")
                     build_puml_states(child, level + 1)
                 content.append(f"{indent}}}")
             else:
                 content.append(f'{indent}state "{node.key}" as {safe_id}')
+                if node.type == "final" and node.parent is not None:
+                    # 🏁 Final states terminate their enclosing region.
+                    content.append(f"{indent}{safe_id} --> [*]")
 
         build_puml_states(self, 0)
 
@@ -2104,31 +2849,13 @@ class MachineNode(StateNode[TContext]):
             Transitions whose target cannot be resolved are skipped.
 
             Args:
-                node: The state whose ``on`` and ``onDone`` edges are rendered.
+                node: The state whose outgoing edges are rendered (see
+                    `_diagram_edges`).
             """
             source_id = node.id.replace(".", "_")
-            for event, transitions in node.on.items():
-                for t in transitions:
-                    if t.target_str:
-                        try:
-                            target_node = resolve_target_state(
-                                t.target_str, node
-                            )
-                            target_id = target_node.id.replace(".", "_")
-                            content.append(
-                                f"{source_id} --> {target_id} : {event}"
-                            )
-                        except StateNotFoundError:
-                            pass
-            if node.on_done and node.on_done.target_str:
-                try:
-                    target_node = resolve_target_state(
-                        node.on_done.target_str, node
-                    )
-                    target_id = target_node.id.replace(".", "_")
-                    content.append(f"{source_id} --> {target_id} : onDone")
-                except StateNotFoundError:
-                    pass
+            for target_node, label in _diagram_edges(node):
+                target_id = target_node.id.replace(".", "_")
+                content.append(f"{source_id} --> {target_id} : {label}")
             for child in node.states.values():
                 build_puml_transitions(child)
 
@@ -2140,6 +2867,28 @@ class MachineNode(StateNode[TContext]):
         content.append("@enduml")
         return "\n".join(content)
 
+    def to_json(self, *, indent: Optional[int] = None) -> str:
+        """Serialise the machine's XState JSON configuration.
+
+        The output is the config this machine was built from (the
+        Pythonic DSL compiles to the same dict), so it loads back with
+        ``create_machine()`` and pastes straight into the Stately editor.
+
+        Args:
+            indent: Passed to :func:`json.dumps`; ``None`` is compact.
+
+        Returns:
+            A JSON document for the machine.
+
+        Raises:
+            TypeError: The config holds a value JSON cannot represent (for
+                example a ``datetime`` in ``context``). Silently stringifying
+                it would produce a chart that no longer round-trips.
+        """
+        import json
+
+        return json.dumps(self.source_config, indent=indent)
+
     def to_mermaid(self) -> str:
         """Generates a Mermaid.js string representation of the state machine.
 
@@ -2148,7 +2897,8 @@ class MachineNode(StateNode[TContext]):
 
         Aliases remain local state keys for compatibility. Repeated keys in
         the state tree can collide in Mermaid; use distinct keys for an
-        unambiguous diagram.
+        unambiguous diagram. ⚠️ Keys containing spaces, dots or hyphens are
+        emitted verbatim and may not parse as Mermaid identifiers.
 
         Returns:
             A string formatted for rendering with Mermaid.js.
@@ -2168,11 +2918,18 @@ class MachineNode(StateNode[TContext]):
                 if node.initial and node.states.get(node.initial):
                     initial_key = node.states[node.initial].key
                     content.append(f"{indent}    [*] --> {initial_key}")
-                for child in node.states.values():
+                for index, child in enumerate(node.states.values()):
+                    if index and node.type == "parallel":
+                        # 🔀 A lone `--` line separates the concurrent
+                        #    regions of a parallel state.
+                        content.append(f"{indent}    --")
                     build_mmd_states(child, level + 1)
                 content.append(f"{indent}}}")
             else:
                 content.append(f'{indent}state "{node.key}" as {node.key}')
+                if node.type == "final" and node.parent is not None:
+                    # 🏁 Final states terminate their enclosing region.
+                    content.append(f"{indent}{node.key} --> [*]")
 
         def build_mmd_transitions(node: StateNode[Any]) -> None:
             """Emit Mermaid transition lines for *node* and its descendants.
@@ -2180,30 +2937,11 @@ class MachineNode(StateNode[TContext]):
             Transitions whose target cannot be resolved are skipped.
 
             Args:
-                node: The state whose ``on`` and ``onDone`` edges are rendered.
+                node: The state whose outgoing edges are rendered (see
+                    `_diagram_edges`).
             """
-            for event, transitions in node.on.items():
-                for t in transitions:
-                    if t.target_str:
-                        try:
-                            target_node = resolve_target_state(
-                                t.target_str, node
-                            )
-                            content.append(
-                                f"{node.key} --> {target_node.key} : {event}"
-                            )
-                        except StateNotFoundError:
-                            pass
-            if node.on_done and node.on_done.target_str:
-                try:
-                    target_node = resolve_target_state(
-                        node.on_done.target_str, node
-                    )
-                    content.append(
-                        f"{node.key} --> {target_node.key} : onDone"
-                    )
-                except StateNotFoundError:
-                    pass
+            for target_node, label in _diagram_edges(node):
+                content.append(f"{node.key} --> {target_node.key} : {label}")
             for child in node.states.values():
                 build_mmd_transitions(child)
 

@@ -23,14 +23,13 @@ import asyncio
 import getpass
 import json
 import sqlite3
-import threading
 import time
 from dataclasses import replace
 from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 
 from ..patterns.dead_letter import DeadLetter, MemoryDeadLetterStore
 from ..plugins import DEFAULT_REDACT_KEYS, redact
-from .broker import settle_awaitable
+from .broker import gather_all, settle_awaitable
 from .envelope import Envelope
 
 __all__ = [
@@ -130,7 +129,6 @@ class SQLiteDeadLetterStore:
         else:
             self._own = SQLiteStore(store_or_path, busy_timeout=busy_timeout)
             self._store = self._own
-        self._lock = threading.Lock()
         conn = self._conn()
         with self._store._tx(conn, immediate=True):
             for stmt in _CREATE:
@@ -363,5 +361,4 @@ class BrokerDeadLetterSink:
     async def flush(self) -> None:
         """Await publishes scheduled from inside a running loop."""
         tasks, self._tasks = self._tasks, []
-        for t in tasks:
-            await t
+        await gather_all(tasks)

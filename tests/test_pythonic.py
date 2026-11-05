@@ -163,9 +163,15 @@ class TestTransition(unittest.TestCase):
         self.assertIsNone(t.target)
         self.assertEqual(t.actions, ["logHb"])
 
-    def test_transition_without_event_raises(self):
-        with self.assertRaises(Exception):
-            self.idle.to(self.running)
+    def test_transition_without_event_is_deferred_to_compile(self):
+        # 0.12.0: the event may be inferred from a StateMachine attribute
+        # name, so `.to()` no longer raises; compiling without one does.
+        t = self.idle.to(self.running)
+        self.assertIsNone(t.event)
+        with self.assertRaises(InvalidConfigError):
+            build_machine(
+                id="m", states=[self.idle, self.running], transitions=[t]
+            )
 
     def test_transition_combine_with_pipe(self):
         a = State("a", initial=True)
@@ -1519,11 +1525,11 @@ class TestErrorHandling(unittest.TestCase):
                 context=None,
             )
 
-    def test_to_without_event_raises(self):
+    def test_to_without_event_raises_at_build(self):
         a = State("a", initial=True)
         b = State("b")
         with self.assertRaises(InvalidConfigError):
-            a.to(b)
+            build_machine(id="m", states=[a, b], transitions=[a.to(b)])
 
     def test_async_guard_raises(self):
         with self.assertRaises(NotSupportedError):

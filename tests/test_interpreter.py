@@ -1583,7 +1583,9 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
         await interpreter.stop()
 
     async def test_complex_on_done_bubbling_async(self) -> None:
-        """Should correctly bubble up a nested final state to trigger `onDone`."""
+        """A nested final state notifies its parent only, as in XState:
+        `p_final` completes `p_wrapper` (no `onDone`), never `s1`
+        (xstate 5.33.3; up to 0.12 the completion bubbled on to `s2`)."""
         logger.info("🧪 Testing `onDone` bubbling from deeply nested states.")
         # 📋 Arrange
         machine = create_machine(
@@ -1627,8 +1629,10 @@ class TestInterpreter(unittest.IsolatedAsyncioTestCase):
         )
         # 🚀 Act & Assert
         interpreter = await Interpreter(machine).start()
-        await self.wait_for_state(interpreter, {"m.s2"})
-        self.assertEqual(interpreter.current_state_ids, {"m.s2"})
+        await self.wait_for_state(interpreter, {"m.s1.p_wrapper.p_final"})
+        self.assertEqual(
+            interpreter.current_state_ids, {"m.s1.p_wrapper.p_final"}
+        )
         await interpreter.stop()
 
     # -------------------------------------------------------------------------

@@ -1,0 +1,309 @@
+{
+  "name": "done_state_propagation",
+  "description": "Entering a final state raises done.state for its compound parent only; then, while the next ancestor is a parallel state whose regions are all in final states, done.state for that parallel state (a history child is not a region). No other ancestor is notified: a compound grandparent whose child completed (a.b) does not complete, so aDone never runs. Every raised done.state event is processed, in order; one without an onDone handler reaches the root's wildcard (anyRoot), which makes it observable.",
+  "tags": [
+    "final",
+    "onDone",
+    "parallel",
+    "history",
+    "wildcard"
+  ],
+  "machine": {
+    "id": "m",
+    "initial": "outer",
+    "on": {
+      "*": {
+        "actions": "anyRoot"
+      }
+    },
+    "states": {
+      "outer": {
+        "initial": "p",
+        "onDone": {
+          "actions": "outerDone"
+        },
+        "states": {
+          "p": {
+            "type": "parallel",
+            "onDone": {
+              "target": "#m.after",
+              "actions": "pDone"
+            },
+            "states": {
+              "hp": {
+                "type": "history",
+                "history": "deep"
+              },
+              "r1": {
+                "initial": "a1",
+                "onDone": {
+                  "actions": "r1Done"
+                },
+                "states": {
+                  "a1": {
+                    "on": {
+                      "FIN1": "f1"
+                    }
+                  },
+                  "f1": {
+                    "type": "final"
+                  }
+                }
+              },
+              "r2": {
+                "type": "parallel",
+                "onDone": {
+                  "actions": "r2Done"
+                },
+                "states": {
+                  "x": {
+                    "initial": "x1",
+                    "onDone": {
+                      "actions": "xDone"
+                    },
+                    "states": {
+                      "x1": {
+                        "on": {
+                          "FIN2": "xf"
+                        }
+                      },
+                      "xf": {
+                        "type": "final"
+                      }
+                    }
+                  },
+                  "y": {
+                    "initial": "y1",
+                    "states": {
+                      "y1": {
+                        "on": {
+                          "FIN2": "yf"
+                        }
+                      },
+                      "yf": {
+                        "type": "final"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "after": {
+        "entry": "e_after",
+        "on": {
+          "NEST": "#m.a"
+        }
+      },
+      "a": {
+        "initial": "b",
+        "onDone": {
+          "actions": "aDone"
+        },
+        "states": {
+          "b": {
+            "initial": "c",
+            "states": {
+              "c": {
+                "on": {
+                  "FIN": "f"
+                }
+              },
+              "f": {
+                "type": "final"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "FIN1"
+    },
+    {
+      "send": "FIN2"
+    },
+    {
+      "send": "NEST"
+    },
+    {
+      "send": "FIN"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "m.outer.p.r1.a1",
+          "m.outer.p.r2.x.x1",
+          "m.outer.p.r2.y.y1"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.outer.p.r1.f1",
+            "m.outer.p.r2.x.x1",
+            "m.outer.p.r2.y.y1"
+          ],
+          "context": {},
+          "actions": [
+            "r1Done"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.after"
+          ],
+          "context": {},
+          "actions": [
+            "xDone",
+            "anyRoot",
+            "r2Done",
+            "pDone",
+            "e_after"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.a.b.c"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.a.b.f"
+          ],
+          "context": {},
+          "actions": [
+            "anyRoot"
+          ],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "m.outer.p.r1.a1",
+          "m.outer.p.r2.x.x1",
+          "m.outer.p.r2.y.y1"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.outer.p.r1.f1",
+            "m.outer.p.r2.x.x1",
+            "m.outer.p.r2.y.y1"
+          ],
+          "context": {},
+          "actions": [
+            "r1Done"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.after"
+          ],
+          "context": {},
+          "actions": [
+            "xDone",
+            "anyRoot",
+            "r2Done",
+            "pDone",
+            "e_after"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.a.b.c"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.a.b.f"
+          ],
+          "context": {},
+          "actions": [
+            "anyRoot"
+          ],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "70663f25bd5af68a",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "m",
+        "machine_hash": "70663f25bd5af68a",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "m.a.b.f"
+        ],
+        "value": {
+          "a": {
+            "b": "f"
+          }
+        },
+        "configuration": [
+          "m",
+          "m.a",
+          "m.a.b",
+          "m.a.b.f"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {
+          "m.outer.p": [
+            "m.outer.p.r1",
+            "m.outer.p.r1.f1",
+            "m.outer.p.r2",
+            "m.outer.p.r2.x",
+            "m.outer.p.r2.x.xf",
+            "m.outer.p.r2.y",
+            "m.outer.p.r2.y.yf"
+          ]
+        },
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"m\",\n  \"machine_hash\": \"70663f25bd5af68a\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"m.a.b.f\"\n  ],\n  \"value\": {\n    \"a\": {\n      \"b\": \"f\"\n    }\n  },\n  \"configuration\": [\n    \"m\",\n    \"m.a\",\n    \"m.a.b\",\n    \"m.a.b.f\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {\n    \"m.outer.p\": [\n      \"m.outer.p.r1\",\n      \"m.outer.p.r1.f1\",\n      \"m.outer.p.r2\",\n      \"m.outer.p.r2.x\",\n      \"m.outer.p.r2.x.xf\",\n      \"m.outer.p.r2.y\",\n      \"m.outer.p.r2.y.yf\"\n    ]\n  },\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

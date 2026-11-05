@@ -13,15 +13,18 @@
 
 from __future__ import annotations
 
+import logging
 import signal
 import threading
 from typing import Any, List, Optional
 
 from django.apps import apps
 from django.core.management.base import BaseCommand, CommandError
-from django.db import DatabaseError
+from django.db import DatabaseError, close_old_connections
 
 from ._resolve import database, model_from_label
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["Command"]
 
@@ -118,9 +121,25 @@ class Command(BaseCommand):  # type: ignore[misc]  # BaseCommand is untyped (Any
         stop = stop or threading.Event()
         restore = _on_stop_signals(stop)
         try:
+            first_pass = True
             while not stop.is_set():
-                for _model, s in scanners:
-                    s.run_once()
+                # 🔥 Outside the request cycle nothing recycles stale
+                #    connections (CONN_MAX_AGE / server idle timeout).
+                close_old_connections()
+                try:
+                    for _model, s in scanners:
+                        s.run_once()
+                except DatabaseError:
+                    if first_pass:
+                        raise  # unmigrated DB: handle() adds the hint
+                    # ⚠️ a transient failure later must not kill the
+                    #    worker: log, back off one interval, try again
+                    logger.warning(
+                        "xsm_deadlines: pass failed; retrying in %.1fs",
+                        interval,
+                        exc_info=True,
+                    )
+                first_pass = False
                 stop.wait(interval)
         except KeyboardInterrupt:  # pragma: no cover - platform timing
             pass

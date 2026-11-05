@@ -150,8 +150,10 @@ assert [
 ] == [  # the audit trail, same transaction
     "CHECKOUT",
     "LEGAL_OK",
+    "done.state.order.review.legal",  # a region finished (engine event)
     "FINANCE_OK",
-    "done.state.order.review",
+    "done.state.order.review.finance",
+    "done.state.order.review",  # ... and so did the parallel state
     "PAY",
 ]
 ```
@@ -186,13 +188,14 @@ Lookups: `filter(statechart__state="order.paid")` and `statechart__state__in=[..
 | `statechart_lock` | `"pessimistic"` | default lock mode for `send()` |
 | `statechart_audit` | `None` | write `TransitionLog` rows (on when the app and `contenttypes` are installed) |
 | `statechart_plugins` | `()` | extra plugins per send: a list, or `(row) -> list` |
+| `statechart_clock` | `None` | `Clock` handed to the per-send `SyncInterpreter` (a `SimulatedClock` in tests makes `after` timers deterministic); `None` means the real clock |
 | `statechart_migrator` / `statechart_on_version_mismatch` | `None` | forwarded to `from_snapshot` (#263) |
 | `statechart_initialize` | `True` | build the initial snapshot on insert (entry actions run once, at creation) |
 | `statechart_forget_log` | `"redact"` | X0.5 choice for the audit trail on `forget_statechart()` |
 
 Methods and properties:
 
-- **`send(event, *, lock=None, actor=None, reason=None, plugins=(), using=None, **payload) -> Receipt`**. Apply the event and write the row. `lock="pessimistic"` locks the row first (`select_for_update()`; on SQLite a no-op `UPDATE` takes the write lock, because SQLite has no row locks). `"optimistic"` writes `UPDATE ... WHERE <field>_version = expected` and raises `ConflictError` when it loses. `"none"` means last writer wins. `actor` travels as `actor_id` in the payload and is visible to `PermissionGuard`. `reason` goes to the audit row.
+- **`send(event_type, *, lock=None, actor=None, reason=None, plugins=(), using=None, wait=True, payload=None, **kwargs) -> Receipt`**. Event data goes in `payload=` (a mapping); web surfaces must pass client data that way and never as `**body`, so a client cannot set `lock` / `using` / `plugins` / `actor`. Python callers may still pass keyword arguments. Apply the event and write the row. `lock="pessimistic"` locks the row first (`select_for_update()`; on SQLite a no-op `UPDATE` takes the write lock, because SQLite has no row locks). `"optimistic"` writes `UPDATE ... WHERE <field>_version = expected` and raises `ConflictError` when it loses. `"none"` means last writer wins. `actor` travels as `actor_id` in the payload and is visible to `PermissionGuard`. `reason` goes to the audit row.
 - **Lock errors and deleted rows.** Lock errors are recognised by SQLSTATE (`55P03` lock timeout, `40P01` deadlock, `40001` serialization failure) or, for drivers without one, an anchored phrase (`database is locked`, `Lock wait timeout exceeded`) -- a table named `locked_orders` is never a lock error. On Postgres `LockTimeoutError.timeout` reports the session's `lock_timeout` (0 means *wait forever*: set `SET lock_timeout = '2s'` per connection for pessimistic sends from web code; a deadlock still aborts one side and is retryable). A row **deleted** while `send()` ran raises `Model.DoesNotExist`, never a `ConflictError` that `send_with_retry` would retry. `lock="none"` is last-writer-wins for the snapshot, but `<field>_version` still only moves forward.
 - **`QuerySet.update(statechart=...)` / `bulk_update`** bypass the mixin: the denormalised columns are NOT recomputed. Run `manage.py xsm_refresh_columns app.Model` (or `refresh_statechart_columns` in a data migration) afterwards.
 - **`asend(...)`**. For async views. The whole locked section runs in one `sync_to_async(thread_sensitive=True)` call. There is no native async `select_for_update`, so never split the ORM calls across awaits.
@@ -231,7 +234,7 @@ The app ships its migrations (`migrate xsm_django zero` reverses them). Your own
 
 **Renaming a `StatechartField`:** `makemigrations` asks once per column ("Was doc.workflow renamed to doc.flow?", then `workflow_state` → `flow_state`, ...). Answer **yes to all five**. Answering no to a sibling drops that column and adds an empty one, which loses the denormalised state until you refresh it (below).
 
-`refresh_statechart_columns(Model, "statechart", *, batch=1000, migrate=None, dry_run=False)` recomputes the sibling columns after a chart change, a bulk import or a raw SQL edit. It reads rows in primary-key batches (bounded memory), skips rows that are already right, and returns how many it changed. With `migrate=`, it rewrites each snapshot first (on a deep copy) and bumps its version. In a migration:
+`refresh_statechart_columns(Model, "statechart", *, using="default", batch=1000, migrate=None, dry_run=False)` recomputes the sibling columns after a chart change, a bulk import or a raw SQL edit. It reads rows in primary-key batches (bounded memory), skips rows that are already right, and returns how many it changed. With `migrate=`, it rewrites each snapshot first (on a deep copy) and bumps its version. In a migration:
 
 ```text
 operations = [refresh_statechart_columns_op("shop", "Order", migrate=rename_state)]
@@ -241,7 +244,7 @@ From the shell: `python manage.py xsm_refresh_columns shop.Order [--batch 1000] 
 
 ### Signals
 
-`from xstate_statemachine.contrib.django.signals import pre_transition, post_transition, statechart_error` (all three are also re-exported from `xstate_statemachine.contrib.django`). **0.11.0.**
+`from xstate_statemachine.contrib.django.signals import pre_transition, post_transition, statechart_error` (all three are also re-exported from `xstate_statemachine.contrib.django`). Added in 0.11.0.
 
 | Signal | Arguments | Notes |
 |:--|:--|:--|
@@ -504,7 +507,7 @@ Templates (override in your project): `admin/xsm/change_form.html` (blocks `xsm_
 | `xsm_snapshots app.Model [--stale] [--json] [--limit N] [--database ALIAS]` | rows and their `machine_version` |
 | `xsm_migrate_fsm app.Model [--field F] [--statechart-field F] [--dry-run] [--write-chart P] [--map OLD=NEW] [--batch N] [--machine-id ID] [--database ALIAS]` | see below |
 
-The output of the first four matches `xsm` byte for byte, and the tests pin that. `--no-color` is Django's own flag and is honoured; `NO_COLOR` and `TERM=dumb` are honoured as by `xsm`. `xsm_simulate` without `-e` runs no events and never waits for input. An unknown label, a model with two `StatechartField`s and no `statechart_field_name`, a missing or malformed *pk*, an unknown `--database` alias, an unwritable `-o`, or an unmigrated database is a `CommandError` (exit status 1), not a traceback. A bad flag or `-f` value is exit status 2 (argparse). Charts given as a dict or a callable are written to a temporary JSON file first.
+The output of the first four matches `xsm` byte for byte, and the tests pin that. `--no-color` is Django's own flag and is honoured; `NO_COLOR` and `TERM=dumb` are honoured as by `xsm`. `xsm_simulate` without `-e` runs no events and never waits for input. An unknown label, a model with two `StatechartField`s and no `statechart_field_name`, a missing or malformed *pk*, an unknown `--database` alias, an unwritable `-o`, or an unmigrated database is a `CommandError` (exit status 1, carrying the CLI's own message -- `exit status 1: cannot write ...: FileNotFoundError: ...`), not a traceback. A bad flag or `-f` value is exit status 2 (argparse). Charts given as a dict or a callable are written to a temporary JSON file first.
 
 ## Coming from django-fsm-2
 
@@ -523,7 +526,7 @@ The output of the first four matches `xsm` byte for byte, and the tests pin that
 | django-fsm-log (`StateLog`, `@fsm_log_by`, `@fsm_log_description`) | `TransitionLog`, written in the same transaction; `send(actor=user, reason=...)`; refusals are recorded too |
 | `FSMAdminMixin` admin buttons (`fsm_admin` is deprecated) | `StatechartAdminMixin` |
 
-`python manage.py xsm_migrate_fsm shop.Order --field state --dry-run` extracts the chart from your `@transition` decorators. The same command without `--dry-run` fills the snapshots, batched and resumable, skips and reports per value any column value the chart does not know (`--map OLD=NEW` folds renamed values in), and `FSMDualWriteMixin` keeps both columns in sync for one release, in both directions: `send()` writes the old column, and an old `@transition` + `save()` re-adopts the snapshot. `--dry-run` prints only the chart JSON on stdout; the recipe goes to stderr. `xsm gt --from-django-fsm app.Model` does step 1 without `manage.py`. The four steps are on [vs django-fsm](../comparisons/vs-django-fsm/#migration-recipe). `from_state_ids(machine, ids, context)` in `xstate_statemachine.persistence` is the generic "adopt an existing record" primitive underneath, and it works for plain dicts and SQLAlchemy too.
+`python manage.py xsm_migrate_fsm shop.Order --field state --dry-run` extracts the chart from your `@transition` decorators. The same command without `--dry-run` fills the snapshots, batched and resumable, skips and reports per value any column value the chart does not know (`--map OLD=NEW` folds renamed values in), and `FSMDualWriteMixin` keeps both columns in sync for one release, in both directions: `send()` writes the old column, and an old `@transition` + `save()` re-adopts the snapshot. `--dry-run` prints only the chart JSON on stdout; the recipe goes to stderr. `xsm gt --from-django-fsm app.Model` does step 1 without `manage.py`. The four steps are on [vs django-fsm](../vs-django-fsm/#migration-recipe). `from_state_ids(machine, ids, context)` in `xstate_statemachine.persistence` is the generic "adopt an existing record" primitive underneath, and it works for plain dicts and SQLAlchemy too.
 
 ## Guarantees
 
@@ -545,7 +548,7 @@ The output of the first four matches `xsm` byte for byte, and the tests pin that
 
 | Django | Python | Tested in CI |
 |:--|:--|:--|
-| 4.2 – 6.1 | 3.9 – 3.14 | ✅ (oldest: Django 4.2 on Python 3.9) |
+| 4.2 (oldest, Python 3.9) – latest | 3.9 and 3.13 cells | ✅ |
 
 See the generated [compatibility table](../compatibility/). SQLite runs everywhere. The same suite runs on Postgres when `DATABASE_URL=postgres://...` is set.
 

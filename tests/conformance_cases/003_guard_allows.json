@@ -1,0 +1,183 @@
+{
+  "name": "guard_allows",
+  "description": "Door with the guard constant true: OPEN transitions and runs the transition actions in declared order before the entry action of the target.",
+  "tags": [
+    "guards",
+    "assign",
+    "entry-exit-order"
+  ],
+  "machine": {
+    "id": "door",
+    "initial": "closed",
+    "context": {
+      "opens": 0,
+      "locked": false
+    },
+    "states": {
+      "closed": {
+        "on": {
+          "OPEN": {
+            "target": "opened",
+            "guard": "isUnlocked",
+            "actions": [
+              "countOpen",
+              {
+                "type": "assign",
+                "params": {
+                  "assignment": {
+                    "opens": 1
+                  }
+                }
+              },
+              "notify"
+            ]
+          }
+        }
+      },
+      "opened": {
+        "entry": "onOpened",
+        "on": {
+          "CLOSE": "closed"
+        }
+      }
+    }
+  },
+  "logic": {
+    "guards": {
+      "isUnlocked": true
+    }
+  },
+  "steps": [
+    {
+      "send": "OPEN"
+    },
+    {
+      "send": "CLOSE"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "door.closed"
+        ],
+        "context": {
+          "opens": 0,
+          "locked": false
+        },
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "door.opened"
+          ],
+          "context": {
+            "opens": 1,
+            "locked": false
+          },
+          "actions": [
+            "countOpen",
+            "notify",
+            "onOpened"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "door.closed"
+          ],
+          "context": {
+            "opens": 1,
+            "locked": false
+          },
+          "actions": [],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "door.closed"
+        ],
+        "context": {
+          "opens": 0,
+          "locked": false
+        },
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "door.opened"
+          ],
+          "context": {
+            "opens": 1,
+            "locked": false
+          },
+          "actions": [
+            "countOpen",
+            "notify",
+            "onOpened"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "door.closed"
+          ],
+          "context": {
+            "opens": 1,
+            "locked": false
+          },
+          "actions": [],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "7084a3dc8a8e6882",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "door",
+        "machine_hash": "7084a3dc8a8e6882",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {
+          "opens": 1,
+          "locked": false
+        },
+        "state_ids": [
+          "door.closed"
+        ],
+        "value": "closed",
+        "configuration": [
+          "door",
+          "door.closed"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"door\",\n  \"machine_hash\": \"7084a3dc8a8e6882\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {\n    \"opens\": 1,\n    \"locked\": false\n  },\n  \"state_ids\": [\n    \"door.closed\"\n  ],\n  \"value\": \"closed\",\n  \"configuration\": [\n    \"door\",\n    \"door.closed\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

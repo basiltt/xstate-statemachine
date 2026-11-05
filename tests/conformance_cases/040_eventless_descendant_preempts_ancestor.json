@@ -1,0 +1,167 @@
+{
+  "name": "eventless_descendant_preempts_ancestor",
+  "description": "After GO both the parallel state p (guarded by stateIn r2.c) and the leaf c have an enabled always transition. p's is selected first (r1's leaf walks up to it) but c is a descendant of p, so c's transition preempts it (removeConflictingTransitions). On the next eventless pass p's guard no longer holds.",
+  "tags": [
+    "parallel",
+    "conflict",
+    "always",
+    "microstep"
+  ],
+  "machine": {
+    "id": "m",
+    "initial": "p",
+    "states": {
+      "p": {
+        "type": "parallel",
+        "always": {
+          "target": "#m.out",
+          "guard": {
+            "type": "stateIn",
+            "params": {
+              "stateValue": "#m.p.r2.c"
+            }
+          },
+          "actions": "tp"
+        },
+        "states": {
+          "r1": {
+            "initial": "a",
+            "states": {
+              "a": {}
+            }
+          },
+          "r2": {
+            "initial": "b",
+            "states": {
+              "b": {
+                "on": {
+                  "GO": "c"
+                }
+              },
+              "c": {
+                "exit": "x_c",
+                "always": {
+                  "target": "d",
+                  "actions": "tc"
+                }
+              },
+              "d": {
+                "entry": "e_d"
+              }
+            }
+          }
+        }
+      },
+      "out": {
+        "entry": "e_out"
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "GO"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "m.p.r1.a",
+          "m.p.r2.b"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.p.r1.a",
+            "m.p.r2.d"
+          ],
+          "context": {},
+          "actions": [
+            "x_c",
+            "tc",
+            "e_d"
+          ],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "m.p.r1.a",
+          "m.p.r2.b"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.p.r1.a",
+            "m.p.r2.d"
+          ],
+          "context": {},
+          "actions": [
+            "x_c",
+            "tc",
+            "e_d"
+          ],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "8547f192990363f6",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "m",
+        "machine_hash": "8547f192990363f6",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "m.p.r1.a",
+          "m.p.r2.d"
+        ],
+        "value": {
+          "p": {
+            "r1": "a",
+            "r2": "d"
+          }
+        },
+        "configuration": [
+          "m",
+          "m.p",
+          "m.p.r1",
+          "m.p.r1.a",
+          "m.p.r2",
+          "m.p.r2.d"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"m\",\n  \"machine_hash\": \"8547f192990363f6\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"m.p.r1.a\",\n    \"m.p.r2.d\"\n  ],\n  \"value\": {\n    \"p\": {\n      \"r1\": \"a\",\n      \"r2\": \"d\"\n    }\n  },\n  \"configuration\": [\n    \"m\",\n    \"m.p\",\n    \"m.p.r1\",\n    \"m.p.r1.a\",\n    \"m.p.r2\",\n    \"m.p.r2.d\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

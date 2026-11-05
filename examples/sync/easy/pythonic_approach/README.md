@@ -57,4 +57,3 @@ Each file's header records the exact command that produced it.
 > ```bash
 > xsm generate-template machine.json --template pythonic-builder -o src/ --check
 > ```
-

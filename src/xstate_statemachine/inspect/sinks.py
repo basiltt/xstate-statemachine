@@ -31,6 +31,7 @@ import math
 import os
 import queue
 import secrets
+import socket
 import threading
 from collections import deque
 from http import HTTPStatus
@@ -153,16 +154,43 @@ def read_jsonl(
                 continue
             try:
                 obj = json.loads(stripped)
-            except ValueError:
+            except (ValueError, RecursionError) as exc:
                 # battle #274: a process that died mid-write leaves a
                 # truncated LAST line (no trailing newline); the readable
                 # part of a post-mortem recording must stay readable. A
                 # corrupt line in the middle is real damage: it raises.
                 if line.endswith("\n"):
+                    if isinstance(exc, RecursionError):
+                        # 🔥 absurdly deep nesting is corruption too, not a
+                        #    crash of the replayer.
+                        raise ValueError(
+                            "recording line is nested too deeply"
+                        ) from exc
                     raise
                 return
             if isinstance(obj, dict):
                 yield obj
+
+
+def _poison(q: Any) -> None:
+    """Put the shutdown sentinel on *q* without ever blocking.
+
+    Drains one slot first so the sentinel fits in a full bounded queue.
+    """
+    try:
+        q.get_nowait()
+    except queue.Empty:
+        pass
+    try:
+        q.put_nowait(None)
+    except queue.Full:
+        pass
+
+
+class _Server6(ThreadingHTTPServer):
+    """`ThreadingHTTPServer` bound to an IPv6 address (``::1``)."""
+
+    address_family = socket.AF_INET6
 
 
 def _is_loopback(host: str) -> bool:
@@ -237,7 +265,10 @@ class SseSink:
         #: messages accepted by `send()`
         self.sent = 0
         self._lock = threading.Lock()
-        self._server = ThreadingHTTPServer((host, port), self._handler())
+        # 📝 ThreadingHTTPServer is AF_INET only: an IPv6 host such as
+        #    ``::1`` needs the AF_INET6 variant or the bind fails.
+        server_cls = _Server6 if ":" in host else ThreadingHTTPServer
+        self._server = server_cls((host, port), self._handler())
         self._server.daemon_threads = True
         self.port: int = self._server.server_address[1]
         self._thread: Optional[threading.Thread] = None
@@ -264,7 +295,9 @@ class SseSink:
         with self._lock:
             clients, self._clients = self._clients, []
         for q in clients:
-            q.put(None)
+            # 🔥 never a blocking put: a stalled client's queue is full by
+            #    definition, and close() would hang on it forever.
+            _poison(q)
         if self._thread is not None:
             self._server.shutdown()
             self._thread.join(timeout=5)
@@ -292,13 +325,15 @@ class SseSink:
         Args:
             message: The inspector message to publish.
         """
+        # 📝 Encode BEFORE touching shared state: a message json cannot
+        #    encode (circular reference, absurd nesting) must not leave a
+        #    half-recorded entry that every new client replays, and the
+        #    encoding does not need the lock.
+        body = json.dumps(message, default=str)
         with self._lock:
             self._seq += 1
             self._history.append(message)
-            frame = (
-                f"id: {self._seq}\n"
-                f"data: {json.dumps(message, default=str)}\n\n"
-            )
+            frame = f"id: {self._seq}\ndata: {body}\n\n"
             clients = list(self._clients)
             self.sent += 1
         for q in clients:
@@ -313,15 +348,7 @@ class SseSink:
                 return
             self._clients.remove(q)
             self.dropped += 1
-        # drain one slot so the sentinel fits and the handler exits
-        try:
-            q.get_nowait()
-        except queue.Empty:
-            pass
-        try:
-            q.put_nowait(None)
-        except queue.Full:
-            pass
+        _poison(q)
 
     @property
     def clients(self) -> List[Any]:

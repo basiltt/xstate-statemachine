@@ -32,7 +32,6 @@ from flask import Flask, Response, current_app, g, has_request_context
 from flask import request as flask_request
 
 from ...events import Receipt
-from ...exceptions import StoreUnavailableError
 from ...persistence.locking import _restore_kwargs, persisted
 from ...persistence.log import TransitionLogPlugin
 from ...plugins import PluginBase
@@ -49,6 +48,8 @@ from ._http import (
     PROBLEM_MEDIA_TYPE,
     MethodNotAllowedError,
     is_idempotency_refusal,
+    log_problem,
+    principal_or_401,
     register_problem_handlers,
     problem_for_exception,
     receipt_body,
@@ -73,22 +74,17 @@ def problem_response(exc: BaseException) -> Any:
     """An RFC 9457 ``application/problem+json`` response for *exc* --
     fixed title and class name, never the exception text (X0.7)."""
     status, body = problem_for_exception(exc)
-    if isinstance(exc, StoreUnavailableError):
-        # 🔌 #306 battle (agent B): a backend outage is ONE warning line
-        #    per request, as in the Starlette registry -- a Redis failover
-        #    under load used to write a full traceback per request here.
-        logger.warning(
-            "🔌 store unavailable; %s %s answered 503: %s",
-            flask_request.method if has_request_context() else "-",
-            flask_request.path if has_request_context() else "-",
-            exc,
-        )
-    elif status >= 500:
-        # 📝 Full traceback in the SERVER log (operators need it); the
-        #    client body still carries only the class name (X0.7).
-        logger.exception(
-            "🔥 %s while handling a statechart request", type(exc).__name__
-        )
+    # 📝 One logging rule for Flask and Quart (`log_problem`): a backend
+    #    outage is ONE warning line (#306), any other 5xx a traceback in
+    #    the SERVER log; the client body carries only the class name.
+    log_problem(
+        exc,
+        (
+            f"{flask_request.method} {flask_request.path}"
+            if has_request_context()
+            else "-"
+        ),
+    )
     return _json(body, status, PROBLEM_MEDIA_TYPE)
 
 
@@ -264,7 +260,10 @@ class XState:
 
     def registry(self, app: Optional[Flask] = None) -> AppRegistry:
         """The `AppRegistry` of *app* (default: `current_app`)."""
-        app = app or current_app._get_current_object()  # type: ignore
+        app = (
+            app
+            or current_app._get_current_object()  # type: ignore[attr-defined]
+        )
         try:
             reg: AppRegistry = app.extensions[EXTENSION_KEY]
         except KeyError:
@@ -299,8 +298,8 @@ class XState:
             strict: Override ``machine.strict`` for requests.
             source: The machine's JSON (path or dict) for ``flask xsm``
                 when *machine* is a `MachineNode`.
-            app: Register on this app only; default: every app this
-                extension initialises (and the current app, if any).
+            app: Register on this app only; default: declare it on the
+                extension, so every app it initialises sees it.
         """
         reg = make_registration(
             name,
@@ -342,7 +341,10 @@ class XState:
         k = r.key_for(name, key)
         skey = r.store_key(name, k)
         if principal is None and r.inbox is not None and has_request_context():
-            principal = r.principal(flask_request)  # type: ignore[misc]
+            # 🔐 Review CW-20: an anonymous caller is a 401, not the
+            #    ValueError (500) `plugins_for` raises for a bad principal.
+            if r.principal is not None:
+                principal = principal_or_401(r.principal(flask_request))
         plugins = r.plugins_for(principal)
         recorder = _Recorder()
         plugins.append(recorder)
@@ -360,8 +362,11 @@ class XState:
             ) as interp:
                 if reg.strict is not None:
                     interp.strict = reg.strict
-                interp._xsm_context_serializer = reg.context_serializer
-                interp._xsm_key = k
+                # 📝 Per-request tags read back by `receipt_response`; the
+                #    engine does not declare them, hence the `Any` view.
+                tagged: Any = interp
+                tagged._xsm_context_serializer = reg.context_serializer
+                tagged._xsm_key = k
                 yield interp
                 bodies = [
                     receipt_body(
@@ -387,14 +392,19 @@ class XState:
         reg = self._reg(name)
         rec = r.store.load(r.store_key(name, key))
         if rec is None:
-            interp = SyncInterpreter(reg.machine, clock=r.clock).start()
-            try:
-                return state_body(interp, reg.context_serializer)
-            finally:
-                interp.stop()
+            # 🔥 Review CW-05: this used to START a real interpreter, so
+            #    a safe GET on an unknown key ran the initial state's
+            #    entry actions and invokes with nothing saved. The
+            #    pure-transition probe computes the initial configuration
+            #    with its actions recorded, not run (as Starlette's peek).
+            from ...helpers import _build_probe
+
+            probe, _ = _build_probe(reg.machine, None)
+            probe.start()
+            return state_body(probe, reg.context_serializer)
         # 🧬 #263 battle: a read of a stale instance migrates like a write
         #    does (read-only; the next `act()` re-saves at the new label).
-        interp = SyncInterpreter.from_snapshot(
+        interp: SyncInterpreter[Any] = SyncInterpreter.from_snapshot(
             rec.snapshot,
             reg.machine,
             clock=r.clock,

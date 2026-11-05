@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 from typing import Any, Dict, List
 
+from ..naming import docstring_safe
 from ..utils import camel_to_snake
 from ._shared import (
     generate_module_header,
@@ -247,7 +248,10 @@ class PytestScaffoldStrategy(BaseStrategy):
                 "",
                 "# Events declared by the chart that the recorded walk never fired -- worth",
                 "# a hand-written test each, if they matter to you:",
-                *[f"#   - {e}" for e in trace.unreached_events],
+                *[
+                    f"#   - {docstring_safe(e)}"
+                    for e in trace.unreached_events
+                ],
                 "",
             ]
         return "\n".join(parts)
@@ -403,7 +407,10 @@ class PytestScaffoldStrategy(BaseStrategy):
                 "",
                 "# Events declared by the chart that the recorded walk never fired -- worth",
                 "# a hand-written test each, if they matter to you:",
-                *[f"#   - {e}" for e in trace.unreached_events],
+                *[
+                    f"#   - {docstring_safe(e)}"
+                    for e in trace.unreached_events
+                ],
                 "",
             ]
         return "\n".join(parts)

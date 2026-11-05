@@ -211,7 +211,7 @@ When the machine enters a parallel state:
 
 > **Note:** Parallel regions don't have an `initial` flag on the parent — there's no "first" child. All children start together. However, each region (which is a compound state) still needs its own `initial` child.
 
-> **Note:** A bare `target: "someState"` only resolves as a **sibling** within the same region — it cannot reach into another parallel region by name. Use an absolute `#machine.path.to.state` target to move a state in a different region. See [Hierarchical States — Bare Targets Are Sibling-Only](../hierarchical/#bare-targets-are-sibling-only). Since 0.8.0, `create_machine()` runs with `strict_targets=True` by default, so an unresolvable cross-region bare target is rejected at **build time** (a clear error when the machine is created) rather than surfacing later as a silent no-op at runtime. Pass `create_machine(config, strict_targets=False)` to downgrade this to a `DeprecationWarning` instead. See the [JSON Config guide](../json-config/) for the full `strictTargets` reference.
+> **Note:** A bare `target: "someState"` only resolves as a **sibling** within the same region — it cannot reach into another parallel region by name. Use an absolute `#machine.path.to.state` target to move a state in a different region (that resets the source region too — see [Transitions Between Regions](#transitions-between-regions)). See [Hierarchical States — Bare Targets Are Sibling-Only](../hierarchical/#bare-targets-are-sibling-only). Since 0.8.0, `create_machine()` runs with `strict_targets=True` by default, so an unresolvable cross-region bare target is rejected at **build time** (a clear error when the machine is created) rather than surfacing later as a silent no-op at runtime. Pass `create_machine(config, strict_targets=False)` to downgrade this to a `DeprecationWarning` instead. See the [JSON Config guide](../json-config/) for the full `strictTargets` reference.
 
 ## Creating Parallel States
 
@@ -607,6 +607,268 @@ interp.stop()
 
 <div class="stately" data-machine="deb267f83e" data-height="520" data-title="withActions"></div>
 
+## Entry and Exit Order
+
+Regions are entered and exited **one whole region at a time, in the order
+the chart declares them** — the XState v5 / SCXML rule:
+
+- **Entry** runs in *document order*: the parallel state, then the first
+  declared region and everything inside it, then the next region. A
+  transition that targets a state deep inside one region does not change
+  this: the targeted region is entered in its declared position, not last.
+- **Exit** runs in *reverse* document order: descendants before their
+  ancestors, and the region declared **last** exits first.
+
+```python
+from xstate_statemachine import SyncInterpreter, create_machine
+from xstate_statemachine.testing_utils import stub_logic
+
+config = {
+    "id": "app",
+    "initial": "idle",
+    "states": {
+        "idle": {
+            "on": {
+                "OPEN": "#app.session.audio.muted",
+            },
+        },
+        "session": {
+            "type": "parallel",
+            "entry": "enterSession",
+            "exit": "exitSession",
+            "on": {
+                "CLOSE": "idle",
+            },
+            "states": {
+                "audio": {
+                    "initial": "playing",
+                    "entry": "enterAudio",
+                    "exit": "exitAudio",
+                    "states": {
+                        "playing": {},
+                        "muted": {
+                            "entry": "enterMuted",
+                            "exit": "exitMuted",
+                        },
+                    },
+                },
+                "video": {
+                    "initial": "shown",
+                    "entry": "enterVideo",
+                    "exit": "exitVideo",
+                    "states": {
+                        "shown": {
+                            "entry": "enterShown",
+                            "exit": "exitShown",
+                        },
+                    },
+                },
+            },
+        },
+    },
+}
+
+ran = []
+machine = create_machine(config, logic=stub_logic(config, ran=ran))
+interp = SyncInterpreter(machine).start()
+
+interp.send("OPEN")
+assert ran == [
+    "enterSession",
+    "enterAudio",
+    "enterMuted",
+    "enterVideo",
+    "enterShown",
+]
+
+ran.clear()
+interp.send("CLOSE")
+assert ran == [
+    "exitShown",
+    "exitVideo",
+    "exitMuted",
+    "exitAudio",
+    "exitSession",
+]
+```
+
+> **Changed in 0.12.0:** entry used to run the regions *not* on the
+> transition's path first and the targeted region last, and exit ran every
+> leaf before every region, ordered by how the state ids sort. If one
+> region's actions must run before another's, declare that region earlier
+> (entry) or later (exit).
+
+## Transitions Between Regions
+
+A transition whose target lies in a **sibling region** of the same parallel
+state (an absolute `#id` target, since a bare name only resolves inside its
+own region) has the parallel state as its *transition domain*. Every region
+exits, and every region is entered again: the targeted region through the
+target, the others through their `initial` state. The parallel state itself
+is neither exited nor re-entered.
+
+```python
+from xstate_statemachine import SyncInterpreter, create_machine
+from xstate_statemachine.testing_utils import stub_logic
+
+config = {
+    "id": "m",
+    "initial": "p",
+    "states": {
+        "p": {
+            "type": "parallel",
+            "states": {
+                "left": {
+                    "initial": "a",
+                    "states": {
+                        "a": {
+                            "on": {
+                                "GO": "b",
+                            },
+                        },
+                        "b": {
+                            "on": {
+                                "JUMP": "#m.p.right.d",
+                            },
+                        },
+                    },
+                },
+                "right": {
+                    "initial": "c",
+                    "states": {
+                        "c": {},
+                        "d": {},
+                    },
+                },
+            },
+        },
+    },
+}
+
+machine = create_machine(config, logic=stub_logic(config))
+interp = SyncInterpreter(machine).start()
+interp.send("GO")
+interp.send("JUMP")
+# `left` was reset to its initial state `a`; `right` moved to `d`.
+assert interp.current_state_ids == {"m.p.left.a", "m.p.right.d"}
+```
+
+To move **only** the other region, handle the event inside that region
+instead — every region receives every event, so `right.c: {"on": {"JUMP":
+"d"}}` leaves `left` untouched. (Before 0.12.0 a cross-region target exited and
+re-entered only the targeted region.)
+
+## When Several Regions Handle the Same Event
+
+Every region that handles an event contributes one transition — from the
+deepest active state in that region that handles it. The parallel state's
+own handler for the event (or an ancestor's) is used only when **no**
+region handled it. The transitions taken for one event form **one
+microstep** (XState v5 / SCXML):
+
+1. every state any of them exits is exited (reverse document order),
+2. then each transition's own actions run, region by region in document
+   order,
+3. then every state any of them enters is entered (document order).
+
+```python
+from xstate_statemachine import SyncInterpreter, create_machine
+from xstate_statemachine.testing_utils import stub_logic
+
+config = {
+    "id": "m",
+    "initial": "p",
+    "states": {
+        "p": {
+            "type": "parallel",
+            "states": {
+                "left": {
+                    "initial": "a",
+                    "states": {
+                        "a": {
+                            "exit": "exitA",
+                            "on": {
+                                "E": {
+                                    "target": "b",
+                                    "actions": "left",
+                                },
+                            },
+                        },
+                        "b": {
+                            "entry": "enterB",
+                        },
+                    },
+                },
+                "right": {
+                    "initial": "c",
+                    "states": {
+                        "c": {
+                            "exit": "exitC",
+                            "on": {
+                                "E": {
+                                    "target": "d",
+                                    "actions": "right",
+                                },
+                            },
+                        },
+                        "d": {
+                            "entry": "enterD",
+                        },
+                    },
+                },
+            },
+        },
+    },
+}
+
+ran = []
+machine = create_machine(config, logic=stub_logic(config, ran=ran))
+interp = SyncInterpreter(machine).start()
+interp.send("E")
+assert ran == ["exitC", "exitA", "left", "right", "enterB", "enterD"]
+```
+
+Two of those transitions **conflict** when their exit sets overlap — for
+example when one region's transition targets a state in another region
+(its domain is the parallel state, so it exits every region). Only one of
+them is taken: the one selected first in document order, unless the later
+one's source is a *descendant* of the earlier one's source, in which case
+the more deeply nested transition wins. The other transition is dropped,
+not run afterwards on whatever state the winner left behind. For `always`
+transitions "selected first" means the region whose active state was
+entered first (see [Guards → Guard Evaluation
+Order](../guards/#guard-evaluation-order)).
+
+> **Changed in 0.12.0:** each selected transition used to run as its own
+> exit → actions → entry sequence, one region after another (`exitA`,
+> `left`, `enterB`, `exitC`, `right`, `enterD`), and a transition whose
+> source an earlier one had exited and re-entered still ran.
+
+## Entering Several Regions at Once (Multi-Target)
+
+`target` may be a **list** of states that lie in *different regions of one
+parallel state*. Each region then enters its target instead of its
+`initial` state, in document order:
+
+```json
+{
+  "idle": {
+    "on": {
+      "RESUME": {
+        "target": ["#app.session.audio.muted", "#app.session.video.shown"]
+      }
+    }
+  }
+}
+```
+
+Any other list — two targets in the same compound region, a state together
+with one of its own descendants, the same state twice, or targets that are
+not under one common parallel state — is rejected by `create_machine()` with
+an `InvalidConfigError`. A one-element list is the same as a plain string
+target. `transition.target_strs` lists every target; `transition.target_str`
+(and diagram exports) show the first.
+
 ## Parallel with Guards
 
 Guards work within parallel regions just like in any other state:
@@ -892,6 +1154,7 @@ config = {
                             "on": {
                                 "USER_ACTION": {
                                     "target": "active",
+                                    "reenter": True,
                                     "actions": "recordActivity",
                                 },
                             },
@@ -992,7 +1255,7 @@ print(interp.active_state_ids)
 print(interp.pending_invocations())
 # []
 
-# User action resets the idle timer in userActivity,
+# User action resets the idle timer in userActivity (reenter: True),
 # without affecting notifications or dataFeed
 interp.send("USER_ACTION")
 

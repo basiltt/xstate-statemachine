@@ -16,8 +16,10 @@
 #    * a timer fires no EARLIER than its deadline and no LATER than the
 #      next scanner tick after it;
 #    * the scanner re-reads the record under the lock and fires only if a
-#      deadline with the SAME `entry_seq` still exists (X0.9) -- a machine
-#      that moved on between the scan and the wake is left alone;
+#      matured deadline is STILL there (X0.9), and the inner `persisted()`
+#      is fenced by the record's version (`_Held.fence`) -- a machine that
+#      moved on between the scan and the wake is left alone or refused
+#      with `ConflictError`, never double-fired;
 #    * a crash between fire and save re-fires on the next tick
 #      (at-least-once): make the timer's transition idempotent or pair it
 #      with the idempotency inbox.
@@ -156,9 +158,17 @@ class DueTimerScanner:
         migrator: Optional[Any] = None,
         on_version_mismatch: Optional[str] = None,
     ) -> None:
+        from .locking import _strategy
+
         self.store = store
         self.machine_for_key = machine_for_key
+        # 🛡️ P-15: fail loudly HERE for something that is not a strategy
+        #    (e.g. the class instead of an instance); it used to fail once
+        #    per key per tick inside the broad `except Exception`.
+        _strategy(lock)
         self.lock = lock
+        #: The `ScanResult` of the most recent `scan()`; ``None`` before one.
+        self.last_result: Optional[ScanResult] = None
         self.plugins = list(plugins)
         self.now = now or time.time
         # 🛡️ #264 battle: a negative tolerance silently made the scanner
@@ -324,7 +334,13 @@ class DueTimerScanner:
 
     # -- loop -------------------------------------------------------------------------
     def run_forever(self, interval_s: float = 1.0) -> None:
-        """Call `run_once` every *interval_s* seconds until `stop()`."""
+        """Call `run_once` every *interval_s* seconds until `stop()`.
+
+        Raises:
+            ValueError: *interval_s* is not a positive number.
+        """
+        if not interval_s > 0:
+            raise ValueError("interval_s must be > 0")
         while not self._stop.is_set():
             try:
                 self.run_once()
@@ -372,3 +388,11 @@ class _WallClock:
 
     def pump(self) -> int:
         return self._inner.pump()
+
+    def pump_filtered(self, owner_filter: Callable[[Any], bool]) -> int:
+        """Forward an owner-restricted pump (ENG-06) when the wrapped clock
+        supports it; otherwise fall back to a plain pump."""
+        inner = getattr(self._inner, "pump_filtered", None)
+        if inner is None:
+            return int(self._inner.pump())
+        return int(inner(owner_filter))

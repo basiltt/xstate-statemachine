@@ -65,7 +65,7 @@ FEATURES = (
     ),
     (
         "Tooling",
-        "xsm generate / inspect / simulate",
+        "xsm generate-template / inspect / simulate",
         "Mermaid + PlantUML export",
     ),
 )
@@ -143,9 +143,9 @@ def run_info(as_json: bool = False) -> None:
     )
     c.blank()
     c.print(
-        c.style("  Zero runtime dependencies. Python 3.9 → 3.14.", "muted")
+        c.style("  Zero runtime dependencies. Python 3.9 → 3.15.", "muted")
         if c.caps.unicode
-        else "  Zero runtime dependencies. Python 3.9 - 3.14."
+        else "  Zero runtime dependencies. Python 3.9 - 3.15."
     )
     if sys.stdout.isatty() and c.caps.tty:
         c.print(

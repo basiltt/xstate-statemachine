@@ -161,8 +161,19 @@ class TestDlqList(_Fixture):
 
 
 class TestDlqReplay(_Fixture):
-    def test_dry_run_by_default(self) -> None:
+    # 📝 The seeded record's data was redacted at capture (`api_key`, see
+    #    X0.5), so replaying it is inspect-only unless `--force` accepts
+    #    sending the masked values (EDA-01). The tests that replay pass it.
+
+    def test_redacted_record_is_inspect_only_without_force(self) -> None:
         code, out = self.replay("--reason", "fixed the bug")
+        self.assertEqual(code, 2, out)
+        self.assertIn("redacted", out)
+        self.assertIn("--force", out)
+        self.assertIsNone(self.dlq.get(self.env.id).resolved_at)
+
+    def test_dry_run_by_default(self) -> None:
+        code, out = self.replay("--reason", "fixed the bug", "--force")
         self.assertEqual(code, 0, out)
         self.assertIn("dry run", out)
         self.assertIsNone(self.dlq.get(self.env.id).resolved_at)
@@ -177,7 +188,7 @@ class TestDlqReplay(_Fixture):
 
     def test_replay_resolves_audits_and_dedups(self) -> None:
         code, out = self.replay(
-            "--no-dry-run", "--yes", "--reason", "fixed in 1.2.3"
+            "--no-dry-run", "--yes", "--reason", "fixed in 1.2.3", "--force"
         )
         self.assertEqual(code, 0, out)
         self.assertIn("processed", out)
@@ -187,7 +198,7 @@ class TestDlqReplay(_Fixture):
         self.assertEqual(blob["context"]["n"], 1)
         # the same envelope id again: the SQLite inbox says duplicate
         code, out = self.replay(
-            "--no-dry-run", "--yes", "--reason", "again", "--json"
+            "--no-dry-run", "--yes", "--reason", "again", "--json", "--force"
         )
         self.assertEqual(json.loads(out)["outcome"], "duplicate")
         self.assertEqual(

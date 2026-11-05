@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any, List, Optional
 
 from ...validation import walk
+from ..utils import safe_file_stem
 from . import get_console
 from .analysis import Facts, analyse, event_table
 from .inspect import _policies
@@ -168,8 +169,14 @@ def run_docs(paths: List[str], *, output: Optional[str] = None) -> None:
             continue
         out_dir = Path(output)
         out_dir.mkdir(parents=True, exist_ok=True)
-        target = out_dir / f"{facts.machine_id}.md"
-        target.write_text(md, encoding="utf-8")
+        # 🛡️ CLI-003: the id is untrusted; never let it pick the path.
+        target = out_dir / f"{safe_file_stem(facts.machine_id)}.md"
+        try:
+            target.write_text(md, encoding="utf-8")
+        except OSError as exc:
+            c.error(f"{p}: cannot write {target}: {type(exc).__name__}: {exc}")
+            failed += 1
+            continue
         c.ok(f"Wrote {c.style(str(target), 'path')}")
         written += 1
     if output is not None:

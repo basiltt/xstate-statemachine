@@ -114,6 +114,11 @@ BUILTIN_ACTION_ALIASES: Dict[str, str] = {
     # stopChild
     "stopChild": STOP_CHILD,
     "stop_child": STOP_CHILD,
+    # 📝 `stop` is the XState v4 spelling of `stopChild`, kept so migrating
+    #    charts run unmodified. Generic verbs here (`stop`, `cancel`, `log`,
+    #    `emit`, ...) never shadow a user action of the same name: user
+    #    actions resolve FIRST, and the built-in's params check is skipped
+    #    for a name the machine's logic implements (MOD-06).
     "stop": STOP_CHILD,
     "xstate.stopChild": STOP_CHILD,
     # spawnChild
@@ -388,6 +393,11 @@ def pure(fn: Callable[..., Any]) -> Dict[str, Any]:
 def choose(conditions: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Builds a `choose` action selecting the first matching branch.
 
+    The JSON form is ``{"type": "xstate.choose", "params": {"branches":
+    [...]}}`` (``"conditions"`` is accepted as a synonym of ``"branches"``);
+    a branch guard may be any guard form, composite ``and`` / ``or`` /
+    ``not`` and ``stateIn`` included.
+
     Args:
         conditions (List[Dict[str, Any]]): Entries of
             `{"guard": ..., "actions": ...}`. The first whose guard passes
@@ -397,6 +407,30 @@ def choose(conditions: List[Dict[str, Any]]) -> Dict[str, Any]:
         Dict[str, Any]: The action definition.
     """
     return {"type": CHOOSE, "params": {"conditions": conditions}}
+
+
+def choose_branches(params: Any) -> List[Dict[str, Any]]:
+    """The branches of a `choose` action, in evaluation order.
+
+    Reads ``params["branches"]`` (the JSON dialect the XState translation
+    and the Rust engine use) or ``params["conditions"]`` (what
+    :func:`choose` builds). Entries that are not mappings are ignored.
+
+    Args:
+        params (Any): The action's (resolved) ``params``.
+
+    Returns:
+        List[Dict[str, Any]]: ``{"guard"|"cond": ..., "actions": ...}``
+        mappings; ``[]`` when there are none.
+    """
+    if not isinstance(params, dict):
+        return []
+    branches = params.get("branches")
+    if branches is None:
+        branches = params.get("conditions")
+    if not isinstance(branches, (list, tuple)):
+        return []
+    return [branch for branch in branches if isinstance(branch, dict)]
 
 
 def enqueue_actions(fn: Callable[..., Any]) -> Dict[str, Any]:
@@ -438,6 +472,8 @@ class ActionEnqueuer:
             event (Any): The event that triggered it.
         """
         self.items: List[Any] = []
+        # 📝 Not read by the helpers below; kept so a custom enqueue
+        #    callback (or a debugger) can see what it runs against.
         self._interpreter = interpreter
         self._event = event
 
@@ -533,6 +569,7 @@ __all__ = [
     "assign",
     "cancel",
     "choose",
+    "choose_branches",
     "emit",
     "enqueue_actions",
     "escalate",

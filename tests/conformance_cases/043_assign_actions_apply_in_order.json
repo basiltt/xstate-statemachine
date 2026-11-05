@@ -1,0 +1,190 @@
+{
+  "name": "assign_actions_apply_in_order",
+  "description": "assign actions apply in microstep order -- exit, then each transition action in list order, then entry -- each one seeing what the previous ones wrote. Keys written by more than one assign show the order: a keeps the exit value, b the first transition assign, c the second, d the entry assign. (The JSON dialect has no expressions, so the order in which ONE assign computes its properties, all against the context before it, is pinned by the Python and Rust unit tests.)",
+  "tags": [
+    "actions",
+    "assign",
+    "context",
+    "entry-exit-order"
+  ],
+  "machine": {
+    "id": "m",
+    "initial": "a",
+    "context": {
+      "a": "init",
+      "b": "init",
+      "c": "init",
+      "d": "init"
+    },
+    "states": {
+      "a": {
+        "exit": [
+          {
+            "type": "assign",
+            "params": {
+              "assignment": {
+                "a": "exit",
+                "b": "exit"
+              }
+            }
+          }
+        ],
+        "on": {
+          "GO": {
+            "target": "b",
+            "actions": [
+              {
+                "type": "assign",
+                "params": {
+                  "assignment": {
+                    "b": "t1",
+                    "c": "t1"
+                  }
+                }
+              },
+              "between",
+              {
+                "type": "assign",
+                "params": {
+                  "assignment": {
+                    "c": "t2",
+                    "d": "t2"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "b": {
+        "entry": [
+          {
+            "type": "assign",
+            "params": {
+              "assignment": {
+                "d": "entry"
+              }
+            }
+          },
+          "enteredB"
+        ]
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "GO"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "m.a"
+        ],
+        "context": {
+          "a": "init",
+          "b": "init",
+          "c": "init",
+          "d": "init"
+        },
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.b"
+          ],
+          "context": {
+            "a": "exit",
+            "b": "t1",
+            "c": "t2",
+            "d": "entry"
+          },
+          "actions": [
+            "between",
+            "enteredB"
+          ],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "m.a"
+        ],
+        "context": {
+          "a": "init",
+          "b": "init",
+          "c": "init",
+          "d": "init"
+        },
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.b"
+          ],
+          "context": {
+            "a": "exit",
+            "b": "t1",
+            "c": "t2",
+            "d": "entry"
+          },
+          "actions": [
+            "between",
+            "enteredB"
+          ],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "8f1eec4a637645db",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "m",
+        "machine_hash": "8f1eec4a637645db",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {
+          "a": "exit",
+          "b": "t1",
+          "c": "t2",
+          "d": "entry"
+        },
+        "state_ids": [
+          "m.b"
+        ],
+        "value": "b",
+        "configuration": [
+          "m",
+          "m.b"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"m\",\n  \"machine_hash\": \"8f1eec4a637645db\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {\n    \"a\": \"exit\",\n    \"b\": \"t1\",\n    \"c\": \"t2\",\n    \"d\": \"entry\"\n  },\n  \"state_ids\": [\n    \"m.b\"\n  ],\n  \"value\": \"b\",\n  \"configuration\": [\n    \"m\",\n    \"m.b\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

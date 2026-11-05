@@ -17,7 +17,7 @@ flowchart LR
 
 ### Is this compatible with XState v5?
 
-Yes. This library is compatible with XState JSON format and supports most XState v4/v5 features, including:
+Yes. The library reads XState v5 JSON (including Stately exports) and follows XState v5 statechart semantics, while engine event names keep the v4 spelling (`done.invoke.<id>`, `error.platform.<id>`, `done.state.<id>`, `after.<ms>.<id>`). Supported features include:
 
 - Hierarchical (nested) states
 - Parallel states
@@ -29,7 +29,7 @@ Yes. This library is compatible with XState JSON format and supports most XState
 - Final states
 - Context (extended state)
 
-The JSON format exported from [Stately.ai](https://stately.ai) works directly with this library.
+A JSON export from [Stately.ai](https://stately.ai) loads with `create_machine` (see [Stately Export](../stately-export/)).
 
 ---
 
@@ -86,11 +86,15 @@ green = State("green", initial=True)
 yellow = State("yellow")
 red = State("red")
 
-green.to(yellow, event="NEXT")
-yellow.to(red, event="NEXT")
-red.to(green, event="NEXT")
+t1 = green.to(yellow, event="NEXT")
+t2 = yellow.to(red, event="NEXT")
+t3 = red.to(green, event="NEXT")
 
-machine = build_machine(id="trafficLight", states=[green, yellow, red])
+machine = build_machine(
+    id="trafficLight",
+    states=[green, yellow, red],
+    transitions=[t1, t2, t3],
+)
 ```
 
 ---
@@ -307,7 +311,7 @@ Since 0.8.0 both interpreters settle `always` transitions *before* `send()` retu
 
 ### In what order do actions run when a transition fires?
 
-Exit actions of the source, then transition actions, then entry actions of the target — always, in every interpreter. For nested states the exits run innermost-first and the entries outermost-first. See [Actions → Execution Order](../actions/#execution-order).
+Exit actions of the source, then transition actions, then entry actions of the target — always, in every interpreter. For nested states the exits run innermost-first and the entries outermost-first; parallel regions are exited and entered one whole region at a time (exit: the last-declared region first; entry: in declaration order), exactly as in XState v5. See [Actions → Execution Order](../actions/#execution-order).
 
 ---
 
@@ -325,7 +329,7 @@ By default it is dropped silently (`onUnhandled: "ignore"`, the 0.7 behaviour). 
 
 ### Can I send an event from inside an action?
 
-Yes, but the event is **queued**, not processed immediately — the current transition finishes first. Use `interp.send(...)` from the action, or the declarative `send` / `raise_` action helpers in JSON. Never call `interp.stop()` from inside an action; return and let the caller do it.
+Yes, but the event is **queued**, not processed immediately — the current transition finishes first. Use `interp.send(...)` from the action, or the declarative `raise` (`raise_`) / `sendTo` (`send_to`) built-ins. Never call `interp.stop()` from inside an action; return and let the caller do it.
 
 Two things a self-send cannot do: **await its own receipt** — `await interp.send("GO", wait=True)` on the action's own task raises `ReentrantWaitError` (0.9.0) because the run loop cannot advance until the action returns; hand the receipt to another task (`asyncio.ensure_future(...)`) or send without `wait` — and **loop without a delay** forever. A zero-delay `raise` cycle is cut at `maxIterations` (`RunawayChainError`, recorded on `chain_trips` / `last_chain_error`); a `raise` with a `delay` is a timer and runs indefinitely, like `after`.
 
@@ -472,7 +476,6 @@ Use the snapshot system to serialize and restore interpreter state:
 <!-- doc-fragment -->
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter
-import json
 
 # Save state
 machine = create_machine(config)
@@ -480,8 +483,7 @@ interp = SyncInterpreter(machine)
 interp.start()
 interp.send("SOME_EVENT")
 
-snapshot = interp.get_snapshot()
-serialized = json.dumps(snapshot)
+serialized = interp.get_snapshot()  # already a JSON string
 
 # ... store `serialized` in a database, file, or cache ...
 
@@ -583,7 +585,10 @@ config = {
                 "30000": "timed_out",
             },
             "on": {
-                "ACTIVITY": "active",
+                "ACTIVITY": {
+                    "target": "active",
+                    "reenter": True,
+                },
             },
         },
         "timed_out": {
@@ -598,7 +603,8 @@ async def main():
     interp = Interpreter(machine)
     await interp.start()
     # Machine will transition to "timed_out" after 30 seconds of inactivity
-    # Sending "ACTIVITY" resets the timer by re-entering "active"
+    # "ACTIVITY" re-enters "active" (reenter: True), which restarts the timer.
+    # Without reenter a self-transition leaves the running timer alone.
 ```
 
 <div class="stately" data-machine="db1bd18a4e" data-height="320" data-title="session"></div>
@@ -660,7 +666,7 @@ It parks the blocked launcher and installs an `xsm.cmd` batch shim beside it; `x
 The library is lightweight with minimal overhead:
 
 - Machine creation: microseconds for typical configs
-- Event processing: tens of microseconds per transition **on an unloaded loop**. Aggregate throughput across all async interpreters in a process is a fixed budget (~20k trivial events/s on a laptop, i.e. ~18 ev/s each at 1,000 machines) — see [Production Characteristics](../production-characteristics/).
+- Event processing: tens of microseconds per transition **on an unloaded loop**. Aggregate throughput across all async interpreters in a process is a fixed budget (~46k trivial events/s on a laptop, i.e. ~46 ev/s each at 1,000 machines) — see [Production Characteristics](../production-characteristics/).
 - Memory: proportional to the number of states and transitions
 - Background threads: the async `Interpreter` uses **none** — everything runs on your asyncio loop. The `SyncInterpreter` spawns none for `after` timers or delayed sends either (since 0.8.0 they fire on the caller's thread inside `send()`/`tick()`); only a non-blocking `spawn_<key>` child gets its own runner thread.
 
@@ -677,10 +683,10 @@ Yes. The plugin system allows you to hook into the interpreter lifecycle:
 from xstate_statemachine import PluginBase
 
 class MetricsPlugin(PluginBase):
-    def on_transition(self, event, source, target):
-        metrics.increment(f"transition.{source}.{target}")
+    def on_transition(self, interpreter, from_states, to_states, transition):
+        metrics.increment("transition")
 
-    def on_event(self, event):
+    def on_event_received(self, interpreter, event):
         metrics.increment(f"event.{event.type}")
 
 interp.use(MetricsPlugin())
@@ -708,7 +714,7 @@ assert interp.matches("expired")
 
 ### What if an action raises halfway through a transition?
 
-Controlled by `actionErrorPolicy` on the machine: `"continue"` (0.7 default — the transition is committed with whatever mutations already happened), `"rollback"` (state *and* context restored, error reported on the `Receipt`), or `"fail"` (interpreter enters `error` status). `"rollback"` becomes the default in 1.0. See [Reliability](../reliability/).
+Controlled by `actionErrorPolicy` on the machine: `"continue"` (0.7 default — the transition is committed with whatever mutations already happened), `"rollback"` (state *and* context restored, error reported on the `Receipt`), or `"fail"` (roll back, then stop: `status == "stopped"` and `interp.error` is a `TransitionFailedError`). `"rollback"` becomes the default in 1.0. See [Reliability](../reliability/).
 
 ---
 
@@ -732,8 +738,8 @@ Use the helpers instead of sleeping:
 ```python
 from xstate_statemachine import wait_for, wait_for_sync
 
-await wait_for(interp, "loaded", timeout=2.0)      # async Interpreter
-wait_for_sync(interp, "loaded", timeout=2.0)        # SyncInterpreter
+await wait_for(interp, lambda i: i.matches("loaded"), timeout=2.0)  # async
+wait_for_sync(interp, lambda i: i.matches("loaded"), timeout=2.0)    # sync
 ```
 
 Or send with `wait=True` and assert on the returned `Receipt`, which tells you the resulting state and any error in one object.
@@ -742,4 +748,4 @@ Or send with `wait=True` and assert on the returned `Receipt`, which tells you t
 
 ### Is this production-ready?
 
-0.8.0 ("Fortify") is the release aimed squarely at that question: 34 silent-failure defects closed, every failure path now has a policy and a plugin hook, snapshots are versioned and drift-checked, and 31 audit reproduction scripts run in CI. The remaining 1.0 work is defaults flipping (`actionErrorPolicy → rollback`, `strict_targets` mandatory), not new surface. See [Reliability](../reliability/) and the [Changelog](../changelog/).
+Yes. The package is classified Production/Stable: every failure path has a policy and a plugin hook, snapshots are versioned and drift-checked, and CI enforces a 90 % coverage gate on Python 3.9–3.15. Before 1.0 only defaults flip (`actionErrorPolicy → rollback`, `strict_targets` mandatory). See [Reliability](../reliability/) and the [Changelog](../changelog/).

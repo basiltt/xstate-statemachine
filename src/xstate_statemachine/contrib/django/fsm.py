@@ -29,7 +29,8 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Callable, Dict, List, Set, Optional, Tuple
+from types import MappingProxyType
+from typing import Any, Callable, Dict, List, Mapping, Set, Optional, Tuple
 
 from django.db import transaction
 
@@ -71,7 +72,7 @@ def fsm_value_index(machine: Any) -> Dict[Any, str]:
 
 
 def fsm_value_of(
-    machine: Any, leaf: str, override: Optional[Dict[str, Any]] = None
+    machine: Any, leaf: str, override: Optional[Mapping[str, Any]] = None
 ) -> Any:
     """The FSM column value for the active *leaf* id (``override`` -- the
     model's ``fsm_value_for_state`` -- wins)."""
@@ -82,7 +83,7 @@ def fsm_value_of(
 
 
 def key_for_value(
-    machine: Any, value: Any, override: Optional[Dict[str, Any]] = None
+    machine: Any, value: Any, override: Optional[Mapping[str, Any]] = None
 ) -> Optional[str]:
     """The top-level state key a column *value* adopts, or None."""
     for leaf, v in (override or {}).items():
@@ -148,7 +149,7 @@ def _transitions(model: Any, f: Any) -> List[Any]:
     out: List[Any] = []
     seen = set()
     for t in f.get_all_transitions(model):
-        key = (t.name, t.source, id(t.target))
+        key = (t.name, t.source, repr(t.target))
         if key not in seen:
             seen.add(key)
             out.append(t)
@@ -534,7 +535,7 @@ _NO_VALUE: Any = object()
 
 
 def _top_value(
-    machine: Any, leaves: List[str], override: Dict[str, Any]
+    machine: Any, leaves: List[str], override: Mapping[str, Any]
 ) -> Any:
     """The ONE FSM value the active *leaves* stand for -- their
     top-level state's (a compound's children all map to it) -- or
@@ -572,7 +573,7 @@ class FSMDualWriteMixin:
     """
 
     fsm_dual_write_field: str = "state"
-    fsm_value_for_state: Dict[str, Any] = {}
+    fsm_value_for_state: Mapping[str, Any] = MappingProxyType({})
 
     def save(self, *args: Any, **kwargs: Any) -> None:
         # 📝 the mixin's save() deliberately never rewrites the statechart
@@ -639,7 +640,14 @@ class FSMDualWriteMixin:
     def _xsm_after_write(self, ctx: Dict[str, Any]) -> None:
         super()._xsm_after_write(ctx)  # type: ignore[misc]
         machine = self.statechart_machine_node()  # type: ignore[attr-defined]
-        value = self._xsm_fsm_value(machine, sorted(ctx["receipt"].state_ids))
+        # 🐛 The receipt covers only the external event's step; engine
+        #    steps of the same send (`done.state.*`, eventless chains) are
+        #    only in the written snapshot -- `_to_states` prefers it.
+        from .signals import _to_states
+
+        value = self._xsm_fsm_value(
+            machine, list(_to_states(ctx, ctx["receipt"]))
+        )
         if value is _NO_VALUE:
             return  # parallel: no single FSM value
         field = self.fsm_dual_write_field

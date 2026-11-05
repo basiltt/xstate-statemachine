@@ -264,7 +264,8 @@ def _build_generated(
     privileges. That is unavoidable — proving the code builds the right
     machine means building it — but the blast radius is worth bounding.
 
-    The module is NOT registered in ``sys.modules``, and ``sys.modules`` is
+    The module is registered in ``sys.modules`` only while it executes (so
+    relative lookups and dataclasses work), and ``sys.modules`` is
     snapshotted and restored afterwards, so a module the generated code
     imports (or injects) cannot persist into the CLI process or shadow a
     later import. This is defence in depth, not a sandbox: code that
@@ -370,9 +371,14 @@ def _collect(node: Any, root_id: str, acc: Dict[str, Any]) -> None:
     else:
         path = node.id
 
-    on_done = node.on_done or []
-    if not isinstance(on_done, (list, tuple)):
-        on_done = [on_done]
+    # 🏁 Every state-level `onDone` alternative (MOD-02), not only the
+    #    first; a node without the list attribute (an older IR) still
+    #    offers a single transition or a list.
+    on_done = getattr(node, "on_done_transitions", None)
+    if on_done is None:
+        on_done = node.on_done or []
+        if not isinstance(on_done, (list, tuple)):
+            on_done = [on_done]
 
     # 🛡️ Transitions are compared in FULL: resolved destination, actions,
     #    guard and reenter -- not merely the set of event names.

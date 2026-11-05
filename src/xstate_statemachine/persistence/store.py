@@ -46,6 +46,7 @@ from ..exceptions import (
     SnapshotCorruptError,
     SnapshotTooLargeError,
     StoreError,
+    StoreUnavailableError,
 )
 from .deadline import Deadline
 
@@ -439,6 +440,11 @@ class BaseStore:
         # 🏛️ #263 battle: `xsm snapshots --stale` only needs the label the
         #    store already keeps beside the blob; loading and decoding every
         #    full snapshot to read it made the drain list O(total bytes).
+        # 🛡️ P-40: the same boundary as `list_keys` -- a negative limit
+        #    sliced the last item off in Memory but meant "unlimited" in
+        #    SQLite (`LIMIT -1`).
+        if limit < 0:
+            raise ValueError("limit must be >= 0")
         out: List[Tuple[str, str]] = []
         for key, mv in self._list_versions_raw(prefix, limit):
             try:
@@ -590,7 +596,12 @@ class MemoryStore(BaseStore):
     def _forget_raw(self, key: str) -> Dict[str, int]:
         with self._guard:
             rec = self._records.pop(key, None)
-            self._key_locks.pop(key, None)
+            # 🔒 P-09: never discard a lock somebody HOLDS -- the next
+            #    `lock(key)` would get a fresh Lock and enter alongside the
+            #    first holder. An idle lock is safe to drop.
+            lk = self._key_locks.get(key)
+            if lk is not None and not lk.locked():
+                del self._key_locks[key]
             return {
                 "snapshots": int(rec is not None),
                 "deadlines": len(rec.deadlines) if rec else 0,
@@ -646,6 +657,15 @@ class MemoryStore(BaseStore):
                 "backend": self.backend,
                 "keys": len(self._records),
             }
+
+
+class StoreUnavailableOSError(StoreUnavailableError, OSError):
+    """`StoreUnavailableError` that is still an `OSError`.
+
+    📝 P-06 / P-12: these paths used to leak the bare ``OSError`` from the
+    filesystem; they now raise a store error, but a caller that caught
+    ``OSError`` keeps working.
+    """
 
 
 @contextlib.contextmanager

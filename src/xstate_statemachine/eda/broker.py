@@ -28,6 +28,8 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
+import logging
 from typing import (
     Any,
     AsyncIterator,
@@ -106,6 +108,33 @@ class SyncBrokerAdapter(Protocol):
         """Protocol member."""
 
 
+async def _await(value: Any) -> None:
+    await value
+
+
+async def gather_all(tasks: List[Any]) -> None:
+    """Await every task, then raise the first failure (if any).
+
+    🔥 Awaiting them one by one abandoned the rest on the first error and
+    left their exceptions "never retrieved"; every failure is logged.
+
+    Raises:
+        Exception: The first failure, after all tasks have finished.
+    """
+    if not tasks:
+        return
+    results = await asyncio.gather(*tasks, return_exceptions=True)
+    first: Optional[BaseException] = None
+    for res in results:
+        if isinstance(res, BaseException):
+            logging.getLogger(__name__).error(
+                "🔥 a scheduled publish failed", exc_info=res
+            )
+            first = first or res
+    if first is not None:
+        raise first
+
+
 #: Seconds a worker thread waits for a publish scheduled on the loop.
 PUBLISH_TIMEOUT_S = 30.0
 
@@ -125,8 +154,12 @@ def settle_awaitable(
       loop and waited for (`PUBLISH_TIMEOUT_S`);
     * no loop anywhere: run to completion with ``asyncio.run``.
     """
-    if not asyncio.iscoroutine(result):
+    if not inspect.isawaitable(result):
         return
+    if not asyncio.iscoroutine(result):
+        # 📝 a Future / Task / custom awaitable: wrap it so the three
+        #    scheduling paths below all deal with a coroutine.
+        result = _await(result)
     try:
         running: Optional[asyncio.AbstractEventLoop] = (
             asyncio.get_running_loop()

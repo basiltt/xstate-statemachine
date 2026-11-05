@@ -49,6 +49,7 @@ from src.xstate_statemachine import (
     emit,
     enqueue_actions,
     escalate,
+    event_payload,
     forward_to,
     get_next_snapshot,
     initial_transition,
@@ -3061,13 +3062,18 @@ class TestModelRepr(unittest.TestCase):
 # 🔒 Wildcards Must Not Swallow Internal Events
 # -----------------------------------------------------------------------------
 class TestWildcardExcludesInternalEvents(unittest.IsolatedAsyncioTestCase):
-    """Pins that `*` never intercepts engine-generated lifecycle events.
+    """Pins that `*` never outranks a state's own lifecycle handler.
 
     🐛 Regression: adding wildcard support made `on: {"*": ...}` match the
     synthetic `done.invoke.*`, `done.state.*`, `error.platform.*` and
-    `after.*` events the engine raises to drive `onDone`, `onError` and
-    `after`. A single wildcard therefore silently broke every invoke and
-    delayed transition in that state.
+    `after.*` events AHEAD of the `onDone`, `onError` and `after` handlers
+    they exist to drive. A single wildcard therefore silently broke every
+    invoke and delayed transition in that state.
+
+    Since XState v5 parity `*` DOES receive engine events (XState's
+    `getCandidates` applies it to every event), but -- as in XState -- only
+    when the state declares no exact handler for them; see
+    `tests/test_xstate_v5_ordering_parity.py::TestWildcardMatchesEngineEvents`.
     """
 
     def test_wildcard_does_not_hijack_invoke_on_done(self) -> None:
@@ -4424,17 +4430,20 @@ class TestCliExtractionAndDelays(unittest.TestCase):
 # ⚡ Transient Selection Uses The Memoised Path
 # -----------------------------------------------------------------------------
 class TestTransientGuardMemoisation(unittest.TestCase):
-    """Pins that an `always` guard on a shared ancestor is not multiplied.
+    """Pins how often an `always` guard on a shared ancestor is evaluated.
 
-    🐛 Regression: transient transitions were selected by a legacy
-    single-winner scan that walked up from every active leaf WITHOUT the
-    guard memo, so a guard on an ancestor shared by N parallel regions was
-    evaluated N times per microstep — multiplying any side effect and firing
-    the `on_guard_evaluated` hook N times for one logical decision.
+    XState v5's `selectEventlessTransitions` walks up from EVERY active
+    atomic state to its first enabled `always`, so a guard on an ancestor
+    shared by N regions is evaluated once per region whose walk reaches it
+    -- N times per eventless pass, no more (conformance case
+    `guard_evaluation_order`). Up to 0.12 the engine memoised it per pass
+    and then selected a second time to execute; neither is XState's count.
     """
 
-    def test_shared_ancestor_always_guard_is_not_multiplied(self) -> None:
-        """Three regions must not triple the ancestor's guard evaluations."""
+    def test_shared_ancestor_always_guard_is_evaluated_once_per_region(
+        self,
+    ) -> None:
+        """Three regions: three evaluations, as in XState."""
         # Arrange
         calls: List[int] = []
 
@@ -4465,11 +4474,11 @@ class TestTransientGuardMemoisation(unittest.TestCase):
             guards={"g": counting_guard},
         )
 
-        # Assert — one evaluation per microstep, not one per region.
+        # Assert — one evaluation per region's walk, none to execute it.
         self.assertEqual({"m.done"}, interpreter.current_state_ids)
-        self.assertLessEqual(
-            len(calls),
+        self.assertEqual(
             3,
+            len(calls),
             f"shared ancestor guard evaluated {len(calls)}x for 3 regions",
         )
 
@@ -4479,7 +4488,7 @@ class TestTransientGuardMemoisation(unittest.TestCase):
         self.assertFalse(
             hasattr(SyncInterpreter, "_find_optimal_transition"),
             "_find_optimal_transition was reintroduced; transient selection "
-            "must use the memoised _select_transitions path",
+            "must use the _select_transitions path",
         )
 
 
@@ -5192,6 +5201,73 @@ class TestReleaseReadiness(unittest.IsolatedAsyncioTestCase):
 
         # Assert
         self.assertEqual("0 0", result.stdout.strip())
+
+
+class TestInvokeInputParity(unittest.IsolatedAsyncioTestCase):
+    """`invoke` without `input` passes the actor nothing, as XState v5 does.
+
+    Verified against xstate 5.33.3: `fromPromise` / `fromCallback` see
+    `input === undefined` when the chart declares no `input`, and a
+    declared `input: ({event}) => ...` factory sees the triggering event.
+    0.12.0 briefly forwarded the triggering payload implicitly, which made
+    the same Stately export behave differently under this engine.
+    """
+
+    CONFIG: Dict[str, Any] = {
+        "id": "m",
+        "initial": "idle",
+        "states": {
+            "idle": {"on": {"START": "plain", "START2": "factory"}},
+            "plain": {"invoke": {"src": "svc", "onDone": "done"}},
+            "factory": {
+                "invoke": {
+                    "src": "svc",
+                    "input": lambda ctx, ev: {"from": ev.type, **ev.payload},
+                    "onDone": "done",
+                }
+            },
+            "done": {"type": "final"},
+        },
+    }
+
+    def _logic(self, seen: List[Any]) -> MachineLogic:
+        def svc(interpreter: Any, context: Any, event: Any) -> int:
+            seen.append(event.payload["input"])
+            return 1
+
+        return MachineLogic(services={"svc": svc})
+
+    def test_sync_engine_matches_xstate(self) -> None:
+        seen: List[Any] = []
+        m = create_machine(self.CONFIG, logic=self._logic(seen))
+        i = SyncInterpreter(m)
+        i.start()
+        i.send("START", url="https://x", amount=3)
+        self.assertEqual(seen, [{}], "no `input` declared: nothing forwarded")
+        seen.clear()
+        n = create_machine(self.CONFIG, logic=self._logic(seen))
+        j = SyncInterpreter(n)
+        j.start()
+        j.send("START2", url="https://y")
+        self.assertEqual(seen, [{"from": "START2", "url": "https://y"}])
+
+    async def test_async_engine_matches_xstate(self) -> None:
+        seen: List[Any] = []
+        i = await Interpreter(
+            create_machine(self.CONFIG, logic=self._logic(seen))
+        ).start()
+        await i.send("START", url="https://x", amount=3, wait=True)
+        await i.stop()
+        self.assertEqual(seen, [{}])
+
+    def test_event_payload_is_the_explicit_opt_in(self) -> None:
+        cfg = json.loads(json.dumps(self.CONFIG, default=str))
+        cfg["states"]["plain"]["invoke"]["input"] = event_payload
+        seen: List[Any] = []
+        i = SyncInterpreter(create_machine(cfg, logic=self._logic(seen)))
+        i.start()
+        i.send("START", url="https://x")
+        self.assertEqual(seen, [{"url": "https://x"}])
 
 
 if __name__ == "__main__":  # pragma: no cover

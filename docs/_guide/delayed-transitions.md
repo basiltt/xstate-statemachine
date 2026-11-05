@@ -16,7 +16,7 @@ stateDiagram-v2
     active --> warning : after 5 min
     warning --> expired : after 30 s
     warning --> active : EXTEND
-    active --> active : ACTIVITY (timer resets)
+    active --> active : ACTIVITY (reenter: timer resets)
 ```
 
 When the machine enters a state with `after` timers, those timers start immediately. If the machine leaves that state before a timer fires (because of an event), the timer is **cancelled automatically**.
@@ -49,7 +49,10 @@ A session that warns the user before expiring:
         "300000": "warning"
       },
       "on": {
-        "ACTIVITY": "active"
+        "ACTIVITY": {
+          "target": "active",
+          "reenter": true
+        }
       }
     },
     "warning": {
@@ -83,7 +86,10 @@ config = {
                 "300000": "warning",
             },
             "on": {
-                "ACTIVITY": "active",
+                "ACTIVITY": {
+                    "target": "active",
+                    "reenter": True,
+                },
             },
         },
         "warning": {
@@ -106,7 +112,7 @@ interp = SyncInterpreter(machine).start()
 print(interp.active_state_ids)
 # {'sessionTimeout.active'}
 
-# User does something — timer resets
+# User does something — reenter: true restarts the timer
 interp.send("ACTIVITY")
 print(interp.active_state_ids)
 # {'sessionTimeout.active'}  (timer restarted)
@@ -121,7 +127,7 @@ This machine:
 1. Starts in `active`
 2. After 5 minutes of inactivity, moves to `warning`
 3. The user gets 30 seconds to click "EXTEND" or it moves to `expired`
-4. Any `ACTIVITY` event re-enters `active`, **resetting** the 5-minute timer
+4. Any `ACTIVITY` event re-enters `active` (`"reenter": true`), **resetting** the 5-minute timer. Without `reenter`, a self-transition leaves the state active and the timer keeps its original schedule (XState v5)
 
 ## 🎬 After with Actions
 
@@ -263,6 +269,7 @@ A single state can have **multiple** `after` timers running simultaneously:
     "after": {
       "5000": {
         "target": "monitoring",
+        "reenter": true,
         "actions": "heartbeat"
       },
       "60000": {
@@ -277,11 +284,11 @@ A single state can have **multiple** `after` timers running simultaneously:
 
 All three timers start when `monitoring` is entered:
 
-- **5 seconds:** self-transition with `heartbeat` action (re-enters, restarting all timers)
+- **5 seconds:** self-transition with `heartbeat` action (`"reenter": true` re-enters the state, restarting all timers)
 - **60 seconds:** conditional move to `stale` (only if guard passes)
 - **5 minutes:** unconditional move to `timeout`
 
-> **Tip:** The shortest timer fires first. If the 5-second heartbeat re-enters the state, **all** timers reset — so the 60s and 300s timers effectively restart too.
+> **Tip:** The shortest timer fires first. With `reenter: true` the 5-second heartbeat re-enters the state and **all** its timers reset — so the 60s and 300s timers effectively restart too.
 
 ## 🔄 Timer Reset
 
@@ -289,12 +296,12 @@ All three timers start when `monitoring` is entered:
 stateDiagram-v2
     direction LR
     [*] --> active
-    active --> active : ACTIVITY (re-enter → timer restarts)
+    active --> active : ACTIVITY (reenter: true → timer restarts)
     active --> idle : after 60 s
     idle --> active : ACTIVITY
 ```
 
-When a state is **re-entered** (via an event transition or a self-transition), all `after` timers for that state are **cancelled and restarted**. This is key to implementing patterns like "idle timeout" — every user action resets the clock.
+A transition that exits and re-enters a state cancels and restarts its `after` timers. A self-transition does so only with `"reenter": true`; without it the state stays active and its timers keep running (XState v5). This is key to implementing patterns like "idle timeout" — every user action resets the clock.
 
 ```json
 {
@@ -303,15 +310,75 @@ When a state is **re-entered** (via an event transition or a self-transition), a
       "300000": "warning"
     },
     "on": {
-      "ACTIVITY": "active"
+      "ACTIVITY": {
+        "target": "active",
+        "reenter": true
+      }
     }
   }
 }
 ```
 
-Every `ACTIVITY` event re-enters `active`, which cancels the existing 5-minute timer and starts a fresh one.
+Every `ACTIVITY` event re-enters `active` (because of `reenter: true`), which cancels the existing 5-minute timer and starts a fresh one.
 
-> **Warning:** Self-transitions (targeting the same state) will cause exit actions, timer cancellation, entry actions, and timer restart. This is intentional — it's how XState works.
+> **Warning:** A self-transition **without** `reenter` does nothing to the state: no exit or entry actions run and no timer is cancelled or restarted. With `"reenter": true` it runs exit actions, cancels the timers, runs entry actions and restarts the timers. This is XState v5 behaviour.
+
+## 🏷️ Named and Computed Delays
+
+An `after` key does not have to be a number. A non-numeric key is a **named delay** resolved from `MachineLogic(delays={...})` when the state is entered; the same names work as the `delay` of a `raise` / `sendTo` / `sendParent` action. A delay is a number of milliseconds or a callable that returns one. A callable receives a single `{"context": ..., "event": ...}` mapping (the legacy `(context, event)` two-argument form is also accepted).
+
+```python
+from xstate_statemachine import (
+    create_machine,
+    SyncInterpreter,
+    MachineLogic,
+    SimulatedClock,
+)
+
+config = {
+    "id": "retry",
+    "initial": "waiting",
+    "context": {
+        "attempt": 2,
+    },
+    "states": {
+        "waiting": {
+            "after": {
+                "BACKOFF": "trying",
+            },
+            "on": {
+                "NUDGE": {
+                    "target": "waiting",
+                    "reenter": True,
+                },
+            },
+        },
+        "trying": {},
+    },
+}
+
+logic = MachineLogic(
+    delays={
+        "BACKOFF": lambda args: 1000 * args["context"]["attempt"],
+    }
+)
+clock = SimulatedClock()
+interp = SyncInterpreter(
+    create_machine(config, logic=logic), clock=clock
+).start()
+
+clock.increment(1500)
+interp.send("NUDGE")  # reenter: the timer restarts from zero
+clock.increment(1500)
+print(sorted(interp.active_state_ids))
+# ['retry.waiting']
+clock.increment(500)
+print(sorted(interp.active_state_ids))
+# ['retry.trying']
+interp.stop()
+```
+
+Gotchas: a name that is not in `MachineLogic.delays` logs a warning and **disables that timer** (the machine still starts); a delay that resolves to something that is not a number is logged as an error and ignored the same way.
 
 ## 🐍 Pythonic After
 
@@ -532,7 +599,7 @@ Every timer in the library — `after` transitions and delayed `send()` — is s
 from xstate_statemachine import Clock, RealClock, SimulatedClock
 ```
 
-A `Clock` exposes `now()`, `set_timeout(fn, delay_sec, owner=None)`, `clear_timeout(handle)`, and `pump()`. Both `Interpreter` and `SyncInterpreter` accept a `clock=` constructor argument; if you don't pass one, each gets its own `RealClock()`.
+A `Clock` exposes `now()`, `set_timeout(fn, delay_sec, owner=None)`, `clear_timeout(handle)`, and `pump()`. Both built-in clocks also provide `wall_now()` (epoch seconds, used for snapshot deadlines) and, since 0.12.0, `pump_filtered(owner_filter)` -- a pump restricted to one owner's deadlines, which is how a `SyncInterpreter` child sharing its parent's `SimulatedClock` avoids firing the parent's timers from its own thread. Both `Interpreter` and `SyncInterpreter` accept a `clock=` constructor argument; if you don't pass one, each gets its own `RealClock()`.
 
 ### `RealClock` — wall time, the default
 
@@ -566,7 +633,10 @@ config = {
                 "300000": "warning",
             },
             "on": {
-                "ACTIVITY": "active",
+                "ACTIVITY": {
+                    "target": "active",
+                    "reenter": True,
+                },
             },
         },
         "warning": {
@@ -611,7 +681,7 @@ await i.stop()
 
 Calling `increment()`/`set()` inside a running event loop **without** `await` raises a warning at the next garbage collection — a forgotten `await` would otherwise silently race the loop instead of failing loudly.
 
-`set(ms)` jumps to an absolute virtual time instead of advancing by a delta, and refuses to move backwards. `pending` reports how many live timers are still scheduled.
+`set(ms)` jumps to an absolute virtual time instead of advancing by a delta, and refuses to move backwards. `pending` reports how many live timers are still scheduled, `next_due()` returns the virtual time (seconds) of the earliest one (or `None`), and `fire_until(seconds)` advances to an absolute time synchronously, firing due timers in order (for code that holds no running loop). `SimulatedClock(wall_start=...)` sets the virtual wall clock (`wall_now()` is `wall_start` plus elapsed virtual time), so a test can express "restarted an hour later".
 
 ### Sharing one clock across async and sync interpreters
 
@@ -712,11 +782,11 @@ Before 0.8.0, a fired async timer's continuation had to queue behind every exter
 }
 ```
 
-Only a **zero-delay** self-`raise` cycle is charged to the budget and cut with `RunawayChainError`. Give the send an `id` and `cancel` it to disarm; exiting the arming state disarms it too, and the clock handle is released either way (#218).
+Only a **zero-delay** self-`raise` cycle is charged to the budget and cut with `RunawayChainError`. Give the send an `id` and `cancel` it to disarm. Leaving the state that armed it does **not** cancel a delayed send (XState v5): it is still delivered after the machine has moved on, and only `cancel` disarms it. The clock handle is released when the send fires or is cancelled (#218).
 
 ### Timers and snapshots
 
-A snapshot records that an `after` timer was *pending*, not how far along it was. After a static `from_snapshot()` restore the timer is dormant — `interp.has_dormant_timers` is `True` — until you pass `from_snapshot(..., restart_timers=True)` (defaults to the value of `restart_services`), which re-arms every dormant timer **from zero** on `start()`. A timer that had already *fired* and was waiting in the priority lane is persisted and replays. An armed **delayed self-send** is persisted with its *remaining* delay (`scheduled_sends`, layout v3) and resumes where it would have been — and it survives a restore → re-persist hop that never calls `start()`. See [Snapshots](../snapshots/).
+A snapshot records each armed `after` timer's wall-clock deadline (`deadlines`, layout v4). After a static `from_snapshot()` restore the timer is dormant — `interp.has_dormant_timers` is `True` — until you pass `restart_timers=` (defaults to the value of `restart_services`): `True` / `"restart"` re-arms every dormant timer **from zero** on `start()`, `"resume"` re-arms the *remaining* time, and `"fire_due"` additionally fires matured timers during `start()`. `persisted()` defaults to `"resume"`. A timer that had already *fired* and was waiting in the priority lane is persisted and replays. An armed **delayed self-send** is persisted with its *remaining* delay (`scheduled_sends`, layout v4) and resumes where it would have been — and it survives a restore → re-persist hop that never calls `start()`. See [Snapshots](../snapshots/).
 
 ## 📡 Complete Example: Polling Machine
 
@@ -851,6 +921,7 @@ config = {
             "on": {
                 "EDIT": {
                     "target": "dirty",
+                    "reenter": True,
                     "actions": "updateContent",
                 },
             },
@@ -902,7 +973,7 @@ interp.send(
 print(interp.active_state_ids)
 # {'autoSave.dirty'}
 
-# Type more — this resets the 2-second debounce timer
+# Type more — reenter: True resets the 2-second debounce timer
 interp.send(
     {
         "type": "EDIT",
@@ -918,4 +989,4 @@ interp.stop()
 
 <div class="stately" data-machine="f363f37eac" data-height="320" data-title="autoSave"></div>
 
-The key insight: each `EDIT` event **re-enters** `dirty`, which resets the 2-second timer. The save only fires after the user stops typing for 2 full seconds. This is the classic debounce pattern, expressed declaratively.
+The key insight: each `EDIT` event **re-enters** `dirty` (`"reenter": true`), which resets the 2-second timer. The save only fires after the user stops typing for 2 full seconds. This is the classic debounce pattern, expressed declaratively.

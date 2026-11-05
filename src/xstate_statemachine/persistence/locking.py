@@ -41,6 +41,7 @@ import contextvars
 import inspect
 import time
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncIterator,
     Callable,
@@ -61,6 +62,10 @@ from ..models import MachineNode
 from ..patterns.retry import RetryPolicy
 from .helpers import _build, save_interpreter
 from .store import StateStore
+
+if TYPE_CHECKING:  # 📝 P-25: annotation-only, avoids an import cycle
+    from ..interpreter import Interpreter
+    from ..sync_interpreter import SyncInterpreter
 
 __all__ = [
     "LockStrategy",
@@ -323,6 +328,9 @@ def _cycle(
     """One create → act → persist → discard pass."""
     from ..sync_interpreter import SyncInterpreter
 
+    # 🛡️ P-14: materialise once -- a generator would be exhausted by
+    #    `_build` and `_mark_plugins` would then see nothing.
+    plugins = tuple(plugins)
     interp, version = _build(
         store,
         key,
@@ -338,8 +346,10 @@ def _cycle(
     interp.store_key = key  # #261: the instance identity for scoped plugins
     with _session(markers):
         before = interp.status
-        interp.start()
         try:
+            # 🛡️ P-14: `start()` is inside the cleanup scope so a failing
+            #    start discards buffered marks and stops the interpreter.
+            interp.start()
             _refuse_failed_start(interp, before)
             result = fn(interp)
             _save_with_marks(store, key, interp, expected(version), markers)
@@ -591,7 +601,10 @@ def _strategy(lock: Any) -> Any:
     instead of as an ``AttributeError`` deep inside the block."""
     if lock is None:
         return _DEFAULT_LOCK
-    if all(
+    # 🛡️ P-15: the CLASS (``lock=OptimisticLock``) has callable ``run`` /
+    #    ``acquire`` / ``fence`` attributes too, and then failed later with
+    #    a missing-``self`` TypeError; only an instance is a strategy.
+    if not isinstance(lock, type) and all(
         callable(getattr(lock, n, None)) for n in ("run", "acquire", "fence")
     ):
         return lock
@@ -682,7 +695,7 @@ def persisted(
     restart_timers: Any = DEFAULT_RESTART_TIMERS,
     verify_machine_hash: bool = True,
     expected_machine_hash: Optional[str] = None,
-) -> Iterator[Any]:
+) -> Iterator[SyncInterpreter[Any]]:
     """create → act → persist → discard as a ``with`` block (sync engine).
 
     ::
@@ -701,6 +714,7 @@ def persisted(
     from ..sync_interpreter import SyncInterpreter
 
     strategy = _strategy(lock)
+    plugins = tuple(plugins)  # 🛡️ P-14: iterated more than once below
     with _commit_scope(key=key), strategy.acquire(store, key):
         interp, version = _build(
             store,
@@ -723,8 +737,8 @@ def persisted(
         interp.store_key = key  # #261
         with _session(markers):
             before = interp.status
-            interp.start()
             try:
+                interp.start()  # 🛡️ P-14: inside the cleanup scope
                 _refuse_failed_start(interp, before)
                 yield interp
             except BaseException:
@@ -763,7 +777,7 @@ async def apersisted(
     verify_machine_hash: bool = True,
     expected_machine_hash: Optional[str] = None,
     settle_timeout: float = DEFAULT_SETTLE_TIMEOUT,
-) -> AsyncIterator[Any]:
+) -> AsyncIterator[Interpreter[Any]]:
     """Async twin of `persisted()`: yields a started `Interpreter`.
 
     *store* may be a sync `StateStore` or an `AsyncStateStore` (from
@@ -795,12 +809,23 @@ async def apersisted(
     owned = not _is_async_store(store)
     astore = as_async(store) if owned else store
 
-    async def _hold() -> Any:
-        if isinstance(strategy, PessimisticLock):
-            return astore.lock(key, timeout=strategy.timeout)
-        return contextlib.nullcontext()
+    plugins = tuple(plugins)  # 🛡️ P-14: iterated more than once below
+    # 🔥 P-02: only the built-in strategies can be driven asynchronously.
+    #    A custom strategy's `acquire()` used to be silently skipped here
+    #    (only its fence ran) -- "silent acceptance is a bug".
+    if not isinstance(strategy, (OptimisticLock, PessimisticLock, NoLock)):
+        from ..exceptions import NotSupportedError
 
-    lock_cm = await _hold()
+        raise NotSupportedError(
+            f"apersisted() cannot drive the custom lock strategy "
+            f"{type(strategy).__name__}: its acquire() would never run. "
+            f"Use persisted() in a worker thread, or a built-in "
+            f"OptimisticLock / PessimisticLock / NoLock."
+        )
+    if isinstance(strategy, PessimisticLock):
+        lock_cm: Any = astore.lock(key, timeout=strategy.timeout)
+    else:
+        lock_cm = contextlib.nullcontext()
     guards = _owned_adapter(astore, owned)
     async with guards, _commit_scope_async(key=key), _maybe_async(lock_cm):
         record = await astore.load(key)
@@ -832,8 +857,8 @@ async def apersisted(
         interp.store_key = key  # #261
         with _session(markers):
             before = interp.status
-            await interp.start()
             try:
+                await interp.start()  # 🛡️ P-14: inside the cleanup scope
                 _refuse_failed_start(interp, before)
                 yield interp
             except BaseException:

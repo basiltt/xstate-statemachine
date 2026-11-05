@@ -85,7 +85,7 @@ Returns an `invoke` service. On entry to the state it calls `task.apply_async(ar
 
 **Exiting the state** calls `AsyncResult.revoke(terminate=False)`, which is best effort. **`stop()`** (for example, the end of a `persisted()` block) only stops the watcher and never revokes.
 
-### `deliver_result(store, machine_for_key, key, invocation_id, task_id, *, result=None, error=None, lock=None, plugins=())`
+### `deliver_result(store, machine_for_key, key, invocation_id, task_id, *, result=None, error=None, lock=None, plugins=(), pending=None) -> bool`
 
 Completes an invocation on a persisted instance and saves it, retrying `ConflictError`. The header values count as **trusted only after this check**: the instance must exist, the invocation must still be active, and it must record `task_id`. Anything else is a stale completion: it is ignored, logged, and reported to `on_event_dropped(..., "stale_invocation")`. Returns whether the completion was applied.
 
@@ -229,7 +229,7 @@ The rest of `xstate_statemachine.contrib.celery.__all__`:
 
 | Celery | Python | Tested in CI |
 |:--|:--|:--|
-| 5.3 – latest | 3.9 – 3.14 | ✅ (eager + in-process worker; live broker opt-in) |
+| 5.3 – latest | 3.9 – 3.15 | ✅ (eager + in-process worker; live broker opt-in) |
 
 ## Troubleshooting
 

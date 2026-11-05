@@ -1,0 +1,156 @@
+{
+  "name": "parallel_entry_order",
+  "description": "Entering a parallel state through a deep target enters regions in document order, regardless of which region holds the target.",
+  "tags": [
+    "parallel",
+    "entry-exit-order",
+    "divergence-probe"
+  ],
+  "machine": {
+    "id": "m",
+    "initial": "idle",
+    "states": {
+      "idle": {
+        "on": {
+          "GO": "#m.p.first.f2"
+        }
+      },
+      "p": {
+        "type": "parallel",
+        "entry": "e_p",
+        "states": {
+          "first": {
+            "initial": "f1",
+            "entry": "e_first",
+            "states": {
+              "f1": {
+                "entry": "e_f1"
+              },
+              "f2": {
+                "entry": "e_f2"
+              }
+            }
+          },
+          "second": {
+            "initial": "s1",
+            "entry": "e_second",
+            "states": {
+              "s1": {
+                "entry": "e_s1"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "GO"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "m.idle"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.p.first.f2",
+            "m.p.second.s1"
+          ],
+          "context": {},
+          "actions": [
+            "e_p",
+            "e_first",
+            "e_f2",
+            "e_second",
+            "e_s1"
+          ],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "m.idle"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.p.first.f2",
+            "m.p.second.s1"
+          ],
+          "context": {},
+          "actions": [
+            "e_p",
+            "e_first",
+            "e_f2",
+            "e_second",
+            "e_s1"
+          ],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "499fb4b470e39aa5",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "m",
+        "machine_hash": "499fb4b470e39aa5",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "m.p.first.f2",
+          "m.p.second.s1"
+        ],
+        "value": {
+          "p": {
+            "first": "f2",
+            "second": "s1"
+          }
+        },
+        "configuration": [
+          "m",
+          "m.p",
+          "m.p.first",
+          "m.p.first.f2",
+          "m.p.second",
+          "m.p.second.s1"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"m\",\n  \"machine_hash\": \"499fb4b470e39aa5\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"m.p.first.f2\",\n    \"m.p.second.s1\"\n  ],\n  \"value\": {\n    \"p\": {\n      \"first\": \"f2\",\n      \"second\": \"s1\"\n    }\n  },\n  \"configuration\": [\n    \"m\",\n    \"m.p\",\n    \"m.p.first\",\n    \"m.p.first.f2\",\n    \"m.p.second\",\n    \"m.p.second.s1\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

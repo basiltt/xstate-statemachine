@@ -100,6 +100,11 @@ class _Subscribers:
         if not subs:
             return  # nobody listening: no sequence to advance, no state
         for body in bodies:
+            if not subs:
+                # 🔥 Review CW-31: the last subscriber was cut off mid-batch;
+                #    `unsubscribe` already dropped the sequence counter, and
+                #    writing it again would leak one int per topic.
+                break
             seq = self._seq.get(topic, 0) + 1
             self._seq[topic] = seq
             item = (seq, body)
@@ -185,4 +190,5 @@ class TimerPublisher:
                 return
 
     def discard_marks(self) -> None:
+        """Drop the buffered bodies (the save was refused or rolled back)."""
         self._pending.items = []

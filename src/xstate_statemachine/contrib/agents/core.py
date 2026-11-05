@@ -366,7 +366,8 @@ class _AgentLogic:
             #    would pin one of its few workers (and `asyncio.run` waits
             #    for that pool on exit, the very hang this removes). A
             #    daemon thread per call, abandoned on timeout, like
-            #    `ToolRegistry.call_sync`.
+            #    `ToolRegistry.call_sync` (and, since review CM-08, the
+            #    async `ToolRegistry._acall` for sync tools).
             resp = await _in_daemon_thread(self.model, messages, schemas)
         if inspect.isawaitable(resp):
             resp = await resp

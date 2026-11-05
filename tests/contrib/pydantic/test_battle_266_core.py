@@ -124,7 +124,9 @@ class TestParserShapes:
     @pytest.mark.parametrize(
         "path, value",
         [
-            ("states.a.on.BUMP.target", ["b"]),
+            # A list target is an XState v5 multi-target transition now;
+            # a non-string element is still a shape error in both layers.
+            ("states.a.on.BUMP.target", ["b", 7]),
             ("states.a.on.BUMP.target", 7),
             ("states.a.entry", {"type": 1}),
             ("states.a.entry", [{"type": None}]),

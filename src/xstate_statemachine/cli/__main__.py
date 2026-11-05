@@ -127,7 +127,13 @@ def _get_validated_json_paths(
 
         json_paths.append(
             chart_from_django_fsm(
-                args.from_django_fsm, args.fsm_field, args.output
+                args.from_django_fsm,
+                args.fsm_field,
+                args.output,
+                dry_run=bool(
+                    getattr(args, "check", False)
+                    or getattr(args, "diff", False)
+                ),
             )
         )
     if args.json_parent:
@@ -138,7 +144,14 @@ def _get_validated_json_paths(
 
     # 🛑 Validate that a child machine is not specified without a parent
     has_children = bool(args.json_child)
-    has_parent = bool(json_paths or args.json or args.json_files)
+    # 🔥 CLI-008: `json_paths` already contains the children, so testing it
+    #    made this check unreachable. Only a real parent source counts.
+    has_parent = bool(
+        args.json_parent
+        or args.json
+        or args.json_files
+        or getattr(args, "from_django_fsm", None)
+    )
     if has_children and not has_parent:
         err_msg = "--json-child requires a parent machine JSON."
         logger.error(f"❌ {err_msg}")
@@ -607,6 +620,8 @@ def _handle_interactive_hierarchy(
             selection = int(input("Enter number (or 0 for none): ").strip())
             if 1 <= selection <= len(machine_ids):
                 final_parent_path = json_paths[selection - 1]
+        except EOFError:
+            print("(no input: proceeding without hierarchy)")
         except (ValueError, IndexError):
             logger.warning(
                 "⚠️ Invalid selection. Proceeding without hierarchy."
@@ -859,9 +874,19 @@ def run_generation_workflow(
         and any(f.exists() for f in files_to_check)
     ):
         # Prompt the user for confirmation to overwrite existing files.
-        answer = (
-            input("File(s) already exist. Overwrite? [Y/n] ").strip().lower()
-        )
+        # 🔥 CLI-009: a closed stdin (CI) used to die with an EOFError
+        #    traceback. EOF is never consent to overwrite: refuse, and say
+        #    how to proceed.
+        try:
+            answer = (
+                input("File(s) already exist. Overwrite? [Y/n] ")
+                .strip()
+                .lower()
+            )
+        except EOFError:
+            parser.error(
+                "output file(s) exist and stdin is closed; pass --force"
+            )
         # If the user enters 'n' or 'no', abort the operation.
         # The default is 'yes', so pressing Enter will proceed.
         if answer in ("n", "no"):
@@ -961,6 +986,7 @@ def run_generation_workflow(
         logic_code=logic_code,
         template=template,
         strict=not getattr(args, "no_verify", False),
+        runner_code=runner_code,
     )
 
     logger.info("✅ Code generation complete.")
@@ -1052,6 +1078,7 @@ def _verify_or_refuse(
     logic_code: str,
     template: str,
     strict: bool,
+    runner_code: str = "",
 ) -> None:
     """Prove the generated code rebuilds the source machine, or refuse.
 
@@ -1086,6 +1113,16 @@ def _verify_or_refuse(
             configs[0], logic_code, template=template, strict=structural
         )
     )
+
+    # 🔥 CLI-004: the runner holds most of the quote/f-string interpolation,
+    #    so it must pass the same syntax gate as the logic module.
+    if runner_code:
+        problems.extend(
+            f"runner: {p}"
+            for p in verify_generated(
+                configs[0], runner_code, template=template, strict=False
+            )
+        )
 
     if problems:
         message = format_refusal(template, machine_id, problems)

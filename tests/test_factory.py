@@ -400,13 +400,15 @@ class TestFactory(unittest.TestCase):
         mock_action = lambda: "mock"  # noqa: E731
         explicit_logic = MachineLogic(actions={"factory_action": mock_action})
 
-        # 🚀 Act: Provide explicit logic AND discoverable sources.
-        machine = create_machine(
-            config=_FACTORY_MACHINE_CONFIG,
-            logic=explicit_logic,
-            logic_modules=[_TEST_FACTORY_LOGIC_MODULE_NAME],
-            logic_providers=[MyLogicProvider()],
-        )
+        # 🚀 Act: Provide explicit logic AND discoverable sources. RU-20:
+        #    the factory now SAYS that the modules/providers are ignored.
+        with self.assertWarnsRegex(UserWarning, "NOT scanned"):
+            machine = create_machine(
+                config=_FACTORY_MACHINE_CONFIG,
+                logic=explicit_logic,
+                logic_modules=[_TEST_FACTORY_LOGIC_MODULE_NAME],
+                logic_providers=[MyLogicProvider()],
+            )
 
         # ✅ Assert: The machine should use the explicit logic object and its action.
         # #92: machine-owned copy; the explicit callable is what runs.
@@ -568,19 +570,18 @@ class TestFactory(unittest.TestCase):
     # -------------------------------------------------------------------------
 
     def test_create_with_nonexistent_initial_state(self) -> None:
-        """Should create successfully even if 'initial' state does not exist."""
-        logger.info("🧪 Testing creation with a non-existent initial state.")
+        """An 'initial' naming no child is refused at build time (MOD-10).
+
+        📝 It used to build and fail only at ``start()``; XState's
+        ``createMachine`` refuses it up front, and so does this library.
+        """
         config = {
             "id": "test",
             "initial": "nonexistent",
             "states": {"idle": {}},
         }
-        # 🚀 Act: The factory's job is creation, not validation of this rule.
-        machine = create_machine(config)
-
-        # ✅ Assert: Machine is created, and the `initial` property is set as specified.
-        self.assertIsInstance(machine, MachineNode)
-        self.assertEqual(machine.initial, "nonexistent")
+        with self.assertRaisesRegex(InvalidConfigError, "nonexistent"):
+            create_machine(config)
 
     def test_create_with_parallel_state_config(self) -> None:
         """Should successfully create a machine with parallel states."""

@@ -16,18 +16,22 @@ flowchart TB
     subgraph build["🏗️ build time"]
         direction TB
         InvalidConfigError --- RootTargetError --- StateNotFoundError --- ImplementationMissingError --- NotSupportedError
+        NotSupportedError --- MissingExtraError
     end
     subgraph run["⚡ runtime"]
         direction TB
         UnhandledEventError --- UnknownEventError --- InvalidEventPayloadError --- InvalidEventError
         InvalidEventError --- TransitionFailedError --- RunawayChainError --- ActorSpawningError
-        ActorSpawningError --- WrongThreadError --- QueueOverflowError --- InterpreterStoppedError
-        InterpreterStoppedError --- ReentrantWaitError
+        ActorSpawningError --- UnresolvedTargetError --- WrongThreadError --- QueueOverflowError --- InterpreterStoppedError
+        InterpreterStoppedError --- ReentrantWaitError --- TransitionNotAllowedError
     end
     subgraph snap["💾 snapshots"]
         direction TB
         SnapshotVersionError --- SnapshotDriftError --- SnapshotCorruptError
         SnapshotCorruptError --- SnapshotMidStepError --- SnapshotSerializationError --- RestoredError
+        RestoredError --- MachineVersionMismatchError --- NoMigrationPathError
+        NoMigrationPathError --- StoreError --- ConflictError --- StoreUnavailableError
+        StoreUnavailableError --- LockTimeoutError --- SnapshotTooLargeError --- InvalidKeyError
     end
     linkStyle default stroke-width:0px
     linkStyle 0,1,2 stroke-width:1.5px
@@ -40,7 +44,11 @@ flowchart TB
 | `StateNotFoundError` | Target state ID doesn't exist |
 | `ImplementationMissingError` | Action/guard/service function not provided |
 | `NotSupportedError` | Feature not available in current mode (e.g. async action in `SyncInterpreter`) |
+| `MissingExtraError` | A `contrib` integration was used without its pip extra installed; the message names the install command. Also an `ImportError` |
+| `TransitionNotAllowedError` | A strict Pythonic `StateMachine` refused a declared event that no active state takes right now; the event is never dispatched |
+| `ExplorationLimitError` | `shortest_paths` found more configurations than `max_configs` (`found` carries the partial result) |
 | `ActorSpawningError` | Error creating a child actor machine |
+| `UnresolvedTargetError` | `sendTo` / `forwardTo` / `sendParent` / `escalate` named no live actor; the event was dropped and the step marked failed (subclass of `ActorSpawningError`) |
 | `UnhandledEventError` | Event matched no transition and `onUnhandled="error"` |
 | `UnknownEventError` | `strict=True` and the event type isn't declared anywhere |
 | `InvalidEventPayloadError` | Event payload failed its declared `event_schemas` validator |
@@ -56,6 +64,14 @@ flowchart TB
 | `SnapshotMidStepError` | `get_persisted_snapshot()` called while a macrostep is in flight — e.g. from inside an action (0.9.0) |
 | `SnapshotCorruptError` | Snapshot is structurally unusable: missing key, non-object `context`, unknown `status`, `running` with an empty configuration (0.9.0) |
 | `SnapshotSerializationError` | A pending event carries non-JSON-native data (`Decimal`, `datetime`) at `get_snapshot()` time (0.9.0) |
+| `MachineVersionMismatchError` | Restoring a snapshot written under a different machine `version` label with no migration; subclass of `SnapshotDriftError` (0.11.0) |
+| `NoMigrationPathError` | `SnapshotMigrator` has no chain of steps from the snapshot's version to the machine's (0.11.0) |
+| `StoreError` | Base of the snapshot-store errors below |
+| `ConflictError` | Optimistic-locking conflict: `save(expected_version=n)` found a different version in the store; nothing was written |
+| `StoreUnavailableError` | The store backend could not be reached; retryable, nothing was written |
+| `LockTimeoutError` | `store.lock(key, timeout=...)` could not acquire the lock in time; retryable |
+| `SnapshotTooLargeError` | A snapshot exceeds the store's `max_snapshot_bytes` (refused on save and on load) |
+| `InvalidKeyError` | A store key is empty, too long or otherwise unusable; also a `ValueError` |
 | `RestoredError` | Wraps an error message recovered from a persisted snapshot |
 | `RestoredChainError` | The restored `last_chain_error` (0.9.1): a `RestoredError` **and** a `RunawayChainError`, so a live-machine `isinstance` guard survives a restart |
 | `XStateMachineError` | The common base of every exception above — `except XStateMachineError` catches anything the library raises |
@@ -69,6 +85,7 @@ from xstate_statemachine import (
     StateNotFoundError,        # Bad transition target
     ImplementationMissingError,# Missing action/guard/service
     ActorSpawningError,        # Actor creation failed
+    UnresolvedTargetError,     # Addressed event reached no live actor
     NotSupportedError,         # Feature not supported in current mode
     UnhandledEventError,       # Unhandled event, onUnhandled="error"
     UnknownEventError,         # strict=True and event type is undeclared
@@ -679,7 +696,7 @@ restored = SyncInterpreter.from_snapshot(
 )
 ```
 
-See [Snapshots — Snapshot Envelope](snapshots/#snapshot-envelope) for the full migration pattern.
+See [Snapshots — Snapshot Envelope](../snapshots/#snapshot-envelope) for the full migration pattern.
 
 ---
 
@@ -865,7 +882,7 @@ machine = create_machine(config, logic=logic)
 xstate_statemachine.exceptions.NotSupportedError: Guard 'my_guard' must be synchronous (guards cannot be async)
 ```
 
-**Why it happens:** You defined a guard function with `async def`. Guards must be synchronous because they need to return a boolean immediately to decide whether a transition should proceed.
+**Why it happens:** You decorated a guard function with `@guard` and `async def`. Guards must be synchronous because they need to return a boolean immediately to decide whether a transition should proceed. (Only the decorator raises; an async callable registered through `MachineLogic(guards=...)` is not detected and would evaluate as a truthy coroutine, so never do that.)
 
 **How to fix it:**
 
@@ -1126,7 +1143,7 @@ def has_items(context, event):
 
 ### Guards Must Be Synchronous
 
-Guards cannot be `async def`. This is enforced by the library:
+Guards cannot be `async def`. The `@guard` decorator enforces this:
 
 ```python
 # This will raise NotSupportedError

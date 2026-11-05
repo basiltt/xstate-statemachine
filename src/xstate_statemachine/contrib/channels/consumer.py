@@ -82,9 +82,12 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):  # type: ignore[misc]  # A
         heartbeat_s: Ping interval; ``0`` disables it.
         context_serializer: ``(context) -> JSON``; context is NOT sent
             without it (X0.1).
+        max_frame_bytes: Largest inbound text frame accepted (default
+            64 KiB); larger frames get a 422 error frame.
     """
 
     model: Any = None
+    max_frame_bytes: int = 64 * 1024
     lookup_kwarg = "pk"
     heartbeat_s: float = 15.0
     context_serializer: Any = None
@@ -182,11 +185,14 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):  # type: ignore[misc]  # A
     async def disconnect(self, code: Any) -> None:
         """Stop the heartbeat task and leave the instance's channel group."""
         if self._beat is not None:
-            self._beat.cancel()
-            try:
-                await self._beat
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
+            beat = self._beat
+            beat.cancel()
+            # ⚠️ `asyncio.wait` does not re-raise the beat's own
+            #    CancelledError, so a cancellation aimed at THIS coroutine
+            #    still propagates (awaiting the task directly swallowed it).
+            await asyncio.wait([beat])
+            if not beat.cancelled() and beat.exception() is not None:
+                logger.debug("heartbeat ended with an error", exc_info=True)
             self._beat = None
         if self.group is not None:
             await self.channel_layer.group_discard(
@@ -252,6 +258,10 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):  # type: ignore[misc]  # A
         if text_data is None:
             await self._error(422, "Binary frames are not supported")
             return
+        if len(text_data) > self.max_frame_bytes:
+            # 🔐 Cap before JSON decoding and the DB-backed send.
+            await self._error(422, "Frame too large")
+            return
         try:
             content = await self.decode_json(text_data)
         except ValueError:
@@ -307,7 +317,11 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):  # type: ignore[misc]  # A
             return {"problem": _problem(403, "Forbidden", "PermissionDenied")}
         user = self.scope["user"]
         inst = self.instance
-        inst.refresh_from_db()
+        try:
+            inst.refresh_from_db()
+        except type(inst).DoesNotExist:
+            # 🔥 The row was deleted while sockets were subscribed.
+            return {"problem": _problem(404, "Not found", "DoesNotExist")}
         if etype not in declared_events(inst.statechart_machine_node()):
             return {
                 "problem": _problem(422, "Unknown event", "UnknownEventError")
@@ -318,6 +332,11 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):  # type: ignore[misc]  # A
             receipt = inst.send(etype, actor=user, payload=payload)
         except Exception as exc:  # noqa: BLE001 -- mapped, never leaked
             status, body = problem_for_exception(exc)
+            if status >= 500:
+                # 🔥 Class name to the client; full detail in the log.
+                logger.exception(
+                    "send %s on %r failed", etype, inst, exc_info=exc
+                )
             return {"problem": {**body, "status": status}}
         body = self._state(user)
         body["state_ids"] = sorted(receipt.state_ids)
@@ -358,7 +377,10 @@ class StatechartConsumer(AsyncJsonWebsocketConsumer):  # type: ignore[misc]  # A
             # 🔐 M2: re-authorise before every push.
             if not self._still_allowed():
                 return None
-            self.instance.refresh_from_db()
+            try:
+                self.instance.refresh_from_db()
+            except type(self.instance).DoesNotExist:
+                return None  # 🔥 row deleted: close like a lost grant
             return self._state(self.scope["user"])
 
         body = await database_sync_to_async(fresh)()

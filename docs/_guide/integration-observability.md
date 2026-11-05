@@ -158,7 +158,7 @@ The hygiene primitives the plugins share, exported for your own exporters.
 
 > **What this does:** observes every hook without changing behaviour — every plugin is wrapped by the engine's `_SafePlugin`, so an exporter that raises is reported via `on_plugin_error` and the machine keeps running. `instrument_all()` covers every interpreter constructed after the call, on both engines, including children and restores. The hot path pays for `on_event_processed` only when a plugin overrides it (all of these do, by design: it carries the outcome).
 >
-> **What this does not do:** configure an OTel SDK or exporter; retro-instrument interpreters that already exist; guarantee delivery of telemetry (exporters are best-effort); emit OTel messaging spans for brokers (those arrive with the EDA broker adapters). Per-event overhead was measured once, on a two-state chart (Windows, CPython 3.14): roughly 3× with `PrometheusPlugin`, 4–5× with `OpenTelemetryPlugin` (SDK, no exporter), about 40 % of it the engine's per-event receipt. It is not a budgeted benchmark; measure on your chart.
+> **What this does not do:** configure an OTel SDK or exporter; retro-instrument interpreters that already exist; guarantee delivery of telemetry (exporters are best-effort); emit OTel messaging spans for brokers (the broker adapters do not trace; carry `traceparent` in the envelope). Per-event overhead was measured once, on a two-state chart (Windows, CPython 3.14): roughly 3× with `PrometheusPlugin`, 4–5× with `OpenTelemetryPlugin` (SDK, no exporter), about 40 % of it the engine's per-event receipt. It is not a budgeted benchmark; measure on your chart.
 >
 > See the programme-wide [Guarantees](../guarantees/) and [Security](../security/) pages ([#303](https://github.com/basiltt/xstate-statemachine/issues/303)).
 
@@ -174,8 +174,8 @@ The hygiene primitives the plugins share, exported for your own exporters.
 
 | Package | Python | Tested in CI |
 |:--|:--|:--|
-| opentelemetry-api 1.20 – latest, prometheus-client 0.17 – latest | 3.9 – 3.14 | ✅ oldest on 3.9, newest on 3.13 ([compatibility](../compatibility/)) |
-| structlog / loguru / sentry-sdk (soft) | 3.9 – 3.14 | ✅ latest in the `observability` cell |
+| opentelemetry-api 1.20 – latest, prometheus-client 0.17 – latest | 3.9 – 3.15 | ✅ oldest on 3.9, newest on 3.13 ([compatibility](../compatibility/)) |
+| structlog / loguru / sentry-sdk (soft) | 3.9 – 3.15 | ✅ latest in the `observability` cell |
 
 ## Troubleshooting
 

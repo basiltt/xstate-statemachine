@@ -1,0 +1,158 @@
+{
+  "name": "invoke_in_parallel_region",
+  "description": "An invoke inside one region completes and drives that region to final; the other region keeps waiting; onDone of the parallel fires once both are final.",
+  "tags": [
+    "invoke",
+    "parallel",
+    "onDone"
+  ],
+  "machine": {
+    "id": "m",
+    "initial": "p",
+    "states": {
+      "p": {
+        "type": "parallel",
+        "onDone": "done",
+        "states": {
+          "fetch": {
+            "initial": "loading",
+            "states": {
+              "loading": {
+                "invoke": {
+                  "src": "load",
+                  "onDone": {
+                    "target": "ok",
+                    "actions": "gotData"
+                  }
+                }
+              },
+              "ok": {
+                "type": "final"
+              }
+            }
+          },
+          "confirm": {
+            "initial": "waiting",
+            "states": {
+              "waiting": {
+                "on": {
+                  "OK": "yes"
+                }
+              },
+              "yes": {
+                "type": "final"
+              }
+            }
+          }
+        }
+      },
+      "done": {
+        "type": "final"
+      }
+    }
+  },
+  "logic": {
+    "services": {
+      "load": {
+        "result": [
+          1,
+          2,
+          3
+        ]
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "OK"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "m.p.confirm.waiting",
+          "m.p.fetch.ok"
+        ],
+        "context": {},
+        "actions": [
+          "gotData"
+        ],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.done"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "done",
+          "output": null
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "m.p.confirm.waiting",
+          "m.p.fetch.ok"
+        ],
+        "context": {},
+        "actions": [
+          "gotData"
+        ],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.done"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "done",
+          "output": null
+        }
+      ],
+      "machine_hash": "649acfe88f5c8ccd",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "m",
+        "machine_hash": "649acfe88f5c8ccd",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "done",
+        "context": {},
+        "state_ids": [
+          "m.done"
+        ],
+        "value": "done",
+        "configuration": [
+          "m",
+          "m.done"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"m\",\n  \"machine_hash\": \"649acfe88f5c8ccd\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"done\",\n  \"context\": {},\n  \"state_ids\": [\n    \"m.done\"\n  ],\n  \"value\": \"done\",\n  \"configuration\": [\n    \"m\",\n    \"m.done\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

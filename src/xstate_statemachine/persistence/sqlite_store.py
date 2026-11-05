@@ -28,11 +28,13 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import math
 import os
 import sqlite3
 import threading
 import time
 import warnings
+import weakref
 from pathlib import Path
 from typing import (
     Any,
@@ -55,7 +57,7 @@ from ..exceptions import (
     StoreError,
 )
 from .deadline import Deadline, check_deadline_record
-from .store import BaseStore, check_record_fields
+from .store import BaseStore, StoreUnavailableOSError, check_record_fields
 
 __all__ = ["SQLiteStore", "SCHEMA_VERSION"]
 
@@ -111,6 +113,10 @@ _STATECHARTS_COLUMNS = frozenset(
 )
 
 
+#: 🔐 P-11: the only journal modes that keep crash safety.
+_JOURNAL_MODES = frozenset({"WAL", "DELETE"})
+
+
 def _is_locked_error(exc: sqlite3.OperationalError) -> bool:
     msg = str(exc).lower()
     return "locked" in msg or "busy" in msg
@@ -163,6 +169,26 @@ def _sqlite_errors_typed(fn: _F) -> _F:
     return cast(_F, wrapper)
 
 
+def sqlite_errors_typed_via_store(fn: _F) -> _F:
+    """`_sqlite_errors_typed` for helpers that own a ``_store``
+    (`SQLiteInbox`, `SQLiteLog`).
+
+    🛡️ P-13: their methods leaked bare `sqlite3.Error` (a duplicate seq,
+    ``database is full``, a non-lock `OperationalError`) past ``except
+    StoreError`` when used directly.
+    """
+
+    @functools.wraps(fn)
+    def wrapper(self: Any, *a: Any, **kw: Any) -> Any:
+        try:
+            return fn(self, *a, **kw)
+        except sqlite3.Error as exc:
+            key = a[0] if a and isinstance(a[0], str) else "<db>"
+            raise _typed(exc, key, self._store.busy_timeout) from exc
+
+    return cast(_F, wrapper)
+
+
 class SQLiteStore(BaseStore):
     """SQLite-backed store; one connection per thread; WAL mode.
 
@@ -188,6 +214,18 @@ class SQLiteStore(BaseStore):
         super().__init__(**kw)
         self.path = str(path)
         self.busy_timeout = float(busy_timeout)
+        # 🛡️ P-11: validate at the boundary. `journal_mode` is interpolated
+        #    into a PRAGMA, and OFF / MEMORY silently remove crash safety.
+        if not (math.isfinite(self.busy_timeout) and self.busy_timeout >= 0):
+            raise ValueError(
+                f"busy_timeout must be a finite number >= 0, "
+                f"got {busy_timeout!r}"
+            )
+        if str(journal_mode).upper() not in _JOURNAL_MODES:
+            raise ValueError(
+                f"journal_mode must be one of {sorted(_JOURNAL_MODES)}, "
+                f"got {journal_mode!r}"
+            )
         self._memory = self.path == ":memory:"
         if not self._memory and _looks_like_network_path(Path(self.path)):
             warnings.warn(
@@ -201,6 +239,15 @@ class SQLiteStore(BaseStore):
             journal_mode = "DELETE"
         self.journal_mode = journal_mode.upper()
         self._local = threading.local()
+        # 🔌 P-12: every thread's connection, so `close()` can close them
+        #    all. Entries are (owner thread weakref, connection); entries
+        #    whose thread has died are closed and pruned on the next
+        #    connect so short-lived threads do not leak handles.
+        self._conns: List[
+            Tuple["weakref.ref[threading.Thread]", sqlite3.Connection]
+        ] = []
+        self._conns_lock = threading.Lock()
+        self._generation = 0
         self._memory_conn: Optional[sqlite3.Connection] = None
         self._init_lock = threading.Lock()
         self._ensure_schema()
@@ -211,9 +258,16 @@ class SQLiteStore(BaseStore):
         #    -wal / -shm siblings (which inherit the umask otherwise) and
         #    the DB itself are never world-readable.
         if not self._memory and not os.path.exists(self.path):
-            Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-            fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
-            os.close(fd)
+            try:
+                Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+                fd = os.open(self.path, os.O_CREAT | os.O_RDWR, 0o600)
+                os.close(fd)
+            except OSError as exc:
+                # 🛡️ P-12: a read-only or missing parent is an
+                #    unavailable store, not a bare PermissionError.
+                raise StoreUnavailableOSError(
+                    f"SQLiteStore: cannot create {self.path!r}: {exc}"
+                ) from exc
         conn = sqlite3.connect(
             self.path,
             timeout=self.busy_timeout,
@@ -291,10 +345,31 @@ class SQLiteStore(BaseStore):
                 self._memory_conn = self._connect()
             return self._memory_conn
         conn = getattr(self._local, "conn", None)
-        if conn is None:
+        # 🔌 P-12: a `close()` from another thread bumps the generation;
+        #    this thread's handle is then closed and must be reopened.
+        if conn is None or getattr(self._local, "gen", None) != (
+            self._generation
+        ):
             conn = self._connect()
             self._local.conn = conn
+            self._local.gen = self._generation
+            self._register(conn)
         return conn
+
+    def _register(self, conn: sqlite3.Connection) -> None:
+        """Remember *conn* for `close()`; reap dead threads' handles."""
+        me = weakref.ref(threading.current_thread())
+        with self._conns_lock:
+            live = []
+            for owner, c in self._conns:
+                thread = owner()
+                if thread is None or not thread.is_alive():
+                    with contextlib.suppress(sqlite3.Error):
+                        c.close()
+                else:
+                    live.append((owner, c))
+            live.append((me, conn))
+            self._conns = live
 
     @_sqlite_errors_typed
     def _ensure_schema(self) -> None:
@@ -374,13 +449,26 @@ class SQLiteStore(BaseStore):
         self, key: str
     ) -> Optional[Tuple[str, int, str, float, Sequence[Deadline]]]:
         conn = self._conn()
-        row = conn.execute(
-            "SELECT snapshot, version, machine_version, updated_at "
-            "FROM statecharts WHERE key = ?",
-            (key,),
-        ).fetchone()
-        if row is None:
+        # 🔒 P-01: the record and its deadlines come from ONE statement, so
+        #    they are one WAL snapshot. As two autocommit SELECTs a writer
+        #    committing between them gave a version-(n+1) snapshot with
+        #    version-n deadlines -- timers fired twice or were lost. (A
+        #    single statement, not BEGIN/COMMIT: no transaction can be left
+        #    open by a failed read, and the snapshot blob is not repeated
+        #    per deadline as a JOIN would.) Pinned by
+        #    tests/persistence/test_review_fixes.py.
+        rows = conn.execute(
+            "SELECT 0, snapshot, version, machine_version, updated_at, "
+            "NULL, NULL, NULL, NULL, NULL FROM statecharts WHERE key = ? "
+            "UNION ALL "
+            "SELECT 1, NULL, NULL, NULL, NULL, state_id, entry_seq, "
+            "due_at_wall, delay_ms, event_type FROM deadlines WHERE key = ? "
+            "ORDER BY 1, 8",
+            (key, key),
+        ).fetchall()
+        if not rows or rows[0][0] != 0:
             return None
+        row = rows[0][1:5]
         # 🛡️ #303/#259 battle: a row another writer damaged (BLOB or
         #    non-UTF-8 snapshot, non-numeric version, NULL / text in a typed
         #    column -- SQLite's type affinity lets all of these in) is
@@ -389,11 +477,7 @@ class SQLiteStore(BaseStore):
             f"SQLiteStore row for {key!r}", row[0], row[1], row[2], row[3]
         )
         deadlines = []
-        for r in conn.execute(
-            "SELECT state_id, entry_seq, due_at_wall, delay_ms, event_type "
-            "FROM deadlines WHERE key = ? ORDER BY due_at_wall",
-            (key,),
-        ):
+        for r in rows[1:]:
             rec = dict(
                 zip(
                     (
@@ -403,7 +487,7 @@ class SQLiteStore(BaseStore):
                         "delay_ms",
                         "event_type",
                     ),
-                    r,
+                    r[5:],
                 )
             )
             problem = check_deadline_record(rec)
@@ -650,11 +734,21 @@ class SQLiteStore(BaseStore):
             return {"ok": False, "backend": self.backend, "error": str(exc)}
 
     def close(self) -> None:
-        """Close this thread's connection (and the shared memory one)."""
+        """Close every thread's connection (and the shared memory one).
+
+        A later call re-opens lazily, as before; connections made by other
+        threads used to leak (P-12).
+        """
         conn = getattr(self._local, "conn", None)
         if conn is not None:
             conn.close()
             self._local.conn = None
+        with self._conns_lock:
+            self._generation += 1
+            for _owner, c in self._conns:
+                with contextlib.suppress(sqlite3.Error):
+                    c.close()
+            self._conns = []
         if self._memory_conn is not None:
             self._memory_conn.close()
             self._memory_conn = None

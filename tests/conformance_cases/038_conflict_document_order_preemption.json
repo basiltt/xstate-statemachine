@@ -1,0 +1,170 @@
+{
+  "name": "conflict_document_order_preemption",
+  "description": "Two regions react to E in the same microstep. r1's transition targets r2's current state x (domain p), so its exit set covers r2's transition: the two conflict and the one selected first in document order wins (removeConflictingTransitions). r2's transition is dropped, x is exited and re-entered, and nothing runs twice.",
+  "tags": [
+    "parallel",
+    "conflict",
+    "microstep"
+  ],
+  "machine": {
+    "id": "m",
+    "initial": "p",
+    "states": {
+      "p": {
+        "type": "parallel",
+        "states": {
+          "r1": {
+            "initial": "a",
+            "states": {
+              "a": {
+                "entry": "e_a",
+                "exit": "x_a",
+                "on": {
+                  "E": {
+                    "target": "#m.p.r2.x",
+                    "actions": "t1"
+                  }
+                }
+              }
+            }
+          },
+          "r2": {
+            "initial": "x",
+            "states": {
+              "x": {
+                "entry": "e_x",
+                "exit": "x_x",
+                "on": {
+                  "E": {
+                    "target": "y",
+                    "actions": "t2"
+                  }
+                }
+              },
+              "y": {
+                "entry": "e_y"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "E"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "m.p.r1.a",
+          "m.p.r2.x"
+        ],
+        "context": {},
+        "actions": [
+          "e_a",
+          "e_x"
+        ],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.p.r1.a",
+            "m.p.r2.x"
+          ],
+          "context": {},
+          "actions": [
+            "x_x",
+            "x_a",
+            "t1",
+            "e_a",
+            "e_x"
+          ],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "m.p.r1.a",
+          "m.p.r2.x"
+        ],
+        "context": {},
+        "actions": [
+          "e_a",
+          "e_x"
+        ],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.p.r1.a",
+            "m.p.r2.x"
+          ],
+          "context": {},
+          "actions": [
+            "x_x",
+            "x_a",
+            "t1",
+            "e_a",
+            "e_x"
+          ],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "6671cd81c70aacf3",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "m",
+        "machine_hash": "6671cd81c70aacf3",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "m.p.r1.a",
+          "m.p.r2.x"
+        ],
+        "value": {
+          "p": {
+            "r1": "a",
+            "r2": "x"
+          }
+        },
+        "configuration": [
+          "m",
+          "m.p",
+          "m.p.r1",
+          "m.p.r1.a",
+          "m.p.r2",
+          "m.p.r2.x"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"m\",\n  \"machine_hash\": \"6671cd81c70aacf3\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"m.p.r1.a\",\n    \"m.p.r2.x\"\n  ],\n  \"value\": {\n    \"p\": {\n      \"r1\": \"a\",\n      \"r2\": \"x\"\n    }\n  },\n  \"configuration\": [\n    \"m\",\n    \"m.p\",\n    \"m.p.r1\",\n    \"m.p.r1.a\",\n    \"m.p.r2\",\n    \"m.p.r2.x\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

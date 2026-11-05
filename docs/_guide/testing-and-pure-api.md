@@ -72,6 +72,33 @@ resulting state, `get_next_snapshot()` returns the snapshot alone:
 print(get_next_snapshot(machine, snapshot, "GO").state_ids)   # {'fetch.done'}
 ```
 
+Likewise `get_initial_snapshot(machine, *, input=None)` returns just the starting
+snapshot (it is `initial_transition(machine, input=input)[0]`), which is the
+shortest way to get a starting point to branch from:
+
+```python
+from xstate_statemachine import create_machine, get_initial_snapshot
+
+machine = create_machine(
+    {
+        "id": "fetch",
+        "initial": "idle",
+        "states": {
+            "idle": {
+                "on": {
+                    "GO": "done",
+                },
+            },
+            "done": {
+                "type": "final",
+            },
+        },
+    }
+)
+start = get_initial_snapshot(machine)
+print(start.state_ids)  # {'fetch.idle'}
+```
+
 ### `PureSnapshot`
 
 | Member | Description |

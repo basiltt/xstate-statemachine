@@ -1,0 +1,178 @@
+{
+  "name": "ancestor_handler_and_payload",
+  "description": "An event handled only by an ancestor exits the whole subtree; an event with a payload reaches the handler of the deepest active state first.",
+  "tags": [
+    "hierarchy",
+    "events",
+    "payload"
+  ],
+  "machine": {
+    "id": "session",
+    "initial": "loggedOut",
+    "states": {
+      "loggedOut": {
+        "on": {
+          "LOGIN": "authenticated"
+        }
+      },
+      "authenticated": {
+        "initial": "browsing",
+        "on": {
+          "LOGOUT": "loggedOut"
+        },
+        "states": {
+          "browsing": {
+            "on": {
+              "CHECKOUT": {
+                "target": "paying",
+                "actions": "startCheckout"
+              }
+            }
+          },
+          "paying": {
+            "on": {
+              "LOGOUT": {
+                "target": "#session.loggedOut",
+                "actions": "abandonCart"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "LOGIN"
+    },
+    {
+      "send": {
+        "type": "CHECKOUT",
+        "items": 3
+      }
+    },
+    {
+      "send": "LOGOUT"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "session.loggedOut"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "session.authenticated.browsing"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "session.authenticated.paying"
+          ],
+          "context": {},
+          "actions": [
+            "startCheckout"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "session.loggedOut"
+          ],
+          "context": {},
+          "actions": [
+            "abandonCart"
+          ],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "session.loggedOut"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "session.authenticated.browsing"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "session.authenticated.paying"
+          ],
+          "context": {},
+          "actions": [
+            "startCheckout"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "session.loggedOut"
+          ],
+          "context": {},
+          "actions": [
+            "abandonCart"
+          ],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "4f0c7077aa84d65b",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "session",
+        "machine_hash": "4f0c7077aa84d65b",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "session.loggedOut"
+        ],
+        "value": "loggedOut",
+        "configuration": [
+          "session",
+          "session.loggedOut"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"session\",\n  \"machine_hash\": \"4f0c7077aa84d65b\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"session.loggedOut\"\n  ],\n  \"value\": \"loggedOut\",\n  \"configuration\": [\n    \"session\",\n    \"session.loggedOut\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

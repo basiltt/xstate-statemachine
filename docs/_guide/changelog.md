@@ -13,6 +13,1214 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.12.0] - 2026-11-05
+
+> **Behaviour changes in this release.** The statechart engine now
+> follows XState v5 where it used to differ, the Pythonic DSL gained an
+> instance façade, and a few things an existing chart or class relied
+> on behave differently. Read **Changed** before upgrading: the behaviour
+> changes there say who notices and how to migrate.
+
+### Added
+
+- **Pythonic DSL, second generation.** A `StateMachine` subclass is now a
+  running machine: `sm = Light()` starts it (sync engine), `sm.cycle()` /
+  `sm.send("CYCLE", amount=3)` send events and return the actions' return
+  values, and `sm.state`, `sm.configuration`, `sm.context`, `sm.status`,
+  `sm.can()`, `sm.matches()`, `sm.allowed_events`, `sm.green.is_active`
+  and a readable `repr()` answer the questions a caller has. The
+  recommended lifecycle idiom is `with Light() as sm:` / `async with
+  Light() as sm:` (stops on exit, exceptions included); for an instance
+  that outlives a block, `sm.interpreter.start()` / `sm.interpreter.stop()`
+  are the explicit escape hatch. `Light.create_machine()` is unchanged and
+  still returns the bare `MachineNode`.
+- **Events are named by the attribute**: `cycle = green.to(yellow)` is the
+  `CYCLE` event (`slow_down` → `SLOW_DOWN`); `event=` remains an override.
+  Transitions declared inside nested state classes are exposed as event
+  methods on the machine (`order.ship()`).
+- **Naming-convention hooks**: `on_enter_<state>`, `on_exit_<state>`,
+  `on_<event>`, `before_<event>`, `after_<event>` and the generic
+  `on_enter_state`, `on_exit_state`, `on_transition`, `before_transition`,
+  `after_transition`. A hook whose suffix matches no state or event logs
+  a warning instead of silently never running. `before_*` / `after_*`
+  need the instance façade (`create_machine()` warns when they exist)
+  and must be plain `def` (an `async def` hook is an `InvalidConfigError`).
+  Convention bindings and inferred event names are recorded per class,
+  never written into the `State` / `Transition` objects, so module-level
+  states can be shared between machines.
+- **Signature-based argument injection** for every class-based and
+  functional callback: declare only what you need (`context`, `event`,
+  `event_type`, `interpreter`, `action_def`, `error`, `data`, `input`,
+  `source`, `target`, `state`, any payload field, `**kwargs` for the rest).
+  The legacy positional shapes (`(interpreter, context, event,
+  action_def)`, `(context, event[, params])`, `(interpreter, context,
+  event)`) are detected by arity and keep working unchanged, a default in
+  the trailing slot (`params=None`, `a=None`) and extra defaulted
+  parameters after the shape (`level="info"`) included. A callback whose
+  arity matches a legacy shape is resolved by name only when it asks for
+  injection -- a default anywhere but that trailing slot, a keyword-only
+  parameter, `**kwargs` (which receives the payload fields once the call
+  is resolved by name), or a
+  parameter named like a field the event carries, a chart `params` key or
+  a hook's injected `state` -- and every parameter without a default can
+  then be supplied: `def can_pay(self, context, amount=0)`, and `def
+  can_pay(self, context, amount)` with an `amount` in the payload, are
+  injected; `def is_big(self, ctx, e, params=None)` and `def log_it(self,
+  i, ctx, e, a=None)` are positional, as are `def ok(self, c, e)` and
+  `def log_it(self, i, c, e, a)` even when the payload carries a key
+  named `e` or `a`. An engine name in another slot than its own (`params`
+  as an action's fourth parameter, `state` as a guard's first) always
+  switches the callback to by-name resolution. When a callback with no
+  engine name asks for injection and the payload names some of its
+  parameters but not a required one (`def fetch(self, url, retries=3,
+  timeout=10)` sent `retries=5` and no `url`), the missing one is a
+  `TypeError` that names it; otherwise the positional call happens as
+  before. Two ambiguities remain. A legacy callback whose non-engine
+  parameters without a default are all named like fields the event
+  carries is resolved by name: `def ok(self, ctx, e)` with `send("GO",
+  e=1)` binds `e=1` (a defaulted `a=None` then takes its default). And a
+  default on the event parameter of a legacy shape (`def ok(self, ctx,
+  e=None)`) asks for injection, so `e` is `None` whenever the event
+  carries no `e` field. Name such parameters `event` / `interpreter` /
+  `action_def` if your payloads can carry those keys, and keep the event
+  parameter without a default.
+- **`State.Compound` / `State.Parallel`** aliases for the nested-class
+  form, and nested classes now accept every `State(...)` keyword
+  (`after=`, `on_done=`, `history=`, `tags=`, `entry=`, `invoke=`, …).
+  A nested class is a valid transition source and target.
+- **`strict = True`** on a `StateMachine` refuses undeclared events
+  (`UnknownEventError`) and declared events that no active state will
+  take right now (new `TransitionNotAllowedError`), at the call site,
+  without dispatching or stopping the machine.
+- **Build-time logic validation**: instantiating a `StateMachine` raises
+  one `ImplementationMissingError` listing every guard, action and
+  service the chart names but no method implements, instead of one name
+  at a time at the first `send()`. `validate_logic = False` defers the
+  check to runtime; `create_machine(validate=True)` applies it to a bare
+  `MachineNode` (off by default there, because a chart without logic is
+  a legitimate static artifact for `to_json()`, diagrams and codegen).
+- `MachineNode.to_json(indent=None)` serialises the XState configuration
+  the machine was built from (raising `TypeError` on a value JSON cannot
+  represent rather than stringifying it). The Pythonic API guide had
+  advertised it since 0.5.0; it did not exist.
+- A subclass of a `StateMachine` subclass inherits its states,
+  transitions and callbacks; attributes it redefines win. Before, the
+  base's chart was silently dropped and the subclass compiled to an
+  empty machine.
+- `engine = "sync" | "async" | "auto"` on a `StateMachine`; `auto` picks
+  the asyncio `Interpreter` when any callback is `async def`. The façade
+  also accepts `clock=` (a `SimulatedClock` in tests) and `plugins=`.
+- **Services see the triggering event.** An invoked service's `input`
+  factory now receives the event whose transition entered the state
+  (XState's `input: ({context, event}) => ...`; it used to get `None`),
+  verified against xstate 5.33.3. A state that declares no `input` still
+  passes the service `{}` (XState passes `undefined`): forwarding the
+  payload implicitly would make the same Stately export behave
+  differently under this engine than under XState. To forward it, declare
+  it -- `"input": event_payload` (new, exported from the package root; the
+  JSON equivalent is `input: ({event}) => event`) or any
+  `lambda ctx, ev: ...` factory. `@state.service(input=event_payload, ...)`
+  is the class-DSL spelling, and argument injection of payload fields
+  into a service's parameters works through that declared input. Child
+  machines invoked as actors follow the same rule. Both engines.
+- **Plain methods satisfy string references by name.** `guard="can_pay"`
+  (or `"canPay"`) plus an undecorated `def can_pay(self, amount)` now
+  binds, as do `actions=["reserve"]` and `invoke={"src": "charge_card"}`
+  -- for names the chart references and no decorated callable already
+  provides, so helper methods are never swept in. The decorators remain
+  the explicit form and the only way to register under another name.
+- **`@state.service(on_done=..., on_error=..., id=..., input=...)`**
+  decorator on a `State`: the method becomes the service AND the state
+  gains the matching `invoke` entry, so the two cannot drift apart.
+- **`SyncInterpreter.from_state(machine, state, context=...)` /
+  `Interpreter.from_state(...)`** build an interpreter that is already in
+  a given state -- a dot path relative to the root (`"paid.packing"`),
+  an absolute id, or several for parallel regions -- without running
+  entry actions, exactly like a snapshot restore (it is one: a minimal
+  snapshot handed to `from_snapshot`, so the same legality checks
+  apply). A compound or parallel state completes to its initial leaves;
+  a top-level final state restores as `done`. `StateMachine(state=...)`
+  exposes the same on the façade. This is the "state string stored on a
+  model row" case that previously needed a hand-built `PureSnapshot`
+  with its ancestor set.
+- Docs: "Coming from python-statemachine" and "Coming from transitions"
+  migration guides, each with a concept map, a worked traffic-light port
+  (guard, nested state, `after` timeout) shown in the other library and
+  as an executable block in ours, and "what maps 1:1 / what differs /
+  what you gain" sections. Linked from the comparison pages and the
+  integrations journey.
+- Docs: `jekyll-sitemap` is enabled and `docs/robots.txt` points
+  crawlers at the sitemap.
+- `tests/test_battle_310_pythonic_dsl.py`: battle tests for the new
+  surface -- 200 concurrent async sends keep their results apart,
+  cross-thread `send_threadsafe` into a façade, hooks that raise, five
+  levels of nesting with deep history and a simulated-clock `after`,
+  same-named leaves at every level, snapshot round-trips of façade-built
+  machines, three-level inheritance, every callback signature shape in
+  one machine, a 200-state machine with the compiled-config cache, the
+  bounded result sink, and lifecycle misuse.
+
+### Changed
+
+**Behaviour changes.** The statechart algorithm now matches XState v5 in
+the places listed below, where it used to give a different answer. Each
+item was checked against xstate 5.33.3 by the conformance cases the Rust
+engine shares with this library. Both engines (`Interpreter` and
+`SyncInterpreter`) change together. Machines that never relied on the old
+answers are unaffected; tests that pin the order of entry or exit actions
+in parallel or nested charts may need their expected lists updated. The
+entries after the engine ones say what an existing Pythonic `StateMachine`
+class, a plugin or a `subscribe()` listener may notice.
+
+- **Exit actions run in reverse document order, one region at a time.**
+  When a transition leaves several states, they now exit in reverse
+  document order: descendants before their ancestors, and in a parallel
+  state the whole region declared last before the region declared above
+  it (for regions `zeta` then `alpha`: `a1`, `alpha`, `z1`, `zeta`).
+  Before, every leaf exited first and then every region, with ties broken
+  by how the state ids sort, so regions interleaved and renaming a state
+  could reorder cleanup. XState and SCXML define the exit order this way.
+  If one region's exit actions must run before another's, declare that
+  region later in the chart.
+- **States are entered in document order.** A transition's whole entry
+  set (the target, its ancestors and every default child) is computed
+  first and entered in the order the chart declares the states. A
+  transition into one region of a parallel state used to enter the
+  *other* regions first and the targeted region last (`e_p`, `e_second`,
+  `e_s1`, `e_first`, `e_f2`); it now runs `e_p`, `e_first`, `e_f2`,
+  `e_second`, `e_s1`, as XState and SCXML do. To make one region's entry
+  actions run before another's, declare it earlier.
+- **A transition into a sibling region resets the whole parallel state's
+  regions.** A transition whose target lies in another region of the same
+  parallel state (`#m.p.r2.d` from `m.p.r1.a`) has the parallel state as
+  its domain: every region exits (reverse document order) and every
+  region is entered again -- the targeted one through the target, the
+  others through their `initial` state. The parallel state itself is
+  neither exited nor re-entered. Before, only the targeted region exited
+  and re-entered, and the source region kept its state. This is the
+  XState v5 / SCXML transition domain (the least common ancestor, which
+  may be a parallel state). To move only the other region, handle the
+  event inside that region (every region sees every event, so
+  `r2.c: {on: {E: "d"}}` keeps `r1` untouched), or `raise` an event that
+  region handles.
+- **`reenter: true` re-enters the source even when the target is its
+  child.** A re-entering transition from `p` to its own child `.a` now
+  exits `p`'s active child and `p` itself, runs the transition actions,
+  then enters `p` and `a` again (`x_b`, `x_p`, `hard`, `e_p`, `e_a`).
+  Before, `reenter` only mattered for a transition targeting its own
+  source, and this one left `p` active (`x_b`, `hard`, `e_a`). In XState
+  v5 `reenter: true` moves the transition domain above the source, so the
+  source exits and re-enters whatever the target. A re-entering
+  transition declared on the machine root likewise runs the root's own
+  `exit` and `entry` actions. Drop `reenter: true` where the source's
+  `entry` / `exit` actions must not run again.
+- **Completing the machine runs the remaining exit actions.** When the
+  machine reaches a top-level final state, the `exit` actions of every
+  state still active -- the final state just entered and the machine root
+  included -- now run in reverse document order, after the final state's
+  `entry` actions and after `output` is resolved (`x_a`, `e_done`,
+  `x_done`, `x_root`). This also happens when `start()` lands directly on
+  a final state. Before, completion ran no further exit actions. XState
+  v5 does this as part of the step that completes the machine; the
+  configuration is unchanged (a done machine still reports its final
+  state). Cleanup that should run only on cancellation, not on normal
+  completion, belongs in an `exit` action of a non-final state, or check
+  the triggering event in the action.
+- **`"*"` and `"prefix.*"` also receive engine events.** Wildcard and
+  partial descriptors now match the events the engine generates
+  (`done.invoke.*`, `error.platform.*`, `after.*`, `done.state.*`), as
+  XState v5's descriptor matching does. A state's own `onDone`, `onError`
+  or `after` handler still outranks a `"*"` on the same state; a `"*"` on
+  a deeper state outranks an ancestor's handler, exactly as for ordinary
+  events. A service failure that only a `"*"` (or `"error.*"`) handler
+  catches is now consumed there and the machine keeps running; before,
+  the wildcard never saw it and the machine went to `status == "error"`.
+  If a catch-all handler should ignore engine events, give it a guard
+  that checks the event type (for example `lambda ctx, ev: not
+  ev.type.startswith(("done.", "error.", "after.", "xstate."))`), or
+  declare explicit `onDone` / `onError` handlers on the same state as the
+  wildcard or deeper -- a wildcard on a child state outranks an ancestor's
+  `onDone`, `onError` and `after`, so a child's `"*"` can keep a parent
+  from ever seeing its service's completion.
+- **Multi-target transitions are supported.** `target` may now be a list
+  of states that lie in different regions of one parallel state
+  (`"target": ["#m.p.r1.x", "#m.p.r2.y"]`); each region enters its
+  target instead of its `initial` state, in document order. Before, a
+  list target was rejected with `InvalidConfigError ... multi-target
+  lists are not supported`. XState v5 and SCXML allow exactly this
+  shape. Any other list -- two targets in one compound region, a target
+  and its own descendant, the same state twice, targets not under one
+  parallel state -- is still an `InvalidConfigError` at `create_machine`
+  (not downgradable by `strict_targets=False`); a one-element list is a
+  plain target. `TransitionDefinition.target_strs` (new) holds every
+  target and `resolved_targets` their resolved nodes; `target_str`,
+  `resolved_target`, the structural hash (`machine_hash`) and diagram
+  exports use the first target, so the hash of every chart that built
+  before is unchanged and matches the Rust engine. The `[pydantic]`
+  config gate and the published JSON schema accept a list of strings.
+- **The JSON `choose` action runs its first matching branch.** A
+  `{"type": "xstate.choose", "params": {"branches": [{"guard": ...,
+  "actions": ...}, ...]}}` action now evaluates its branches in order
+  and runs the actions of the first whose guard passes (a branch without
+  a guard always passes); branch guards may be composite (`and` / `or` /
+  `not`) or `stateIn`. Before, only the `params.conditions` spelling that
+  the `choose()` helper builds was read, so a JSON `choose` silently ran
+  no branch. This is how the XState translation of `choose`
+  (`enqueueActions` with `check`) and the Rust engine behave. The
+  `stateIn` guard also reads XState's own `params.stateValue` key (as
+  well as `state` / `value`); before, `{"type": "stateIn", "params":
+  {"stateValue": "#m.p.mode.night"}}` was always false. `choose()` and
+  `params.conditions` keep working unchanged, and `stub_logic()` /
+  `logic_names()` now include the action and guard names inside `choose`
+  branches.
+- **Transitions taken for one event form one microstep; conflicting ones
+  are dropped.** When several parallel regions take a transition for the
+  same event, every state any of them exits is now exited first (reverse
+  document order), then each transition's actions run (regions in document
+  order), then every state any of them enters is entered (`exitC`,
+  `exitA`, `left`, `right`, `enterB`, `enterD`). Before, each transition
+  ran its own exit, actions and entry before the next one started
+  (`exitA`, `left`, `enterB`, `exitC`, `right`, `enterD`). Two of those
+  transitions *conflict* when their exit sets overlap -- a region whose
+  transition targets another region exits every region -- and only one is
+  taken: the one selected first in document order, unless the later one's
+  source is a descendant of the earlier one's, in which case the more
+  deeply nested transition wins. Before, the second transition still ran
+  whenever its source was active again after the first one (for example
+  after the first transition had exited and re-entered it), and a parallel
+  state's own handler leaving the parallel state could still run after
+  its regions' transitions. This is XState v5's `removeConflictingTransitions` and
+  `microstep`. The transitions are also selected in document order of the
+  regions, not deepest-first. A rollback (`actionErrorPolicy`) undoes the
+  whole microstep, and `on_transition` fires once per transition taken,
+  after all of them, with the configuration before and after the step.
+- **`done.state.*` is an internal event.** When a final state completes
+  its compound (or parallel) parent, the generated `done.state.<id>` event
+  now goes onto the internal queue, like a `raise`, so the parent's
+  `onDone` transition is taken before any external event that is already
+  waiting. With `send_events(["FINISH", "NEXT"])` (or two `send()` calls
+  queued on the async engine before it runs), `FINISH` completes the
+  state, `onDone` runs, and `NEXT` is handled in the `onDone` target;
+  before, the done event was appended to the inbox behind `NEXT`, so
+  `NEXT` was handled in the completed state first. XState v5 raises it
+  into its `internalQueue`. A rollback (`actionErrorPolicy`) of the step
+  that entered the final state now also withdraws the done event it
+  queued, and on the async engine the event counts toward the
+  `maxIterations` chain budget like any other self-generated event.
+- **Guards are evaluated in XState's order, and only when needed.**
+  Transition selection now follows XState v5's `selectTransitions`: the
+  active tree is descended region by region (document order); in each
+  region the innermost active state's candidates are tried in order and
+  evaluation stops at the first enabled one; a state's own handlers are
+  consulted only when nothing below it matched, and a parallel state's
+  only when no region matched. Before, every active leaf walked up to the
+  root evaluating the guard of every matching transition on the way
+  (memoised per pass), so guards XState never evaluates ran -- an
+  ancestor's, or a later candidate's on the same state -- and a parallel
+  state's own targetless handler for an event ran next to a region's
+  transition for it. `always` transitions follow `selectEventlessTransitions`:
+  each active leaf walks up to its first enabled `always`, so a guard on an
+  `always` shared by N regions is evaluated N times per pass (XState's
+  count); before it was evaluated once and the pass then selected a second
+  time to execute. Guards with side effects and the `on_guard_evaluated`
+  hook see the new count and order; `can(event)` evaluates exactly what
+  `send(event)` would. `stub_logic()` takes a new `guard_log=` list that
+  records every guard evaluation.
+- **One `assign` computes every property against the context before it.**
+  `assign({"a": lambda args: args["context"]["b"], "b": 1})` now gives `a`
+  the *old* `b`: all property values (plain or callables of
+  `{context, event}`) are resolved first and then merged into the context,
+  as XState v5's `assign` does, so two keys can swap without a temporary.
+  Before, each property was written as soon as it was computed and later
+  callables of the same `assign` saw the earlier writes. Separate `assign`
+  actions are unchanged: they run in order (exit, transition, entry) and
+  each sees what the previous ones wrote. To derive a key from another
+  key's new value, split the `assign` in two or return the whole update
+  from one callable (`assign(lambda args: {...})`).
+- **A compound state targeting itself resets its children.** A transition
+  from a compound (or parallel) state `p` to `p` without `reenter` now
+  exits `p`'s active descendants, runs the transition's actions and
+  enters `p`'s `initial` child again (`x_b`, `t`, `e_a`); `p` itself is
+  neither exited nor entered, so its own `entry` / `exit` actions do not
+  run and its `after` timers keep running. Before, such a transition only
+  ran its actions and the active child stayed. This is XState v5's
+  transition domain (the source) and `computeEntrySet`. An atomic state
+  targeting itself is unchanged (actions only), and `reenter: true` still
+  exits and re-enters `p` as well. To keep the children where they are,
+  make the transition targetless (drop `target`).
+- **A JSON `assign` without the `assignment` wrapper updates the
+  context.** `{"type": "xstate.assign", "params": {"count": 1}}` (or
+  `"type": "assign"`) now assigns `count`; `params.assignment` is used
+  when present, otherwise `params` itself is the property mapping -- the
+  spellings the Rust engine and the XState translation of the dialect
+  accept. Before, only `{"params": {"assignment": {...}}}` (what `assign()`
+  builds) was read and the bare form was silently ignored, so the same
+  chart produced a different context on this engine. A chart that
+  relied on the bare form being a no-op should remove the action.
+- **`always` transitions are checked in the order their states were
+  entered.** After a step, the eventless pass now visits the active
+  innermost states in the order they were entered -- a state that stayed
+  active before one the step entered, states entered together in the
+  chart's order -- as XState v5's `selectEventlessTransitions` does (it
+  walks its snapshot's state list, to which a microstep appends what it
+  enters). Before, they were visited in document order. This changes the
+  order in which `always` guards run and, when `always` transitions of two
+  regions conflict, which one is taken: after region `r2` moved to `d` and
+  then `r1` moved to `b`, `d`'s transition now wins over `b`'s. A step that
+  re-enters exactly the states it left without recording history keeps
+  the previous order, and a restored snapshot (or a hand-built
+  `PureSnapshot`) starts in document order; snapshots produced by the pure
+  `transition()` carry the order to the next call. The snapshot format is
+  unchanged. If one region's `always` must win a conflict, make the guards
+  exclusive instead of relying on the order.
+- **History is recorded only when its owner is exited.** A history
+  node's state now remembers its active descendants only when that state
+  itself is exited, as XState v5 and SCXML (`exitStates`) do. Before, every
+  transition that exited any descendant of it recorded too, so after
+  `g1` → `g2` inside `s` and `g` → `k` (still inside `s`), a transition
+  from `k` to `s`'s deep history restored `g2`; it now enters the history
+  default (`s`'s `initial` chain, `g1`), because `s` was never left. Once
+  `s` is exited, its history is recorded and restored exactly as before.
+  Snapshots are unchanged in shape; one taken after such an inner
+  transition no longer carries the extra `history` entry. To resume an
+  inner state from inside the parent, target that state directly.
+- **An `always` transition that changes nothing runs once, not in a
+  loop.** After an eventless microstep that left the active states, the
+  recorded history, the context and the spawned actors as they were, the
+  `always` transitions are not selected again until an internal event has
+  been processed, as XState v5's `macrostep` does (it re-selects only when
+  the microstep produced a new snapshot). An `always` that targets its own
+  state -- atomic, with `reenter: true`, or compound (its children exit and
+  re-enter) -- or a targetless one with a plain action now runs its actions
+  once per step (once more per `raise`d or `done.state.*` event). Before,
+  it ran again and again until `maxIterations` tripped a
+  `RunawayChainError` on every step. An action that mutates `context` in
+  place counts as a change (Python's equivalent of `assign`), so a guarded
+  counting `always` still loops until its guard fails; an uncopyable
+  context is conservatively treated as changed.
+- **`done.state.*` reaches the states XState notifies, and only those.**
+  Entering a final state now raises `done.state.<parent>` for its compound
+  parent and then, walking up, `done.state.<p>` for every parallel state
+  `p` whose regions are all in final states (a history child is not a
+  region), in that order and whether or not the state declares `onDone`
+  -- XState v5's `enterStates`. Before, only the FIRST ancestor that had an
+  `onDone` and counted as "done" was notified, and a compound counted as
+  done when its active child did, recursively. So: when the last region of
+  a parallel state finishes, the region's `onDone` and the parallel
+  state's `onDone` now both run (before, only the region's); a compound
+  state whose child compound completes (`a` → `b` → final `f`) no longer
+  runs `onDone` (`b`'s runs, `a`'s does not, as in XState); a `done.state`
+  event without a handler reaches a `"*"` handler; and a machine whose root
+  is a parallel state completes when every region is final (before, it
+  stayed running). Plugin hooks and audit trails (the transition log,
+  the Django/DRF history) now also see the `done.state.*` event of every
+  region that finishes. To react to a nested completion higher up, put the
+  `onDone` on the state that owns the final child, or transition to a
+  final child of the outer state from there.
+- **A `StateMachine` instance owns a few attribute names.** A subclass is
+  now a running machine (see *Added*), so `status`, `state`, `context`,
+  `configuration`, `machine`, `interpreter` and `allowed_events` are
+  read-only properties of every instance. A class whose `__init__` or
+  methods assigned one of them on `self` -- `self.status = "fresh"` --
+  now raises `AttributeError`, also through `create_machine()`, which
+  still runs the user's `__init__`. Rename the attribute (`self._status`).
+- **Naming-convention hooks bind existing methods too.** An undecorated
+  method named `on_enter_<state>`, `on_exit_<state>`, `on_<event>`,
+  `on_transition`, `on_enter_state` or `on_exit_state` is now called by
+  the engine. A helper that carried such a name in an earlier release
+  runs once more per entry, exit or transition; one whose parameters
+  cannot be resolved raises inside the action list, which is logged as an
+  action error and skips the explicitly declared actions after it. Rename
+  the helper, or give it parameters the engine can inject.
+- **`internal: false` with a child target re-enters the source.**
+  `internal` is the XState v4 alias of `reenter` (`"internal": false`
+  means `reenter: true`), so the `reenter` change above applies to it: a
+  transition from `p` to its own child with `"internal": false` now exits
+  and re-enters `p` (its `exit` / `entry` actions run, its `after` timers
+  and invokes restart). Before, neither spelling re-entered for a child
+  target. XState v5 ignores `internal` altogether; drop the key where the
+  source must stay.
+- **`subscribe()` listeners are notified once per microstep.** When one
+  event takes transitions in several parallel regions, a subscriber now
+  sees one notification with the settled configuration instead of one per
+  region transition, each showing an intermediate configuration. Plugins'
+  `on_transition` still fires once per transition taken, after the whole
+  step (see the microstep entry above). Diff successive snapshots instead
+  of counting notifications.
+- **A declared falsy `input` reaches the service as declared.** An
+  `invoke` whose `input` is `0`, `""`, `[]` or `False` now passes that
+  value; before it was coerced to `{}`. Only an undeclared (or `null`)
+  `input` becomes `{}`.
+- **`xstate_statemachine.pythonic` re-exports only its own names.** With
+  the implementation moved to private modules (below), names the module
+  merely imported -- `MachineLogic`, `MachineNode`, `InvalidConfigError`,
+  `ActionCallable`, `GuardCallable`, `ServiceCallable` -- are no longer
+  importable from it, and neither is the private `_StateMachineMeta`
+  metaclass (now in `_pythonic_class`); import them from the package root
+  (`from xstate_statemachine import MachineLogic`) or their own modules.
+  Every documented DSL name is unchanged; the DSL classes' `__module__`
+  is now a private module (`xstate_statemachine._pythonic_core` for
+  `State` and `Transition`, `_pythonic_class` for `StateMachine`,
+  `_pythonic_builder` for `MachineBuilder`).
+
+- `State.to()` and `State.internal()` no longer raise when `event=` is
+  omitted; the event may be inferred from the attribute name. Compiling a
+  transition that still has no event (functional API, `build_machine()`)
+  raises `InvalidConfigError` at build time instead.
+- `send`, `state`, `configuration`, `context`, `status`, `can`, `matches`,
+  `allowed_events`, `machine`, `interpreter`, `engine`, `strict`,
+  `plugins`, `validate_logic` and the existing class settings are reserved
+  attribute names in a `StateMachine` body and raise `InvalidConfigError`
+  if used for a state or transition. `start` and `stop` are deliberately
+  not reserved -- timers and media players need those events and Stately
+  exports use them -- but the lifecycle always wins: a `stop` transition
+  stays in the chart (`sm.send("STOP")`) and gets no `sm.stop()` sugar,
+  and a warning is logged at class definition. Letting the event win
+  would have turned a documented shutdown call into a machine that keeps
+  running silently.
+- `import xstate_statemachine` is lighter: about 25-30% less import time
+  with warm bytecode and 47 fewer modules loaded. The graph algorithms
+  (`reachable_states`, `shortest_paths`, ...), the pure transition API
+  (`wait_for`, `get_next_snapshot`, ...), the testing utilities
+  (`stub_logic`, `logic_names`), the receipt codec and the file / SQLite /
+  async store backends are imported on first use (PEP 562 module
+  `__getattr__`). `__all__` and every `from xstate_statemachine import X`
+  are unchanged and type checkers still see every name. Those submodules
+  are no longer attributes of the package after a bare
+  `import xstate_statemachine` -- `xstate_statemachine.helpers.wait_for`
+  raises `AttributeError` until `xstate_statemachine.helpers` is
+  imported; import the name from the package root or import the
+  submodule explicitly. `hashlib` and
+  `uuid` are loaded only when a structure hash or an anonymous actor id
+  is first needed. `tests/test_import_time.py` pins which modules a bare
+  import may load.
+- Docs: the Quick Start is one recommended path -- a `StateMachine`
+  class run with `with Machine() as sm:` -- followed by "Also: load
+  XState JSON or design in Stately", "Choose your engine" and "Next
+  steps"; the older Python styles are kept in a compact section. Getting
+  Started leads with the class DSL.
+- `xstate_statemachine.pythonic` is now a thin public module; the
+  implementation moved to `_pythonic_core`, `_pythonic_builder`,
+  `_pythonic_class` and `_pythonic_runtime`. Every documented DSL name,
+  and the private compiler helpers the test suite imports, is re-exported
+  unchanged; the incidental imports listed in the entry above are not.
+
+**Pre-release review pass (behaviour changes).** A line-by-line
+review of the whole library ahead of 0.12.0 -- engine, config
+parsing, runtime utilities, Pythonic DSL, persistence, EDA and
+inspector, CLI and every contrib adapter -- changed the following
+behaviours. Each item is pinned by a regression test under
+`tests/test_review_fixes_*.py` (and the contrib / CLI / EDA /
+persistence equivalents).
+
+- **Engine:** exit actions now run before the state's invoked services and
+  child actors are stopped, as in XState v5 `exitStates`, so an exit action
+  can still `sendTo` its own invoke (both engines).
+- **Engine:** on `SyncInterpreter`, a non-blocking child's completion
+  (`onDone`/`onError`) and its `sendParent` ran the parent's step on the
+  child's pump thread, racing the owner thread. They are now delivered on the
+  owner's thread at its next `send()` or `tick()`. A parent-to-child `sendTo`
+  stays synchronous, serialised with the child's pump step.
+- **Config parsing:** a state `type` outside
+  `atomic`/`compound`/`parallel`/`final`/`history` (`"Final"`, `"paralel"`)
+  and a `compound`/`parallel` state with no child states now raise
+  `InvalidConfigError` naming the state and value. A mis-cased `final` used
+  to build an atomic state whose `onDone` never fired, and a misspelled
+  `parallel` built a compound state. An atomic, final or history state that
+  declares children is still built as compound, now with an accurate warning.
+- **Config parsing:** an invalid `history` value (`"dep"`) raises
+  `InvalidConfigError` instead of silently falling back to shallow history,
+  and a history state's default `target` must be a non-empty string.
+- **Config parsing:** the boolean flags `strict`, `strictTargets`,
+  `strictConfig` and the transition-level `reenter` and `internal` accept
+  only `true`/`false` (or null for 'not set'). They were read with `bool()`,
+  so `"strict": "false"` enabled strict mode and `"reenter": "false"` forced
+  a re-entry.
+- **Config parsing:** config errors from action, guard and transition parsing
+  name the state and key (`State 'm.a' entry: ...`, `Transition 'GO' on state
+  'm.a': invalid 'guard': ...`, `State 'm.a' on 'GO': invalid transition item
+  ...`) instead of the bare 'Guard must be a string or a dictionary'.
+- **Config parsing:** an action object without a `type` raises
+  `InvalidConfigError` (it used to become an action named "UnknownAction"),
+  and non-object `params` (`5`, a list) is `InvalidConfigError` rather than a
+  bare `TypeError`. Under `strictConfig`, unknown keys of action objects,
+  guard objects and a built-in's `params` (`"delya"`) are reported like other
+  unknown keys (a warning otherwise).
+- **Config parsing:** `maxIterations` must be a whole number >= 1 (0,
+  negatives, `2.9` and `true` were accepted or truncated) and
+  `spawnBlockingTimeout` must be a finite number >= 0 (`"nan"`, `"inf"` and
+  negatives were accepted).
+- **Config parsing:** an `initial` that names no child state now raises
+  `InvalidConfigError` at `create_machine()`, with a 'did you mean' hint,
+  matching XState's `createMachine`. It used to fail only at `start()`.
+- **Config parsing:** `after` keys must be whole, non-negative milliseconds
+  or a delay name. `1.5` was truncated to 1, `-5` and `true` were accepted,
+  and two keys that normalise to the same delay (`"100"` and `" 100"`)
+  silently overwrote each other. Numeric strings such as `"1e3"` are
+  normalised and the generated `after.<ms>.<state>` event uses the normalised
+  value.
+- **Config parsing:** invoke `id` and `systemId` must be non-empty strings,
+  `description` must be a string, child state keys must be non-empty strings,
+  an empty-string `target` is refused (it was a silent targetless
+  transition), and `entry`/`exit`/`actions` of `0`, `false` or `""` are
+  refused instead of meaning 'no actions'.
+- **Runtime utilities:** `register_global` raises `TypeError` for a class or
+  an object without any `on_*` hook instead of silently accepting it.
+  `ExplorationLimitError` is now defined in `exceptions` and exported from
+  the package root. `receipt_to_json` gained `include_messages=` and the
+  status lookup follows the error's MRO; `STATUS_NO_OP` is the new name of
+  `STATUS_NOT_MODIFIED_OK`. `SimulatedClock` gained typed `advance()` /
+  `advance_sync()`.
+- **Runtime utilities:** every `PluginBase` hook docstring now states its
+  engine, thread and what a plugin may do; `on_event_dropped` documents all
+  seven reasons (`EVENT_DROP_REASONS`). The package-level docstring example
+  now actually prints.
+- **Pythonic DSL:** `after_<event>` and `after_transition` hooks run once per
+  event, after its whole macrostep has settled. Before, they ran once per
+  microstep, so an eventless `always` follow-up ran them twice. A raising
+  hook is still contained and cannot veto the transition (now documented).
+- **Pythonic DSL:** `xstate_statemachine.pythonic.__all__` lists only public
+  names. The underscore helpers (`_compile_config`, `_snake_to_camel`, ...)
+  remain importable but no longer leak through `import *`.
+- **Persistence:** `fingerprint()` refuses payload values whose text form
+  embeds a memory address (previously a false `IdempotencyMismatchError` on
+  retry); `adopt.from_state_ids` raises `InvalidConfigError` for a non-JSON
+  context instead of stringifying it; `list_versions(limit=-1)` raises
+  `ValueError`; `persisted()`/`apersisted()` are typed to yield the
+  interpreter instead of `Any`.
+- **CLI:** `xsm coverage --json` writes `--fail-under` failure lines to
+  stderr, so redirected stdout stays one JSON document.
+- **Web adapters:** the operationId stability note now states exactly when
+  ids can change (a look-alike event name added later may renumber an
+  existing one).
+- **Django & SQLAlchemy:** `PermissionGuard(object_level=False,
+  fallback_global=False)` now raises ValueError instead of silently denying
+  every row; Django `signals` no longer imports Django's private `_make_id`.
+- **Engine:** `last_error` / `receipt.error` for a `sendTo`, `forwardTo`,
+  `sendParent` or `escalate` that reached no live actor now carry
+  `UnresolvedTargetError`, a new subclass of `ActorSpawningError` (which is
+  what the step reported before, although nothing was being spawned); `except
+  ActorSpawningError` handlers keep working.
+- **Runtime utilities:** `RealClock` and `SimulatedClock` gained
+  `pump_filtered(owner_filter)`, a pump restricted to one owner's deadlines;
+  `Clock.pump()` is unchanged.
+- **Factory:** `create_machine()` warns (`UserWarning`) when `logic` is
+  passed together with `logic_modules` / `logic_providers` -- the explicit
+  `logic` is used and the modules are not scanned, which used to happen
+  silently; `event_schemas` values must be callable or expose a callable
+  `validate()`, checked at build time instead of failing on the first
+  matching `send()`; the alias warnings (`storeUser` / `store_user`) now name
+  the caller's line, not a line inside the library.
+- **Performance.** Building a machine is about 25 % cheaper and starting an
+  interpreter about 20 % cheaper than in 0.11.0, with unchanged semantics:
+  the parser reads each node's and transition's keys in one pass, the
+  build-time validator consumes the parser's list of targeted transitions
+  instead of re-walking the finished tree, logic discovery skips its matching
+  indexes for a chart that names no logic, the async-shape and
+  parameter-count checks on user callables are memoised, `validation.walk()`
+  is iterative, and an idle `SyncInterpreter` is ~1.4 KB smaller (its mailbox
+  and finished-children queues are lists). A flat `send()` on the sync engine
+  pumps the clock once instead of twice, skips the reserved-keyword scan for
+  a plain string event and probes the `on_event_processed` hook once per
+  drain, and the microstep epilogue calls its subscriber, completion and
+  soft-error helpers only when there is something for them to do (both
+  engines); the pure transition API (`transition()`,
+  `get_next_snapshot()`) no longer normalises an event twice per step and
+  binds its recorder's imports once. The cross-library numbers in
+  `benchmarks/competitors/README.md` and on the home page were re-measured
+  on this release.
+
+### Fixed
+
+- Transitions declared inside a nested `class paid(State): ...` body were
+  silently dropped; children declared both as class attributes and in a
+  parent's `states=[...]` were compiled twice (once at the root); a nested
+  class used as a `.to()` target raised `AttributeError`.
+- Two states with the same name under different parents received each
+  other's transitions: the class-based compiler keyed transitions by bare
+  state name. They are keyed by the source state's path now.
+- `MachineNode.to_mermaid()` and `to_plantuml()` now draw what a
+  statechart diagram needs and previously omitted: delayed `after`
+  transitions (`created --> cancelled : after 100ms`, or `after TIMEOUT`
+  for named delays, with `[guard]` when guarded), a `--> [*]` end marker
+  on every `type: final` state (inside the parent's block for nested
+  finals), and the `--` divider between the regions of a `type: parallel`
+  state. `invoke` `onDone` / `onError` edges are drawn too (`invoke
+  onDone`, `invoke onError`), and eventless `always` edges carry an
+  `always` label (plus `[guard]`) instead of an empty one. Existing `on`
+  / `onDone` edges are unchanged.
+- A three-argument legacy guard `(context, event, params)` on a
+  transition that declares no `params` received two arguments and raised
+  `TypeError` (evaluating as `False`); it now receives `params=None`.
+- A strict `StateMachine` façade refuses a send to a finished or stopped
+  machine with `InterpreterStoppedError` instead of a silent drop.
+- Docs: Getting Started showed a four-command `xsm --help` (the CLI has
+  24) and a project tree of modules that do not exist (`machine.py`,
+  `snapshot.py`, `plugin.py`, `diagram_exporter.py`); both now match the
+  shipped CLI and `src/`. Supported-Python ranges on the integration
+  pages read 3.9 - 3.14 and now read 3.9 - 3.15. The site search index
+  had a missing object boundary that dropped the "vs python-statemachine"
+  entry (it appeared under the Step Functions title).
+- `State(entry="name")`, `State(exit="name")` and `.to(..., actions="name")`
+  with a bare string were iterated character by character into nonsense
+  action names. A string is one action, as in XState JSON.
+- The Pythonic API guide's `storeError` example read the deprecated
+  `event.data` on an error event; it now reads `event.error`. The
+  hierarchical guide's `FormWizard` referenced a service and an action it
+  never implemented.
+
+**Pre-release review pass.** The same review fixed the following
+defects; each has a regression test.
+
+- **Engine:** every alternative of a state-level `onDone` list is now a
+  transition candidate on both engines, so a failing guard falls through to
+  the next entry (the config-parsing fix above kept them all; the engines
+  used to read only the first).
+- **Engine:** on `SyncInterpreter`, a non-blocking child that shares its
+  parent's `SimulatedClock` fired the PARENT's due deadlines from its own
+  pump thread. Such a child now pumps only the deadlines it owns; the
+  parent's fire on the parent's next `send()` / `tick()`.
+- **Engine:** an initial `context` holding an uncopyable handle (a
+  `threading.Lock`, a DB session) made every interpreter construction raise
+  `TypeError` from `copy.deepcopy`, through `create_machine` and the class
+  façade alike. The copy now falls back to a shallow one, sharing the handle,
+  and logs a warning; a `context` factory gives each interpreter its own.
+- **Runtime utilities:** auto-discovery skipped `@staticmethod`s on a logic
+  provider, never bound a user function named like a built-in action (`log`,
+  `cancel`, `stop`, ...) even though user actions win over built-ins in an
+  explicit `MachineLogic`, and demanded an ACTION implementation for a
+  `spawn_<key>` inside an invoke's `onDone` / `onError`. Static methods are
+  discovered; a built-in-named function DEFINED in a scanned module (not
+  merely imported there) or implemented by a provider is bound and wins;
+  spawn actions route to `services[<key>]` everywhere.
+- **Pydantic:** `validate_machine_json` names the nesting cap on
+  pydantic-core 2.50.4 and later too: its error type for a chart that
+  out-nests the validator changed from `recursion_loop` to
+  `recursion_depth_exceeded`, which the gate reported as a raw 200-segment
+  "Recursion error" path instead of the named limit.
+- **Django & SQLAlchemy:** a management command that the CLI refused
+  (`xsm_diagram -o` / `xsm_docs -o` into an unwritable path, a chart that
+  does not load) raised `CommandError("exit status 1")` and left the reason
+  in the command's stdout. The error now repeats the CLI's own message
+  (`exit status 1: cannot write ...: FileNotFoundError: ...`), and the
+  write-failure messages name the exception class.
+- **Engine:** an action that failed inside `choose`, `pure` or
+  `enqueueActions` ignored `actionErrorPolicy`. Under `rollback`/`fail` the
+  transition committed with partial context and `last_transition_ok` stayed
+  True. Nested failures now roll back or stop the machine exactly like
+  top-level ones (both engines).
+- **Engine:** an entry action that failed on a top-level final state under
+  `actionErrorPolicy: rollback`/`fail` left the machine reporting `status ==
+  "done"` with the configuration rolled back and its children already torn
+  down. Completion is now applied only when the microstep commits: a rollback
+  keeps the machine running, and `fail` stops it (both engines).
+- **Engine:** on `SyncInterpreter`, a `raise` inside an initial-state
+  `always` transition was processed in the middle of the start-up microstep
+  and lost, so `start()` ended in a different state than the async engine.
+  The settle now runs behind the re-entrancy guard, so the raised event runs
+  after the microstep, as on the async engine and as when the same `always`
+  is reached by an event.
+- **Engine:** `subscribe()` listeners were never notified for targetless
+  (actions-only) transitions, so a counter's `assign` never reached a UI
+  bound through `subscribe()`. They are now notified once per such microstep
+  (both engines).
+- **Engine:** `has_dormant_timers` reported False as soon as any restored
+  timer was re-armed, even when another parallel region's restored timer was
+  still dormant. It now checks each state, and a timer that fired but whose
+  guard refused the transition is not reported as dormant.
+- **Engine:** restoring a snapshot did not pass `minimum_version`,
+  `expected_machine_hash` or `plugins` to child actors, so a nested child
+  record could declare `version: 0` to skip the drift check, and child
+  restore refusals never reached `on_invalid_event`.
+- **Engine:** `restart_timers="resume"`/`"fire_due"` raised
+  `StateNotFoundError` for an orphaned deadline only after it had armed some
+  timers and discarded every parked deadline. It now refuses before arming
+  anything, so the records survive for a retry or a re-persist.
+- **Engine:** `send("")` was accepted and treated as the engine's internal
+  eventless sentinel. It now raises `InvalidEventError`, as the dict form
+  already did.
+- **Engine:** keyword payload passed with an `Event` object
+  (`send(Event("X"), source="retry")`), or with an `__xstate_event__` adapter
+  that returns an Event, was silently dropped. It is now merged into the
+  event's payload; for an engine event, which cannot be annotated,
+  `InvalidEventError` is raised.
+- **Engine:** an `assign` function returning something other than a mapping
+  (a list, a model object) was silently ignored. It is now an action error
+  handled by `actionErrorPolicy`. Returning `None` remains an explicit no-op,
+  and any Mapping is merged.
+- **Engine:** `sendParent` and `escalate` on a machine without a parent
+  dropped the event with only a log line. Like an unresolved `sendTo`, they
+  now fire `on_event_dropped("unresolved_target")` and mark the step failed
+  (both engines).
+- **Engine:** an inline delay callable that raised escaped out of state
+  entry, whereas a named one was contained. Both are now contained. A delay
+  of `True`, NaN, infinity or a non-number is now rejected with an error log
+  on every path (`after`, delayed `raise`, delayed `sendTo`), not just
+  `after`.
+- **Engine:** a snapshot's `taken_at` used `time.time()` instead of the
+  clock's `wall_now()`, so with `SimulatedClock(wall_start=...)` it did not
+  line up with the snapshot's persisted deadlines.
+- **Engine:** on `SyncInterpreter`, events still queued after the machine
+  reached a final state or was stopped by an action kept being processed,
+  running user actions on a finished machine. The drain now stops at the
+  terminal status, and stranded events are reported via `on_event_dropped`.
+- **Engine:** `SyncInterpreter.stop(drain=True)` called from inside an action
+  did nothing. It now finishes the events queued in the current drain and
+  then stops the machine.
+- **Engine:** events in the internal queue at `stop()`, and inbox or
+  priority-lane events left behind when the async machine completed or
+  failed, were discarded without `on_event_dropped`. Every stranded event is
+  now reported, on both engines.
+- **Engine:** on `SyncInterpreter`, a `send_threadsafe()` event that raised
+  while being drained aborted the owner's unrelated `send()`, losing the rest
+  of the mailbox batch and the owner's own event. The error is now logged and
+  recorded on `last_error`, and draining continues.
+- **Engine:** on `SyncInterpreter` with a `RealClock`, a non-blocking child's
+  pump thread fired the parent's `after` timers and delayed sends off the
+  parent's thread. Each such child now has its own deadline heap.
+- **Engine:** on `SyncInterpreter`, a blocking spawn (`spawn_blocking_*`) of
+  a child driven by `after` timers always waited the full
+  `spawnBlockingTimeout` and returned with the child unfinished. The waiting
+  thread now drives the child's timers and returns as soon as the child
+  finishes.
+- **Engine:** on the async `Interpreter`, an action registered as an object
+  with `async def __call__`, or a plain function returning a coroutine, never
+  ran and the step reported success. Such actions are now awaited. On
+  `SyncInterpreter`, a returned coroutine raises `NotSupportedError` like any
+  async action.
+- **Engine:** the async `send_events()` ignored `OverflowPolicy.BLOCK`
+  (raising `QueueOverflowError` instead of waiting), the owning-thread check
+  and the self-send routing. It now applies everything `send()` does to each
+  event.
+- **Engine:** a non-`Exception` `BaseException` escaping the async run loop
+  set `status = "stopped"` directly. That skipped teardown (leaking services
+  and child actors) and left `send(wait=True)` awaiters hanging. The machine
+  now enters `status == "error"`, fails pending receipts, fires `on_error`
+  and tears down.
+- **Engine:** a failed `start()` left the async machine "stopped" without
+  releasing what the partial entry had armed, and left the sync machine
+  "running" on a half-entered configuration. Both engines now end "stopped"
+  and tear down.
+- **Engine:** `SyncInterpreter` fired no
+  `on_service_start`/`on_service_done`/`on_service_error` hooks for invoked
+  child machines. On both engines, an unhandled failure while bringing up an
+  invoked child (for example, a raising `input` resolver) left the parent
+  running instead of failing it.
+- **Engine:** `SyncInterpreter.send_events()` ran `send_threadsafe()` events
+  and already-due timers after the batch instead of before it, as `send()`
+  does. `drain_pending()` now also returns events still waiting in the
+  mailbox.
+- **Engine:** re-starting a restored async interpreter in `done` or `error`
+  status fired `on_interpreter_start` every time; it now fires once.
+- **Engine:** a delayed `sendTo` to another actor on the async engine
+  reported a failed delivery only as "Task exception was never retrieved". It
+  is now tracked and logged.
+- **Engine:** after an `actionErrorPolicy` rollback, the remembered `history`
+  from the undone transition was kept (and could be persisted), and timers
+  and invokes were re-armed in an unpredictable order. History is now
+  restored, and re-arming follows document order.
+- **Engine:** `sendTo("kid")` from inside an actor named `kid` matched that
+  actor's own grandchildren, and a child keyed `parent` could shadow the real
+  parent.
+- **Config parsing:** building a machine with an `invoke` no longer
+  configures the host application's ROOT logger. `InvokeDefinition` used the
+  module-level `logging.debug` and `logging.warning` helpers, which call
+  `logging.basicConfig()` and so attached a stderr handler and made the
+  application's own later `basicConfig(level=...)` a no-op. It now logs
+  through the library's `xstate_statemachine.models` logger, on both engines.
+- **Config parsing:** a state-level `onDone` given as a LIST of guarded
+  transitions kept only the first entry. Every alternative is now parsed
+  (`StateNode.on_done_transitions`), validated and auto-discovered, so a
+  failing guard falls through to the next alternative as in XState v5.
+  `StateNode.on_done` remains the first one.
+- **Config parsing:** a user action named like a built-in (`cancel`, `stop`,
+  `log`, `emit`, ...) and given its own `params` was rejected at
+  `create_machine()` with the built-in's 'missing required param' error,
+  although user actions resolve before built-ins. The built-in params check,
+  and the `strictConfig` params check, now skip names the machine's logic
+  implements (both engines).
+- **Config parsing:** restoring a snapshot that holds a pending engine
+  completion (`done`/`error`/`after`) emitted a `DeprecationWarning` about
+  `events.engine_*`, or raised under `-W error`. The restore path now uses
+  the private minters.
+- **Config parsing:** `MachineNode.get_state_by_id()` found nothing when the
+  machine id or a state key contained a dot (`"my.machine"`, `"v1.0"`), and a
+  miss now logs at DEBUG instead of WARNING.
+- **Config parsing:** a state with a dotted custom `id` (`"my.id"`) could not
+  be targeted as `#my.id` or `#my.id.child`. The resolver now matches the
+  longest dotted prefix, as it already did for the machine id. Failed
+  resolution probes also no longer log at ERROR, so one bad target no longer
+  produces four ERROR lines before its `InvalidConfigError`.
+- **Config parsing:** `restore_event` accepted an unknown `kind` as user
+  traffic and a non-object `payload` as-is, and raised a bare
+  `TypeError`/`ValueError` for a system payload holding an `event_type` key
+  or a non-numeric timer timestamp. All of these are now
+  `SnapshotCorruptError` or restore correctly.
+- **Runtime utilities:** `Clock.pump()` / `SimulatedClock.increment()`
+  dropped every other due timer when one callback raised, and fired a timer
+  that an earlier callback in the same batch had just cleared. Each timer is
+  now re-checked before it runs, an error no longer loses the rest of the
+  batch (the first error is re-raised afterwards), and
+  `increment`/`set`/`fire_until`/`set_timeout` reject NaN and infinity. Both
+  engines.
+- **Runtime utilities:** the pure transition API (`get_next_snapshot`,
+  `transition`, ...) kept every machine alive forever through its probe
+  cache; machines are now garbage collected. `transition()` also no longer
+  revives a done/error snapshot: it is returned unchanged with no actions.
+- **Runtime utilities:** `wait_for_sync` spun until timeout (or forever with
+  `timeout=None`) on a stopped or finished machine; both waiters now raise
+  `WaitTerminatedError` (a `TimeoutError` subclass with `.status`), and
+  `wait_for` no longer evaluates the predicate twice per poll. `to_promise`
+  raises `XStateMachineError` for an error status with no recorded error.
+- **Runtime utilities:** most library exceptions with structured constructor
+  arguments (`UnhandledEventError`, `SnapshotVersionError`, `ConflictError`,
+  `ReceiptError`, ...) could not be pickled, which broke `multiprocessing`,
+  `concurrent.futures` and Celery; they now round-trip.
+- **Runtime utilities:** `redact()` / `LoggingInspector` crashed on
+  namedtuples and self-referencing contexts, and over-redacted ordinary keys
+  such as `shipping`, `company`, `author`, `spinner` (short entries like
+  `pin`, `pan`, `otp`, `card`, `auth` now match whole words of the key).
+  Exception reprs and `done` output in the inspector now pass through the
+  redactor; free-text messages and tracebacks remain unredacted (documented).
+- **Runtime utilities:** `TaskManager.cancel_by_owner` could orphan a task
+  added during its await and never pruned empty owner entries; the async
+  engine is affected.
+- **Runtime utilities:** `from_iterator` logged a false 'blocked inside
+  next()' warning for healthy streams on the async engine, and `send_back` to
+  a stopped interpreter was lost silently on some paths; it now logs at DEBUG
+  and fires `on_event_dropped(..., "stopped")`.
+- **Runtime utilities:** `logic_names(config)` and `logic_names(machine)`
+  disagreed for composite guards, and `spawn_<key>` was reported as an
+  action; both forms now agree and report spawn keys as services.
+- **Pythonic DSL:** a plain (undecorated) `async def` method bound by name as
+  a guard is now refused with `NotSupportedError` when the machine is built.
+  Before, the un-awaited coroutine was truthy, so the guard let every
+  transition through, with only a RuntimeWarning (class-based `StateMachine`,
+  both engines).
+- **Pythonic DSL:** `engine="auto"` now selects the asyncio engine when a
+  plain `async def` action or service is bound by name (`actions=["do_it"]`).
+  Before, only decorated callbacks were counted, the sync engine was chosen,
+  and the action never ran.
+- **Pythonic DSL:** a decorated callback named like a facade member (`@action
+  def send`, `can`, `context`, ...) or like a lifecycle method (`start`,
+  `stop`) now raises `InvalidConfigError` when the class is defined. Before,
+  it silently replaced the facade method, so `sm.send("GO")` ran the user's
+  action.
+- **Pythonic DSL:** a state named `start` or `stop` no longer breaks
+  `sm.start()` / `sm.stop()`. The state stays in the chart, the lifecycle
+  methods keep their meaning, and a warning is logged, as for transitions of
+  those names. Before, `sm.stop()` raised `TypeError: 'BoundState' object is
+  not callable`.
+- **Pythonic DSL:** event names inferred from transition attributes keep
+  SCREAMING_SNAKE names and acronyms intact: `START_NOW = a.to(b)` is
+  `START_NOW` (was `S_T_A_R_T__N_O_W`), and `HTTPError` is `HTTP_ERROR`.
+- **Pythonic DSL:** `internal=True` combined with a target now raises
+  `InvalidConfigError` in
+  `State.to`/`transition()`/`MachineBuilder.transition`. Before, the target
+  was dropped silently. `transition()` now accepts `target=None` for internal
+  transitions.
+- **Pythonic DSL:** `before_<event>` / `after_<event>` hooks now run for
+  events declared only in `State(on={...})` dicts. Before, they were reported
+  as 'will never run' and indeed never ran. An `on_<event>` hook for such an
+  event now warns that it cannot attach.
+- **Pythonic DSL:** a nested state class that inherits states or transitions
+  from another nested state class now raises `InvalidConfigError`. Before, it
+  silently compiled to an empty atomic state.
+- **Pythonic DSL:** the functional API (`build_machine`) now raises
+  `InvalidConfigError` for a callable decorated as one kind but passed as
+  another (a `@guard` in `actions=[...]`), for two callables registered under
+  the same name (also on `StateMachine` classes), and for a nameless callable
+  such as a `functools.partial`. A `partial` with an explicit `_xsm_name` is
+  now accepted instead of raising `AttributeError`. Before, these cases were
+  silently mis-filed or overwritten.
+- **Pythonic DSL:** `@action` / `@guard` / `@service` reject non-string or
+  empty names, and refuse to re-mark a function as a different kind.
+  `@action()` with no name now uses the function name instead of registering
+  `None`.
+- **Pythonic DSL:** a transition source or target `State` that is not part of
+  the tree but shares its name with several states in it now raises
+  `InvalidConfigError` listing the candidates. Before, it bound to whichever
+  state was registered last.
+- **Pythonic DSL:** `MachineBuilder.state(always=...)` no longer adds a `""`
+  key to the caller's `on` dict. `history=` combined with `final`/`parallel`,
+  or a history value other than `shallow`/`deep`, now raises.
+  `child_states(initial=..., parallel=True)` raises instead of dropping
+  `initial`, a second `child_states` call merges its children instead of
+  replacing them, and `root()` refuses `id`/`states`/`initial`.
+- **Pythonic DSL:** `StateMachine(state="b")` no longer logs the misleading
+  "Lookup will fail" warning for a relative path.
+- **Persistence:** `SQLiteStore.load()` read a record and its durable
+  deadlines in two separate statements, so a concurrent save could return a
+  snapshot with another version's deadlines (timers firing twice or lost).
+  Both now come from one statement. Both engines.
+- **Persistence:** `apersisted()` silently skipped the `acquire()` of any
+  custom lock strategy (only the fence ran). It now raises
+  `NotSupportedError` for strategies other than `OptimisticLock`,
+  `PessimisticLock` and `NoLock`.
+- **Persistence:** `IdempotencyPlugin` admitted an event with no
+  deduplication when the key function, principal callable or `instance_key`
+  raised; it now refuses the event.
+- **Persistence:** `IdempotencyPlugin.flush_marks()` stopped at the first
+  failing inbox write and left later claims in flight; it now attempts every
+  mark and re-raises the first error.
+- **Persistence:** a snapshot whose `pending_events`/`deferred` lane was not
+  a list raised a bare `TypeError` from `from_snapshot`; it now raises
+  `SnapshotCorruptError`. A fractional snapshot `version` (1.9) is rejected
+  instead of truncated.
+- **Persistence:** `Deadline.remaining_ms()` raised `OverflowError` for a
+  huge finite `due_at_wall`; it now clamps.
+- **Persistence:** `FileStore` leaked bare `OSError` from temp-file creation,
+  delete, listing, lock-file open and directory creation (now store errors
+  that remain `OSError` subclasses where they were before);
+  `delete()`/`forget()` take the key lock so a concurrent save cannot
+  resurrect a deleted record; `list_keys()` no longer advertises files
+  `load()` would reject; saves fsync the directory on POSIX.
+- **Persistence:** `MemoryStore.forget()` discarded a lock that was still
+  held, letting a second holder in.
+- **Persistence:** `SQLiteStore` accepted any `journal_mode` (now WAL or
+  DELETE) and any `busy_timeout` (now finite and >= 0); file-creation errors
+  are store errors; `close()` closes every thread's connection.
+- **Persistence:** `SQLiteInbox` and `SQLiteLog` leaked raw `sqlite3` errors;
+  they are now `StoreError`.
+- **Persistence:** `persisted()`/`apersisted()` exhausted a generator passed
+  as `plugins` (marks never flushed) and did not clean up when `start()`
+  raised.
+- **Persistence:** `load_interpreter` ignored restore options on a new key;
+  unknown options now raise `TypeError` and `expected_machine_hash` is
+  checked against the machine. `check_identity` no longer ignores
+  `expected_machine_hash` when `verify_machine_hash=False`.
+- **Persistence:** `DueTimerScanner.last_result` raised `AttributeError`
+  before the first scan, and an invalid `lock=` (e.g. the class) was only
+  reported on every tick; both now fail or initialise at construction.
+  `run_forever(0)` is rejected.
+- **Persistence:** `TransitionLogPlugin` kept references to events the engine
+  dropped; `JSONLinesLog.append` no longer re-validates a stale sequence
+  cache.
+- **EDA & inspector:** `replay_dead_letter` no longer replays a dead letter
+  whose stored data was redacted at capture (it would have sent `"***"` to
+  the machine and marked the record resolved); it raises `ReplayRefusedError`
+  unless `force=True`. Both engines.
+- **EDA & inspector:** `SseSink.close()` no longer hangs on a stalled client
+  with a full queue, and `SseSink.send()` encodes a message before recording
+  it, so an unencodable message leaves no half-recorded history entry.
+- **EDA & inspector:** `SseSink('::1')` now binds an IPv6 loopback address
+  instead of failing with a name-resolution error.
+- **EDA & inspector:** one corrupt row in the SQLite outbox no longer stalls
+  every later row; it is logged and parked, and the relay carries on.
+- **EDA & inspector:** `OutboxRelay.relay_once` and the broker helpers now
+  await any awaitable (Future, Task) returned by `publish`, instead of
+  marking the row sent for a lost publish.
+- **EDA & inspector:** a state-store outage raised inside a machine run is
+  requeued without counting an attempt, rather than dead-lettered as poison
+  after `max_attempts`; a down dead-letter store no longer double-counts the
+  attempt.
+- **EDA & inspector:** `Envelope.to_json` refuses NaN/Infinity
+  (`EnvelopeCorruptError`) instead of writing JSON that every consumer
+  rejects.
+- **EDA & inspector:** `OutboxPlugin` validates `meta.publish` when the
+  interpreter starts and logs a warning when a requested `data` field is
+  missing from the context; `drain()` and `BrokerDeadLetterSink.flush()`
+  await every pending publish and log each failure.
+- **EDA & inspector:** `InspectorPlugin` no longer fails on a non-dict
+  context; `read_jsonl` reports an absurdly deep recording line as
+  `ValueError` instead of crashing with `RecursionError`; `OutboxRelay`
+  rejects `batch < 1`.
+- **CLI:** `xsm generate-template` (typed, pytest, class-json, function-json
+  and every pythonic template) no longer writes machine-supplied event,
+  action, guard, service or actor names into docstrings and comments
+  unescaped. A hostile machine JSON could inject top-level code into the
+  generated module. These strings now go through the same sanitiser as
+  machine ids.
+- **CLI:** the generated runner is now syntax-checked before anything is
+  written, and `escape_for_string` escapes newlines, carriage returns and
+  Unicode line separators. An event name containing a line break used to
+  produce a runner that raised SyntaxError while the CLI exited 0; it is now
+  refused with exit 1.
+- **CLI:** `xsm docs -o DIR` and `xsm diagram -o DIR` no longer build the
+  output file name from the raw machine id. An id such as `../escaped` could
+  write outside DIR. Names are sanitised, and a failed write is reported
+  instead of a traceback.
+- **CLI:** function-json and class-json logic stubs no longer shadow names
+  the generated module itself binds. A service named `time`, `logging` or
+  `logger`, or an action named `Event`, used to replace the import and break
+  at run time. Such names now get a numeric suffix.
+- **CLI:** `--json-child` without a parent machine is now rejected, and
+  `--json-parent` given twice (including `--json-parent=a --json-parent=b`)
+  is a usage error. `--sleep-time` rejects negative values.
+- **CLI:** when the output files already exist and stdin is closed (CI), `xsm
+  generate-template` now exits with 'pass --force' instead of an EOFError
+  traceback. A closed stdin is never treated as consent to overwrite.
+- **CLI:** the generated class-json and function-json hierarchy runners
+  (`-jp`/`-jc`) now bind the same logic to the child machines. Children with
+  actions, guards or services previously raised ImplementationMissingError.
+  The pythonic hierarchy runners are not yet fixed.
+- **CLI:** post-processing no longer strips `from __future__ import
+  annotations` from generated modules.
+- **CLI:** transitions with a list-valued `target` (multi-target) are now
+  reported by name as unsupported by the code generator, instead of surfacing
+  as an unexplained 'on differs' refusal.
+- **CLI:** `xsm validate` and the other commands built on the shared analyser
+  report an unreadable or non-UTF-8 file, and an unexpected machine shape, as
+  findings instead of a Python traceback.
+- **CLI:** in the interactive simulator, the `t` key no longer crashes on
+  machines whose timers use named delays, and `c` rejects nan, inf and
+  negative values.
+- **CLI:** the interactive launcher now shows the message of a failed
+  command, and `simulate`/pytest-scaffold generation restore the previous
+  logging state instead of re-enabling all logging.
+- **CLI:** `xsm update --json` prints a single JSON document, and version
+  parsing handles `rc` + `.dev` and `.post` releases.
+- **CLI:** `xsm gt --check/--diff --from-django-fsm` no longer writes the
+  extracted chart into the output directory.
+- **Web adapters:** a StatechartRegistry resident whose chart reached a final
+  state was never saved when it was evicted, released or shut down; the
+  completing transition was lost. It is now persisted (async engine).
+- **Web adapters:** with create_if_missing=False, the FastAPI router and
+  Litestar controller answered 404 for a missing key and 403 for an existing
+  one to an unauthorised caller, which let anyone enumerate instance keys.
+  Authorization now runs first, so both answer 403 (Starlette registry
+  send_event).
+- **Web adapters:** Flask and Quart accepted a malformed or over-long
+  Idempotency-Key header and silently ignored the key when no inbox was
+  configured. They now answer 400 and 501, as the Starlette stack does.
+- **Web adapters:** a client-supplied idempotency_key in the JSON body (HTTP
+  and WebSocket, all adapters) bypassed the header validation. It is now
+  refused with 422; the key comes only from the Idempotency-Key header.
+- **Web adapters:** a GET on an unknown key through Flask or Quart started a
+  real interpreter and ran the initial state's entry actions. It now reports
+  the initial state without running anything.
+- **Web adapters:** Quart GET /history returned raw event payloads and
+  ignored after/limit. It now omits payloads and validates the bounds like
+  Flask (negative values are 400 on both).
+- **Web adapters:** Litestar get_interpreter hung a sibling dependency for
+  the same key when an anonymous caller's principal check failed. The request
+  now answers 401 (Litestar).
+- **Web adapters:** a deeply nested JSON body or WebSocket frame raised
+  RecursionError and produced a 500 (or tore down the WebSocket). It is now a
+  422 or an error frame (Starlette, FastAPI, Litestar, Flask, Quart).
+- **Web adapters:** Quart 5xx problem responses were not logged, so operators
+  had no traceback. They are logged like the Flask ones.
+- **Web adapters:** Quart SSE parked one default-executor thread per
+  connected client for each heartbeat interval; it now waits on an asyncio
+  event.
+- **Web adapters:** Quart body reads were unbounded for chunked requests and
+  had no timeout. Over-limit is now 413 and a stalled body is 408; Litestar
+  routes now also honour body_timeout_s (408).
+- **Web adapters:** the Flask SSE fan-out kept sequence counters for every
+  key ever used and silently dropped events for a slow client. It now keeps
+  state only while someone listens and cuts a lagging client off so it
+  reconnects to a fresh snapshot.
+- **Web adapters:** SSE and WebSocket streams read the snapshot before
+  subscribing, so a transition committed in between was lost. They now
+  subscribe first (a transition may appear in both the snapshot and the
+  stream, never in neither).
+- **Web adapters:** Flask GET /<id>/history with a negative after or limit
+  answered 500; it is now 400.
+- **Web adapters:** an event sent to a finished instance through Flask or
+  Quart answered 500 (now 409), and an oversized snapshot through the
+  Starlette stack answered 500 (now 413).
+- **Web adapters:** numeric registry options (scanner_interval_s,
+  drain_timeout_s, resident_idle_ttl_s, settle_timeout, max_body_bytes; Flask
+  heartbeat_s and max_body_bytes) are validated at construction instead of
+  busy-spinning or refusing every request.
+- **Web adapters:** Flask and Quart act() called from your own view gave a
+  500 for an anonymous caller; it is now 401.
+- **Web adapters:** the Origin check compared host names case-sensitively and
+  had two diverging copies; there is one shared rule now.
+- **Web adapters:** the flask xsm CLI turned sys.exit() into exit code 1 and
+  dropped sys.exit('message'); it now follows Python's convention.
+- **Web adapters:** events whose names are unsafe in a URL path (a slash,
+  braces, `?`, `#`, `%`, a tab or a line break; a plain space is fine and is
+  served percent-encoded) now fail the FastAPI router and Litestar controller
+  build with a clear ValueError instead of producing an unreachable route.
+- **Web adapters:** instrument_app deduplicates by registry identity and
+  mounts the health and ready probes ahead of any catch-all mount; unexpected
+  5xx in the generated routes are now logged with a traceback.
+- **Django & SQLAlchemy:** a Django model whose `statechart_machine` /
+  `statechart_logic` was a dotted string naming a callable that takes the row
+  was resolved once with `row=None` and cached for the life of the process;
+  it is now resolved per row (zero-argument factories stay cached). Django.
+- **Django & SQLAlchemy:** `StatechartModelMixin` with a prebuilt
+  `MachineNode` plus module/provider `statechart_logic` silently dropped the
+  logic; it is now rebound by rebuilding from the node's source config. The
+  SQLAlchemy mixin now raises TypeError when `__xsm_machine__` /
+  `__xsm_logic__` do not yield a MachineNode / MachineLogic.
+- **Django & SQLAlchemy:** the DRF `history/` route returned HTTP 500 for
+  non-integer user primary keys (UUID/str); the actor is now rendered as a
+  string (integers unchanged).
+- **Django & SQLAlchemy:** unexpected exceptions in the DRF send route and
+  the Channels consumer returned a class-name-only 500 but were never logged;
+  the full traceback is now logged server-side.
+- **Django & SQLAlchemy:** `DjangoStore` classified any message containing
+  'locked' or 'busy' as lock contention (a missing table named
+  `locked_orders` looked retryable); it now uses the anchored classifier
+  already used by `send()`.
+- **Django & SQLAlchemy:** `AsyncSQLAlchemyStore.save/load/delete/forget`
+  leaked raw driver errors on lock contention and, with
+  `create_tables=False`, never verified the schema; both now match
+  `SQLAlchemyStore` (LockTimeoutError; missing/newer schema refused).
+- **Django & SQLAlchemy:** `FSMDualWriteMixin` wrote the legacy FSM column
+  from the receipt, which missed engine steps of the same send (done.state,
+  eventless chains); it now uses the written snapshot.
+- **Django & SQLAlchemy:** a wide parallel chart overflowing the
+  `<name>_state` column now raises a clear ValidationError naming
+  `state_max_length` on every backend (no migration change).
+- **Django & SQLAlchemy:** the Django admin `render_change_form` read `obj`
+  from the wrong positional index; a bulk action no longer aborts the batch
+  on one row's unexpected error (the row counts as failed, is logged, and
+  error receipts are no longer counted as denied).
+- **Django & SQLAlchemy:** `SQLAlchemyMixin.send` now accepts `payload=` like
+  the Django mixin, and exports `RESERVED_PAYLOAD_KEYS` / `reserved_keys` for
+  web adapters.
+- **Django & SQLAlchemy:** concurrent first saves in `DjangoStore` and the
+  SQLAlchemy store could raise a raw IntegrityError; the loser now retries as
+  an UPDATE.
+- **Django & SQLAlchemy:** `xsm_deadlines --forever` never refreshed stale DB
+  connections and exited on the first transient DatabaseError; it now
+  recycles connections and retries after logging.
+- **Django & SQLAlchemy:** SQLAlchemy `ModelStore.forget()` left the snapshot
+  (and any personal data in context) in the business row; it now nulls the
+  snapshot and sibling columns and bumps the version, as the Django model
+  store does. Malformed keys in both model stores now mean 'not found'
+  instead of ValueError / ValidationError.
+- **Django & SQLAlchemy:** the Channels consumer survived a deleted row (404
+  problem / close 1008) instead of dropping the socket, refuses inbound
+  frames over `max_frame_bytes` (64 KiB), and no longer swallows a
+  cancellation of `disconnect` itself.
+- **Messaging & agents:** `RedisStore.list_keys` (sync and async) advertised
+  keys whose snapshot had expired through `ttl_s`, and the key index grew
+  without bound; expired members are now pruned and no longer listed.
+- **Messaging & agents:** the RabbitMQ broker stopped consuming for good
+  after a failed ack (for example a stale delivery tag after a reconnect),
+  because its un-acked counter never recovered; the counter is now released
+  even when the ack raises.
+- **Messaging & agents:** a broker `ack()` or `nack(requeue=False)` that
+  failed in the transport left the delivery un-retriable; it can now be
+  retried. Redis Streams also no longer hides an entry from its own consumer
+  after a failed XACK. Sync and async brokers.
+- **Messaging & agents:** `PydanticCodec` rejected contexts carrying
+  library-private `_xsm_*` keys when the model used `extra="forbid"`,
+  skipping typed normalisation on every save.
+- **Messaging & agents:** the pydantic config gate accepted lax values such
+  as "false" for a transition's `internal` / `reenter`, which the engine
+  reads with `bool()` as the opposite; these flags are now strict booleans.
+- **Agents:** a NaN/inf/garbage usage block made `ModelResponse.to_dict`
+  raise and the turn was retried; it now fails closed on the budget. The
+  global `BudgetPlugin` likewise counted invalid child usage as zero and now
+  treats it as exhausting the budget.
+- **Agents:** tools taking `datetime`, `Decimal`, `UUID` or enum parameters
+  could never be called from JSON arguments because validation was strict
+  python-mode; arguments are now validated as JSON. Synchronous tools under
+  the async engine now run on a daemon thread so a hung tool cannot block
+  shutdown.
+- **Messaging & agents:** `RedisStore` errors no longer include `str(exc)`
+  for connection-class failures (host:port, possible credentials), only the
+  exception class name; a server reply (`ResponseError`) keeps its text,
+  minus any URL and any echoed command arguments, so the cause stays
+  readable; a `prefix` made only of colons is rejected.
+
 ## [0.11.0] - 2026-10-13
 
 ### Added

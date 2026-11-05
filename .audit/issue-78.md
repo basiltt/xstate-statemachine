@@ -144,4 +144,3 @@ Independently verified on 2026-09-17.
 
 ---
 Found while re-verifying the 0.8.0 release against the adoption-readiness checklist in #26. Self-contained repro attached in the body; exits 1 while the defect is present, 0 once fixed.
-

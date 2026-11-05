@@ -15,13 +15,14 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, NoReturn, Optional
 
 __all__ = ["chart_from_django_fsm"]
 
 
-def _fail(msg: str) -> None:
+def _fail(msg: str) -> NoReturn:
     from .commands import get_console
 
     get_console().error(msg)
@@ -29,7 +30,11 @@ def _fail(msg: str) -> None:
 
 
 def chart_from_django_fsm(
-    label: str, field: str = "state", out_dir: Optional[str] = None
+    label: str,
+    field: str = "state",
+    out_dir: Optional[str] = None,
+    *,
+    dry_run: bool = False,
 ) -> str:
     """Extract *label*'s FSMField *field* to a chart JSON file; return
     its path. Every failure is one clear line and exit status 2."""
@@ -54,6 +59,11 @@ def chart_from_django_fsm(
     except Exception as exc:  # 📝 settings / label / field errors
         _fail(f"--from-django-fsm {label}: {type(exc).__name__}: {exc}")
     target = Path(out_dir) if out_dir else Path.cwd()
+    if dry_run:
+        # 🔥 CLI-017: `--check` / `--diff` must not touch the checkout, but
+        #    the generator still reads the chart from a file: park it in a
+        #    throw-away directory.
+        target = Path(tempfile.mkdtemp(prefix="xsm-fsm-"))
     path = target / f"{chart['id']}.json"
     try:
         target.mkdir(parents=True, exist_ok=True)

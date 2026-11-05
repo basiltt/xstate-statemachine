@@ -25,7 +25,12 @@ from ...factory import create_machine
 from ...machine_logic import MachineLogic
 from ...models import MachineNode
 
-__all__ = ["import_string", "machine_source", "resolve_machine"]
+__all__ = [
+    "import_string",
+    "is_static_spec",
+    "machine_source",
+    "resolve_machine",
+]
 
 
 def import_string(spec: str) -> Any:
@@ -91,17 +96,21 @@ def _logic_kwargs(logic: Any, row: Any) -> Dict[str, Any]:
     return {"logic_providers": [logic]}
 
 
-def _call_maybe_row(fn: Any, row: Any) -> Any:
+def _takes_row(fn: Any) -> bool:
+    """Whether *fn* declares a positional parameter (the row)."""
     try:
         sig = inspect.signature(fn)
-        takes = any(
+        return any(
             p.kind
             in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD, p.VAR_POSITIONAL)
             for p in sig.parameters.values()
         )
     except (TypeError, ValueError):  # pragma: no cover - builtins
-        takes = False
-    return fn(row) if takes else fn()
+        return False
+
+
+def _call_maybe_row(fn: Any, row: Any) -> Any:
+    return fn(row) if _takes_row(fn) else fn()
 
 
 def resolve_machine(
@@ -129,6 +138,12 @@ def resolve_machine(
         import copy
 
         kw = _logic_kwargs(logic, row)
+        if "logic_modules" in kw or "logic_providers" in kw:
+            # 🔥 Modules / provider instances are bound by name at build
+            #    time, so a finished node cannot take them by assignment.
+            #    Rebuild from its source config rather than silently
+            #    dropping the logic ("silent acceptance is a bug").
+            return create_machine(spec.source_config, **kw)
         m = copy.copy(spec)
         if "logic" in kw:
             m.logic = kw["logic"]
@@ -151,6 +166,44 @@ def resolve_machine(
         "machine must be a JSON path, config dict, MachineNode or callable; "
         f"got {type(spec).__name__}"
     )
+
+
+def is_static_spec(spec: Any, logic: Any) -> bool:
+    """Whether ``spec`` / ``logic`` resolve identically for every row.
+
+    Dotted strings are imported first (🏛️ a ``str`` is never callable, so
+    classifying the raw spec cached a per-row dotted factory built with
+    ``row=None`` for the life of the process).
+
+    Args:
+        spec: The ``machine=`` spec.
+        logic: The ``logic=`` spec.
+
+    Returns:
+        ``True`` when the built machine may be cached on the class.
+    """
+    from_string = False
+    if isinstance(spec, (str, Path)) and not str(spec).endswith(".json"):
+        spec, from_string = import_string(str(spec)), True
+    logic_from_string = isinstance(logic, str)
+    if logic_from_string:
+        logic = import_string(logic)
+    # 📝 A dotted callable is per-row only when it TAKES the row; a
+    #    zero-argument factory builds the same chart every time, so it is
+    #    cached like any static spec (it was before this was resolved).
+    machine_static = (
+        not callable(spec)
+        or isinstance(spec, MachineNode)
+        or (from_string and not _takes_row(spec))
+    )
+    logic_static = (
+        logic is None
+        or inspect.ismodule(logic)
+        or isinstance(logic, MachineLogic)
+        or not callable(logic)
+        or (logic_from_string and not _takes_row(logic))
+    )
+    return machine_static and logic_static
 
 
 def machine_source(spec: Any, owner: Any = None) -> Optional[Path]:

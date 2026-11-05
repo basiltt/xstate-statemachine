@@ -213,6 +213,11 @@ def analyse(
             Finding("error", f"invalid JSON: {exc}", f"line {exc.lineno}")
         )
         return facts
+    except (OSError, UnicodeDecodeError, RecursionError) as exc:
+        # 🔥 CLI-013: "never raises for a bad file" -- a non-UTF-8 file, a
+        #    directory or an unreadable path used to escape as a traceback.
+        facts.findings.append(Finding("error", f"cannot read file: {exc}"))
+        return facts
     if not isinstance(facts.config, dict):
         facts.findings.append(Finding("error", "root must be a JSON object"))
         return facts
@@ -264,6 +269,19 @@ def analyse(
         )
     except XStateMachineError as exc:
         facts.findings.append(Finding("error", str(exc)))
+        return facts
+    except (
+        TypeError,
+        AttributeError,
+        KeyError,
+        ValueError,
+        RecursionError,
+    ) as exc:
+        # 🔥 CLI-013: a malformed shape the parser did not anticipate is a
+        #    finding about the file, not a crash of the CLI.
+        facts.findings.append(
+            Finding("error", f"invalid machine: {type(exc).__name__}: {exc}")
+        )
         return facts
     finally:
         lib_logger.removeHandler(cap)

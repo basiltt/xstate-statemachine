@@ -69,6 +69,12 @@ def prune_unused_imports(code: str) -> str:
         if any(alias.name == "*" for alias in node.names):
             continue
 
+        # 🛡️ CLI-011: `from __future__ import annotations` is a compiler
+        #    directive, not a name the module "uses"; the typed/plugin
+        #    templates emit it on purpose and Python 3.9 needs it.
+        if isinstance(node, ast.ImportFrom) and node.module == "__future__":
+            continue
+
         kept = [a for a in node.names if _binding(a) in used]
         if len(kept) == len(node.names):
             continue

@@ -1,0 +1,139 @@
+{
+  "name": "always_guard_false_after_assign",
+  "description": "An eventless transition guarded by a false constant must not fire even though an assign changed the context in the same macrostep.",
+  "tags": [
+    "always",
+    "assign",
+    "guards"
+  ],
+  "machine": {
+    "id": "m",
+    "initial": "counting",
+    "context": {
+      "n": 0
+    },
+    "states": {
+      "counting": {
+        "on": {
+          "INC": {
+            "actions": {
+              "type": "assign",
+              "params": {
+                "assignment": {
+                  "n": 3
+                }
+              }
+            }
+          }
+        },
+        "always": {
+          "target": "full",
+          "guard": "isFull"
+        }
+      },
+      "full": {
+        "type": "final"
+      }
+    }
+  },
+  "logic": {
+    "guards": {
+      "isFull": false
+    }
+  },
+  "steps": [
+    {
+      "send": "INC"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "m.counting"
+        ],
+        "context": {
+          "n": 0
+        },
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.counting"
+          ],
+          "context": {
+            "n": 3
+          },
+          "actions": [],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "m.counting"
+        ],
+        "context": {
+          "n": 0
+        },
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.counting"
+          ],
+          "context": {
+            "n": 3
+          },
+          "actions": [],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "e940454ba5b1e7da",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "m",
+        "machine_hash": "e940454ba5b1e7da",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {
+          "n": 3
+        },
+        "state_ids": [
+          "m.counting"
+        ],
+        "value": "counting",
+        "configuration": [
+          "m",
+          "m.counting"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"m\",\n  \"machine_hash\": \"e940454ba5b1e7da\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {\n    \"n\": 3\n  },\n  \"state_ids\": [\n    \"m.counting\"\n  ],\n  \"value\": \"counting\",\n  \"configuration\": [\n    \"m\",\n    \"m.counting\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

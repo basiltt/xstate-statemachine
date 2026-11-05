@@ -16,10 +16,21 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Callable, Dict, List, Optional, Tuple
+import logging
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    List,
+    Mapping,
+    Optional,
+    Tuple,
+)
 
 from ...exceptions import (
     ConflictError,
+    InterpreterStoppedError,
     InvalidEventError,
     InvalidEventPayloadError,
     InvalidKeyError,
@@ -34,27 +45,37 @@ from ...persistence.helpers import KeyNotFoundError
 from ...persistence.idempotency import (
     IdempotencyInFlightError,
     IdempotencyMismatchError,
+    validate_idempotency_key,
     validate_principal,
 )
 from ...context_keys import (
     public_context as _public_context,
 )  # 🔑 #265: no `_xsm_*` keys in API bodies
 
+logger = logging.getLogger(__name__)
+
 __all__ = [
     "BadRequestError",
+    "DEFAULT_BODY_TIMEOUT_S",
     "ForbiddenError",
     "HTTPProblemError",
     "IDEMPOTENCY_HEADER",
+    "IdempotencyNotConfiguredError",
     "MethodNotAllowedError",
     "PROBLEM_MEDIA_TYPE",
     "PayloadTooLargeError",
     "RESERVED_SEND_KEYS",
+    "RequestTimeoutError",
     "ReservedKeyError",
     "UnauthenticatedError",
     "UnprocessableBodyError",
     "UnsupportedMediaTypeError",
     "available_events",
     "declared_events",
+    "history_args",
+    "history_items",
+    "idempotency_key_from_header",
+    "log_problem",
     "mapped_exceptions",
     "parse_json_body",
     "principal_or_401",
@@ -138,6 +159,26 @@ class UnsupportedMediaTypeError(HTTPProblemError):
     title = "Request body must be application/json"
 
 
+class RequestTimeoutError(HTTPProblemError):
+    """The request body did not arrive in time (HTTP 408, safe to retry)."""
+
+    status = 408
+    title = "Request Timeout"
+
+
+#: Longest a Quart request body may take to arrive (review CW-11).
+DEFAULT_BODY_TIMEOUT_S = 30.0
+
+
+class IdempotencyNotConfiguredError(HTTPProblemError):
+    """🔥 review CW-03: an ``Idempotency-Key`` on an app WITHOUT an inbox
+    was silently ignored -- 200 and every retry re-ran the event. A
+    promise the server cannot keep is refused (501), as on Starlette."""
+
+    status = 501
+    title = "Idempotency-Key not supported: no idempotency inbox configured"
+
+
 class UnprocessableBodyError(HTTPProblemError):
     """The request body is not a JSON object (HTTP 422)."""
 
@@ -159,12 +200,106 @@ class ReservedKeyError(HTTPProblemError):
 
 #: `send()` keyword options a client body may never carry.
 RESERVED_SEND_KEYS = ("wait", "priority")
+#: Payload keys the ADAPTER owns: ``idempotency_key`` comes only from the
+#: validated header (review CW-04), never from the client's body.
+ADAPTER_OWNED_PAYLOAD_KEYS = ("idempotency_key",)
 
 
 def refuse_reserved_send_keys(payload: Dict[str, Any]) -> None:
-    """Raise `ReservedKeyError` if *payload* names a `send()` option."""
-    if any(k in payload for k in RESERVED_SEND_KEYS):
+    """Raise `ReservedKeyError` if *payload* names a `send()` option or an
+    adapter-owned key (``idempotency_key``)."""
+    if any(k in payload for k in RESERVED_SEND_KEYS) or any(
+        k in payload for k in ADAPTER_OWNED_PAYLOAD_KEYS
+    ):
         raise ReservedKeyError()
+
+
+def idempotency_key_from_header(
+    value: Optional[str], *, has_inbox: bool
+) -> Optional[str]:
+    """The validated ``Idempotency-Key`` header value, or ``None``.
+
+    🔥 Review CW-03: Flask and Quart used to copy the raw header into the
+    payload, which skipped both rules the Starlette stack enforces: a
+    malformed / over-long key reached the plugin and came back as a
+    duplicate-flagged 200 whose event never ran, and with no inbox the
+    key was silently ignored so retries re-ran the event.
+
+    Args:
+        value: The raw header value (``None`` / empty = no key).
+        has_inbox: Whether the app has an idempotency inbox.
+
+    Returns:
+        The validated key, or ``None`` when the header is absent.
+
+    Raises:
+        BadRequestError: The key is malformed (400).
+        IdempotencyNotConfiguredError: There is no inbox (501).
+    """
+    if not value:
+        return None
+    try:
+        key = validate_idempotency_key(value)
+    except ValueError:
+        raise BadRequestError("Invalid Idempotency-Key header") from None
+    if not has_inbox:
+        raise IdempotencyNotConfiguredError()
+    return key
+
+
+def history_args(args: Mapping[str, str]) -> Tuple[int, int]:
+    """Parse ``?after=&limit=`` for ``/history``: ``(after, limit)``.
+
+    🔥 Review CW-17b: ``?limit=-1`` passed the ``int()`` check and then
+    raised a ValueError from the log store (a 500 with a traceback); a
+    negative bound is the client's mistake (400).
+
+    Raises:
+        BadRequestError: Not integers, or negative.
+    """
+    try:
+        after = int(args.get("after", 0))
+        limit = min(int(args.get("limit", 100)), 1000)
+    except ValueError:
+        raise BadRequestError("after/limit must be integers") from None
+    if after < 0 or limit < 0:
+        raise BadRequestError("after/limit must not be negative")
+    return after, limit
+
+
+def history_items(rows: Iterable[Any]) -> List[Dict[str, Any]]:
+    """Public view of log rows: every field EXCEPT ``event_payload``.
+
+    🔐 Review CW-06: Flask omitted the payload (it may carry PII or
+    secrets; X0.1 state-only bodies) while Quart returned it. One helper
+    for both so they cannot drift.
+    """
+    return [
+        {k: v for k, v in rec.to_dict().items() if k != "event_payload"}
+        for rec in rows
+    ]
+
+
+def log_problem(exc: BaseException, where: str = "-") -> None:
+    """Leave the server-side trace for a problem response.
+
+    A backend outage is ONE warning line (#306: a Redis failover used to
+    write a traceback per request); any other 5xx logs with its traceback
+    -- the client body carries only the class name (X0.7). 4xx are quiet.
+
+    Args:
+        exc: The exception being answered.
+        where: ``"<METHOD> <path>"`` or another short label.
+    """
+    if isinstance(exc, StoreUnavailableError):
+        logger.warning("🔌 store unavailable; %s answered 503: %s", where, exc)
+    elif status_for_exception(exc) >= 500:
+        logger.error(
+            "🔥 %s while handling a statechart request (%s)",
+            type(exc).__name__,
+            where,
+            exc_info=exc,
+        )
 
 
 _STATUS_TABLE = (
@@ -175,6 +310,9 @@ _STATUS_TABLE = (
     (SnapshotDriftError, 409, "Machine version mismatch"),
     (IdempotencyInFlightError, 409, "Request in flight"),
     (ConflictError, 409, "Conflict"),
+    # 🏁 Review CW-17: an event for a finished / stopped instance is 409
+    #    on the Starlette stack; it was a 500 here.
+    (InterpreterStoppedError, 409, "Instance is no longer running"),
     (LockTimeoutError, 409, "Lock timeout"),
     # 🍪 #285 battle (A): a context that outgrew its store (SessionStore's
     #    cookie cap) is the request's payload problem, not a server crash.
@@ -257,8 +395,12 @@ def parse_json_body(
         raise UnsupportedMediaTypeError()
     try:
         data = json.loads(raw)
-    except ValueError:
-        raise UnprocessableBodyError("Request body is not valid JSON")
+    except (ValueError, RecursionError):
+        # 🔥 Review CW-08: deeply nested JSON raised RecursionError (not a
+        #    ValueError) and surfaced as a 500.
+        raise UnprocessableBodyError(
+            "Request body is not valid JSON"
+        ) from None
     if not isinstance(data, dict):
         raise UnprocessableBodyError()
     return data
@@ -316,6 +458,7 @@ def receipt_body(
 
 
 def is_idempotency_refusal(receipt: Any) -> bool:
+    """Whether *receipt* carries an idempotency refusal (422 / 409)."""
     return isinstance(
         receipt.error, (IdempotencyMismatchError, IdempotencyInFlightError)
     )

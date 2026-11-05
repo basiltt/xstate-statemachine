@@ -12,8 +12,10 @@ same violation. Pinned:
 * **the planted bug is found and shrunk** -- a refund path on the orders
   chart (real `logic.build_logic`, a wrapped action) that goes negative
   only after `ADD_ITEM, CHECKOUT, PAY, REFUND, REFUND`: Hypothesis fails
-  within `max_examples=300`, the written `failing.json` has at most 6
-  steps, and `xsm simulate --script failing.json --json` ends with the
+  within `max_examples=300`, the written `failing.json` is short (at
+  most 12 steps: the minimal sequence is 5, and Hypothesis's shrink
+  phase is time-bounded, so a loaded runner stops a little earlier),
+  and `xsm simulate --script failing.json --json` ends with the
   same negative total;
 * **only legal sequences** -- 500 examples × `allow_denied=False`: no
   generated send is refused by the engine (receipt `denied` is never set
@@ -162,7 +164,9 @@ def test_refund_bug_is_found_shrunk_and_replays(
     assert "total never negative" in str(exc)
     script = json.loads(failing.read_text("utf-8"))
     steps = script if isinstance(script, list) else script["steps"]
-    assert len(steps) <= 6, steps
+    # 📝 5 is minimal; a loaded CI runner has produced 8 (the shrink
+    #    phase is time-bounded). Unshrunk runs are up to `max_steps`=50.
+    assert len(steps) <= 12, steps
     sends = [s["send"] for s in steps if "send" in s]
     assert sends.count("REFUND") >= 2 and "PAY" in sends
     # 🔁 replay through the CLI: the same violation, not a different run

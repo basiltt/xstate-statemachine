@@ -22,7 +22,7 @@ The interpreter manages the full lifecycle of a running state machine:
 4. **Execute actions** — runs side effects (entry, exit, and transition actions).
 5. **Invoke services** — starts async/sync operations and handles their results.
 6. **Track state** — maintains the current state(s) and context.
-7. **Stop** — exits all active states (runs exit actions) and shuts down.
+7. **Stop** — cancels timers, services and child actors and shuts down. Exit actions do not run on `stop()` (as in XState v5); they run when a transition leaves a state and when the machine completes.
 
 This library provides two interpreter implementations:
 
@@ -128,7 +128,7 @@ asyncio.run(main())
 
 - `await interpreter.start()` — enters the initial state and returns the interpreter (for chaining).
 - `await interpreter.send("EVENT")` — sends an event and processes the resulting transition(s).
-- `await interpreter.stop()` — exits all active states and shuts down.
+- `await interpreter.stop()` — cancels pending timers and services, stops child actors and shuts down (`status` becomes `stopped`; exit actions are not run).
 - Services defined with `async def` are awaited automatically.
 
 ### Use Cases
@@ -219,7 +219,7 @@ interp.stop()
 
 - `.start()` returns `self`, so you can chain: `SyncInterpreter(machine).start()`.
 - `.send("EVENT")` processes the event synchronously and blocks until all actions complete.
-- `.stop()` exits all active states and runs their exit actions.
+- `.stop()` cancels timers and services, stops child actors and shuts down without running exit actions.
 - Services defined with `def` (not `async def`) are called directly.
 
 ### Use Cases
@@ -237,7 +237,7 @@ interp.stop()
 | Property / Method | Type | Description |
 |-------------------|------|-------------|
 | `.start()` | method | Initialize the interpreter and enter the initial state. Runs entry actions. Returns the interpreter (chainable). |
-| `.stop()` | method | Exit all active states (runs exit actions) and shut down. |
+| `.stop()` | method | Cancel timers, services and child actors and shut down. Exit actions do not run on `stop()`; a machine that reaches a top-level final state runs them as part of completing. |
 | `.send(event, **kwargs)` | method | Send an event to the machine. Accepts string, dict, or `Event` object. Extra kwargs become event payload. |
 | `.send_events(events)` | method | Send multiple events in sequence. Each event is processed before the next. |
 | `.active_state_ids` | `set[str]` | The set of currently active state IDs (e.g., `{'machine.idle'}`). |
@@ -247,18 +247,18 @@ interp.stop()
 | `.value` | `str \| dict` | The active configuration in hierarchical form — see [Hierarchical State Value](#hierarchical-state-value). |
 | `.pending_events` | `tuple`/`list` | Events accepted by `send()` but not yet processed, in FIFO order. |
 | `.drain_pending()` | method | Remove and return every pending event without processing it. |
-| `.wait_done()` | method | *(async `Interpreter` only)* A future resolved with `"done"`/`"error"` the instant the machine reaches a terminal status. |
-| `.stop(drain=False, timeout=None)` | method | Stop the interpreter; `drain=True` processes the inbox to empty first (`timeout` bounds this on the async engine). |
+| `.wait_done()` | method | *(async `Interpreter` only)* A future resolved with the terminal status (`"done"`, `"error"`, or `"stopped"` after an `actionErrorPolicy: "fail"` halt) the instant the machine reaches it. |
+| `.stop(drain=False, timeout=None)` | method | Stop the interpreter; `drain=True` processes the inbox to empty first (`timeout` bounds this on the async engine only — `SyncInterpreter.stop(*, drain=False)` takes no `timeout`). `stop()` runs **no** exit actions; exit actions run on transitions and when the machine completes. |
 | `.can(event)` | method | Dry-run check — reports whether sending `event` right now would trigger a transition (guards included), without any side effects. |
 | `.on(event_type, listener)` | method | Registers a listener for events published via the `emit` action. Pass `"*"` to listen to every emitted event. Returns an unsubscribe callable. |
-| `.subscribe(listener)` | method | Registers a listener invoked after every settled transition (mirrors XState's `actor.subscribe()`). Returns an unsubscribe callable. |
+| `.subscribe(listener)` | method | Registers a listener notified **once per microstep**, with the settled configuration (mirrors XState's `actor.subscribe()`): when one event transitions several parallel regions, subscribers see one notification, not one per region. Returns an unsubscribe callable. |
 | `.system` | `ActorSystem` | The actor-system registry used to look up other actors by `system_id`, e.g. for `send_to`/`forward_to` targets. |
 | `.tags` | `set[str]` | The union of tags declared by every currently active state. |
 | `.has_tag(tag)` | method | `True` if any active state carries `tag`. |
 | `.get_meta()` | method | Returns a `{state_id: meta_dict}` mapping merged from every active state's `meta`. |
 | `.pending_invocations()` | method | Lists in-flight `invoke`s from the active configuration that have no live service backing them — most relevant right after `from_snapshot()`. |
 | `.has_dormant_invocations` | `bool` | `True` when `pending_invocations()` is non-empty. **`status` is not a liveness signal after a restore** — a statically restored machine reports `"running"` while its invokes are parked; check this in health checks instead. *(0.9.0)* |
-| `.MAX_ACTION_DEPTH` | `int` | The recursion guard rail for self-triggered actions (default `50`) — raised when actions keep re-sending events into the same transition. |
+| `.MAX_ACTION_DEPTH` | `int` | Class attribute (default `50`) bounding nested action expansion — `pure` / `choose` / `enqueueActions` returning further actions; past it the branch is aborted with a logged error. Self-sent event chains are bounded by `maxIterations` instead. |
 
 ### Checking Transitions, Tags, and Metadata
 
@@ -485,13 +485,13 @@ The same ordering applies mid-run: everything `START` transitively raised on its
 
 **What changed vs. 0.7**: prior releases queued a self-raised event onto the same inbox as external `send()` calls, so a `raise`d event could be interleaved with (or delayed behind) events sent concurrently from elsewhere. As of #36 the interpreter keeps a dedicated internal queue for self-raised events (`_internal_queue` on both engines), which is drained FIFO — internal events among themselves, in the order raised — ahead of the next external event. This makes ordering match the SCXML processing model and removes a class of races where an external event could be processed *between* two microsteps of the same macrostep.
 
-A runaway chain of self-raised events (a machine that keeps raising to itself forever) is still bounded: exceeding the configured event limit for a single macrostep raises rather than hanging the run loop forever.
+A runaway chain of self-raised events (a machine that keeps raising to itself forever) is still bounded by `maxIterations`: the tail is discarded, the machine stays running, and the trip is reported as a `RunawayChainError` on `receipt.error`, `last_error` and `last_chain_error`.
 
 ---
 
 ## 📦 Bounded Inbox and Overflow Policy (#38)
 
-By default an interpreter's inbox (the queue `send()` appends to) is unbounded — nothing on a hot path is ever refused, but nothing stops it from growing without limit if producers outrun the consumer. Pass `max_queue_size` to `Interpreter` (or `SyncInterpreter`) to put a ceiling on it, and `overflow_policy` to choose what happens once that ceiling is hit:
+By default an interpreter's inbox (the queue `send()` appends to) is unbounded — nothing on a hot path is ever refused, but nothing stops it from growing without limit if producers outrun the consumer. Pass `max_queue_size` to the async `Interpreter` to put a ceiling on it (`SyncInterpreter` has no inbox to bound and refuses the argument with `ValueError`), and `overflow_policy` to choose what happens once that ceiling is hit:
 
 <!-- doc-fragment -->
 ```python
@@ -583,7 +583,7 @@ print(receipt.error)      # the exception raised while processing THIS event, or
 
 **Where the macrostep ends.** A `raise`d event is processed in the same drain but is its *own* macrostep with its own receipt (`on_event_processed` fires per event, #304): the receipt for `GO` describes the step `GO` took, on both engines. A *service completion* is likewise the next macrostep. The engines differ in *when you get control back*: `SyncInterpreter.send()` drains the whole chain — raises, `done.invoke`s, further invokes — before it returns, so the machine is settled when you read it; `await interp.send(..., wait=True)` resolves when `GO`'s step ends, while the run loop is already starting the next one — and if that step enters a plain `def` invoke, the machine is mid-step when your `await` returns. To wait for the chain on the async engine use `await interp.await_settled(timeout)` (0.11.0, #263 battle) — `True` when nothing is in flight — before snapshotting; `apersisted()` and the web registries do this for you. A live `after` timer does not count as unsettled.
 
-`Receipt` is a `NamedTuple` with five fields (three before 0.9.0 — a positional destructure written as `state_ids, changed, error = receipt` now raises `ValueError`; read fields by attribute):
+`Receipt` is a `NamedTuple` with six fields (three before 0.9.0, five in 0.9.0–0.10.x — a positional destructure written as `state_ids, changed, error = receipt` now raises `ValueError`; read fields by attribute):
 
 - `state_ids: FrozenSet[str]` — the active leaf state IDs when the instant processing this event finished.
 - `changed: bool` — `True` if a transition was taken (configuration or context changed) *for this event*.
@@ -591,6 +591,7 @@ print(receipt.error)      # the exception raised while processing THIS event, or
 
 - `deferred: bool` — `True` when this event selected no transition and was parked under `onUnhandled: "defer"`. It is replayed as its *own* macrostep after the next event that changes the configuration; the replay never folds into that event's receipt (0.9.0, both engines — the sync engine now holds replays until the caller's receipt is final, #125).
 - `denied: bool` — `True` when the active state *declared* a handler for this event but every guard said no (0.9.0, #153). Without it, a business-rule refusal and an event that simply does not apply in this state produce byte-identical receipts. A guard that *raised* under `guardErrorPolicy: "raise"` is neither: `denied=False`, and the exception is on `error` (#170). Under `onUnhandled: "defer"` a denied event is also deferred (`deferred=True`) and replayed against the next configuration — scope `defer` to the states that need it if your guards encode business rules.
+- `duplicate: bool` — `True` when a plugin answered the send from `on_before_send` as an already-seen event (the idempotency inbox, 0.11.0). The other fields then describe the *original* delivery's outcome.
 
 `error` is also set (to `InterpreterStoppedError`) if the interpreter is stopped, refuses the event, or tears down before a pending receipt resolves, so a caller awaiting `wait=True` never hangs on shutdown.
 
@@ -719,7 +720,7 @@ interp.stop()
 
 <div class="stately" data-machine="112333260e" data-height="320" data-title="userMachine"></div>
 
-> **Note:** For service `onDone` events, the service's return value is available as `event.data`. For `onError` events, the raised exception is in `event.data`.
+> **Note:** For service `onDone` events, the service's return value is available as `event.data`. For `onError` events the event is an `ErrorEvent` and the exception is on `event.error` (`event.data` is a deprecated alias, removed in 1.0).
 
 ---
 
@@ -799,7 +800,7 @@ print(interp.active_state_ids)  # {'lifecycle.running'}
 interp.send("STOP")
 print(interp.active_state_ids)  # {'lifecycle.done'}
 
-# 4. STOP — exits all states, runs exit actions
+# 4. STOP — cancels timers and services and shuts down (no exit actions)
 interp.stop()
 print(interp.is_running)  # False
 ```
@@ -812,7 +813,7 @@ Both `start()` and `stop()` are safe to call multiple times:
 
 - **`start()`** on an already-running interpreter is a no-op
 - **`stop()`** on an already-stopped interpreter is a no-op
-- **`send()`** on a stopped interpreter is silently ignored
+- **`send()`** on a stopped interpreter is dropped with a WARNING and `on_event_dropped`; `send(wait=True)` returns a `Receipt` whose `error` is `InterpreterStoppedError`
 
 ```python
 interp = SyncInterpreter(machine).start()
@@ -821,7 +822,7 @@ interp.start()  # No effect — already running
 interp.stop()
 interp.stop()  # No effect — already stopped
 
-interp.send("EVENT")  # Silently ignored — interpreter is stopped
+interp.send("EVENT")  # Dropped (WARNING + on_event_dropped) — interpreter is stopped
 ```
 
 ### Event Processing: Queue Semantics
@@ -1219,7 +1220,7 @@ Whatever the policy, every unhandled event fires the `on_unhandled_event(interpr
 
 ## Throughput and Scaling
 
-All async `Interpreter`s in a process share **one** event loop on **one** thread, so throughput is a per-process budget (~20k trivial ev/s on a laptop) divided among your machines — not a per-machine capacity. Adding interpreters does not add capacity; scale by process. Measured tables, the sizing rule, and the timer-lateness curve are in [Production Characteristics](../production-characteristics/).
+All async `Interpreter`s in a process share **one** event loop on **one** thread, so throughput is a per-process budget (~46k trivial ev/s on a laptop) divided among your machines — not a per-machine capacity. Adding interpreters does not add capacity; scale by process. Measured tables, the sizing rule, and the timer-lateness curve are in [Production Characteristics](../production-characteristics/).
 
 ---
 
@@ -1255,7 +1256,7 @@ The event is normalised on the *calling* thread (so a malformed event or a raisi
 - **Payloads are aliased, not copied.** An object the producer mutates after `send_threadsafe()` is seen mutated when the event runs. Pass immutable values or copy before sending.
 - **A `strict` refusal** of a mailbox event cannot raise on the producer (it is gone); it lands on the owner as `last_transition_ok = False` plus `on_event_dropped(…, "invalid")`.
 
-> **Note:** If a foreign thread just sent events you don't want lost on shutdown, prefer `stop(drain=True)` over a plain `stop()` — see [Snapshots — The Inbox: pending events](snapshots/#the-inbox-pending-events).
+> **Note:** If a foreign thread just sent events you don't want lost on shutdown, prefer `stop(drain=True)` over a plain `stop()` — see [Snapshots — The Inbox: pending events](../snapshots/#the-inbox-pending-events).
 
 ---
 
@@ -1373,7 +1374,7 @@ pytest test_login.py -v
 | Stop | `await interp.stop()` | `interp.stop()` |
 | Chainable start | `await Interpreter(m).start()` | `SyncInterpreter(m).start()` |
 | Services | `async def` (awaited) | `def` (called directly) |
-| Actions | Sync (same for both) | Sync (same for both) |
+| Actions | `def` or `async def` (awaited) | `def` only (`async def` raises `NotSupportedError`) |
 | Guards | Sync (same for both) | Sync (same for both) |
 | Event loop | Requires `asyncio` | No event loop needed |
 | Plugins | Same API | Same API |

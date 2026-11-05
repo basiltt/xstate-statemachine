@@ -49,7 +49,7 @@ The `invoke` property on a state defines which service to call and how to handle
 |-----|------|-------------|
 | `src` | `string` | The service name (must match a registered service function) |
 | `id` | `string` | Optional unique identifier (defaults to the state's ID) |
-| `input` | `any` \| `callable` | Static data (or a `fn(context, event)` / `fn({"context": ..., "event": ...})` callable, resolved fresh on every spawn) forwarded to the invoked service or child. A callable service receives it at `event.payload["input"]`; a spawned child machine receives it at `context["input"]`. |
+| `input` | `any` \| `callable` | Static data (or a `fn(context, event)` / `fn({"context": ..., "event": ...})` callable, resolved fresh on every spawn) forwarded to the invoked service or child. A callable service receives it at `event.payload["input"]`; a spawned child machine receives it at `context["input"]`. | Without `input` the actor receives nothing (`{}`), exactly as XState passes `undefined`; the triggering event is never forwarded implicitly. To hand a service the event that entered the state, declare `"input": event_payload` (exported from the package root; the XState equivalent is `input: ({event}) => event`). |
 | `systemId` | `string` | Registers the invocation under a global actor address so it can be addressed from anywhere in the tree with `send_to` — see [Actors](../actors/). |
 | `onDone` | `object` | Transition to take on successful completion |
 | `onError` | `object` | Transition to take on failure (exception) |
@@ -292,7 +292,7 @@ class Logic(MachineLogic):
         # Output: Service failed: API server unreachable
 ```
 
-> **Migrating from 0.8.0:** `event.data` still returns the exception on an `ErrorEvent`, with a `DeprecationWarning`; it is removed in 0.9. Success events are unchanged — `onDone` still receives a `DoneEvent` whose `data` is the service's return value.
+> **Migrating from 0.8.0:** `event.data` still returns the exception on an `ErrorEvent`, with a `DeprecationWarning`; it is removed in 1.0. Success events are unchanged — `onDone` still receives a `DoneEvent` whose `data` is the service's return value.
 
 ## 🔗 Multiple Services (Array Form)
 
@@ -666,7 +666,7 @@ The interpreter uses a specific naming convention for invoke-related events:
 | **Success** | `done.invoke.<id>` | `done.invoke.userFetcher` |
 | **Error** | `error.platform.<id>` | `error.platform.userFetcher` |
 
-The `<id>` defaults to the state's name if no explicit `id` is provided in the invoke config. When using multiple invokes per state, always provide explicit `id` values to avoid event name collisions:
+The `<id>` defaults to the hosting state's full id (for example `done.invoke.userLoader.loading`) if no explicit `id` is provided in the invoke config. When using multiple invokes per state, always provide explicit `id` values to avoid event name collisions:
 
 ```json
 "invoke": [
@@ -697,7 +697,7 @@ If a `maxIterations` cut discards a service's completion while its state is stil
 | **Multiple invokes** | Sequential | Can run concurrently |
 | **Async service?** | Raises `NotSupportedError` | Fully supported |
 
-Engine parity note (0.9.0, #116): a plain `def` service — one that returns a value, not an awaitable — completes at the **same point** on both engines. The async `Interpreter` runs it inline instead of on a separate task, and the sync engine queues its completion behind the current macrostep, so a script such as `send("GO"); send("CANCEL")` lands in the same state whichever interpreter you use. A `def` that returns a coroutine, or an `AsyncMock`, still takes the awaited path.
+Engine parity note (0.9.0, #116): a plain `def` service — one that returns a value, not an awaitable — completes at the **same point** on both engines. The async `Interpreter` runs it on its service executor and the entering macrostep awaits the result (#149), and the sync engine queues its completion behind the current macrostep, so a script such as `send("GO"); send("CANCEL")` lands in the same state whichever interpreter you use. A `def` that returns a coroutine, or an `AsyncMock`, still takes the awaited path.
 
 ## Complete Example: User Data Loader with Retry
 

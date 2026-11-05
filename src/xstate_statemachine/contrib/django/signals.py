@@ -31,7 +31,6 @@ from typing import Any, Dict, List, Optional, Tuple, cast
 
 from django.db import transaction
 from django.dispatch import Signal
-from django.dispatch.dispatcher import _make_id
 
 from ...events import Receipt
 from ...exceptions import XStateMachineError
@@ -85,10 +84,23 @@ class _OnCommit:
         )
 
 
+def _make_id(target: Any) -> Any:
+    """Stable identity of a receiver: ``(id(self), id(func))`` for a bound
+    method, else ``id(target)``.
+
+    🏛️ Mirrors Django's private ``django.dispatch.dispatcher._make_id``
+    (a rename would otherwise break this module's import); a test pins
+    the equivalence so a Django upgrade that changes it fails loudly.
+    """
+    if hasattr(target, "__func__"):
+        return (id(target.__self__), id(target.__func__))
+    return id(target)
+
+
 def _wrapper_uid(receiver: Any, dispatch_uid: Any) -> Any:
-    # 📝 `_make_id` is Django's own: ``(id(self), id(func))`` for a bound
-    #    method -- ``id(obj.method)`` differs on every attribute access,
-    #    so `disconnect(obj.method)` could never find the wrapper.
+    # 📝 ``id(obj.method)`` differs on every attribute access, so
+    #    `disconnect(obj.method)` could never find the wrapper without the
+    #    ``(id(self), id(func))`` key.
     return dispatch_uid or ("xsm_on_commit", _make_id(receiver))
 
 
@@ -155,6 +167,7 @@ class DjangoSignalPlugin(PluginBase[Any]):
         self._lock = threading.Lock()
 
     def on_action_execute(self, interpreter: Any, action: Any) -> None:
+        """Record the executed action's type for `post_transition`."""
         with self._lock:
             self.actions.append(str(getattr(action, "type", action)))
 
@@ -166,16 +179,19 @@ class DjangoSignalPlugin(PluginBase[Any]):
     def on_action_error(
         self, interpreter: Any, action: Any, error: BaseException
     ) -> None:
+        """Emit `statechart_error` (kind ``"action"``)."""
         self._error("action", error)
 
     def on_service_error(
         self, interpreter: Any, invocation: Any, error: Exception
     ) -> None:
+        """Emit `statechart_error` (kind ``"service"``)."""
         self._error("service", error)
 
     def on_chain_budget_exceeded(
         self, interpreter: Any, error: BaseException, event: Any
     ) -> None:
+        """Emit `statechart_error` (kind ``"chain_budget"``)."""
         self._error("chain_budget", error)
 
 
@@ -217,6 +233,17 @@ def _to_states(ctx: Dict[str, Any], receipt: Any) -> Tuple[str, ...]:
 
 
 def emit_post(instance: Any, ctx: Dict[str, Any], plugin: Any) -> None:
+    """Send `post_transition` for a send that has just been written.
+
+    📝 Called INSIDE the send's transaction after the row UPDATE and the
+    audit flush: a raising non-``on_commit`` receiver rolls the whole send
+    back; ``on_commit=True`` receivers run after COMMIT.
+
+    Args:
+        instance: The row.
+        ctx: The send context (``receipt``, ``snapshot``, ``event``...).
+        plugin: The send's `DjangoSignalPlugin` (executed actions).
+    """
     receipt = ctx["receipt"]
     post_transition.send(
         sender=type(instance),

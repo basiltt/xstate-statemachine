@@ -28,7 +28,6 @@
 from __future__ import annotations
 
 import logging
-import sys
 import re
 from typing import Any, Dict, List, Optional, Tuple, cast
 
@@ -392,10 +391,27 @@ class StatechartAdminMixin:
         return bool(_transition_meta(machine, event).get("confirm"))
 
     def render_change_form(
-        self, request: Any, context: Dict[str, Any], *args: Any, **kw: Any
+        self,
+        request: Any,
+        context: Dict[str, Any],
+        add: bool = False,
+        change: bool = False,
+        form_url: str = "",
+        obj: Any = None,
     ) -> Any:
-        """Inject the transition buttons and URLs into the change-form context."""
-        obj = kw.get("obj") or (args[2] if len(args) > 2 else None)
+        """Inject the transition buttons and URLs into the change-form context.
+
+        Args:
+            request: The admin request.
+            context: The template context to extend.
+            add: Forwarded to Django (add view).
+            change: Forwarded to Django (change view).
+            form_url: Forwarded to Django.
+            obj: The row being edited, if any.
+
+        Returns:
+            The rendered response.
+        """
         context["xsm_buttons"] = self.xsm_buttons(request, obj)
         context["xsm_event_field"] = EVENT_FIELD
         if obj is not None and obj.pk is not None:
@@ -403,7 +419,9 @@ class StatechartAdminMixin:
             context["xsm_transition_url"] = reverse(
                 "admin:%s_%s_xsm_transition" % info, args=[obj.pk]
             )
-        return super().render_change_form(request, context, *args, **kw)  # type: ignore[misc]
+        return super().render_change_form(  # type: ignore[misc]
+            request, context, add, change, form_url, obj
+        )
 
     # -- urls / views -----------------------------------------------------------------
     def get_urls(self) -> List[Any]:
@@ -597,7 +615,8 @@ class StatechartAdminMixin:
                 queryset: The selected rows.
 
             Rows the user may not send to, refused sends and rows deleted mid-run
-            count as denied; retryable store errors count as failed. A summary
+            count as denied; retryable store errors, unexpected exceptions and
+            error receipts count as failed (logged, the batch carries on). A summary
             message is posted with an error level if any failed, a warning level
             if any were denied, otherwise success.
             """
@@ -623,17 +642,36 @@ class StatechartAdminMixin:
                     #    action in a 500 with no counts at all
                     denied += 1
                     continue
-                except XStateMachineError:
+                except (XStateMachineError, PermissionDenied) as exc:
                     logger.warning(
                         "bulk %s on %s refused: %s",
                         event,
                         getattr(obj, "pk", "?"),
-                        type(sys.exc_info()[1]).__name__,
+                        type(exc).__name__,
                     )
                     denied += 1
                     continue
+                except Exception:  # noqa: BLE001 - one bad row, not the batch
+                    # 🔥 An IntegrityError / non-lock OperationalError /
+                    #    receiver bug on ONE row aborted the loop after
+                    #    earlier rows had committed, with no counts. Log it
+                    #    and carry on.
+                    logger.exception(
+                        "bulk %s on %s failed", event, getattr(obj, "pk", "?")
+                    )
+                    failed += 1
+                    continue
                 if r.changed:
                     changed += 1
+                elif r.error is not None and not r.denied:
+                    # 📝 an error receipt is a failure, not a policy denial
+                    logger.warning(
+                        "bulk %s on %s ended with %s",
+                        event,
+                        getattr(obj, "pk", "?"),
+                        type(r.error).__name__,
+                    )
+                    failed += 1
                 else:
                     denied += 1
             text = _("%(event)s: %(changed)d changed / %(denied)d denied") % {

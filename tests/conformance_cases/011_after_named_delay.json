@@ -1,0 +1,133 @@
+{
+  "name": "after_named_delay",
+  "description": "A symbolic delay resolved from the delays table.",
+  "tags": [
+    "after",
+    "delays"
+  ],
+  "machine": {
+    "id": "retry",
+    "initial": "waiting",
+    "states": {
+      "waiting": {
+        "after": {
+          "BACKOFF": "retrying"
+        }
+      },
+      "retrying": {
+        "type": "final"
+      }
+    }
+  },
+  "logic": {
+    "delays": {
+      "BACKOFF": 1000
+    }
+  },
+  "steps": [
+    {
+      "advance_ms": 999
+    },
+    {
+      "advance_ms": 1
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "retry.waiting"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "retry.waiting"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "retry.retrying"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "done",
+          "output": null
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "retry.waiting"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "retry.waiting"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "retry.retrying"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "done",
+          "output": null
+        }
+      ],
+      "machine_hash": "8781577c909efcd6",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "retry",
+        "machine_hash": "8781577c909efcd6",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "done",
+        "context": {},
+        "state_ids": [
+          "retry.retrying"
+        ],
+        "value": "retrying",
+        "configuration": [
+          "retry",
+          "retry.retrying"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"retry\",\n  \"machine_hash\": \"8781577c909efcd6\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"done\",\n  \"context\": {},\n  \"state_ids\": [\n    \"retry.retrying\"\n  ],\n  \"value\": \"retrying\",\n  \"configuration\": [\n    \"retry\",\n    \"retry.retrying\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

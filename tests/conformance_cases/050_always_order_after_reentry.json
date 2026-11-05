@@ -1,0 +1,365 @@
+{
+  "name": "always_order_after_reentry",
+  "description": "XState keeps the previous snapshot (and so the previous order of its state nodes) when a microstep leaves the configuration and the history value unchanged. Re-entering s, which owns a history node, records history and so moves s1 behind t1; re-entering t (no history node) changes nothing, so t1 stays ahead of s1. When ARM enables both conflicting always transitions, t1's is selected first and wins (y). After BACK re-enters p in document order, ARM lets s1's win (x).",
+  "tags": [
+    "always",
+    "parallel",
+    "conflict",
+    "history",
+    "reenter",
+    "selection"
+  ],
+  "machine": {
+    "id": "m",
+    "initial": "p",
+    "states": {
+      "p": {
+        "type": "parallel",
+        "states": {
+          "r1": {
+            "initial": "s",
+            "states": {
+              "s": {
+                "initial": "s1",
+                "on": {
+                  "RS": {
+                    "target": "s",
+                    "reenter": true
+                  }
+                },
+                "states": {
+                  "h": {
+                    "type": "history"
+                  },
+                  "s1": {
+                    "always": {
+                      "target": "#m.x",
+                      "guard": {
+                        "type": "and",
+                        "params": {
+                          "guards": [
+                            "g1",
+                            {
+                              "type": "stateIn",
+                              "params": {
+                                "stateValue": "#m.p.r3.armed"
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "actions": "tX"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "r2": {
+            "initial": "t",
+            "states": {
+              "t": {
+                "initial": "t1",
+                "on": {
+                  "RT": {
+                    "target": "t",
+                    "reenter": true
+                  }
+                },
+                "states": {
+                  "t1": {
+                    "always": {
+                      "target": "#m.y",
+                      "guard": {
+                        "type": "and",
+                        "params": {
+                          "guards": [
+                            "g2",
+                            {
+                              "type": "stateIn",
+                              "params": {
+                                "stateValue": "#m.p.r3.armed"
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "actions": "tY"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "r3": {
+            "initial": "idle",
+            "states": {
+              "idle": {
+                "on": {
+                  "ARM": "armed"
+                }
+              },
+              "armed": {}
+            }
+          }
+        }
+      },
+      "x": {
+        "entry": "e_x",
+        "on": {
+          "BACK": "#m.p"
+        }
+      },
+      "y": {
+        "entry": "e_y",
+        "on": {
+          "BACK": "#m.p"
+        }
+      }
+    }
+  },
+  "logic": {
+    "record_guards": true
+  },
+  "steps": [
+    {
+      "send": "RS"
+    },
+    {
+      "send": "RT"
+    },
+    {
+      "send": "ARM"
+    },
+    {
+      "send": "BACK"
+    },
+    {
+      "send": "ARM"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "m.p.r1.s.s1",
+          "m.p.r2.t.t1",
+          "m.p.r3.idle"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running",
+        "guards": [
+          "g1",
+          "g2"
+        ]
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.p.r1.s.s1",
+            "m.p.r2.t.t1",
+            "m.p.r3.idle"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running",
+          "guards": [
+            "g2",
+            "g1"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.p.r1.s.s1",
+            "m.p.r2.t.t1",
+            "m.p.r3.idle"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running",
+          "guards": [
+            "g2",
+            "g1"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.y"
+          ],
+          "context": {},
+          "actions": [
+            "tY",
+            "e_y"
+          ],
+          "status": "running",
+          "guards": [
+            "g2",
+            "g1"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.p.r1.s.s1",
+            "m.p.r2.t.t1",
+            "m.p.r3.idle"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running",
+          "guards": [
+            "g1",
+            "g2"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.x"
+          ],
+          "context": {},
+          "actions": [
+            "tX",
+            "e_x"
+          ],
+          "status": "running",
+          "guards": [
+            "g1",
+            "g2"
+          ]
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "m.p.r1.s.s1",
+          "m.p.r2.t.t1",
+          "m.p.r3.idle"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running",
+        "guards": [
+          "g1",
+          "g2"
+        ]
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.p.r1.s.s1",
+            "m.p.r2.t.t1",
+            "m.p.r3.idle"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running",
+          "guards": [
+            "g2",
+            "g1"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.p.r1.s.s1",
+            "m.p.r2.t.t1",
+            "m.p.r3.idle"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running",
+          "guards": [
+            "g2",
+            "g1"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.y"
+          ],
+          "context": {},
+          "actions": [
+            "tY",
+            "e_y"
+          ],
+          "status": "running",
+          "guards": [
+            "g2",
+            "g1"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.p.r1.s.s1",
+            "m.p.r2.t.t1",
+            "m.p.r3.idle"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running",
+          "guards": [
+            "g1",
+            "g2"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.x"
+          ],
+          "context": {},
+          "actions": [
+            "tX",
+            "e_x"
+          ],
+          "status": "running",
+          "guards": [
+            "g1",
+            "g2"
+          ]
+        }
+      ],
+      "machine_hash": "564b5553b4596081",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "m",
+        "machine_hash": "564b5553b4596081",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "m.x"
+        ],
+        "value": "x",
+        "configuration": [
+          "m",
+          "m.x"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {
+          "m.p.r1.s": [
+            "m.p.r1.s.s1"
+          ]
+        },
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"m\",\n  \"machine_hash\": \"564b5553b4596081\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"m.x\"\n  ],\n  \"value\": \"x\",\n  \"configuration\": [\n    \"m\",\n    \"m.x\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {\n    \"m.p.r1.s\": [\n      \"m.p.r1.s.s1\"\n    ]\n  },\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

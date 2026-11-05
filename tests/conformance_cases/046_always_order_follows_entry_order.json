@@ -1,0 +1,307 @@
+{
+  "name": "always_order_follows_entry_order",
+  "description": "XState's selectEventlessTransitions visits the active atomic states in the order the snapshot holds them (snapshot._nodes): the states that remain keep their place and the states a microstep enters are appended, in document order. After F then E, r2's d was entered before r1's b, so d's always is evaluated (and selected) first and preempts b's conflicting one: y wins, although b precedes d in document order. After RESET re-enters p in document order, E then F puts b first and x wins.",
+  "tags": [
+    "always",
+    "parallel",
+    "conflict",
+    "guards",
+    "selection"
+  ],
+  "machine": {
+    "id": "m",
+    "initial": "p",
+    "on": {
+      "RESET": ".p"
+    },
+    "states": {
+      "p": {
+        "type": "parallel",
+        "states": {
+          "r1": {
+            "initial": "a",
+            "states": {
+              "a": {
+                "on": {
+                  "E": "b"
+                }
+              },
+              "b": {
+                "always": {
+                  "target": "#m.x",
+                  "guard": {
+                    "type": "and",
+                    "params": {
+                      "guards": [
+                        "gB",
+                        {
+                          "type": "stateIn",
+                          "params": {
+                            "stateValue": "#m.p.r2.d"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "actions": "tB"
+                }
+              }
+            }
+          },
+          "r2": {
+            "initial": "c",
+            "states": {
+              "c": {
+                "on": {
+                  "F": "d"
+                }
+              },
+              "d": {
+                "always": {
+                  "target": "#m.y",
+                  "guard": {
+                    "type": "and",
+                    "params": {
+                      "guards": [
+                        "gD",
+                        {
+                          "type": "stateIn",
+                          "params": {
+                            "stateValue": "#m.p.r1.b"
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "actions": "tD"
+                }
+              }
+            }
+          }
+        }
+      },
+      "x": {
+        "entry": "e_x"
+      },
+      "y": {
+        "entry": "e_y"
+      }
+    }
+  },
+  "logic": {
+    "record_guards": true
+  },
+  "steps": [
+    {
+      "send": "F"
+    },
+    {
+      "send": "E"
+    },
+    {
+      "send": "RESET"
+    },
+    {
+      "send": "E"
+    },
+    {
+      "send": "F"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "m.p.r1.a",
+          "m.p.r2.c"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running",
+        "guards": []
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.p.r1.a",
+            "m.p.r2.d"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running",
+          "guards": [
+            "gD"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.y"
+          ],
+          "context": {},
+          "actions": [
+            "tD",
+            "e_y"
+          ],
+          "status": "running",
+          "guards": [
+            "gD",
+            "gB"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.p.r1.a",
+            "m.p.r2.c"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running",
+          "guards": []
+        },
+        {
+          "state_ids": [
+            "m.p.r1.b",
+            "m.p.r2.c"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running",
+          "guards": [
+            "gB"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.x"
+          ],
+          "context": {},
+          "actions": [
+            "tB",
+            "e_x"
+          ],
+          "status": "running",
+          "guards": [
+            "gB",
+            "gD"
+          ]
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "m.p.r1.a",
+          "m.p.r2.c"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running",
+        "guards": []
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.p.r1.a",
+            "m.p.r2.d"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running",
+          "guards": [
+            "gD"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.y"
+          ],
+          "context": {},
+          "actions": [
+            "tD",
+            "e_y"
+          ],
+          "status": "running",
+          "guards": [
+            "gD",
+            "gB"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.p.r1.a",
+            "m.p.r2.c"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running",
+          "guards": []
+        },
+        {
+          "state_ids": [
+            "m.p.r1.b",
+            "m.p.r2.c"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running",
+          "guards": [
+            "gB"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.x"
+          ],
+          "context": {},
+          "actions": [
+            "tB",
+            "e_x"
+          ],
+          "status": "running",
+          "guards": [
+            "gB",
+            "gD"
+          ]
+        }
+      ],
+      "machine_hash": "f4c210d318259e8a",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "m",
+        "machine_hash": "f4c210d318259e8a",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "m.x"
+        ],
+        "value": "x",
+        "configuration": [
+          "m",
+          "m.x"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"m\",\n  \"machine_hash\": \"f4c210d318259e8a\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"m.x\"\n  ],\n  \"value\": \"x\",\n  \"configuration\": [\n    \"m\",\n    \"m.x\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

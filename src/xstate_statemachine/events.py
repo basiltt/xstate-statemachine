@@ -32,7 +32,16 @@ would affect all subsequently created events.
 from dataclasses import dataclass, field
 import copy
 import warnings
-from typing import Any, Callable, Dict, FrozenSet, NamedTuple, Optional, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Final,
+    FrozenSet,
+    NamedTuple,
+    Optional,
+    Tuple,
+)
 
 # -----------------------------------------------------------------------------
 # 🏛️ Reserved event namespaces
@@ -84,6 +93,9 @@ class Event:
     inputs, user actions, or other system components. It serves as the primary
     mechanism for driving state transitions.
 
+    📝 Frozen means the ATTRIBUTES cannot be rebound; ``payload`` itself is
+    an ordinary (mutable) dict, and an `Event` is therefore not hashable.
+
     Attributes:
         type: The name of the event, which is used to match against
             transitions defined in the machine's `on` property.
@@ -130,7 +142,15 @@ class Event:
 
     @property
     def data(self) -> Dict[str, Any]:
-        """Alias for `payload` to maintain compatibility with older versions."""
+        """Alias for `payload` to maintain compatibility with older versions.
+
+        Returns:
+            Dict[str, Any]: The payload.
+
+        Raises:
+            TypeError: The payload is not a dict (an `Event` built by hand
+                with a non-dict payload).
+        """
         # This property allows access to the payload using the `data` attribute,
         # which is a common convention in state machine libraries.
         # It ensures that existing code using `data` will continue to work.
@@ -155,6 +175,7 @@ class StreamEvent(Event):
 
     @property
     def data(self) -> Any:
+        """The stream ITEM (``payload["data"]``), not the payload dict."""
         return self.payload.get("data")
 
 
@@ -244,12 +265,15 @@ class ErrorEvent(NamedTuple):
         return self.error
 
 
-#: Event classes the engine itself mints. Membership -- not the name -- is
-#: what marks an event as "system traffic" for the wildcard matcher, the
-#: `onUnhandled` policy and strict mode (#79). A user-sent `Event` whose
-#: `type` merely starts with ``done.`` is user traffic and is treated as
-#: such. `Event` instances the engine creates for its own sentinels are
-#: flagged with `Event.system=True` (see `system_event`).
+#: The PUBLIC NamedTuple event classes (`DoneEvent`, `ErrorEvent`,
+#: `AfterEvent`); assigned below, once they are defined. Kept for code
+#: that imported it before #195.
+#:
+#: ⚠️ Membership does NOT make an event system traffic. Since #195 that is
+#: decided by provenance: `is_system_event` requires the private
+#: engine-minted subclasses (`_ENGINE_MINTED_TYPES`) or, for a plain
+#: `Event`, the engine mark set by `system_event`. A hand-built instance
+#: of any class listed here is user traffic.
 ENGINE_EVENT_TYPES: Tuple[type, ...] = ()  # populated below, after defs
 
 
@@ -272,19 +296,28 @@ class _EngineMark:
     __slots__ = ()
 
     def __repr__(self) -> str:  # pragma: no cover -- debugging aid
+        """Name the sentinel in reprs and debuggers."""
         return "<engine-provenance>"
 
     def __deepcopy__(self, memo: Dict[int, Any]) -> "_EngineMark":
+        """Return the singleton itself, so identity survives `deepcopy`."""
         return self
 
     def __copy__(self) -> "_EngineMark":
+        """Return the singleton itself, so identity survives `copy`."""
         return self
 
     def __reduce__(self) -> str:
-        return "_ENGINE_MARK"  # pickle resolves this module attribute
+        """Pickle by NAME.
+
+        📝 Returning a string tells `pickle` to store a reference to the
+        module global of that name and to look it up on load, so the
+        unpickled value IS `_ENGINE_MARK` rather than a new instance.
+        """
+        return "_ENGINE_MARK"
 
 
-_ENGINE_MARK: Any = _EngineMark()
+_ENGINE_MARK: Final[_EngineMark] = _EngineMark()
 
 
 def is_system_event(event: Any) -> bool:
@@ -292,8 +325,9 @@ def is_system_event(event: Any) -> bool:
 
     Provenance, not spelling -- and not public type either (#195). A
     `DoneEvent` / `ErrorEvent` / `AfterEvent` the engine minted is an
-    instance of a private subclass (`engine_done` / `engine_error` /
-    `engine_after`); one built by hand from the public class is USER
+    instance of a private subclass (`_EngineDone` / `_EngineError` /
+    `_EngineAfter`, built only by `_engine_done` / `_engine_error` /
+    `_engine_after`); one built by hand from the public class is USER
     traffic, subject to `strict` and `onUnhandled` like any other event.
     A plain `Event` is engine-made only when created via
     :func:`system_event` (init/exit sentinels, `escalate`, restore).
@@ -308,7 +342,31 @@ def system_event(event_type: str, **payload: Any) -> "Event":
 
     The ONLY way to produce an `Event` for which `is_system_event` is
     true. `Event` is frozen, so the marker is written through
-    `object.__setattr__` exactly once, here.
+    `object.__setattr__` exactly once, in `_mint_system_event`.
+
+    Args:
+        event_type: The event type.
+        **payload: The payload fields.
+
+    Returns:
+        Event: An engine-minted `Event`.
+    """
+    return _mint_system_event(event_type, payload)
+
+
+def _mint_system_event(event_type: str, payload: Dict[str, Any]) -> "Event":
+    """Mint an engine-owned `Event` from a payload MAPPING.
+
+    The body of `system_event`, minus its ``**payload`` keyword expansion,
+    so `restore_event` can rebuild a persisted payload holding a key named
+    ``event_type`` (or any key) without a ``TypeError``.
+
+    Args:
+        event_type: The event type.
+        payload: The payload; copied.
+
+    Returns:
+        Event: An `Event` for which `is_system_event` is ``True``.
     """
     ev = Event(type=event_type, payload=dict(payload))
     object.__setattr__(ev, "_provenance", _ENGINE_MARK)
@@ -343,6 +401,17 @@ def persist_event(event: Any, *, lane: Optional[str] = None) -> Dict[str, Any]:
     NamedTuple ones. `ErrorEvent.error` is an exception and cannot be
     serialised faithfully; its ``repr`` is kept and restored as a
     `RestoredError`-style stand-in by `restore_event`.
+
+    Args:
+        event: The event to persist.
+        lane: Where the event was waiting (``"priority"``), or ``None``.
+
+    Returns:
+        Dict[str, Any]: A JSON-native record `restore_event` inverts.
+
+    Raises:
+        SnapshotSerializationError: The event carries a value JSON cannot
+            represent.
     """
     kind = event_kind(event)
     rec: Dict[str, Any] = {"kind": kind, "type": event.type}
@@ -399,6 +468,18 @@ def restore_event(record: Dict[str, Any]) -> Any:
     all we have, and only at this boundary -- so an escalate event or init
     sentinel persisted by 0.9.0 is not turned into user traffic that fails
     an `onUnhandled: "error"` machine on restore.
+
+    Args:
+        record: One event record, as written by `persist_event`.
+
+    Returns:
+        The restored event: an `Event` / `StreamEvent`, or a `DoneEvent` /
+        `ErrorEvent` / `AfterEvent` (engine-minted when the record carries
+        ``"engine": true``).
+
+    Raises:
+        SnapshotCorruptError: The record is not an object, or its
+            ``type`` / ``kind`` / ``payload`` / timestamps are malformed.
     """
     from .exceptions import SnapshotCorruptError
 
@@ -426,6 +507,12 @@ def restore_event(record: Dict[str, Any]) -> Any:
         #    system is the init sentinel; everything else re-persists as
         #    v2 on the next save. See the 0.9.0 changelog migration note.
         kind = "system" if etype.startswith("___xstate") else "event"
+    elif kind not in _RESTORABLE_KINDS:
+        # 🛡️ An unknown `kind` used to restore silently as USER traffic.
+        raise SnapshotCorruptError(
+            f"Snapshot is malformed: event record {etype!r} has unknown "
+            f"'kind' {kind!r}; expected one of {sorted(_RESTORABLE_KINDS)}."
+        )
     # 🏷️ #195: provenance is restored exactly as persisted. A `done` /
     #    `error` / `after` record carrying ``"engine": true`` was written by
     #    `persist_event` from an engine-minted completion and restores as
@@ -442,6 +529,41 @@ def restore_event(record: Dict[str, Any]) -> Any:
     return _restore(record, etype, kind, trusted=trusted)
 
 
+#: Every ``kind`` `persist_event` writes (see `event_kind`).
+_RESTORABLE_KINDS: FrozenSet[str] = frozenset(
+    {"event", "system", "done", "error", "after"}
+)
+
+
+def _restored_time(record: Dict[str, Any], key: str) -> Optional[float]:
+    """Read an `AfterEvent` timestamp from a record (``None`` if absent).
+
+    Args:
+        record: The event record.
+        key: ``"scheduled_for"`` or ``"fired_at"``.
+
+    Returns:
+        Optional[float]: The timestamp, or ``None`` when not recorded.
+
+    Raises:
+        SnapshotCorruptError: The value is not a number.
+    """
+    raw = record.get(key)
+    if raw is None:
+        return None
+    try:
+        if isinstance(raw, bool):
+            raise TypeError("bool")
+        return float(raw)
+    except (TypeError, ValueError):
+        from .exceptions import SnapshotCorruptError
+
+        raise SnapshotCorruptError(
+            f"Snapshot is malformed: event record {record.get('type')!r} "
+            f"has a non-numeric {key!r}: {raw!r}."
+        ) from None
+
+
 def _restore(
     record: Dict[str, Any], etype: str, kind: Any, *, trusted: bool
 ) -> Any:
@@ -453,7 +575,9 @@ def _restore(
     """
     if kind == "done":
         args = (etype, record.get("data"), record.get("src", ""))
-        return engine_done(*args) if trusted else DoneEvent(*args)
+        # 📝 The PRIVATE minters: the public `engine_*` names are
+        #    deprecated shims that warned on every restore (EVT-01).
+        return _engine_done(*args) if trusted else DoneEvent(*args)
     if kind == "error":
         from .exceptions import RestoredError
 
@@ -462,22 +586,32 @@ def _restore(
             RestoredError(record.get("error") or "unknown error"),
             record.get("src", ""),
         )
-        return engine_error(*eargs) if trusted else ErrorEvent(*eargs)
+        return _engine_error(*eargs) if trusted else ErrorEvent(*eargs)
     if kind == "after":
         # 📏 #118: absent telemetry restores as None, never 0.0.
-        sched = record.get("scheduled_for")
-        fired = record.get("fired_at")
         aargs = (
             etype,
-            None if sched is None else float(sched),
-            None if fired is None else float(fired),
+            _restored_time(record, "scheduled_for"),
+            _restored_time(record, "fired_at"),
         )
-        return engine_after(*aargs) if trusted else AfterEvent(*aargs)
-    payload = record.get("payload") or {}
+        return _engine_after(*aargs) if trusted else AfterEvent(*aargs)
+    payload = record.get("payload")
+    if payload is None:
+        payload = {}
+    elif not isinstance(payload, dict):
+        # 🛡️ A list / string payload restored as-is and broke later, in
+        #    `Event.data` or a user action, far from the snapshot.
+        from .exceptions import SnapshotCorruptError
+
+        raise SnapshotCorruptError(
+            f"Snapshot is malformed: event record {etype!r} has a "
+            f"{type(payload).__name__} 'payload'; expected an object."
+        )
     if kind == "system":
         # `kind == "system"` IS the persisted provenance for a plain
-        # `Event` (#86/#162); it needs no separate flag.
-        return system_event(etype, **payload)
+        # `Event` (#86/#162); it needs no separate flag. Minted from the
+        # mapping, not `**payload`: a key named `event_type` was a TypeError.
+        return _mint_system_event(etype, payload)
     if record.get("stream") is True:
         return StreamEvent(type=etype, payload=payload)  # #267 battle
     return Event(type=etype, payload=payload)
@@ -534,6 +668,10 @@ class AfterEvent(NamedTuple):
         type: The event name, which is internally generated by the interpreter
               to be unique to the state and delay (e.g., `after.5000.myState`).
               This is used to match the specific `after` transition.
+        scheduled_for: When the timer was due (clock seconds), or ``None``
+            when not recorded.
+        fired_at: When it actually fired (clock seconds), or ``None`` when
+            not recorded. See `lateness_ms`.
 
     Example:
         A developer defines an `after` transition in their JSON:
@@ -553,7 +691,7 @@ class AfterEvent(NamedTuple):
 
         >>> after_event = AfterEvent(type="after.3000.machineName.pending")
         >>> print(after_event)
-        AfterEvent(type='after.3000.machineName.pending')
+        AfterEvent(type='after.3000.machineName.pending', scheduled_for=None, fired_at=None)
     """
 
     # 🏷️ The structured, internally-generated name of the delayed event.
@@ -595,7 +733,7 @@ ENGINE_EVENT_TYPES = (DoneEvent, ErrorEvent, AfterEvent)
 # running. The engine now mints PRIVATE subclasses. To user code they are
 # indistinguishable from the public class -- `isinstance(ev, DoneEvent)`,
 # field access, equality, `_replace`, pickle and deepcopy all behave the same
-# pickle and deepcopy all behave the same and preserve the subclass -- but
+# and preserve the subclass -- but
 # `is_system_event` requires the subclass, so only what the engine (or
 # `restore_event` on a persisted engine record) produced is system traffic.
 # The classes are not exported and have no public name; construct through
@@ -626,8 +764,12 @@ class _EngineDone(DoneEvent):
 
     __slots__ = ()
 
+    # #235: deliberately narrows the return type to the PUBLIC class.
     def _replace(self, **kwargs: Any) -> DoneEvent:  # type: ignore[override]
-        # #235: a caller-chosen variant is user traffic (see design note).
+        """Return a copy with *kwargs* changed, as the PUBLIC `DoneEvent`.
+
+        #235: a caller-chosen variant is user traffic (see design note).
+        """
         return DoneEvent(*self)._replace(**kwargs)
 
 
@@ -636,8 +778,12 @@ class _EngineError(ErrorEvent):
 
     __slots__ = ()
 
+    # #235: deliberately narrows the return type to the PUBLIC class.
     def _replace(self, **kwargs: Any) -> ErrorEvent:  # type: ignore[override]
-        # #235: a caller-chosen variant is user traffic (see design note).
+        """Return a copy with *kwargs* changed, as the PUBLIC `ErrorEvent`.
+
+        #235: a caller-chosen variant is user traffic (see design note).
+        """
         return ErrorEvent(*self)._replace(**kwargs)
 
 
@@ -646,8 +792,12 @@ class _EngineAfter(AfterEvent):
 
     __slots__ = ()
 
+    # #235: deliberately narrows the return type to the PUBLIC class.
     def _replace(self, **kwargs: Any) -> AfterEvent:  # type: ignore[override]
-        # #235: a caller-chosen variant is user traffic (see design note).
+        """Return a copy with *kwargs* changed, as the PUBLIC `AfterEvent`.
+
+        #235: a caller-chosen variant is user traffic (see design note).
+        """
         return AfterEvent(*self)._replace(**kwargs)
 
 

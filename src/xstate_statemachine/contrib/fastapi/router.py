@@ -28,8 +28,8 @@ from fastapi.routing import APIRoute
 from starlette.responses import JSONResponse, PlainTextResponse, Response
 
 from ...persistence.helpers import KeyNotFoundError
-from .._openapi import FIXED_OPS as _FIXED_OPS  # noqa: F401
 from .._openapi import ident as _ident
+from .._openapi import require_route_safe_events
 from .._openapi import operation_ids as _operation_ids
 from ..pydantic.events import models_of
 from ..starlette._http import (
@@ -41,6 +41,7 @@ from ..starlette._http import (
     idempotency_key_from,
     problem,
     problem_for_exception,
+    problem_for_exception_logged,
     read_body,
 )
 from ..starlette.streaming import transition_stream, websocket_endpoint
@@ -316,6 +317,7 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
             f"per_event_dependencies names events {unknown} that machine "
             f"{name!r} does not declare"
         )
+    require_route_safe_events(user_events(machine))
     op = operation_id_prefix or name
     base = f"/{name}" if prefix is None else prefix
     kp = "{" + key_param + "}"
@@ -344,15 +346,20 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
     async def _send(
         request: Request, key: str, etype: str, payload: Any, principal: Any
     ) -> Response:
-        try:
-            if not create_if_missing and not await registry.exists(name, key):
-                raise KeyNotFoundError(key)
-        except Exception as exc:  # noqa: BLE001 -- mapped, never leaked
-            return problem_for_exception(exc)
+        # 🔐 Review CW-02: the existence check lives INSIDE `send_event`,
+        #    after `authorize` -- checking it here first answered 404 to an
+        #    unauthorised caller for a missing key and 403 for an existing
+        #    one, enumerating instance keys.
         return cast(
             Response,  # 📝 registry.send_event is untyped (Any)
             await registry.send_event(
-                request, name, key, etype, payload, principal=principal
+                request,
+                name,
+                key,
+                etype,
+                payload,
+                principal=principal,
+                create_if_missing=create_if_missing,
             ),
         )
 
@@ -362,7 +369,7 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
             await _guard_read(request, key)
             body = await registry.peek(name, key)
         except Exception as exc:  # noqa: BLE001
-            return problem_for_exception(exc)
+            return problem_for_exception_logged(exc, f"GET {name}/{key}")
         body["machine_version"] = machine.version or None
         return JSONResponse(body)
 
@@ -375,6 +382,12 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
         """``POST /{id}/send`` -- send the body's event; returns the receipt."""
         etype = str(body.type)
         if etype in gated:
+            # 🔐 Authorize first: an unauthorised caller must not learn
+            #    which events carry an extra gate.
+            try:
+                await registry.authorize(request, name, key, etype)
+            except Exception as exc:  # noqa: BLE001 -- mapped
+                return problem_for_exception_logged(exc, f"send {name}/{key}")
             return problem(403, "Use this event's dedicated route")
         if models:
             # 🔥 battle #276-b: by_alias -- the engine re-validates the
@@ -396,7 +409,9 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
             await _guard_read(request, key)
             available = (await registry.peek(name, key))["available_events"]
         except Exception as exc:  # noqa: BLE001
-            return problem_for_exception(exc)
+            return problem_for_exception_logged(
+                exc, f"GET {name}/{key}/events"
+            )
         declared = [
             {
                 "type": e,
@@ -413,7 +428,9 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
         try:
             await registry.authorize(request, name, key, None)
         except Exception as exc:  # noqa: BLE001
-            return problem_for_exception(exc)
+            return problem_for_exception_logged(
+                exc, f"GET {name}/{key}/diagram"
+            )
         return PlainTextResponse(machine.to_mermaid())
 
     async def stream(request: Request, key: str = KeyPath) -> Response:
@@ -424,7 +441,9 @@ def StatechartRouter(  # noqa: N802 -- reads as a class, returns APIRouter
         try:
             await _guard_read(request, key)
         except Exception as exc:  # noqa: BLE001 -- mapped, never leaked
-            return problem_for_exception(exc)
+            return problem_for_exception_logged(
+                exc, f"GET {name}/{key}/stream"
+            )
         return await transition_stream(registry, name, key, request)
 
     reads = problem_responses(400, 401, 403, 404, 500, 503)

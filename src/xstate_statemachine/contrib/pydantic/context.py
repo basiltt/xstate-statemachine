@@ -229,7 +229,16 @@ class PydanticCodec:
         ctx = blob.get("context")
         if isinstance(ctx, dict):
             try:
-                instance = self.model.model_validate(ctx)
+                # 🔥 review CM-03: library-private `_xsm_*` keys are not the
+                #    user's domain; a model with extra="forbid" must not
+                #    reject them. Validate the visible keys, merge the
+                #    private ones back untouched.
+                visible = {
+                    k: v
+                    for k, v in ctx.items()
+                    if not is_private_context_key(k)
+                }
+                instance = self.model.model_validate(visible)
             except ValidationError as exc:
                 # 🔥 #266 battle: storing as-is was SILENT acceptance -- a
                 #    blob the model refuses then fails `TypedContextPlugin`

@@ -14,7 +14,7 @@ flowchart LR
     J -. "SnapshotDriftError if the machine changed" .-> X["⛔ refused"]
 ```
 
-A snapshot is a JSON string that captures the runtime state of an interpreter inside a versioned envelope (layout **v3** in 0.9.0 — see [Snapshot Envelope](#snapshot-envelope) for every key). The essentials:
+A snapshot is a JSON string that captures the runtime state of an interpreter inside a versioned envelope (layout **v4** since 0.11.0 — see [Snapshot Envelope](#snapshot-envelope) for every key). The essentials:
 
 - **`status`** — the interpreter's lifecycle status (`"running"`, `"stopped"`, etc.)
 - **`context`** — the full context dictionary (all mutable data)
@@ -157,7 +157,7 @@ restored.stop()
 >
 > - **Entry actions are NOT re-run** — The restored interpreter is placed directly into the saved states without executing their `entry` actions.
 > - **Services are NOT restarted** — Any `invoke` services that were running when the snapshot was taken are not re-invoked by default. Inspect what's dormant with `pending_invocations()`, or opt in to re-driving it with `from_snapshot(..., restart_services=True)` — see [Restoring Dormant Invocations](#restoring-dormant-invocations) below.
-> - **Timers are NOT resumed by default** — a snapshot records that an `after` timer was pending, not how far along it was. After a static restore `interpreter.has_dormant_timers` is `True`. Pass `from_snapshot(..., restart_timers=True)` (defaults to the value of `restart_services`) to have `start()` re-arm every dormant timer **from zero** (0.9.0, #128). A timer that had already *fired* and was waiting in the priority lane **is** persisted and replays on restore (#107) — into the lane, ahead of the inbox, on both engines (#214, #233).
+> - **Timers are not resumed by default** — the snapshot records each armed timer's wall-clock deadline (`deadlines`), but a static restore leaves them dormant: `interpreter.has_dormant_timers` is `True`. Pass `restart_timers=` (defaults to the value of `restart_services`): `True` / `"restart"` re-arms from zero in `start()` (0.9.0, #128), `"resume"` re-arms the *remaining* time, and `"fire_due"` also fires matured timers during `start()` (0.11.0, #264). A timer that had already *fired* and was waiting in the priority lane **is** persisted and replays on restore (#107) — into the lane, ahead of the inbox, on both engines (#214, #233).
 > - **The chain-trip latch crosses a restart, as a `RestoredChainError`** (0.9.0, #226; 0.9.1, #243) — `chain_trips` and `last_chain_error` are snapshot fields. A restored machine reports the same count, and the error comes back as a `RestoredChainError`, which is *both* a `RestoredError` and a `RunawayChainError` — so `isinstance(interp.last_chain_error, RunawayChainError)` stays `True` across the restart. Its `.limit` / `.dropped` are `None` (JSON kept only the message); the type-independent, restart-safe guard is `interp.chain_trips > 0`. `clear_chain_error()` is still the only thing that clears it. Before #226 both reset to `0` / `None` on restore; in 0.9.0 the restored latch was a plain `RestoredError` and an `isinstance` guard went silently `False`.
 > - **`strict` and event schemas apply on restore** (#214, #227) — a persisted record in `pending_events` *or* `scheduled_sends` that `send()` would have refused is dropped, reported via `on_invalid_event`, and recorded on `last_error`. Pass `from_snapshot(..., plugins=[...])` (#230) so the hook is attached *before* admission runs; otherwise the refusal is only visible on `last_error`.
 > - **`status` is not a liveness signal after a restore** — the restored object reports the persisted `"running"` immediately, before `start()` has re-invoked anything. Between `from_snapshot()` and `start()`, and after any static restore, check `has_dormant_invocations` / `has_dormant_timers` (#135).
@@ -170,6 +170,52 @@ restored.stop()
 > - **Restore with the clock you mean** — `from_snapshot(..., clock=SimulatedClock())` (0.9.0, #117); without it a restored machine ran on `RealClock`, which broke deterministic replay.
 > - **Context is restored by value** — The context dictionary is deserialized from JSON. Non-serializable values (functions, class instances, file handles) will be lost or converted to strings.
 > - **Machine definition must match** — The `machine` argument to `from_snapshot()` must have the same structure as the original. If state IDs have changed, restoration will fail with `StateNotFoundError`.
+
+## 📍 `from_state()` — Starting in a Known State
+
+When you only know *which state* something is in (a `status` column on a database row, say) and have no snapshot, build the interpreter straight into that state:
+
+```text
+Interpreter.from_state(machine, state, *, context=None, clock=None,
+                       plugins=None, restart_services=False,
+                       restart_timers=None)   # same on SyncInterpreter
+```
+
+`state` is one id or several (for parallel regions); each is an absolute id (`"order.paid.packing"`) or a dot path from the machine root (`"paid.packing"`). A compound or parallel state completes to its initial leaves, as entering it would. Entry actions are **not** run (exactly like a snapshot restore); call `start()` afterwards and it resumes instead of re-entering the initial state. `context` is shallow-merged over the machine's defaults. A top-level final state restores as `status == "done"`.
+
+```python
+from xstate_statemachine import SyncInterpreter, create_machine
+
+machine = create_machine(
+    {
+        "id": "flow",
+        "initial": "draft",
+        "states": {
+            "draft": {
+                "on": {
+                    "SUBMIT": "review",
+                },
+            },
+            "review": {
+                "on": {
+                    "APPROVE": "done",
+                },
+            },
+            "done": {},
+        },
+    }
+)
+
+interp = SyncInterpreter.from_state(machine, "review").start()
+print(sorted(interp.current_state_ids))
+# ['flow.review']
+interp.send("APPROVE")
+print(sorted(interp.current_state_ids))
+# ['flow.done']
+interp.stop()
+```
+
+An unknown id raises `StateNotFoundError`; ids that do not form a legal configuration (two leaves of one non-parallel parent) raise `SnapshotCorruptError`. The Pythonic `StateMachine(state=...)` constructor uses the same path. It is implemented as a minimal snapshot handed to `from_snapshot`, so `machine_hash` verification is skipped.
 
 ## 🔌 Restoring Dormant Invocations
 
@@ -316,8 +362,8 @@ As of 0.8.0, `get_snapshot()` writes a versioned **envelope** around the fields 
 - **`chain_trips`** / **`last_chain_error`** *(#226)* — the sticky chain-trip signal (#222). Restored verbatim; the error comes back as a `RestoredChainError` (a `RunawayChainError` *and* a `RestoredError`, #243). Absent in blobs written before 0.9.0, which restore to `0` / `None`. A malformed value (a non-integer count, a non-string message) is `SnapshotCorruptError` like any other field (#241). **Trust boundary (#205, #242):** like every restored field these are accepted verbatim with no integrity check beyond the definition-level `machine_hash` — a party who can write the blob can set `chain_trips` to any value and `last_chain_error` to any message. If these fields feed a supervisor-alerting path, a replayed blob can manufacture or suppress that alert; authenticate blobs outside the library if that matters.
 - **`pending_events`** — see [The Inbox: pending events](#the-inbox-pending-events) below. Since layout **v3** (#214) each record also carries its provenance (`"engine": true` for a completion the engine minted) and, on the async engine, its `lane` (`"priority"` for a fired timer / completion waiting ahead of the inbox), so both round-trip; a v2 record of kind `done` / `error` / `after` is upcast as engine-minted, because only the engine could have written one. Restored user events pass the same `strict` check a `send()` does — a refused one is reported (`on_invalid_event`, `last_error`) and dropped, never silently accepted. Since layout **v2** (0.9.0) every pending or deferred record carries a `kind` — `event`, `system`, `done`, `error` or `after` — so engine events (`DoneEvent`, `ErrorEvent`, a due `after`) and provenance round-trip instead of being silently dropped (#86, #87). An `ErrorEvent`'s exception is persisted as its `repr` and restored as a `RestoredError`. v1 snapshots restore unchanged; their engine-shaped plain events are re-derived by name at the restore boundary only.
 - **`machine_version`** *(layout v4, #305)* — the chart's own `"version"` label from the root of the config (`MachineNode.version`), or `null` when the chart declares none. `machine_hash` answers *"did the structure change?"*; this answers *"which revision wrote it?"* — the label a human reads in a stuck-workflow ticket and the key the snapshot migrator (#263) dispatches on. Re-labelling a chart does **not** change `machine_hash`, so old blobs still load.
-- **`deadlines`** *(layout v4, #305)* — durable `after` timers anchored to the **wall clock** (`persistence.Deadline`: `state_id`, `entry_seq`, `due_at_wall`, `delay_ms`, `event_type`), for timers that must survive a restart hours later, possibly on another host (#264). Distinct from `scheduled_sends`, which stores the delay *remaining* and is right for a restart seconds later. `entry_seq` is the state-entry generation, so a deadline armed by an earlier visit to the same state is recognised as stale and dropped instead of fired. Written by `get_snapshot()` for every armed `after` whose owning state is active; `persisted()` resumes the *remaining* time and `DueTimerScanner` wakes the ones that elapsed while nothing was running (see [Persistence & Durability](persistence/#durable-timers)).
-- **`value`** — the hierarchical [`interpreter.value`](interpreters/#hierarchical-state-value) at the time of capture, included for convenience. Restore ignores it; it is derived fresh from `state_ids` every time.
+- **`deadlines`** *(layout v4, #305)* — durable `after` timers anchored to the **wall clock** (`persistence.Deadline`: `state_id`, `entry_seq`, `due_at_wall`, `delay_ms`, `event_type`), for timers that must survive a restart hours later, possibly on another host (#264). Distinct from `scheduled_sends`, which stores the delay *remaining* and is right for a restart seconds later. `entry_seq` is the state-entry generation, so a deadline armed by an earlier visit to the same state is recognised as stale and dropped instead of fired. Written by `get_snapshot()` for every armed `after` whose owning state is active; `persisted()` resumes the *remaining* time and `DueTimerScanner` wakes the ones that elapsed while nothing was running (see [Persistence & Durability](../persistence/#durable-timers)).
+- **`value`** — the hierarchical [`interpreter.value`](../interpreters/#hierarchical-state-value) at the time of capture, included for convenience. Restore ignores it; it is derived fresh from `state_ids` every time.
 
 **Unversioned 0.7.x snapshots restore unchanged.** A payload with no `version` key is treated as version 0 and accepted unconditionally — there is no breaking change for snapshots taken before 0.8.0.
 

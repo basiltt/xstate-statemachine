@@ -393,7 +393,9 @@ CORRUPTIONS: List[Tuple[str, Any]] = [
     ("actionErrorPolicy", "panic"),
     ("maxIterations", "lots"),
     ("states.cart.on.CHECKOUT", 5),
-    ("states.cart.on.CHECKOUT.target", ["awaitingPayment"]),
+    # A list of strings is a valid (XState v5 multi-target) target; a
+    # non-string entry is still a shape error with a path.
+    ("states.cart.on.CHECKOUT.target", ["awaitingPayment", 7]),
     ("states.paying.invoke", "chargeCard"),
     ("states.paying.invoke.src", 7),
     ("states.awaitingPayment.after", "900000"),

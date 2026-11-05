@@ -1,4 +1,4 @@
-﻿# src/xstate_statemachine/contrib/django/stores.py
+# src/xstate_statemachine/contrib/django/stores.py
 # -----------------------------------------------------------------------------
 # 🗄️ DjangoStore / DjangoModelStore -- the A2 `StateStore` contract on the ORM
 # -----------------------------------------------------------------------------
@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import threading
 import time
 import uuid
@@ -39,6 +40,7 @@ from typing import (
     Tuple,
 )
 
+from django.core.exceptions import ValidationError as DjangoValidationError
 from django.db import IntegrityError, OperationalError, transaction
 from django.db.models import F
 
@@ -46,6 +48,7 @@ from ...exceptions import ConflictError, LockTimeoutError
 from ...persistence.deadline import Deadline
 from ...persistence.store import BaseStore
 from . import _deadlines
+from ._locking import _is_lock_error
 from .fields import sibling_values
 
 __all__ = ["DjangoModelStore", "DjangoStore"]
@@ -54,17 +57,14 @@ _LOCK_POLL_S = 0.01
 DEFAULT_LOCK_TTL_S = 60.0
 DEFAULT_NAMESPACE = "default"
 
+logger = logging.getLogger(__name__)
+
 
 def _app_model(name: str) -> Any:
     # 📝 Via the registry (see `_deadlines._model`).
     from django.apps import apps
 
     return apps.get_model("xsm_django", name)
-
-
-def _locked(exc: BaseException) -> bool:
-    msg = str(exc).lower()
-    return "locked" in msg or "busy" in msg
 
 
 class DjangoStore(BaseStore):
@@ -152,7 +152,7 @@ class DjangoStore(BaseStore):
                 _deadlines.write(self.using, self.namespace, key, deadlines)
             return new
         except OperationalError as exc:
-            if _locked(exc):
+            if _is_lock_error(exc):
                 raise LockTimeoutError(key, 0.0) from exc
             raise
 
@@ -177,17 +177,32 @@ class DjangoStore(BaseStore):
             if n != 1:
                 raise ConflictError(key, expected, self._current(key))
             return expected + 1
+        if self._bump(key, values):
+            return int(self._current(key) or 1)
+        try:
+            # 🔥 Two first saves can both miss the UPDATE; the loser's
+            #    INSERT hits the unique key. A savepoint keeps an outer
+            #    Postgres transaction usable, then the UPDATE is retried
+            #    once instead of leaking a raw IntegrityError.
+            with transaction.atomic(using=self.using):
+                self._model.objects.using(self.using).create(
+                    source=self.namespace, key=key, version=1, **values
+                )
+        except IntegrityError:
+            if self._bump(key, values):
+                return int(self._current(key) or 1)
+            raise
+        return 1
+
+    def _bump(self, key: str, values: Dict[str, Any]) -> bool:
+        """UPDATE the row's snapshot and bump its version; ``True`` if a
+        row matched."""
         n = (
             self._qs()
             .filter(key=key)
             .update(version=F("version") + 1, **values)
         )
-        if n == 1:
-            return int(self._current(key) or 1)
-        self._model.objects.using(self.using).create(
-            source=self.namespace, key=key, version=1, **values
-        )
-        return 1
+        return n == 1
 
     def _delete_raw(self, key: str) -> bool:
         with transaction.atomic(using=self.using):
@@ -224,7 +239,15 @@ class DjangoStore(BaseStore):
     def due_keys(
         self, until_wall: float, *, limit: int = 1000
     ) -> List[Tuple[str, float]]:
-        """``(key, earliest due_at)`` from the deadline index."""
+        """``(key, earliest due_at)`` from the deadline index.
+
+        Args:
+            until_wall: Wall-clock upper bound (inclusive).
+            limit: Maximum number of keys.
+
+        Returns:
+            Due keys with their earliest deadline, soonest first.
+        """
         return _deadlines.due(self.using, self.namespace, until_wall, limit)
 
     # -- lease ----------------------------------------------------------------------
@@ -249,7 +272,7 @@ class DjangoStore(BaseStore):
         except IntegrityError:
             return False
         except OperationalError as exc:
-            if _locked(exc):
+            if _is_lock_error(exc):
                 return False
             raise
 
@@ -274,12 +297,30 @@ class DjangoStore(BaseStore):
             yield
         finally:
             held.discard(key)
-            with contextlib.suppress(Exception):
+            try:
                 StatechartLock.objects.using(self.using).filter(
                     source=self.namespace, key=key, owner=owner
                 ).delete()
+            except Exception:  # noqa: BLE001 - never mask the body's error
+                # ⚠️ The lease then stays until `lock_ttl_s` and blocks
+                #    other writers of this key; leases have no heartbeat,
+                #    so a section longer than the TTL loses exclusion and
+                #    only the version fence prevents a lost update.
+                logger.warning(
+                    "failed to release lease on %r (expires in <= %.0fs)",
+                    key,
+                    self.lock_ttl_s,
+                    exc_info=True,
+                )
 
     def health(self) -> Dict[str, Any]:
+        """Probe the snapshot table.
+
+        Returns:
+            ``{"ok": True, "backend", "vendor", "namespace", "keys"}``, or
+            ``{"ok": False, "backend", "error": <class name>}``; never
+            raises.
+        """
         try:
             n = self._qs().count()
             from django.db import connections
@@ -325,7 +366,13 @@ class DjangoModelStore(BaseStore):
         return self.model._base_manager.using(self.using)
 
     def _pk(self, key: str) -> Any:
-        return self.model._meta.pk.to_python(key)
+        # 📝 A key that is not a valid pk (``"abc"`` for an integer pk)
+        #    names no row: ``None`` matches nothing, so load() returns
+        #    None and save() raises ConflictError, not ValidationError.
+        try:
+            return self.model._meta.pk.to_python(key)
+        except (DjangoValidationError, ValueError, TypeError):
+            return None
 
     def _load_raw(
         self, key: str
@@ -366,7 +413,7 @@ class DjangoModelStore(BaseStore):
         try:
             return self._save_row(key, snap, expected_version, deadlines)
         except OperationalError as exc:
-            if _locked(exc):
+            if _is_lock_error(exc):
                 raise LockTimeoutError(key, 0.0) from exc
             raise
 
@@ -426,6 +473,8 @@ class DjangoModelStore(BaseStore):
     def due_keys(
         self, until_wall: float, *, limit: int = 1000
     ) -> List[Tuple[str, float]]:
+        """``(pk, earliest due_at)`` from the deadline index (see
+        `DjangoStore.due_keys`)."""
         return _deadlines.due(self.using, self.source, until_wall, limit)
 
     def _lock_raw(self, key: str, timeout: float) -> ContextManager[None]:

@@ -1,9 +1,9 @@
 ---
 title: "CLI Templates Deep Dive"
-description: "All 5 primary templates and 3 companion templates explained with complete generated output."
+description: "All 5 primary templates and 5 companion templates explained with complete generated output."
 ---
 
-The `xsm` CLI offers five **primary** code generation templates, each producing a different code structure and API style, plus three **companion** templates (`pytest`, `typed`, `plugin`) that add a test module, a typed-context module or a plugin skeleton alongside any of them. This guide shows the **complete generated output** for each template using the same input JSON, so you can compare them side-by-side and choose the best fit for your project.
+The `xsm` CLI offers five **primary** code generation templates, each producing a different code structure and API style, plus five **companion** templates (`pytest`, `typed`, `plugin`, `pydantic-models`, `fastapi-router`) that add a test module, a typed-context module, a plugin skeleton, pydantic models or a FastAPI router alongside any of them. This guide shows the **complete generated output** for each template using the same input JSON, so you can compare them side-by-side and choose the best fit for your project.
 
 ## 🧩 Template Overview
 
@@ -14,7 +14,7 @@ flowchart LR
     T --> D["class-json"] & E["function-json"]
     A & B & C --> P["🐍 pure Python — JSON discarded"]
     D & E --> Q["📎 Python + JSON kept side-by-side"]
-    T -. "--with-tests / --with-types / --with-plugin" .-> F["🧪 pytest · 🔤 typed · 🔌 plugin"]
+    T -. "--with-tests / --with-types / --with-plugin / --with-models / --with-api" .-> F["🧪 pytest · 🔤 typed · 🔌 plugin · 📐 pydantic · 🌐 fastapi"]
 ```
 
 | Template | API Style | JSON at Runtime? | Logic Pattern | Default Mode |
@@ -88,6 +88,7 @@ The examples on this page focus on `--template`/`-t` and `--async-mode`/`-am`, b
 
 - `--with-tests`, `--with-types`, `--with-plugin` — Also emit the `pytest`, `typed` and `plugin` companion modules described in [Companion templates](#companion-templates) below. Any combination; they never replace the primary output.
 - `--with-models`, `--with-api` — Also emit the `pydantic-models` (`<machine>_models.py`) and `fastapi-router` (`<machine>_api.py`) companions for the `[pydantic]` / `[fastapi]` extras.
+- `--fixtures` — With the `pytest` companion only: emit the `@pytest.mark.xstate_machine` marker and the `xsm_interp` / `xsm_clock` / `xsm_ran` fixtures of the `[testing]` extra instead of building the interpreter and the stub logic by hand in the module (`pip install "xstate-statemachine[testing]"`; see [Integration testing](../integration-testing/)).
 - `-fc`, `--file-count {1,2}` — Number of output files: `1` (combined) or `2` (logic/runner). Default: `2`. This page's "Generated Logic File" / "Generated Runner File" pairs all assume the default of `2`; pass `--file-count 1` to get a single combined file instead.
 - `--no-verify` — Skip the structural check that generated code rebuilds the source machine. Syntax is still validated. Use only to inspect output the generator would otherwise refuse to write.
 - `--check` — Do not write anything. Exit with status 1 if the files on disk differ from what would be generated. Intended for CI, so generated code can be committed and kept honest.

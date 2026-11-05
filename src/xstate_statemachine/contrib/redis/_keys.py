@@ -40,7 +40,13 @@ def validate_prefix(prefix: str) -> str:
         )
     if any(c in prefix for c in " \t\n\r"):
         raise InvalidConfigError("Redis `prefix` must not contain whitespace.")
-    return prefix.rstrip(":")
+    stripped = prefix.rstrip(":")
+    if not stripped:
+        # 🔥 review CM-29: ":::" is only separators -- an empty namespace.
+        raise InvalidConfigError(
+            "Redis `prefix` must contain more than ':' separators."
+        )
+    return stripped
 
 
 class Keys:

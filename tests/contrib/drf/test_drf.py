@@ -78,9 +78,13 @@ class TestRoutes:
         assert "LEGAL_OK" in r.json()["declared"]
         r = c.get(f"/api/orders/{order.pk}/history/")
         assert r.status_code == 200
+        # `legal` reaching its final state raises `done.state` for the
+        # region (XState v5), which the audit trail records like any engine
+        # event.
         assert [h["event"] for h in r.json()] == [
             "SUBMIT",
             "LEGAL_OK",
+            "done.state.order.review.legal",
             "RESET",
         ]
         assert r.json()[0]["actor"] == alice.pk

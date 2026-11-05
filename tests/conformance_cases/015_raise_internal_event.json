@@ -1,0 +1,143 @@
+{
+  "name": "raise_internal_event",
+  "description": "A raised event is processed before the macrostep completes; its handler runs within the same send, after the remaining transition actions and the entry actions of the target.",
+  "tags": [
+    "actions",
+    "raise",
+    "internal-queue"
+  ],
+  "machine": {
+    "id": "r",
+    "initial": "a",
+    "states": {
+      "a": {
+        "on": {
+          "GO": {
+            "target": "b",
+            "actions": [
+              "beforeRaise",
+              {
+                "type": "raise",
+                "params": {
+                  "event": {
+                    "type": "INTERNAL"
+                  }
+                }
+              },
+              "afterRaise"
+            ]
+          }
+        }
+      },
+      "b": {
+        "entry": "enterB",
+        "on": {
+          "INTERNAL": {
+            "target": "c",
+            "actions": "handledInternal"
+          }
+        }
+      },
+      "c": {
+        "entry": "enterC"
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "GO"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "r.a"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "r.c"
+          ],
+          "context": {},
+          "actions": [
+            "beforeRaise",
+            "afterRaise",
+            "enterB",
+            "handledInternal",
+            "enterC"
+          ],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "r.a"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "r.c"
+          ],
+          "context": {},
+          "actions": [
+            "beforeRaise",
+            "afterRaise",
+            "enterB",
+            "handledInternal",
+            "enterC"
+          ],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "a57b68e35b534b70",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "r",
+        "machine_hash": "a57b68e35b534b70",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "r.c"
+        ],
+        "value": "c",
+        "configuration": [
+          "r",
+          "r.c"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"r\",\n  \"machine_hash\": \"a57b68e35b534b70\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"r.c\"\n  ],\n  \"value\": \"c\",\n  \"configuration\": [\n    \"r\",\n    \"r.c\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

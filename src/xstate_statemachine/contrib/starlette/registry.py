@@ -13,7 +13,7 @@
 #    single-worker deployments and dev. Bounded (`max_residents`, idle TTL,
 #    X0.11/12), stopped -- and saved -- on eviction and on shutdown.
 #
-# â° Timers: a persisted `after` deadline is woken by `DueTimerScanner`
+# ⏰ Timers: a persisted `after` deadline is woken by `DueTimerScanner`
 #    (#264), which `lifespan` runs in a daemon thread when `run_timers=True`.
 #
 # 🔐 X0.1 closed-by-default: `register(authorize=)` is REQUIRED; `allow_all`
@@ -61,6 +61,7 @@ from ...persistence.idempotency import (
     IdempotencyPlugin,
     validate_principal,
 )
+from ...persistence.helpers import KeyNotFoundError
 from ...persistence.locking import (
     DEFAULT_SETTLE_TIMEOUT,
     _restore_kwargs,
@@ -68,6 +69,7 @@ from ...persistence.locking import (
 )
 from ...persistence.store import validate_key
 from ...plugins import PluginBase
+from .._compat import origin_is_allowed, positive_finite
 from ._act_helpers import (
     _comparable,
     Authorizer,
@@ -85,6 +87,7 @@ from ._http import (
     ForbiddenError,
     ShuttingDownError,
     IdempotencyNotConfiguredError,
+    PrincipalNotConfiguredError,
     idempotency_key_from,
     json_body,
     principal_or_401,
@@ -103,7 +106,9 @@ __all__ = ["Authorizer", "StatechartRegistry", "allow_all"]
 #: Separator between machine name and instance key in the STORE key.
 #: Names may not contain it; keys may (the split is on the first one).
 KEY_SEP = "."
-_INTERNAL_PREFIXES = ("done.", "error.", "after.", "xstate.")
+#: Interpreter statuses whose state is worth persisting when a resident
+#: is retired ("done" = the chart reached a top-level final state).
+_SAVEABLE_STATUSES = ("running", "done")
 
 _allow_all_warned = threading.Event()
 
@@ -191,6 +196,15 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
     ) -> None:
         if max_residents < 1:
             raise ValueError("max_residents must be >= 1")
+        # 🔥 Review CW-18: every duration / size option fails at
+        #    construction -- `scanner_interval_s=0` busy-spun the scanner
+        #    thread and `max_body_bytes=-1` answered 413 to every body.
+        positive_finite("scanner_interval_s", scanner_interval_s)
+        positive_finite("drain_timeout_s", drain_timeout_s)
+        positive_finite("resident_idle_ttl_s", resident_idle_ttl_s)
+        positive_finite("settle_timeout", settle_timeout, allow_zero=True)
+        if max_body_bytes is not None:
+            positive_finite("max_body_bytes", max_body_bytes, allow_zero=True)
         if max_connections_per_key < 1:
             raise ValueError("max_connections_per_key must be >= 1")
         self.store = store
@@ -240,7 +254,7 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
         self._residents: "OrderedDict[Tuple[str, str], _Resident]" = (
             OrderedDict()
         )
-        # 📝 Created lazily: on Python 3.9 syncio.Lock() binds to the
+        # 📝 Created lazily: on Python 3.9 asyncio.Lock() binds to the
         #    current loop at construction and raises with no running loop --
         #    and a registry is built at import time, before the server starts.
         self.__resident_lock: Optional[asyncio.Lock] = None
@@ -297,6 +311,7 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
 
     @property
     def machines(self) -> Mapping[str, MachineNode[Any]]:
+        """A snapshot mapping of registered name → parsed machine."""
         return {n: r.machine for n, r in self._regs.items()}
 
     def _reg(self, name: str) -> _Registration:
@@ -316,6 +331,17 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
         return validate_key(f"{name}{KEY_SEP}{key}")
 
     def machine_for_store_key(self, store_key: str) -> MachineNode[Any]:
+        """The machine a store key belongs to (its ``"<name>."`` prefix).
+
+        Args:
+            store_key: A key built by `store_key`.
+
+        Returns:
+            The registered machine.
+
+        Raises:
+            KeyError: If the prefix names no registered machine.
+        """
         return self._reg(store_key.split(KEY_SEP, 1)[0]).machine
 
     # -- authorization ------------------------------------------------------
@@ -394,7 +420,8 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
         ) as interp:
             if reg.strict is not None:
                 interp.strict = reg.strict
-            interp._xsm_context_serializer = reg.context_serializer
+            tagged: Any = interp  # 📝 per-request tag read by receipts
+            tagged._xsm_context_serializer = reg.context_serializer
             yield interp
             # ⏳ #263 battle: the receipt resolved at the end of the EVENT's
             #    macrostep; a plain-`def` invoke chain (authorise → capture)
@@ -408,7 +435,7 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
                 )
                 for r in recorder.changed
             ]
-        # âœ… Only after the save committed: subscribers never see a
+        # ✅ Only after the save committed: subscribers never see a
         #    transition that a conflict rolled back.
         if bodies:
             self.subscribers.publish(name, str(key), bodies)
@@ -484,6 +511,7 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
         payload: Optional[Dict[str, Any]] = None,
         *,
         principal: Optional[str] = None,
+        create_if_missing: bool = True,
     ) -> Response:
         """Authorize, read the JSON body (unless *payload*), honour
         ``Idempotency-Key``, `act()`, and answer with `ReceiptResponse` --
@@ -493,9 +521,15 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
             principal: The authenticated caller, when a framework resolved
                 it already (FastAPI's ``actor_from_request`` dependency).
                 Defaults to the registry's ``principal(conn)`` callable.
+            create_if_missing: ``False`` answers 404 for a key with no
+                stored instance. 🔐 Review CW-02: the check runs AFTER
+                `authorize`, so an unauthorised caller cannot tell a
+                missing key from an existing one (a key-existence oracle).
         """
         try:
             await self.authorize(request, name, key, event_type)
+            if not create_if_missing and not await self.exists(name, key):
+                raise KeyNotFoundError(key)
             if payload is None:
                 payload = await json_body(
                     request,
@@ -589,10 +623,9 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
         if self.inbox is None:
             return None
         if self.principal is None:
-            raise ValueError(
-                "StatechartRegistry(principal=) is required with inbox= "
-                "for the HTTP helpers (X0.2)."
-            )
+            # 🔥 Review CW-19: a typed configuration error (still a
+            #    `ValueError`) the 5xx path logs, not a bare one.
+            raise PrincipalNotConfiguredError()
         # 🔐 Battle #303 review H1: the HTTP helpers answer 401, not a
         #    pooled "None" scope, when `principal(conn)` identifies nobody.
         return principal_or_401(self.principal(conn))
@@ -600,10 +633,18 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
     # -- residents ------------------------------------------------------------
     @property
     def residents(self) -> int:
+        """How many resident actors are currently held in memory."""
         return len(self._residents)
 
     async def resident(self, name: str, key: str) -> Interpreter[Any]:
         """A long-lived in-process actor for *key* (opt-in).
+
+        📝 Review CW-21: ``resident_idle_ttl_s`` counts from the last
+        time a caller FETCHED the resident here, not from its last event.
+        A caller that holds the returned interpreter and keeps sending
+        for longer than the TTL can have it saved and stopped by the next
+        `resident()` call for ANY key -- re-fetch per use rather than
+        caching the interpreter.
 
         Loaded from the store on first use, LRU/TTL-evicted, and saved
         (with `expected_version`) + stopped when evicted, released or on
@@ -686,7 +727,10 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
     ) -> None:
         interp = res.interp
         try:
-            if interp.status == "running":
+            # 🔥 Review CW-01: a chart that reached a `final` state reports
+            #    "done", not "running" -- skipping it lost the completing
+            #    transition on every eviction, release and shutdown.
+            if interp.status in _SAVEABLE_STATUSES:
                 await self._astore.save(
                     interp.store_key,
                     interp.get_snapshot(),
@@ -754,16 +798,13 @@ class StatechartRegistry(_ProbesMixin, _ScannerMixin):
 
     def origin_allowed(self, conn: HTTPConnection) -> bool:
         """X0.7: no ``Origin`` (non-browser), same-origin, or allow-listed."""
-        origin = conn.headers.get("origin")
-        if origin is None:
-            return True
-        if origin in self.allowed_origins:
-            return True
-        host = conn.headers.get("host")
-        if not host:
-            return False
-        bare = origin.split("://", 1)[-1].rstrip("/")
-        return bare == host
+        # 📝 Review CW-33: one rule for Flask, Quart and ASGI -- see
+        #    `origin_is_allowed` (host compared case-insensitively).
+        return origin_is_allowed(
+            conn.headers.get("origin"),
+            conn.headers.get("host"),
+            self.allowed_origins,
+        )
 
     # -- lifespan -------------------------------------------------------------
     @contextlib.asynccontextmanager

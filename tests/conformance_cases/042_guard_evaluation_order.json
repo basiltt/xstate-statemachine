@@ -1,0 +1,285 @@
+{
+  "name": "guard_evaluation_order",
+  "description": "Guard evaluations are recorded (logic.record_guards). For an event XState descends the active tree: in each region the deepest state's candidates are tried in order and the walk stops at the first enabled one; a region's own handlers are consulted only when its active child had none, and the parallel ancestor only when no region matched. Eventless transitions are selected per atomic state in document order, walking up to the first enabled always, so a guard on a shared ancestor is evaluated once per region that reaches it.",
+  "tags": [
+    "guards",
+    "parallel",
+    "always",
+    "selection"
+  ],
+  "machine": {
+    "id": "m",
+    "initial": "p",
+    "states": {
+      "p": {
+        "type": "parallel",
+        "always": {
+          "target": "#m.out",
+          "guard": "gAlways"
+        },
+        "on": {
+          "E": {
+            "actions": "pTook",
+            "guard": "gP"
+          },
+          "F": {
+            "actions": "pF",
+            "guard": "gPF"
+          }
+        },
+        "states": {
+          "r1": {
+            "initial": "a",
+            "on": {
+              "E": {
+                "actions": "r1Took",
+                "guard": "gR1"
+              }
+            },
+            "states": {
+              "a": {
+                "on": {
+                  "E": [
+                    {
+                      "target": "b",
+                      "guard": "gA1",
+                      "actions": "a1"
+                    },
+                    {
+                      "guard": "gA2",
+                      "actions": "a2"
+                    },
+                    {
+                      "guard": "gA3",
+                      "actions": "a3"
+                    }
+                  ]
+                }
+              },
+              "b": {}
+            }
+          },
+          "r2": {
+            "initial": "c",
+            "states": {
+              "c": {
+                "on": {
+                  "E": {
+                    "guard": "gC",
+                    "actions": "cTook"
+                  },
+                  "F": {
+                    "guard": "gCF",
+                    "actions": "cF"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "out": {}
+    }
+  },
+  "logic": {
+    "guards": {
+      "gAlways": false,
+      "gA1": false,
+      "gA2": true,
+      "gC": false,
+      "gCF": false
+    },
+    "record_guards": true
+  },
+  "steps": [
+    {
+      "send": "E"
+    },
+    {
+      "send": "F"
+    },
+    {
+      "send": "G"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "m.p.r1.a",
+          "m.p.r2.c"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running",
+        "guards": [
+          "gAlways",
+          "gAlways"
+        ]
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.p.r1.a",
+            "m.p.r2.c"
+          ],
+          "context": {},
+          "actions": [
+            "a2"
+          ],
+          "status": "running",
+          "guards": [
+            "gA1",
+            "gA2",
+            "gC",
+            "gAlways",
+            "gAlways"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.p.r1.a",
+            "m.p.r2.c"
+          ],
+          "context": {},
+          "actions": [
+            "pF"
+          ],
+          "status": "running",
+          "guards": [
+            "gCF",
+            "gPF",
+            "gAlways",
+            "gAlways"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.p.r1.a",
+            "m.p.r2.c"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running",
+          "guards": [
+            "gAlways",
+            "gAlways"
+          ]
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "m.p.r1.a",
+          "m.p.r2.c"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running",
+        "guards": [
+          "gAlways",
+          "gAlways"
+        ]
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.p.r1.a",
+            "m.p.r2.c"
+          ],
+          "context": {},
+          "actions": [
+            "a2"
+          ],
+          "status": "running",
+          "guards": [
+            "gA1",
+            "gA2",
+            "gC",
+            "gAlways",
+            "gAlways"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.p.r1.a",
+            "m.p.r2.c"
+          ],
+          "context": {},
+          "actions": [
+            "pF"
+          ],
+          "status": "running",
+          "guards": [
+            "gCF",
+            "gPF",
+            "gAlways",
+            "gAlways"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.p.r1.a",
+            "m.p.r2.c"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running",
+          "guards": [
+            "gAlways",
+            "gAlways"
+          ]
+        }
+      ],
+      "machine_hash": "1cf21204e92d7ca4",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "m",
+        "machine_hash": "1cf21204e92d7ca4",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "m.p.r1.a",
+          "m.p.r2.c"
+        ],
+        "value": {
+          "p": {
+            "r1": "a",
+            "r2": "c"
+          }
+        },
+        "configuration": [
+          "m",
+          "m.p",
+          "m.p.r1",
+          "m.p.r1.a",
+          "m.p.r2",
+          "m.p.r2.c"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"m\",\n  \"machine_hash\": \"1cf21204e92d7ca4\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"m.p.r1.a\",\n    \"m.p.r2.c\"\n  ],\n  \"value\": {\n    \"p\": {\n      \"r1\": \"a\",\n      \"r2\": \"c\"\n    }\n  },\n  \"configuration\": [\n    \"m\",\n    \"m.p\",\n    \"m.p.r1\",\n    \"m.p.r1.a\",\n    \"m.p.r2\",\n    \"m.p.r2.c\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

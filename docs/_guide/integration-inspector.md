@@ -94,8 +94,8 @@ Every message also has `_version`, `createdAt` (epoch ms, string) and `id: null`
 |:--|:--|
 | `MemorySink(maxlen=None)` | `.messages` list; `maxlen` keeps only the newest, `.dropped` counts the rest |
 | `JsonLinesSink(path)` | one ASCII-only message per line; the file is created **0600** (POSIX; on Windows the directory ACL applies), an existing file is appended to; `send()` after `close()` raises; context manager |
-| `SseSink(host="127.0.0.1", port=0, *, token=None, allowed_origins=(), history=1000, max_queue=10_000)` | stdlib HTTP server: `/` page, `/app.js`, `/events` (SSE, backlog replayed to late clients, 15 s keep-alives), `/messages` (JSON). `.url` is the first-load URL, `.port`, `.token`, `.start()` / `.close()` / context manager. A client `max_queue` frames behind is disconnected; `.dropped`, `.sent`, `.clients` |
-| `contrib.starlette.WebSocketSink(*, token=None, history=1000, max_queue=10_000)` | WebSocket fan-out; created by `mount_inspector()`; a lagging client is closed with 1013, `.dropped` |
+| `SseSink(host="127.0.0.1", port=0, *, token=None, allowed_origins=(), history=1000, max_queue=10_000, keepalive=15.0)` | stdlib HTTP server: `/` page, `/app.js`, `/events` (SSE, backlog replayed to late clients, 15 s keep-alives), `/messages` (JSON). `.url` is the first-load URL, `.port`, `.token`, `.start()` / `.close()` / context manager. A client `max_queue` frames behind is disconnected; `.dropped`, `.sent`, `.clients` |
+| `contrib.starlette.WebSocketSink(*, token=None, history=1000, max_queue=10_000, keepalive=15.0)` | WebSocket fan-out; created by `mount_inspector()`; a lagging client is closed with 1013, `.dropped` |
 
 `read_jsonl(path)` is a generator over a recording (a truncated *last* line is ignored, a corrupt middle line raises). `replay_messages(source, sink, *, speed=0.0)` streams a path (`str` or `os.PathLike`, never loaded whole) or an iterable of dicts into a sink and returns how many it sent; non-protocol lines are skipped (not counted), a negative `speed` raises `ValueError`, a recorded clock that steps backwards never sleeps, and a sink that raises stops the replay with that exception. `session_id_of(interp)` returns the session id the plugin uses for an interpreter (the `store_key` of a persisted instance). The protocol builders `actor_message`, `event_message`, `snapshot_message`, and `PROTOCOL_VERSION`, `MESSAGE_TYPES`, `COOKIE_NAME` are exported for custom sinks.
 
@@ -143,8 +143,8 @@ Refuses unless `debug=True`. Appends an `InspectorPlugin` to `registry.plugins` 
 
 | Component | Python | Tested in CI |
 |:--|:--|:--|
-| Core (`xstate_statemachine.inspect`, SSE, JSONL) | 3.9 – 3.14 | ✅ default test job |
-| `WebSocketSink` / `mount_inspector` | 3.9 – 3.14 with `[starlette]` | ✅ `starlette` cells |
+| Core (`xstate_statemachine.inspect`, SSE, JSONL) | 3.9 – 3.15 | ✅ default test job |
+| `WebSocketSink` / `mount_inspector` | 3.9 – 3.15 with `[starlette]` | ✅ `starlette` cells |
 | Wire protocol | `@statelyai/inspect` 0.7.x | ✅ recorded fixtures |
 
 ## Troubleshooting

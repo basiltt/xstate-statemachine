@@ -1,90 +1,113 @@
 ---
 title: Quick Start
-description: Build your first state machine in 5 minutes with five different approaches.
+description: Write a state machine as a Python class and run it in two minutes. Then load XState JSON, pick an engine and find your next page.
 ---
 
-Pick the style that fits your project. All five approaches produce the same result — a running state machine.
+One recommended path: describe the machine as a Python class, run it with a `with` block. Everything else on this page (XState JSON, the CLI, the older Python styles) builds the same machine and is collected under [Also](#also-load-xstate-json-or-design-in-stately).
 
 ```mermaid
-flowchart LR
-    A["🐍 Functional<br/><small>build_machine()</small>"] --> M
-    B["📄 JSON<br/><small>create_machine(dict)</small>"] --> M
-    C["⚙️ CLI<br/><small>xsm gt machine.json</small>"] --> M
-    D["🏛️ Class-based<br/><small>class Door(StateMachine)</small>"] --> M
-    E["🔗 Builder<br/><small>MachineBuilder().state()…</small>"] --> M
-    M["🧠 one MachineNode"] --> I["▶️ Interpreter · SyncInterpreter"]
+stateDiagram-v2
+    direction LR
+    [*] --> off
+    off --> on : TOGGLE
+    on --> off : TOGGLE
 ```
 
-| Option | Best For | Lines of Code |
-|--------|----------|:---:|
-| [A: Pure Python (Functional)](#option-a-pure-python-functional) | New projects, simple machines | ~20 |
-| [B: JSON Configuration](#option-b-json-configuration-xstate-compatible) | XState interop, visual editors | ~25 |
-| [C: CLI Code Generation](#option-c-generate-boilerplate-with-cli) | Rapid prototyping from JSON | 1 command |
-| [D: Class-Based Style](#option-d-class-based-style) | Large machines, OOP teams | ~30 |
-| [E: Builder Style](#option-e-builder-style) | Fluent chaining, dynamic assembly | ~20 |
+## 🐍 1. Write a class, run it with `with`
 
----
-
-## 🐍 Option A: Pure Python (Functional)
-
-> **Recommended for new projects.** No JSON, no boilerplate — just Python.
+A `StateMachine` subclass is a **running machine**. The attribute you assign a transition to is its event (`toggle` becomes `TOGGLE`), and hooks are found by name (`on_toggle`, `on_enter_<state>`, `on_exit_<state>`, `before_<event>`, `after_<event>`).
 
 ```python
-from xstate_statemachine import State, build_machine, SyncInterpreter, action
-
-# 1. Define states
-off = State("off", initial=True)
-on = State("on")
-
-# 2. Define transitions — capture the Transition objects so they can be
-#    passed to build_machine(); State.to() only *creates* a transition,
-#    it does not register it anywhere on its own.
-t1 = off.to(on, event="TOGGLE", actions=["logToggle"])
-t2 = on.to(off, event="TOGGLE", actions=["logToggle"])
+from xstate_statemachine import State, StateMachine
 
 
-# 3. Define actions
-@action
-def log_toggle(interpreter, context, event, action_def):
-    context["flips"] = context.get("flips", 0) + 1
-
-
-# 4. Build the machine — pass the transitions explicitly via `transitions=`
-machine = build_machine(
-    id="lightSwitch",
-    states=[off, on],
-    transitions=[t1, t2],
-    actions=[log_toggle],
-    context={
+class LightSwitch(StateMachine):
+    initial_context = {
         "flips": 0,
-    },
-)
+    }
 
-# 5. Run it
-interpreter = SyncInterpreter(machine).start()
-interpreter.send("TOGGLE")  # off -> on
-print(f"Light is now: {interpreter.active_state_ids}")
-interpreter.send("TOGGLE")  # on -> off
-print(f"Light is now: {interpreter.active_state_ids}")
-interpreter.stop()
-print(f"Total flips: {interpreter.context['flips']}")
+    off = State(initial=True)
+    on = State()
+
+    # The attribute name is the event: TOGGLE
+    toggle = off.to(on) | on.to(off)
+
+    def on_toggle(self, context):
+        # Only the arguments you name are injected.
+        context["flips"] += 1
+
+    def on_enter_on(self):
+        print("Light is on")
+
+
+with LightSwitch() as light:  # started, in `off`; stopped on exit
+    print(light.state)
+    light.toggle()  # same as light.send("TOGGLE")
+    print(light.state)
+    light.send("TOGGLE")
+    print(light.state)
+    print(f"Total flips: {light.context['flips']}")
+print(light.status)
 ```
 
 **Output:**
 
 ```
-Light is now: {'lightSwitch.on'}
-Light is now: {'lightSwitch.off'}
+off
+Light is on
+on
+off
 Total flips: 2
+stopped
 ```
 
----
+`with Machine() as sm:` starts the machine and stops it on the way out, also when an exception escapes. Use `async with` on the asyncio engine (see [Choose your engine](#choose-your-engine)).
 
-## 📄 Option B: JSON Configuration (XState Compatible)
+### Payloads, guards and return values
 
-Use this approach when you have an existing XState JSON file, or when you want to share machine definitions across JavaScript and Python.
+Event arguments are plain keyword arguments. Each callback declares only the ones it wants, `send()` hands back what the callbacks returned, and a guard that says no leaves the machine where it was.
 
-**Step 1 — Create `light_switch.json`:**
+```python
+from xstate_statemachine import State, StateMachine, guard
+
+
+class Cart(StateMachine):
+    shopping = State(initial=True)
+    paid = State(final=True)
+
+    pay = shopping.to(paid, guard="can_pay")
+
+    @guard
+    def can_pay(self, amount):
+        return amount > 0
+
+    def on_pay(self, amount):
+        return f"charged {amount}"
+
+
+with Cart() as cart:
+    print(cart.pay(amount=0))
+    print(cart.state)
+    print(cart.pay(amount=25))
+    print(cart.state, cart.status)
+```
+
+**Output:**
+
+```
+None
+shopping
+charged 25
+paid done
+```
+
+Add `strict = True` to the class and an event the machine cannot take right now raises `UnknownEventError` or `TransitionNotAllowedError` instead of being ignored. The [Pythonic API](../pythonic-api/) page covers nested `State.Compound` / `State.Parallel` classes, strict mode, `after` timers and the full hook list.
+
+## 📄 Also: load XState JSON or design in Stately
+
+Use the JSON route when the chart already exists as an XState file, is edited in [Stately](https://stately.ai/editor), or is shared with a JavaScript frontend. The library reads XState v5 JSON and follows XState v5 statechart semantics (engine event names keep the v4 spelling, such as `done.invoke.<id>`), and a class machine exports the same format (`LightSwitch.create_machine().to_json()`).
+
+**Step 1: `light_switch.json`**
 
 ```json
 {
@@ -116,7 +139,7 @@ Use this approach when you have an existing XState JSON file, or when you want t
 
 <div class="stately" data-machine="e0b70fe57c" data-height="320" data-title="lightSwitch"></div>
 
-**Step 2 — Create `light_switch_logic.py`:**
+**Step 2: `light_switch_logic.py`**
 
 ```python
 from xstate_statemachine import MachineLogic
@@ -127,7 +150,7 @@ class LightSwitchLogic(MachineLogic):
         print(f"Flipped! Total: {context['flips']}")
 ```
 
-**Step 3 — Run it:**
+**Step 3: run it**
 
 <!-- doc-fragment -->
 ```python
@@ -154,30 +177,20 @@ Flipped! Total: 2
 Total flips: 2
 ```
 
----
+### Generate boilerplate with the CLI
 
-## ⚙️ Option C: Generate Boilerplate with CLI
-
-Already have an XState JSON file? Generate production-ready Python in one command:
+Already have the JSON? One command writes the logic stubs and a runner:
 
 ```bash
 xsm generate-template light_switch.json --template pythonic-class --force
 ```
-
-This creates two files:
 
 | File | Contents |
 |------|----------|
 | `light_switch_logic.py` | Action, guard, and service stubs with full type hints |
 | `light_switch_runner.py` | Interpreter bootstrap code, ready to execute |
 
-You can also use the short alias:
-
-```bash
-xsm gt light_switch.json -t pythonic-class -f
-```
-
-**Available templates:**
+Short form: `xsm gt light_switch.json -t pythonic-class -f`. Pythonic templates generate sync code by default; add `--async-mode yes` for async, or `--file-count 1` to merge logic and runner into a single file. The templates:
 
 ```bash
 xsm gt machine.json --template pythonic-class        # Class-based OOP
@@ -187,22 +200,59 @@ xsm gt machine.json --template class-json             # Class-based with JSON
 xsm gt machine.json --template function-json          # Functions with JSON
 ```
 
-> **Tip:** Add `--async-mode no` for synchronous code, or `--file-count 1` to merge logic and runner into a single file.
+### Other Python spellings of the same machine
 
----
+These three styles predate the short way and keep working. They compile to the same `MachineNode`, so pick one only if it suits your code better; the [Pythonic API](../pythonic-api/) page documents each in full.
 
-## 🏛️ Option D: Class-Based Style
-
-Best for larger machines where you want everything organized in a single class:
+**Functional** (`build_machine`, explicit `@action` functions):
 
 ```python
-from xstate_statemachine import (
-    State,
-    StateMachine,
-    SyncInterpreter,
-    action,
-    guard,
+from xstate_statemachine import State, build_machine, SyncInterpreter, action
+
+off = State("off", initial=True)
+on = State("on")
+
+# State.to() only *creates* a transition; pass it to build_machine().
+t1 = off.to(on, event="TOGGLE", actions=["logToggle"])
+t2 = on.to(off, event="TOGGLE", actions=["logToggle"])
+
+
+@action
+def log_toggle(interpreter, context, event, action_def):
+    context["flips"] = context.get("flips", 0) + 1
+
+
+machine = build_machine(
+    id="lightSwitch",
+    states=[off, on],
+    transitions=[t1, t2],
+    actions=[log_toggle],
+    context={
+        "flips": 0,
+    },
 )
+
+interpreter = SyncInterpreter(machine).start()
+interpreter.send("TOGGLE")  # off -> on
+print(f"Light is now: {interpreter.active_state_ids}")
+interpreter.send("TOGGLE")  # on -> off
+print(f"Light is now: {interpreter.active_state_ids}")
+interpreter.stop()
+print(f"Total flips: {interpreter.context['flips']}")
+```
+
+**Output:**
+
+```
+Light is now: {'lightSwitch.on'}
+Light is now: {'lightSwitch.off'}
+Total flips: 2
+```
+
+**Class with decorators and explicit events** (the positional `(interpreter, context, event, action_def)` signature):
+
+```python
+from xstate_statemachine import State, StateMachine, SyncInterpreter, action
 
 
 class TrafficLight(StateMachine):
@@ -211,27 +261,19 @@ class TrafficLight(StateMachine):
         "cycle_count": 0,
     }
 
-    # States
     green = State("green", initial=True)
     yellow = State("yellow")
     red = State("red")
 
-    # Transitions
     slow_down = green.to(yellow, event="TIMER")
     caution = yellow.to(red, event="TIMER")
     go = red.to(green, event="TIMER", actions="countCycle")
 
-    # Actions
     @action
     def count_cycle(self, interpreter, context, event, action_def):
         context["cycle_count"] += 1
         print(f"Cycle {context['cycle_count']} complete")
 
-    @action
-    def log_change(self, interpreter, context, event, action_def):
-        print(f"Light: {interpreter.active_state_ids}")
-
-    # Entry/Exit actions
     @red.enter
     def on_enter_red(self, interpreter, context, event, action_def):
         print("STOP! Red light.")
@@ -241,10 +283,8 @@ class TrafficLight(StateMachine):
         print("GO! Green light.")
 
 
-# Run it
-machine = TrafficLight.create_machine()
+machine = TrafficLight.create_machine()  # the bare MachineNode
 interp = SyncInterpreter(machine).start()
-
 interp.send("TIMER")  # green -> yellow
 interp.send("TIMER")  # yellow -> red
 interp.send("TIMER")  # red -> green (cycle complete)
@@ -254,25 +294,16 @@ interp.stop()
 **Output:**
 
 ```
+GO! Green light.
 STOP! Red light.
 Cycle 1 complete
 GO! Green light.
 ```
 
----
-
-## 🔗 Option E: Builder Style
-
-Fluent API for dynamic or programmatic machine construction:
+**Builder** (fluent, good for machines assembled at run time):
 
 ```python
-from xstate_statemachine import MachineBuilder, SyncInterpreter, action
-
-
-@action
-def log_state(interpreter, context, event, action_def):
-    print(f"State: {interpreter.active_state_ids}")
-
+from xstate_statemachine import MachineBuilder, SyncInterpreter
 
 machine = (
     MachineBuilder("doorLock")
@@ -288,50 +319,92 @@ machine = (
     .transition("locked", "UNLOCK", "blocked")
     .transition("unlocked", "LOCK", "locked")
     .transition("blocked", "RESET", "locked")
-    .action("logState", log_state)
     .guard("hasKey", lambda ctx, evt: ctx.get("has_key", False))
     .build()
 )
 
 interp = SyncInterpreter(machine).start()
-
-# Without a key -> blocked
-interp.send("UNLOCK")
+interp.send("UNLOCK")  # no key -> blocked
 print(f"Locked out: {interp.active_state_ids}")
-
 interp.send("RESET")
-
-# Give them the key
-interp.context["has_key"] = True
+interp.context["has_key"] = True  # give them the key
 interp.send("UNLOCK")
 print(f"Unlocked: {interp.active_state_ids}")
-
 interp.stop()
 ```
 
----
+**Output:**
 
-## 🤔 What Just Happened?
+```
+Locked out: {'doorLock.blocked'}
+Unlocked: {'doorLock.unlocked'}
+```
 
-In every example above, the same pattern plays out:
+## ⚙️ Choose your engine
 
-1. **Define states** — the distinct modes your system can be in (`off`, `on`, `green`, `red`)
-2. **Define transitions** — rules that say _"when event X happens in state A, go to state B"_
-3. **Define actions** — side effects that run during transitions (logging, updating data)
-4. **Build the machine** — compile your definition into a runnable `MachineNode`
-5. **Create an interpreter** — the engine that processes events and manages state
-6. **Send events** — drive the machine by sending events like `"TOGGLE"` or `"TIMER"`
+| Engine | Use it when | Lifecycle |
+|--------|-------------|-----------|
+| **Sync** (`SyncInterpreter`, the default for a class machine) | Scripts, CLIs, tests, request handlers, anything whose callbacks are plain functions | `with Machine() as sm:` |
+| **Async** (`Interpreter`) | Your callbacks are `async def`, or the machine lives on an event loop (web servers, workers, real-time apps) | `async with Machine() as sm:` and `await` the events |
+
+A class machine picks the engine for you: if any callback is `async def` it runs on the asyncio `Interpreter`, otherwise on the sync one. Set `engine = "async"` on the class to force the asyncio engine for plain callbacks.
+
+```python
+import asyncio
+
+from xstate_statemachine import State, StateMachine
+
+
+class Fetch(StateMachine):
+    idle = State(initial=True)
+    done = State()
+    fetch = idle.to(done)
+
+    async def on_fetch(self, url):
+        await asyncio.sleep(0)
+        return url.upper()
+
+
+async def main():
+    async with Fetch() as sm:
+        print(sm.engine)
+        print(await sm.fetch(url="http://x"))
+        print(sm.state)
+
+
+asyncio.run(main())
+```
+
+**Output:**
+
+```
+async
+HTTP://X
+done
+```
+
+With the explicit interpreters the same choice is `SyncInterpreter(machine).start()` versus `await Interpreter(machine).start()` (pass `wait=True` to `await interp.send(...)` to get a `Receipt` once the transition ran). Both accept a clock, so `after` timers can be driven deterministically in tests. See [Interpreters](../interpreters/) for the full comparison.
+
+## 🤔 What just happened?
+
+Every example above plays out the same way:
+
+1. **Define states**: the distinct modes your system can be in (`off`, `on`, `green`, `red`)
+2. **Define transitions**: rules that say _"when event X happens in state A, go to state B"_
+3. **Attach logic**: hooks, actions and guards that run during transitions (logging, updating data, saying no)
+4. **Build the machine**: compile the definition into a runnable `MachineNode` (a class instance does this for you)
+5. **Run it on an interpreter**: the engine that processes events and manages state
+6. **Send events**: drive the machine with `"TOGGLE"` or `"TIMER"`, or call the event method
 
 > **Key insight:** The machine definition is _data_. The interpreter is the _engine_. This separation means you can serialize machines, visualize them, test them in isolation, and swap interpreters (async vs sync) without changing your machine logic.
 
----
+## ➡️ Next steps
 
-## ➡️ Next Steps
-
-- [Core Concepts](../core-concepts/) — Understand states, events, transitions, guards, and actions in depth
-- [Pythonic API](../pythonic-api/) — Full reference for all three Python styles
-- [Actions](../actions/) — Entry, exit, and transition actions
-- [Guards](../guards/) — Conditional transitions
-- [Context](../context/) — Mutable data across transitions
-- [CLI Tool](../cli/) — Generate, inspect and simulate machines from XState JSON
-- [Interpreters](../interpreters/) — Async vs sync execution
+- [Core Concepts](../core-concepts/): states, events, transitions, guards, and actions in depth
+- [Pythonic API](../pythonic-api/): the full class DSL, nested states, strict mode and the other Python styles
+- [Coming from python-statemachine](../coming-from-python-statemachine/) or [Coming from transitions](../coming-from-transitions/): a port of a worked machine, concept by concept
+- [Actions](../actions/), [Guards](../guards/) and [Context](../context/): logic and data
+- [JSON Configuration](../json-config/): the XState JSON format reference
+- [CLI Tool](../cli/): generate, inspect and simulate machines from XState JSON
+- [Interpreters](../interpreters/): async vs sync execution
+- [Integrations](../integrations/): persistence, web frameworks, brokers and testing

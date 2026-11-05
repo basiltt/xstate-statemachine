@@ -7,7 +7,9 @@ Most of this guide describes what a machine *means*. This page describes how the
 
 The first three sections draw their numbers from [`benchmarks/production_characteristics.py`](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/production_characteristics.py); the integration budgets in §4 come from [`benchmarks/integrations_characteristics.py`](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/integrations_characteristics.py). Run either on your own hardware and trust your figures over ours. Both support `--json` (or `--json-file PATH`) so CI can inspect measurements without scraping a table.
 
-> **Measured on:** 0.9.0 (2026-09-19, `main` @ `816600c`), CPython 3.14.6, `Windows-11-10.0.26200-SP0` / `AMD64`, `Intel64 Family 6 Model 141` (Core i7-11850H, 16 logical CPUs), a trivial single-action macrostep, `tracemalloc` **off**, best-of-3. Treat these as order-of-magnitude, not guarantees. For how the runtime compares with other Python state-machine libraries on identical machine shapes, see the [cross-library benchmark](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/competitors/README.md) (summary on the [home page](../../#how-it-compares)).
+> **Measured on:** 0.12.0 (2026-11-05, `xstate-v5-engine-parity` @ `the 0.12.0 release commits`), CPython 3.14.6, `Windows-11-10.0.26300-SP0` / `AMD64`, `Intel64 Family 6 Model 141 Stepping 1` (Core i7-11850H, 16 logical CPUs), a trivial single-action macrostep, `tracemalloc` **off**, best-of-3. Treat these as order-of-magnitude, not guarantees. For how the runtime compares with other Python state-machine libraries on identical machine shapes, see the [cross-library benchmark](https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/competitors/README.md) (summary on the [home page](../../#how-it-compares)).
+>
+> **Like-for-like against 0.9.0 (same host, same hour, same script):** 0.9.0 measured ~34,000 / ~29,000 / ~27,000 / ~37,000 aggregate ev/s at 1 / 10 / 100 / 1,000 interpreters; this release measured ~51,000 / ~52,000 / ~51,000 / ~46,000, i.e. 1.2-1.9x. Absolute figures move with the host's thermal and power state (the 2026-09-19 table on 0.9.0 read ~59,000 at N=1 on this same laptop), so compare rows measured in one session, never tables measured months apart.
 
 ---
 
@@ -28,16 +30,16 @@ The consequence: **throughput is a per-process budget, not a per-machine capacit
 
 | Interpreters | Aggregate ev/s | Per-interpreter ev/s |
 |---:|---:|---:|
-| 1 | ~59,000 | ~59,000 |
-| 10 | ~58,000 | ~5,800 |
-| 100 | ~57,000 | ~570 |
-| 1,000 | ~52,000 | ~52 |
+| 1 | ~51,000 | ~51,000 |
+| 10 | ~52,000 | ~5,200 |
+| 100 | ~51,000 | ~510 |
+| 1,000 | ~46,000 | ~46 |
 
 The aggregate barely moves across three orders of magnitude (0.9.0 closed the dip at 100–1,000 machines that 0.8.0 showed — the per-child manager task and the settle-hook accumulation are gone — and the run loop now yields to the event loop every 16 inbox events instead of every one, which is most of the ~30% lift over the first 0.9.0 measurement); the per-machine share collapses. This is the correct and unavoidable behaviour of a single-threaded core — it is how XState's actor system behaves too, and it is not something a library change can "fix" without a different architecture.
 
 ### Sizing rule
 
-1. Estimate your **mean macrostep cost** — the time your actions, guards and plugins take per event. That, not the library, sets your budget: the ~20k ev/s above is for actions that do almost nothing.
+1. Estimate your **mean macrostep cost** — the time your actions, guards and plugins take per event. That, not the library, sets your budget: the ~46k ev/s above is for actions that do almost nothing.
 2. Invert it for the **process budget** in ev/s.
 3. Divide by your **machine count**.
 
@@ -79,16 +81,16 @@ On the async engine a timer is scheduled through the interpreter's [`Clock`](../
 
 | Busy machines in the process | `after: 10` fires late by |
 |---:|---:|
-| 0 | ~0.1 ms |
-| 10 | ~1 ms |
-| 100 | ~7 ms |
-| 500 | ~36 ms |
+| 0 | ~0.3 ms |
+| 10 | ~0.9 ms |
+| 100 | ~11 ms |
+| 500 | ~56 ms |
 
 (The 0.9.0 run loop yields to the event loop every `Interpreter._INBOX_YIELD_EVERY` = 16 inbox events rather than every one — set the class attribute to `1` to restore the per-event yield if you would rather trade throughput for timer punctuality. The construction/instance work that followed made every macrostep cheaper, which pulled lateness back down: every event the loop processes faster is a timer that fires sooner. Before 0.8.0 the timer's continuation shared the inbox and the same run measured ~35 ms and ~180 ms; the priority lane and the 0.8.0 hot-path work together cut the lateness by roughly 4x. Lateness tracks per-event cost -- every event the loop processes faster is a timer that fires sooner -- so it will keep moving with throughput. `AfterEvent.lateness_ms` reports the actual figure for each firing.)
 
 Two properties of that curve matter for design:
 
-- **The error is roughly constant in absolute terms across delay sizes.** A 10 ms timer and a 10 s timer are each ~36 ms late at 500 busy machines — so *short* deadlines degrade worst *relatively*. A 10 ms timeout at 500 machines is meaningless; a 30 s one is fine.
+- **The error is roughly constant in absolute terms across delay sizes.** A 10 ms timer and a 10 s timer are each ~56 ms late at 500 busy machines — so *short* deadlines degrade worst *relatively*. A 10 ms timeout at 500 machines is meaningless; a 30 s one is fine.
 - **The OS floor.** On Windows the default timer resolution is ~15.6 ms; an `after: 5` cannot fire at 5 ms on an idle loop there. Linux and macOS are ~1 ms.
 - **A plain-`def` service blocks its own machine's timers for its whole duration** (#174). A non-coroutine `invoke` runs on a worker thread, but the macrostep that entered the invoking state *awaits its result* before it completes (that is what puts `done.invoke` ahead of the inbox, #116/#149). A due `after` on that machine is delivered only when that macrostep ends, so an `after: 100` armed alongside a 500 ms plain service fires at ~500 ms, not 100. Other machines on the loop are unaffected. If a timer has to interrupt a long service, make the service a coroutine (`async def`) — it then runs as a task and the timer fires on time. Since #179 an `async def` service's completion is charged to the chain budget exactly like a `def` service's, so `async def` is the safe choice on **both** axes: timers and runaway protection.
 

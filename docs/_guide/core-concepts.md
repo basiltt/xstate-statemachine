@@ -92,21 +92,22 @@ interpreter.send_events(["STEP_1", "STEP_2", "STEP_3"])
 
 > **Tip:** Event names are conventionally UPPER_CASE (`"TOGGLE"`, `"SUBMIT"`, `"FETCH"`). State names are lowercase (`"idle"`, `"loading"`, `"done"`). This makes it easy to tell them apart at a glance.
 
-> **Engine events vs. your events — decided by provenance, not by name.** The engine synthesises `done.invoke.<id>`, `error.platform.<id>`, `after.<ms>`, `xstate.error.actor.<id>` and the init/exit sentinels. Everywhere the library has to ask "is this the machine's own traffic, or a user event it forgot to handle?" — the `"*"` / `"prefix.*"` wildcard matcher, the `onUnhandled` policy and `strict` mode — it checks **who minted the event**, not what it is called. So a user event you name `done.review` is ordinary user traffic: it reaches `"*"`, it trips `onUnhandled: "error"` if nothing handles it, and `strict` rejects it unless declared. (Before 0.9.0 this was a prefix test on the name, and such an event silently got system-event semantics — #79.) The engine's name shapes are still importable as `xstate_statemachine.events.ENGINE_EVENT_SHAPES` for documentation and build-time checks; there is no longer any reason to avoid the prefixes, though `review.done` reads better than `done.review`.
+> **Engine events vs. your events — decided by provenance, not by name.** The engine synthesises `done.invoke.<id>`, `error.platform.<id>`, `after.<ms>.<stateId>` (for example `after.3000.myApp.pending`), `xstate.error.actor.<id>` and the init/exit sentinels. Everywhere the library has to ask "is this the machine's own traffic, or a user event it forgot to handle?" — the `onUnhandled` policy and `strict` mode — it checks **who minted the event**, not what it is called. So a user event you name `done.review` is ordinary user traffic: it trips `onUnhandled: "error"` if nothing handles it, and `strict` rejects it unless declared. (`"*"` and `"prefix.*"` descriptors match both kinds, as in XState v5.) (Before 0.9.0 this was a prefix test on the name, and such an event silently got system-event semantics — #79.) The engine's name shapes are still importable as `xstate_statemachine.events.ENGINE_EVENT_SHAPES` for documentation and build-time checks; there is no longer any reason to avoid the prefixes, though `review.done` reads better than `done.review`.
 
 ---
 
 ## 🏷️ Engine events and provenance
 
-Some events are minted by the engine itself: `done.invoke.<id>` / `done.state.<id>` (`DoneEvent`), `error.platform.<id>` and `xstate.error.actor.<id>` (`ErrorEvent`), `after.<ms>` (`AfterEvent`), and the init/exit sentinels. Three behaviours turn on the distinction between those and *your* events:
+Some events are minted by the engine itself: `done.invoke.<id>` / `done.state.<id>` (`DoneEvent`), `error.platform.<id>` and `xstate.error.actor.<id>` (`ErrorEvent`), `after.<ms>.<stateId>` (`AfterEvent`), and the init/exit sentinels. Two behaviours turn on the distinction between those and *your* events:
 
 | Behaviour | Engine event | Your event |
 |---|---|---|
-| `"*"` / `"prefix.*"` wildcard | matched only by an exact `on` key | matched by wildcards |
 | `onUnhandled: "error"` / `"defer"` | exempt | applies |
 | `strict=True` | never rejected | must be declared |
 
-The decision is made by **provenance — who created the event — not by its name**. `is_system_event(event)` is the single predicate all three consult; `system_event(type, **payload)` is the only way to mint a plain `Event` that passes it. Both are exported from the package root. A user event you happen to name `done.review` is user traffic; the marker cannot be forged from a name, and it survives `deepcopy`, `pickle`, `send(wait=True)` and a snapshot round-trip.
+Wildcard descriptors do **not** distinguish them: as in XState v5, `"*"` and `"prefix.*"` match engine events too. A state's own `onDone`, `onError` or `after` handler still outranks a `"*"` on the same state, and a `"*"` on a deeper state outranks an ancestor's handler. So a service failure caught only by a `"*"` (or `"error.*"`) handler is consumed there and the machine keeps running. (Before 0.12.0 engine events never reached a wildcard.)
+
+The decision is made by **provenance — who created the event — not by its name**. `is_system_event(event)` is the single predicate both consult; `system_event(type, **payload)` is the only way to mint a plain `Event` that passes it. Both are exported from the package root. A user event you happen to name `done.review` is user traffic; the marker cannot be forged from a name, and it survives `deepcopy`, `pickle`, `send(wait=True)` and a snapshot round-trip.
 
 ```python
 from xstate_statemachine import Event, is_system_event, system_event
@@ -119,11 +120,11 @@ is_system_event(system_event("___xstate_statemachine_init___"))  # True
 
 ## 🚨 Error & Unhandled-Event Policies
 
-By default, an event that doesn't match any transition from the current state is dropped silently, and an action or guard that raises an exception propagates as-is. For most apps that's the right default, but a few config keys let you change this per machine:
+By default, an event that doesn't match any transition from the current state is dropped silently, and an action that raises is logged and the transition still completes, and a guard that raises is treated as `False`. For most apps that's the right default, but a few config keys let you change this per machine:
 
 - **`strict`** (bool, default `False`) — when `True`, sending an event *type* the machine never declares anywhere in its config raises `UnknownEventError` instead of being ignored. Useful for catching typos in event names during development.
 - **`onUnhandled`** (`"ignore"` | `"defer"` | `"error"`, default `"ignore"`) — controls what happens when a *known* event has no transition from the current state. `"ignore"` drops it (the default), `"error"` raises `UnhandledEventError`, and `"defer"` queues it for later instead of discarding it.
-- **`actionErrorPolicy`** / **`guardErrorPolicy`** — control whether an exception raised inside an action or guard callback is swallowed, logged, or re-raised, instead of always propagating.
+- **`actionErrorPolicy`** (`"continue"` | `"rollback"` | `"fail"`, default `"continue"`) and **`guardErrorPolicy`** (`"false"` | `"true"` | `"raise"`, default `"false"`) decide what a raising action or guard does: commit, roll back or stop the machine; treat the guard as `False` or `True`, or surface the exception. See [Reliability](../reliability/).
 
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter
@@ -282,6 +283,14 @@ counting.to(counting, event="INCREMENT", actions="addOne")
     },
 }
 ```
+
+Without `"reenter": true` the state itself is not exited or entered again:
+its own `entry` / `exit` actions do not run and its `after` timers keep
+running. A **compound** (or parallel) state targeting itself does reset its
+children, though, as in XState v5: its active child states exit and its
+`initial` child is entered again (`x_b`, `t`, `e_a` for a state `p` whose
+active child was `b`). With `"reenter": true` the state itself exits and
+re-enters too (`x_b`, `x_p`, `t`, `e_p`, `e_a`).
 
 ---
 
@@ -467,7 +476,8 @@ premium = State("premium")
 standard = State("standard")
 rejected = State("rejected")
 
-# Order matters! First match wins.
+# Order matters! First match wins. The group must be passed to
+# build_machine(transitions=...) -- a bare .to() expression is discarded.
 verify = (
     checking.to(premium, event="VERIFY", guard="isPremium")
     | checking.to(standard, event="VERIFY", guard="isAdult")
@@ -488,6 +498,7 @@ def is_adult(context, event):
 machine = build_machine(
     id="accessControl",
     states=[checking, premium, standard, rejected],
+    transitions=[verify],
     guards=[is_premium, is_adult],
     context={
         "age": 25,
@@ -516,8 +527,8 @@ from xstate_statemachine import State, build_machine, SyncInterpreter, action
 counting = State("counting", initial=True)
 done = State("done")
 
-counting.to(counting, event="INCREMENT", actions="addOne")
-counting.to(done, event="FINISH")
+inc = counting.to(counting, event="INCREMENT", actions="addOne")
+finish = counting.to(done, event="FINISH")
 
 
 @action
@@ -529,6 +540,7 @@ def add_one(interpreter, context, event, action_def):
 machine = build_machine(
     id="counter",
     states=[counting, done],
+    transitions=[inc, finish],
     actions=[add_one],
     context={
         "count": 0,
@@ -561,7 +573,7 @@ flowchart LR
     A["🧩 create<br/><small>define states & rules</small>"] --> B["▶️ start<br/><small>enter initial state</small>"]
     B --> C["📨 send events<br/><small>process transitions</small>"]
     C --> C
-    C --> D["⏹️ stop<br/><small>exit all states, clean up</small>"]
+    C --> D["⏹️ stop<br/><small>cancel timers, services and children; no exit actions</small>"]
 ```
 
 In code:
@@ -728,6 +740,10 @@ Processing a single external event is a **macrostep**, made of one or more
 2. The machine evaluates transitions and runs their actions. An action can
    itself `raise()` a new event **to this same machine** -- that event does
    **not** go back onto the external inbox. It goes onto an internal queue.
+   The `done.state.<id>` event the engine generates when a compound or
+   parallel state completes goes onto the same internal queue, so its
+   `onDone` transition is taken before any external event that is already
+   waiting (before 0.12.0 it was appended to the inbox, behind such events).
 3. Before the interpreter looks at the next *external* event, it drains the
    internal queue completely, one microstep at a time, in the order events
    were raised. Each internal event may itself raise further internal
@@ -777,7 +793,7 @@ self-raised events.
 
 ---
 
-
+## 🚀 Next Steps
 
 Now that you understand the building blocks:
 

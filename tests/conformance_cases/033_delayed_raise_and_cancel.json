@@ -1,0 +1,215 @@
+{
+  "name": "delayed_raise_and_cancel",
+  "description": "raise with a delay fires through the clock; cancel by sendId stops a pending delayed raise.",
+  "tags": [
+    "actions",
+    "raise",
+    "cancel",
+    "timers"
+  ],
+  "machine": {
+    "id": "m",
+    "initial": "a",
+    "states": {
+      "a": {
+        "entry": {
+          "type": "raise",
+          "params": {
+            "event": {
+              "type": "TICK"
+            },
+            "delay": 200,
+            "id": "tick"
+          }
+        },
+        "on": {
+          "TICK": {
+            "target": "b",
+            "actions": "ticked"
+          },
+          "STOP": {
+            "actions": {
+              "type": "cancel",
+              "params": {
+                "sendId": "tick"
+              }
+            }
+          }
+        }
+      },
+      "b": {
+        "entry": {
+          "type": "raise",
+          "params": {
+            "event": {
+              "type": "TICK"
+            },
+            "delay": 200,
+            "id": "tick"
+          }
+        },
+        "on": {
+          "TICK": {
+            "target": "c",
+            "actions": "ticked"
+          },
+          "STOP": {
+            "actions": {
+              "type": "cancel",
+              "params": {
+                "sendId": "tick"
+              }
+            }
+          }
+        }
+      },
+      "c": {}
+    }
+  },
+  "steps": [
+    {
+      "advance_ms": 199
+    },
+    {
+      "advance_ms": 1
+    },
+    {
+      "send": "STOP"
+    },
+    {
+      "advance_ms": 500
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "m.a"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.a"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.b"
+          ],
+          "context": {},
+          "actions": [
+            "ticked"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.b"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.b"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "m.a"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.a"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.b"
+          ],
+          "context": {},
+          "actions": [
+            "ticked"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.b"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.b"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "a9b997b6d0b8cb8e",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "m",
+        "machine_hash": "a9b997b6d0b8cb8e",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "m.b"
+        ],
+        "value": "b",
+        "configuration": [
+          "m",
+          "m.b"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"m\",\n  \"machine_hash\": \"a9b997b6d0b8cb8e\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"m.b\"\n  ],\n  \"value\": \"b\",\n  \"configuration\": [\n    \"m\",\n    \"m.b\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

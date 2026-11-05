@@ -22,7 +22,7 @@ flowchart LR
 Key characteristics:
 
 - **Boolean** — must return `True` or `False`.
-- **Synchronous** — `async def` guards raise `NotSupportedError`.
+- **Synchronous** — decorating an `async def` with `@guard` raises `NotSupportedError`; never register an async callable as a guard some other way (for example `MachineLogic(guards=...)`): a coroutine object is not a boolean, and the engine would treat it as truthy.
 - **Side-effect-free** — guards should only *read* context, never *modify* it. Use actions for mutations.
 - **Short-circuiting** — the first matching transition wins; remaining guards are not evaluated.
 
@@ -333,7 +333,7 @@ interp.stop()
 
 <div class="stately" data-machine="0bb758473f" data-height="320" data-title="wizard"></div>
 
-The state id accepts both the `#machine.a.b` and bare `machine.a.b` spellings.
+The state id accepts both the `#machine.a.b` and bare `machine.a.b` spellings. It may be given under `params.stateValue` (XState's own key, which Stately exports use), `params.state` or `params.value`, or as a bare string `params`.
 
 > **Note:** If you register your own guard named `stateIn` in `MachineLogic.guards`, your implementation takes precedence over the built-in — the same resolution order used for built-in actions.
 
@@ -573,6 +573,41 @@ If a user is both VIP *and* adult, they go to `vip_lounge` because `isVIP` is ev
 
 > **Warning:** Placing the fallback (no-guard) transition before guarded transitions means the fallback always wins and the guards are never checked. Always put fallbacks last.
 
+### Nested and parallel states
+
+Which guards run, and how often, follows XState v5 exactly:
+
+- **Deepest state first.** For each active region, the innermost active
+  state's candidates are tried first (in order, stopping at the first that
+  is enabled). Its parent's handlers for the same event are consulted —
+  and their guards evaluated — only when nothing below matched.
+- **Parallel states.** Every region is asked, in the order the chart
+  declares them. The parallel state's own handlers (and anything above it)
+  are consulted only when **no** region had an enabled transition for the
+  event; a region that matched keeps them from running at all.
+- **`always` transitions.** After every step, each active innermost state
+  walks up to the first `always` whose guard holds. A guard on an
+  `always` that several regions share (declared on the parallel state or
+  above it) is therefore evaluated once **per region** whose walk reaches
+  it. The innermost states are visited in the order they were **entered**,
+  not in the order the chart declares them: a state that stayed active
+  comes before one a later step entered (states entered in the same step
+  keep the chart's order). After region `r2` moved to `d` and then region
+  `r1` moved to `b`, `d`'s `always` is checked before `b`'s, and if both
+  are enabled and conflict, `d`'s is taken. A step that leaves the states
+  exactly as they were (a self-transition with `reenter: true` on a state
+  that owns no history node) does not change that order; a restored
+  snapshot starts again in the chart's order. This is XState v5's
+  `selectEventlessTransitions`.
+- Apart from that, one selection never evaluates a guard twice, and
+  `interp.can(event)` evaluates exactly the guards `send(event)` would.
+
+> **Changed in 0.12.0:** every active leaf used to evaluate the guard of
+> every matching transition up to the root (memoised per pass), and an
+> eventless pass selected its transitions twice. Guards with side effects —
+> counters, metrics, the `on_guard_evaluated` hook — now see XState's
+> evaluation count and order.
+
 ## 🧠 Guards with Context
 
 Guards commonly read context to make decisions:
@@ -676,7 +711,7 @@ class Logic(MachineLogic):
 
 ## ⛔ Guards Must Be Synchronous
 
-Guards **cannot** be `async def`. Attempting to register an async guard raises `NotSupportedError` immediately:
+Guards **cannot** be `async def`. The `@guard` decorator refuses one with `NotSupportedError` immediately. The check lives in the decorator only: an `async def` passed straight to `MachineLogic(guards=...)` is not refused, but calling it just produces a coroutine object, which is truthy, so the transition would fire whatever the coroutine would have returned. Keep guards plain functions:
 
 ```python
 from xstate_statemachine import guard, NotSupportedError

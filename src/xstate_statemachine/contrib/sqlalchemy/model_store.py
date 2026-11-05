@@ -31,6 +31,7 @@ from typing import (
 )
 
 from sqlalchemy import String, cast, delete, func, select, update
+from sqlalchemy import null as sql_null
 
 from ...exceptions import ConflictError
 from ...persistence.deadline import Deadline
@@ -78,7 +79,15 @@ class ModelStore(BaseStore):
             ptype = self.pk.type.python_type
         except NotImplementedError:  # pragma: no cover - exotic types
             return key
-        return ptype(key) if ptype is not str else key
+        if ptype is str:
+            return key
+        try:
+            return ptype(key)
+        except (ValueError, TypeError):
+            # 📝 A key that is no valid pk (``"abc"`` for an int pk) names
+            #    no row: ``pk == None`` matches nothing, so load() is None
+            #    and save() is a ConflictError, never a bare ValueError.
+            return None
 
     def _load_raw(
         self, key: str
@@ -113,7 +122,10 @@ class ModelStore(BaseStore):
             json.dumps(snap),
             int(row[1] or 0),
             "" if mv is None else str(mv),
-            float(snap.get("taken_at") or time.time()),
+            float(
+                (snap.get("taken_at") if isinstance(snap, dict) else None)
+                or time.time()
+            ),
             deadlines,
         )
 
@@ -166,18 +178,45 @@ class ModelStore(BaseStore):
         )
 
     def _forget_raw(self, key: str) -> Dict[str, int]:
-        """Erase the auxiliary rows (deadlines, transition log) of *key*;
-        the business row itself is the application's to delete."""
+        """Erase *key*: its deadlines, transition log AND the snapshot.
+
+        🔐 X0.5: context may hold personal data, so the ``statechart``
+        column and its denormalised siblings are nulled and the version
+        bumped (the same as the Django model store). The business row
+        itself stays: deleting it is the application's call.
+
+        Returns:
+            ``{"snapshots", "deadlines", "log_entries"}`` row counts.
+        """
+        t = self.table
         with self._tx() as conn:
             d = self.tables.deadlines
             n = conn.execute(
-                delete(d).where(d.c.source == self.table.name, d.c.key == key)
+                delete(d).where(d.c.source == t.name, d.c.key == key)
             ).rowcount
             tr = self.tables.transitions
             lg = conn.execute(
-                delete(tr).where(tr.c.machine_id == f"{self.table.name}:{key}")
+                delete(tr).where(tr.c.machine_id == f"{t.name}:{key}")
             ).rowcount
-        return {"snapshots": 0, "deadlines": int(n), "log_entries": int(lg)}
+            sn = conn.execute(
+                update(t)
+                .where(
+                    self.pk == self._pk_value(key),
+                    t.c.statechart.is_not(None),
+                )
+                .values(
+                    statechart=sql_null(),
+                    statechart_state=None,
+                    statechart_state_ids=sql_null(),
+                    statechart_machine_version=None,
+                    statechart_version=t.c.statechart_version + 1,
+                )
+            ).rowcount
+        return {
+            "snapshots": int(sn),
+            "deadlines": int(n),
+            "log_entries": int(lg),
+        }
 
     def _list_keys_raw(self, prefix: str, limit: int) -> List[str]:
         k = cast(self.pk, String)

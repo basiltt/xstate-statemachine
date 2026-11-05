@@ -44,7 +44,7 @@ from typing import (
 # -------------------------------------------------------------------------
 # 📥 Project-Specific Imports
 # -------------------------------------------------------------------------
-from .exceptions import XStateMachineError
+from .exceptions import ExplorationLimitError
 from .models import MachineNode
 from .validation import transitions_of, walk
 from ._graph_explorer import _Explorer
@@ -122,26 +122,8 @@ def shortest_paths(
         return _dijkstra(explorer, max_depth)
 
 
-class ExplorationLimitError(XStateMachineError):
-    """`shortest_paths` found more configurations than ``max_configs``.
-
-    🐛 #269 battle (A3): a wide parallel chart has a configuration count
-    exponential in its regions; with no bound the traversal ran until the
-    snapshot cache or the clock gave out. ``found`` is the partial result
-    so far (shortest paths are already final for every entry).
-    """
-
-    def __init__(self, limit: int, found: Dict[FrozenSet[str], Path]):
-        super().__init__(
-            f"graph: more than {limit} reachable configurations; raise "
-            f"max_configs (or None), lower max_depth, or explore a "
-            f"sub-chart."
-        )
-        self.limit = limit
-        self.found = found
-
-
 def _check_bounds(**bounds: Optional[int]) -> None:
+    """Reject negative bounds with a ``ValueError`` naming the parameter."""
     for name, value in bounds.items():
         if value is not None and value < 0:
             raise ValueError(f"{name} must be >= 0, got {value!r}")
@@ -212,13 +194,25 @@ def reachable_states(
 ) -> Set[str]:
     """Every state id (leaves AND their ancestors) the engine can reach.
 
-    Raises `ExplorationLimitError` past *max_configs* (reviewer M2: the
-    bound was inherited but not tunable here)."""
-    explorer = _Explorer(machine, guards)
-    out: Set[str] = set()
+    Args:
+        machine: The machine to explore (never modified).
+        guards: ``"true"``, ``"false"`` or ``"both"``; see `shortest_paths`.
+        max_depth: Maximum number of steps in any path.
+        max_configs: Configuration bound (reviewer M2: the bound was
+            inherited but not tunable here).
+
+    Returns:
+        Every reachable state id, ancestors of active leaves included.
+
+    Raises:
+        ValueError: On an unknown ``guards`` or a negative bound.
+        ExplorationLimitError: More than *max_configs* configurations.
+    """
     found = shortest_paths(
         machine, guards=guards, max_depth=max_depth, max_configs=max_configs
     )
+    explorer = _Explorer(machine, guards)
+    out: Set[str] = set()
     for config in found:
         out.update(n.id for n in explorer._active_nodes(config))
     return out
@@ -234,6 +228,18 @@ def simple_paths(
     """Every non-empty path that never revisits a configuration.
 
     Depth-first; stops after *max_paths* paths or at *max_depth* steps.
+
+    Args:
+        machine: The machine to explore (never modified).
+        guards: ``"true"``, ``"false"`` or ``"both"``; see `shortest_paths`.
+        max_paths: Stop after this many paths.
+        max_depth: Maximum number of steps in any path.
+
+    Returns:
+        Paths in discovery order, none revisiting a configuration.
+
+    Raises:
+        ValueError: On an unknown ``guards`` or a negative bound.
     """
     _check_bounds(max_depth=max_depth, max_paths=max_paths)
     explorer = _Explorer(machine, guards)
@@ -272,6 +278,12 @@ def transition_coverage_targets(
     Static: read from the parsed chart, no execution. Labels are those of
     `validation.transitions_of` (``"on 'GO'"``, ``"after 2000"``, …);
     targetless transitions point back at their source.
+
+    Args:
+        machine: The parsed machine.
+
+    Returns:
+        The set of ``(from_state_id, label, to_state_id)`` triples.
     """
     out: Set[Tuple[str, str, str]] = set()
     for node in walk(machine):

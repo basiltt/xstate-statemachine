@@ -71,6 +71,7 @@ def register(
 
 
 def _message(entry: Deprecation, detail: Optional[str]) -> str:
+    """Compose the warning text from a registry entry and optional detail."""
     text = (
         f"{entry.what} is deprecated since {entry.since} and will be "
         f"removed in {entry.removal}; use {entry.alternative} instead."
@@ -95,22 +96,34 @@ def deprecated(
         removal: The earliest release that removes it, e.g. ``"1.0"``.
         alternative: What to use instead.
         detail: Optional extra sentence appended to the message.
-        stacklevel: As for `warnings.warn`, relative to the CALLER of
-            `deprecated` (2 = the function that called this helper's
-            caller -- i.e. user code for a direct shim).
+        stacklevel: Which frame is "the call site", counted from
+            `deprecated` itself: ``1`` = the function that called
+            `deprecated` (the shim), ``2`` (default) = whoever called the
+            shim, i.e. the USER's line for a direct shim such as
+            ``ErrorEvent.data``. The de-duplication key and the warning's
+            attributed location both use that frame.
 
     Returns:
         True if a warning was emitted, False if this call site already
         warned.
     """
-    entry = register(
-        what, since=since, removal=removal, alternative=alternative
-    )
+    # ⚡ The header promises a hot loop touching a deprecated attribute is
+    #    cheap. Resolve the call site FIRST and bail out lock-free when it
+    #    has already warned: a set membership test is atomic under the GIL,
+    #    and a stale miss only costs one trip through the locked path.
     try:
         frame = sys._getframe(stacklevel)
         site = (what, frame.f_code.co_filename, frame.f_lineno)
     except ValueError:  # stack shallower than stacklevel
         site = (what, "<unknown>", 0)
+    if site in _SEEN:
+        return False
+    # 📝 The MESSAGE always reflects this call's arguments (a call site may
+    #    refine the registered `alternative`); the registry write -- a lock
+    #    plus a dict store -- happens only the first time a name is seen.
+    entry = Deprecation(what, since, removal, alternative)
+    if what not in _REGISTRY:
+        register(what, since=since, removal=removal, alternative=alternative)
     with _LOCK:
         if site in _SEEN:
             return False
@@ -158,6 +171,7 @@ for _name in ("engine_done", "engine_error", "engine_after"):
         removal="1.0",
         alternative=f"nothing -- internal; `_{_name}` is private",
     )
+del _name  # 📝 keep the loop variable out of the module namespace
 register(
     "leading-dot sibling target fallback",
     since="0.8.0",

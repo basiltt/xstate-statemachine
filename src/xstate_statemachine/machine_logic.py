@@ -180,7 +180,7 @@ def resolve_aliases(
                     f"'{name}' is used; remove the others or make them the "
                     f"same object.",
                     UserWarning,
-                    stacklevel=3,
+                    stacklevel=4,  # RU-22: the create_machine() caller
                 )
             continue
         candidates = by_key.get(normalize_logic_name(name))

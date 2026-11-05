@@ -70,6 +70,11 @@ class Console:
         self.caps: Capabilities = (
             caps if caps is not None else detect(self.out)
         )
+        #: The most recent `error()` message, so a host that turns the
+        #: CLI's ``SystemExit(1)`` into its own error (the Django
+        #: management commands raise `CommandError`) can say WHY instead
+        #: of only "exit status 1" (#282 battle follow-up).
+        self.last_error: Optional[str] = None
 
     # ---------------------------------------------------------------- basics
     def _encodable(self, msg: str) -> str:
@@ -115,10 +120,22 @@ class Console:
             f"{self.style('!' if not self.caps.unicode else '⚠', 'warn')} {msg}"
         )
 
-    def error(self, msg: str) -> None:
-        self.print(
-            f"{self.style('✗' if self.caps.unicode else 'X', 'err')} {msg}"
-        )
+    def error(self, msg: str, *, to_stderr: bool = False) -> None:
+        """Print an error line.
+
+        Args:
+            msg: The message.
+            to_stderr: Write to ``sys.stderr`` instead of the console stream.
+                ``--json`` commands pass this so stdout stays one parseable
+                document and a failed gate is not captured by ``> out.json``
+                (CLI-007; opt-in, so every other command keeps its output).
+        """
+        line = f"{self.style('✗' if self.caps.unicode else 'X', 'err')} {msg}"
+        self.last_error = msg
+        if to_stderr:
+            print(self._encodable(line), file=sys.stderr)
+            return
+        self.print(line)
 
     def info(self, msg: str) -> None:
         self.print(

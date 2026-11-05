@@ -54,6 +54,7 @@ from .actions import is_builtin as is_builtin_action
 from .models import (
     MachineNode,
     StateNode,
+    TransitionDefinition,
     is_spawn_action,
     spawn_service_key,
 )
@@ -83,7 +84,7 @@ _TLogicLoader = TypeVar("_TLogicLoader", bound="LogicLoader")
 
 def _register_explicit_name(
     logic_map: Dict[str, Callable[..., Any]], func: Callable[..., Any]
-) -> None:
+) -> Optional[str]:
     """Also key *func* under the name its decorator declared, if any.
 
     🏛️ Architecture decision: name matching is by Python identifier and
@@ -99,6 +100,19 @@ def _register_explicit_name(
     explicit = getattr(target, "_xsm_name", None)
     if isinstance(explicit, str) and explicit:
         logic_map[explicit] = func
+        return explicit
+    return None
+
+
+def _is_provider_callable(member: Any) -> bool:
+    """Predicate for scanning a logic provider instance.
+
+    🏛️ Review RU-04: `inspect.ismethod` alone skipped ``@staticmethod``s
+    -- on an instance they are plain functions -- so a provider could not
+    offer a pure guard without a dummy ``self``. Bound methods (including
+    ``@classmethod``s) and plain functions are both implementations.
+    """
+    return inspect.ismethod(member) or inspect.isfunction(member)
 
 
 class LogicLoader:
@@ -169,11 +183,49 @@ class LogicLoader:
             )
 
     @staticmethod
+    def _classify_action(
+        action_type: str,
+        actions: Set[str],
+        services: Set[str],
+        builtins: Set[str],
+    ) -> None:
+        """File one referenced action name under the set it is found in.
+
+        🏛️ ONE rule for every place an action can appear (``entry`` /
+        ``exit``, ``on``, ``after``, ``onDone``, an invoke's ``onDone`` /
+        ``onError``). Review RU-06: the invoke handlers had their own copy
+        that forgot the ``spawn_`` routing, so a ``spawn_worker`` in an
+        invoke's ``onDone`` demanded an ACTION implementation and
+        auto-discovery rejected the machine.
+
+        * ``spawn_<key>`` / ``spawn_blocking_<key>`` are built-in action
+          types resolved from ``logic.services[<key>]`` at run time.
+        * Other built-in creators (``assign``, ``raise``, ``sendTo``, …) are
+          implemented by the interpreter. They are recorded in *builtins*
+          so that a user implementation of the same name can still be
+          bound -- it wins over the built-in (AGENTS.md).
+        * Everything else needs a user implementation.
+
+        Args:
+            action_type: The action name as the config spells it.
+            actions: Required user actions.
+            services: Required services (spawn keys, invoke sources).
+            builtins: Built-in action names the machine references.
+        """
+        if is_spawn_action(action_type):
+            services.add(spawn_service_key(action_type))
+        elif is_builtin_action(action_type):
+            builtins.add(action_type)
+        else:
+            actions.add(action_type)
+
+    @staticmethod
     def _extract_logic_from_node(
         node: StateNode[Any],
         actions: Set[str],
         guards: Set[str],
         services: Set[str],
+        builtins: Optional[Set[str]] = None,
     ) -> None:
         """Recursively traverses a StateNode tree to extract all logic names.
 
@@ -186,59 +238,63 @@ class LogicLoader:
             actions: A set to be populated with required action names.
             guards: A set to be populated with required guard names.
             services: A set to be populated with required service names.
+            builtins: A set to be populated with the built-in action names
+                the machine references (``log``, ``cancel``, …); a user
+                implementation of one of these wins over the built-in.
+                Optional for callers that only need the first three.
         """
-        #  Actions from entry/exit handlers
-        all_actions = node.entry + node.exit
-
-        # Actions and guards from `on` and `after` transitions
-        all_transitions = [t for tl in node.on.values() for t in tl]
-        all_transitions.extend([t for tl in node.after.values() for t in tl])
-        if node.on_done:
-            all_transitions.append(node.on_done)
-
-        for transition in all_transitions:
-            all_actions.extend(transition.actions)
-            LogicLoader._collect_guard_names(transition.guard_def, guards)
-
-        # 🎭 Categorize actions, routing `spawn_` actions to services.
-        #
-        # 🏛️ Architecture decision: `spawn_<key>` / `spawn_blocking_<key>` are
-        # built-in action types intercepted by the interpreters at execution
-        # time and resolved from `logic.services`, never from `logic.actions`.
-        # Registering them as required *actions* made auto-discovery
-        # structurally incompatible with the actor model: a machine using
-        # `spawn_` always raised `ImplementationMissingError` unless the caller
-        # bypassed discovery with an explicit `logic=`. The service key is the
-        # action type minus its `spawn_` / `spawn_blocking_` prefix.
-        for action_def in all_actions:
-            action_type = action_def.type
-            if is_spawn_action(action_type):
-                services.add(spawn_service_key(action_type))
-            elif is_builtin_action(action_type):
-                # 🎬 Built-in creators (`assign`, `raise`, `sendTo`, …) are
-                #    implemented by the interpreter, so requiring a user
-                #    implementation would make auto-discovery reject every
-                #    machine that uses the declarative action vocabulary.
-                continue
-            else:
-                actions.add(action_type)
+        if builtins is None:
+            builtins = set()
+        classify = LogicLoader._classify_action
+        collect = LogicLoader._collect_transition_logic
+        # ⚡ No intermediate `all_actions` / `all_transitions` lists: this
+        #    runs for every node of every `create_machine()`, and most nodes
+        #    own one or two transitions (#307 benchmark).
+        for action_def in node.entry:
+            classify(action_def.type, actions, services, builtins)
+        for action_def in node.exit:
+            classify(action_def.type, actions, services, builtins)
+        for transitions in node.on.values():
+            for transition in transitions:
+                collect(transition, actions, guards, services, builtins)
+        for transitions in node.after.values():
+            for transition in transitions:
+                collect(transition, actions, guards, services, builtins)
+        # 🏁 Every `onDone` alternative, not just the first (MOD-02).
+        for transition in node.on_done_transitions:
+            collect(transition, actions, guards, services, builtins)
 
         # Logic from `invoke` definitions
         for invoke_def in node.invoke:
             if invoke_def.src:
                 services.add(invoke_def.src)
             # Also check for logic within the `onDone` and `onError` transitions
-            for transition in invoke_def.on_done + invoke_def.on_error:
-                for action_def in transition.actions:
-                    if not is_builtin_action(action_def.type):
-                        actions.add(action_def.type)
-                LogicLoader._collect_guard_names(transition.guard_def, guards)
+            for transition in invoke_def.on_done:
+                collect(transition, actions, guards, services, builtins)
+            for transition in invoke_def.on_error:
+                collect(transition, actions, guards, services, builtins)
 
         # 🌳 Recurse into child states
         for child_node in node.states.values():
             LogicLoader._extract_logic_from_node(
-                child_node, actions, guards, services
+                child_node, actions, guards, services, builtins
             )
+
+    @staticmethod
+    def _collect_transition_logic(
+        transition: TransitionDefinition,
+        actions: Set[str],
+        guards: Set[str],
+        services: Set[str],
+        builtins: Set[str],
+    ) -> None:
+        """File one transition's action names and guard leaves."""
+        for action_def in transition.actions:
+            LogicLoader._classify_action(
+                action_def.type, actions, services, builtins
+            )
+        if transition.guard_def is not None:
+            LogicLoader._collect_guard_names(transition.guard_def, guards)
 
     @staticmethod
     def required_names(
@@ -255,9 +311,25 @@ class LogicLoader:
             a: Set[str] = set()
             g: Set[str] = set()
             s: Set[str] = set()
-            LogicLoader._extract_logic_from_node(machine, a, g, s)
-            memo = machine._required_logic = (a, g, s)
+            b: Set[str] = set()
+            LogicLoader._extract_logic_from_node(machine, a, g, s, b)
+            memo = machine._required_logic = (a, g, s, b)
         return set(memo[0]), set(memo[1]), set(memo[2])
+
+    @staticmethod
+    def builtin_action_names(machine: MachineNode[Any]) -> Set[str]:
+        """The built-in action names a machine's config references.
+
+        Spelled as the config spells them (``log``, ``send_to``, ``sendTo``).
+        Discovery binds a user implementation of such a name when the
+        scanned module defines it or a provider implements it (RU-05); the
+        interpreter then runs that instead of the built-in. A COPY.
+        """
+        memo = machine._required_logic
+        if memo is None:
+            LogicLoader.required_names(machine)  # fills the memo
+            memo = machine._required_logic
+        return set(memo[3]) if memo is not None else set()
 
     @staticmethod
     def _collect_guard_names(guard_def: Any, guards: Set[str]) -> None:
@@ -340,6 +412,11 @@ class LogicLoader:
                     all_modules.append(module)
 
         logic_map: Dict[str, Callable[..., Any]] = {}
+        #: 🏠 RU-05: names whose implementation a scanned module DEFINES
+        #: (not merely imports) or a provider implements. Only these may
+        #: override a built-in action of the same name; `from x import log`
+        #: in a logic module must not hijack the `log` built-in.
+        own_names: Set[str] = set()
 
         # 🔎 Scan all modules for functions
         for module in all_modules:
@@ -357,7 +434,11 @@ class LogicLoader:
                     #    Matching is normalised (case/separator-insensitive)
                     #    at resolution time, which subsumes that alias.
                     logic_map[name] = func
-                    _register_explicit_name(logic_map, func)
+                    explicit = _register_explicit_name(logic_map, func)
+                    if getattr(func, "__module__", None) == module.__name__:
+                        own_names.add(name)
+                        if explicit is not None:
+                            own_names.add(explicit)
 
         # 🔎 Scan all provider instances for methods (overrides module functions)
         if logic_providers:
@@ -367,12 +448,17 @@ class LogicLoader:
                     "  -> 🏛️  Scanning instance of class: '%s' for methods...",
                     cls_name,
                 )
+                # 🏛️ RU-04: bound methods AND plain functions, so a
+                #    `@staticmethod` on the provider is discovered too.
                 for name, method in inspect.getmembers(
-                    provider, inspect.ismethod
+                    provider, _is_provider_callable
                 ):
                     if not name.startswith("_"):
                         logic_map[name] = method
-                        _register_explicit_name(logic_map, method)
+                        own_names.add(name)
+                        explicit = _register_explicit_name(logic_map, method)
+                        if explicit is not None:
+                            own_names.add(explicit)
 
         # ---------------------------------------------------------------------
         # 📋 Step 2: Extract all required logic names from the config.
@@ -395,6 +481,13 @@ class LogicLoader:
         required_actions |= req_a
         required_guards |= req_g
         required_services |= req_s
+        # ⚡ A chart that names no action, guard, service or built-in has
+        #    nothing to bind: hand back an empty, machine-owned container
+        #    without building the matching indexes (#307 benchmark).
+        if not (
+            required_actions or required_guards or required_services
+        ) and not LogicLoader.builtin_action_names(tree):
+            return MachineLogic()
 
         # ---------------------------------------------------------------------
         # 🔗 Step 3: Match requirements with implementations.
@@ -464,6 +557,40 @@ class LogicLoader:
                         "no implementation was found in the provided modules "
                         "or providers."
                     )
+
+        # 🎬 RU-05: a built-in action name the machine uses (`log`,
+        #    `cancel`, `stop`, ...) that the scanned module DEFINES or a
+        #    provider implements is the user's own action and wins over the
+        #    built-in, exactly as it does in an explicit `MachineLogic`
+        #    (AGENTS.md: built-ins resolve after `logic.actions`). Discovery
+        #    used to skip these names, so with auto-binding the built-in ran
+        #    and the user's function was silently never called. A missing
+        #    implementation is fine here: the built-in runs.
+        actions_found = discovered_logic["actions"]
+        for name in LogicLoader.builtin_action_names(tree):
+            if name in actions_found:
+                continue
+            cands = (
+                [name]
+                if name in logic_map
+                else normalized_candidates.get(normalize_logic_name(name), [])
+            )
+            own = [c for c in cands if c in own_names]
+            if not own:
+                continue
+            if len({id(logic_map[c]) for c in own}) > 1:
+                raise InvalidConfigError(
+                    f"Action '{name}' is ambiguous: {sorted(own)} are all "
+                    f"discovered and differ only by case or separators, but "
+                    f"are DIFFERENT callables. Keep one, or register the "
+                    f"exact name '{name}' explicitly."
+                )
+            actions_found[name] = logic_map[own[0]]
+            logger.info(
+                "🎬 User implementation '%s' overrides the built-in action "
+                "of the same name.",
+                own[0],
+            )
 
         if _info:
             total = sum(len(d) for d in discovered_logic.values())

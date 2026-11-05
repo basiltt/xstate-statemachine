@@ -216,6 +216,33 @@ The 0.7.x reading — resolving `.child` as a sibling of the source, i.e. a chil
 
 An absolute target such as `"#machineId.path.to.state"` resolves from the machine root regardless of where the transition is defined, and is unaffected by `strictTargets`.
 
+A non-root state may also declare its own `id` and be targeted as `"#thatId"` from anywhere in the machine, without spelling out the path:
+
+```json
+{
+  "id": "m",
+  "initial": "a",
+  "states": {
+    "a": {
+      "on": {
+        "GO": "#deep"
+      }
+    },
+    "b": {
+      "initial": "x",
+      "states": {
+        "x": {},
+        "y": {
+          "id": "deep"
+        }
+      }
+    }
+  }
+}
+```
+
+Sending `GO` lands in `m.b.y`. Custom ids must be unique across the machine: declaring the same `id` twice raises `InvalidConfigError` when the machine is created.
+
 ### Bare Targets Are Sibling-Only
 
 As of 0.8.0, a bare `target: "someState"` (no leading dot, `#`, or path) resolves **only** as a sibling of the transition's source — a child of the source's own parent. There is no whole-tree search by last id segment anymore.
@@ -340,6 +367,8 @@ interp.stop()
 <div class="stately" data-machine="b74b150f53" data-height="420" data-title="player"></div>
 
 A history node is never itself an active state — it is only ever a transition *target* that gets expanded into the remembered child (or the declared `initial` child, the first time the parent is entered). See [services.md](../services/) for another way to model "resume" behavior across invoked actors.
+
+**When history is recorded.** The configuration is remembered only when the state that declares the history node is itself **exited**. Moving between its children (`paused` → `running` above) records nothing, so a transition that targets the history node from *inside* the parent, before the parent was ever left, enters the history default (the history node's `target`, else the parent's `initial`) — not the child that was active a moment ago. This is XState v5's (and SCXML's) `exitStates`. Before 0.12.0 every transition that left any descendant of the parent overwrote its history.
 
 ### Parent-Level Transitions (Catch-All)
 
@@ -687,7 +716,7 @@ interp.stop()
 
 ## 🏁 onDone for Compound States
 
-When a compound state's child reaches a **final** state, a `done.state.*` event fires on the parent. Use `onDone` to react:
+When a compound state's child reaches a **final** state, a `done.state.*` event fires on the parent. Use `onDone` to react (the grandparent is not notified: it is done only when one of its *own* final children is entered — see [Final States → Which states are told they are done](../final-states/#which-states-are-told-they-are-done)):
 
 ```json
 {
@@ -1137,6 +1166,7 @@ from xstate_statemachine import (
     SyncInterpreter,
     action,
     guard,
+    service,
 )
 
 
@@ -1232,6 +1262,18 @@ class FormWizard(StateMachine):
         value = event.data.get("value")
         if section in context and field:
             context[section][field] = value
+
+    @action
+    def show_error(self, interpreter, context, event, action_def):
+        context["error"] = str(event.error)
+
+    # Services
+    @service
+    def submit_form(self, interpreter, context, event):
+        return {
+            "id": 42,
+            "personal": context["personal"],
+        }
 
 
 machine = FormWizard.create_machine()

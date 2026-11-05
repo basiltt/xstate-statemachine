@@ -52,7 +52,7 @@ Every public name, one subsection each: signature, what it does, what it raises.
 
 | <Framework> | Python | Tested in CI |
 |:--|:--|:--|
-| X.Y – Z.W | 3.9 – 3.14 | ✅ |
+| X.Y – Z.W | 3.9 – 3.15 | ✅ |
 
 ## Troubleshooting
 

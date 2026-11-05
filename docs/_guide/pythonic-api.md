@@ -27,6 +27,442 @@ All three compile to the same internal `MachineNode` and work with both `Interpr
 
 ---
 
+## ⚡ The short way (v0.12.0)
+
+> **New in v0.12.0** — a `StateMachine` subclass is a running machine. Events are named by the attribute you assign them to, callbacks are found by name, and each callback declares only the arguments it wants.
+
+```python
+from xstate_statemachine import State, StateMachine
+
+
+class TrafficLight(StateMachine):
+    green = State(initial=True)
+    yellow = State()
+    red = State()
+
+    # The attribute name is the event: CYCLE
+    cycle = green.to(yellow) | yellow.to(red) | red.to(green)
+
+    def __init__(self, *args, **kwargs):
+        self.count = 0
+        super().__init__(*args, **kwargs)
+
+    # Naming-convention hooks: on_enter_<state>, on_exit_<state>,
+    # on_<event>, before_<event>, after_<event>, and the generic
+    # on_enter_state / on_exit_state / on_transition /
+    # before_transition / after_transition.
+    def on_enter_red(self):
+        print("Don't move.")
+
+    # Only the arguments you name are injected: payload fields,
+    # `context`, `event`, `event_type`, `interpreter`, `action_def`,
+    # `error`, `data`, `input`, `source`, `target`, `state`, ...
+    def on_cycle(self, amount=1):
+        self.count += amount
+        return f"counted {amount}"
+
+
+with TrafficLight() as light:  # started, in `green`; stopped on exit
+    print(light.state)  # green
+    print(light.cycle(amount=3))  # counted 3   <- return values come back
+    print(light.send("CYCLE"))  # counted 1   <- same thing, by name
+    print(light.state)  # red
+    print(light.red.is_active, light.count)  # True 4
+    print(light.configuration)  # frozenset({'red'})
+    print(light.can("CYCLE"), sorted(light.allowed_events))  # True ['CYCLE']
+    print(light)  # TrafficLight(state='red', context={})
+print(light.status)  # stopped
+```
+
+**Use the context manager.** `with Machine() as sm:` (or `async with` for the asyncio engine) is the recommended way to run an instance: it stops the machine on the way out, including when an exception escapes, and it never depends on method names. For a long-lived machine that outlives a block, hold the instance and call `sm.interpreter.stop()` when you are done; `sm.interpreter.start()` / `sm.interpreter.stop()` are the explicit escape hatch that always reaches the lifecycle, whatever the chart's events are called.
+
+Everything above still compiles to the same XState JSON (`TrafficLight.create_machine().to_json()`; `to_json(indent=2)` pretty-prints, `indent` is keyword-only, and a context value JSON cannot represent, such as a `datetime`, raises `TypeError` instead of being stringified), and `TrafficLight.create_machine()` still returns the bare `MachineNode` when you want to drive it with your own `Interpreter` or `SyncInterpreter` (snapshots, custom clocks, actor systems).
+
+### Compound and parallel states as nested classes
+
+Nested classes may hold child states, their own transitions, and any `State(...)` keyword (`after=`, `on_done=`, `history=`, `tags=`, `entry=`, …). `State.Compound` and `State.Parallel` are aliases for readers coming from other libraries.
+
+```python
+from xstate_statemachine import State, StateMachine
+
+
+class Order(StateMachine):
+    created = State(initial=True)
+
+    class paid(State.Compound, on_done="fulfil"):
+        packing = State(initial=True)
+        shipped = State(final=True)
+        ship = packing.to(shipped)  # event SHIP, declared where it belongs
+
+    class fulfil(State.Parallel):
+        class payment(State.Compound):
+            pending = State(initial=True)
+            settled = State(final=True)
+            settle = pending.to(settled)
+
+        class notify(State.Compound):
+            idle = State(initial=True)
+            sent = State(final=True)
+            send_mail = idle.to(sent)
+
+    closed = State(final=True)
+    pay = created.to(paid)  # a nested class is a valid target...
+    close = fulfil.to(closed)  # ...and a valid source
+
+
+with Order() as order:
+    order.pay()
+    order.ship()
+    print(sorted(order.configuration))  # ['fulfil.notify.idle', 'fulfil.payment.pending']
+    order.settle()
+    order.send_mail()
+    order.close()
+    print(order.state, order.status)  # closed done
+```
+
+### Strict mode and build-time validation
+
+```python
+from xstate_statemachine import (
+    ImplementationMissingError,
+    State,
+    StateMachine,
+    TransitionNotAllowedError,
+    UnknownEventError,
+)
+
+
+class Door(StateMachine):
+    strict = True  # refuse events that cannot be taken right now
+
+    closed = State(initial=True)
+    opened = State()
+    open = closed.to(opened)
+    close = opened.to(closed)
+
+
+with Door() as door:
+    door.open()
+    try:
+        door.open()  # already open
+    except TransitionNotAllowedError as exc:
+        print(exc)  # Can't 'OPEN' when in 'opened': no enabled transition ...
+    try:
+        door.send("OPNE")  # typo
+    except UnknownEventError as exc:
+        print("unknown:", exc.event_type)
+    print(door.state)  # opened  <- the machine is untouched
+
+# Logic the chart names but nobody implemented is reported when the
+# class is instantiated (or on create_machine(validate=True)), not at
+# the first send.
+try:
+
+    class Broken(StateMachine):
+        a = State(initial=True)
+        b = State()
+        go = a.to(b, guard="isReady", actions=["save"])
+
+    Broken()
+except ImplementationMissingError as exc:
+    print(exc)  # Broken references logic that is not implemented: ...
+```
+
+### Lifecycle: `with`, `async with`, and the escape hatch
+
+There are three ways to control an instance's lifecycle, in order of preference:
+
+| Idiom | When |
+|---|---|
+| `with Machine() as sm:` / `async with Machine() as sm:` | **Recommended.** Starts (async) and stops the machine for you, also on exceptions, and never depends on what the chart's events are called. |
+| `sm.interpreter.start()` / `sm.interpreter.stop()` | The explicit escape hatch for a machine that outlives a block (a module-level singleton, a machine owned by a request handler). Always reaches the lifecycle. |
+| `sm.start()` / `sm.stop()` | Convenience methods on the instance; same effect as the escape hatch. |
+
+`sm.start()` and `sm.stop()` always start and stop the machine. Timers, jobs and media players naturally have `START` / `STOP` *events* too, and that is allowed: declare the transition as usual, and send the event by name. The attribute just does not get the `sm.stop()` shortcut, and a warning at class-definition time tells you so. With the context manager you never have to think about it.
+
+```python
+import logging
+
+from xstate_statemachine import State, StateMachine
+
+logging.basicConfig(level=logging.WARNING)
+
+
+class Timer(StateMachine):
+    idle = State(initial=True)
+    running = State()
+    start = idle.to(running)  # the START event -- warning logged here
+    stop = running.to(idle)  # the STOP event  -- and here
+
+
+with Timer() as t:
+    t.send("START")  # the event
+    print(t.state)  # running
+    t.send("STOP")  # the event
+    print(t.state)  # idle
+# leaving the block stopped the machine
+print(t.status)  # stopped
+
+# The same machine kept beyond a block: the explicit escape hatch.
+t2 = Timer()
+t2.send("START")
+print(t2.state)  # running
+t2.interpreter.stop()  # always the lifecycle, whatever the events are called
+print(t2.status)  # stopped
+```
+
+Why the lifecycle wins: event methods arrived in 0.12.0, so no code relied on `sm.stop()` sending an event, whereas a shutdown call that silently sent an event instead would leave the interpreter and its timers running. Names that would break the façade itself (`send`, `state`, `context`, `status`, `can`, `matches`, `machine`, `interpreter`, …) are reserved and raise `InvalidConfigError`; give the transition another attribute name and keep the event name with `event="STATE"` if you need it.
+
+### Async machines
+
+If any callback is `async def`, the instance runs on the asyncio `Interpreter`; start it with `await sm.start()` (or `async with`) and `await` its events. Set `engine = "async"` to force it for sync callbacks.
+
+```python
+import asyncio
+
+from xstate_statemachine import State, StateMachine
+
+
+class Fetch(StateMachine):
+    idle = State(initial=True)
+    done = State()
+    fetch = idle.to(done)
+
+    async def on_fetch(self, url):
+        await asyncio.sleep(0)
+        return url.upper()
+
+
+async def main():
+    async with Fetch() as sm:
+        print(sm.engine)  # async
+        print(await sm.fetch(url="http://x"))  # HTTP://X
+        print(sm.state)  # done
+
+
+asyncio.run(main())
+```
+
+### The instance reference
+
+A `StateMachine` subclass is a running machine once instantiated. Everything a caller can ask of the instance:
+
+| Member | What it does |
+|:--|:--|
+| `sm.send("EVENT", **payload)` | Send an event; returns the return values of the actions that ran (a single value for one action, `None` when none ran). |
+| `sm.cycle(amount=3)` | Event method for the `CYCLE` event. **Keyword arguments only**: `sm.cycle(3)` raises `TypeError`. |
+| `sm.state` | The one active leaf, as a name. Raises `ValueError` while several leaves are active (parallel states); read `sm.configuration` then. |
+| `sm.configuration` | Frozen set of every active leaf. |
+| `sm.context` | The live context dict. |
+| `sm.status` | `"running"`, `"done"`, `"error"` or `"stopped"`. |
+| `sm.can("EVENT")` | `True` when an active state would take the event right now (guards included). |
+| `sm.matches("paid.packing")` | `True` when that state is active. |
+| `sm.allowed_events` | The events that would be taken right now, as a frozen set. |
+| `sm.machine` | The compiled `MachineNode`. |
+| `sm.interpreter` | The underlying `SyncInterpreter` / `Interpreter`, for the escape hatch and anything not on the facade. |
+| `sm.engine`, `sm.strict` | The engine and the strict setting actually in effect. |
+| `sm.green.is_active` | Class-level states are `BoundState` objects on an instance (`.name`, `.path`, `.id`, `.is_active`). |
+| `repr(sm)` | `Light(state='green', context={})`. |
+
+`TransitionGroup` (several transitions joined with `|` for one event) and `BoundState` are public names of `xstate_statemachine.pythonic`. The names in the table are reserved; so are `create_machine`, `machine_id`, `initial_context`, `machine_root`, `engine`, `strict`, `plugins` and `validate_logic`. A state or transition attribute that uses one raises `InvalidConfigError` at class creation, and assigning to a read-only member of an instance (`self.status = ...`) raises `AttributeError`.
+
+<!-- doc-fragment -->
+```python
+sm = Light()
+sm.cycle(amount=3)          # keyword arguments only
+sm.can("CYCLE")             # True
+sm.allowed_events           # frozenset({'CYCLE'})
+sm.matches("yellow")        # True
+```
+
+### Settings and constructor keywords
+
+| Class attribute | Default | Meaning |
+|:--|:--|:--|
+| `machine_id` | the class name | The machine id. |
+| `initial_context` | `None` | Starting context; `Light(context={...})` overrides it. |
+| `machine_root` | `None` | A `State` carrying machine-level `on` / `entry` / `exit` / `tags` (see [Machine-Level Properties](#machine-level-properties)). |
+| `engine` | `"auto"` | `"sync"`, `"async"` or `"auto"` (async when any callback is `async def`). `Light(engine="sync")` overrides it and `sm.engine` reads the choice. |
+| `strict` | `False` | Refuse events that cannot be taken (below). `Light(strict=True)` overrides it. |
+| `validate_logic` | `True` | Check on instantiation that every guard, action and service the chart names is implemented, and report all that are missing in one `ImplementationMissingError`. `False` defers the check to the first use. Services the engine registers itself (`spawn_<key>`) are exempt. |
+
+`Light(context=None, *, state=None, engine=None, strict=None, plugins=None, clock=None)`:
+
+- `state="paid.packing"` (a dot path, or a list for parallel regions) starts the machine **already in** that state, without running entry actions, exactly like a snapshot restore. It is the "state string stored on a model row" case; for a bare `MachineNode` use `SyncInterpreter.from_state(machine, "order.paid.packing")` (see [Persistence](../persistence/)).
+- `clock=SimulatedClock()` drives `after` timers deterministically in tests.
+- `plugins=[...]` attaches extra [plugins](../plugins/).
+
+```python
+from xstate_statemachine import SimulatedClock, State, StateMachine
+
+
+class Order(StateMachine):
+    machine_id = "order"
+    cart = State(initial=True)
+
+    class paid(State.Compound):
+        picking = State(initial=True)
+        packing = State()
+        pack = picking.to(packing)
+
+    pay = cart.to(paid)
+
+
+class Session(StateMachine):
+    active = State(
+        initial=True,
+        after={
+            300000: "expired",
+        },
+    )
+    expired = State()
+
+
+with Order(state="paid.packing") as order:  # no entry actions ran
+    print(order.state, order.matches("paid.packing"))
+
+clock = SimulatedClock()
+with Session(clock=clock) as session:
+    clock.increment(300000)  # five minutes pass, instantly
+    print(session.state)  # expired
+```
+
+With `strict = True`, `send()` on a machine that has finished or been stopped raises `InterpreterStoppedError` as well (the message says the event was not sent); the setting is readable on the instance as `sm.strict`.
+
+### Naming-convention hooks
+
+A method with one of these names is bound without a decorator:
+
+| Method | Runs |
+|:--|:--|
+| `on_enter_<state>` / `on_exit_<state>` | when that state is entered / exited |
+| `on_<event>` | as the action of the transition for that event |
+| `before_<event>` / `after_<event>` | around the event, from a plugin (instance only) |
+| `on_enter_state` / `on_exit_state` | on every entry / exit |
+| `on_transition` | on every transition |
+| `before_transition` / `after_transition` | around every event (instance only) |
+
+Rules the tests pin (`tests/test_pythonic_dsl_v2.py::TestNamingConventionHooks`):
+
+- Order for one event: `before_<event>`, exits, `on_<event>`, entries, `after_<event>`. Generic hooks run before the specific ones whatever the declaration order.
+- `before_*` / `after_*` need the instance facade and must be plain `def`; an `async def` one raises `InvalidConfigError` at class creation. `create_machine()` logs a warning when they exist and runs none of them.
+- `before_*` does not run for an event that is blocked.
+- A hook whose suffix matches no state or event logs a warning instead of silently never running.
+- A method that is already decorated (`@state.enter`) is not also treated as a convention hook, so it never runs twice.
+
+### Argument injection
+
+Declare only what a callback needs and it is passed by name; the legacy positional shapes (`(interpreter, context, event, action_def)`, `(context, event[, params])`) keep working by arity.
+
+| Name | Value | Guards | Actions | Services | Hooks |
+|:--|:--|:--:|:--:|:--:|:--:|
+| `context`, `ctx` | the live context | yes | yes | yes | yes |
+| `event` | the triggering `Event` | yes | yes | yes | yes |
+| `event_type` | its type string | yes | yes | yes | yes |
+| `interpreter`, `interp`, `machine` | the running interpreter | yes | yes | yes | yes |
+| `action_def`, `action`, `params` | the action definition / its `params` | | yes | | yes |
+| `error`, `data`, `input` | error / done data / invoke input | where the engine supplies one | | services | |
+| `source`, `target`, `state` | transition source, target and current state | yes | yes | | yes |
+| any payload field | `sm.pay(amount=5)` passes `amount=5` | yes | yes | yes | yes |
+| `**kwargs` | the payload fields not otherwise consumed | yes | yes | yes | yes |
+
+A name the chart gives an action through `params` wins first, then the engine names (`context`, `event`, `interpreter`, ...), then payload fields, then `error` / `data` / `input` / `source` / `target` / `state`. A payload key called `context` therefore cannot shadow the context. A required parameter that nothing supplies raises a `TypeError` naming the callback, the event and the parameter (`_pythonic_runtime.resolve_arguments`). A Pythonic service sees payload fields only through a declared `input` (below).
+
+### Plain methods are found by name
+
+Names the chart references and no decorated callable provides are bound to an undecorated method of that name (`guard="can_pay"` and `guard="canPay"` both find `def can_pay`). `@guard` / `@action` / `@service` remain the explicit form and the only way to register under another name. Helper methods the chart never names are not swept in.
+
+```python
+from xstate_statemachine import State, StateMachine
+
+
+class Shop(StateMachine):
+    machine_id = "shop"
+    initial_context = {
+        "paid": 0,
+    }
+
+    cart = State(initial=True)
+    paid = State()
+    pay = cart.to(paid, guard="can_pay", actions=["record"])
+
+    def can_pay(self, amount):  # no decorator needed
+        return amount > 0
+
+    def record(self, context, amount, event_type):
+        context["paid"] += amount
+        return event_type
+
+
+with Shop() as shop:
+    print(shop.pay(amount=0), shop.state)  # None cart (guard said no)
+    print(shop.pay(amount=5), shop.state)  # PAY paid
+    print(shop.context)  # {'paid': 5}
+```
+
+### `@state.service`
+
+`@state.service(on_done=, on_error=, id=, input=)` makes the method the service **and** adds the `invoke` entry to that state, so the two cannot drift apart. As in XState a service receives `{}` unless the state declares an `input`; pass `input=event_payload` to forward the payload of the triggering event (a static value or a `fn(context, event)` factory also works).
+
+```python
+from xstate_statemachine import State, StateMachine, event_payload
+
+
+class Fetch(StateMachine):
+    idle = State(initial=True)
+    loading = State()
+    done = State()
+    failed = State()
+    go = idle.to(loading)
+
+    @loading.service(on_done="done", on_error="failed", input=event_payload)
+    def fetch_url(self, url):
+        if not url.startswith("http"):
+            raise ValueError("bad url")
+        return {
+            "length": len(url),
+        }
+
+
+with Fetch() as ok:
+    ok.go(url="https://example.com")
+    print(ok.state)  # done
+
+with Fetch() as bad:
+    bad.go(url="nope")
+    print(bad.state)  # failed (the service raised)
+```
+
+### Inheritance
+
+A subclass of a `StateMachine` subclass inherits the states, transitions and callbacks of its base; an attribute it redefines wins.
+
+```python
+from xstate_statemachine import State, StateMachine
+
+
+class Base(StateMachine):
+    green = State(initial=True)
+    yellow = State()
+    cycle = green.to(yellow)
+
+    def on_enter_yellow(self):
+        print("yellow!")
+
+
+class Extended(Base):
+    red = State()
+
+
+with Extended() as sm:
+    sm.cycle()  # yellow!  (the base hook is inherited)
+    print(sm.state)  # yellow
+```
+
+The rest of this page documents the three styles in full, including the explicit `@action` / `@guard` / `@service` decorators and the legacy positional callback signatures, which keep working unchanged: a callback whose arity matches a legacy shape (`(interpreter, context, event, action_def)`, `(context, event[, params])`, `(interpreter, context, event)`) is called positionally, a default in the trailing `params` / `action_def` slot and extra defaulted parameters after the shape included, and is resolved by name only when it asks for injection (a default elsewhere, a keyword-only parameter, `**kwargs`, or a parameter named like a field the event carries) and every parameter without a default can be supplied by name. A signature with no engine name at all that asks for injection (`def fetch(self, url, retries=3, timeout=10)`) raises a clear `TypeError` when the payload names some of its parameters but not a required one.
+
+---
+
 ## 🏛️ Style 1: Class-Based (`StateMachine`)
 
 The class-based style is the most expressive. States are class attributes, transitions use `.to()`, and logic is defined with `@action`, `@guard`, and `@service` decorators.
@@ -109,6 +545,7 @@ interp.stop()
 - States are `State(...)` instances assigned to class attributes.
 - Transitions use `source.to(target, event="EVENT_NAME")`.
 - `create_machine()` is a classmethod that compiles everything and returns a `MachineNode`.
+- Instantiating the class starts a machine; the attribute name is the event name unless `event=` overrides it; guards and actions are found by name (see [The instance reference](#the-instance-reference) and the sections after it).
 
 ---
 
@@ -197,13 +634,14 @@ interp.stop()
 | Method | Signature | Description |
 |--------|-----------|-------------|
 | `.context(ctx)` | `dict → self` | Set initial context. |
-| `.state(name, ...)` | `str, **kwargs → self` | Add a state. Supports `initial`, `final`, `parallel`, `on`, `entry`, `exit`, `after`, `invoke`, `on_done`, `always`. |
+| `.state(name, ...)` | `str, **kwargs → self` | Add a state. Supports `initial`, `final`, `parallel`, `on`, `entry`, `exit`, `after`, `invoke`, `on_done`, `always`, `history`, `tags`, `meta`. |
 | `.transition(src, event, target, ...)` | `str, str, str, **kwargs → self` | Add a transition. Supports `guard`, `actions`, `reenter`, `internal`. |
 | `.action(name, fn)` | `str, callable → self` | Register an action function. |
 | `.guard(name, fn)` | `str, callable → self` | Register a guard function. |
 | `.service(name, fn)` | `str, callable → self` | Register a service function. |
 | `.child_states(parent, ...)` | `str, **kwargs → self` | Add child states to a parent. Supports `initial`, `states`, `parallel`. |
-| `.build(context=None)` | `dict? → MachineNode` | Compile and return the machine. Optional context override. |
+| `.root(**props)` | `**kwargs → self` | Machine-level `on`, `entry`, `exit`, `tags`, `meta` or `type` (see [Machine-Level Properties](#machine-level-properties)). |
+| `.build(context=None)` | `dict? → MachineNode` | Compile and return the machine. Optional context override; idempotent, it can be called repeatedly. |
 
 ### Adding Child States (Hierarchy)
 
@@ -305,7 +743,7 @@ machine = (
         "storeError",
         lambda i, ctx, e, a: ctx.update(
             {
-                "error": str(e.data),
+                "error": str(e.error),
             }
         ),
     )
@@ -398,10 +836,11 @@ loaded = State("loaded")
 error = State("error")
 
 # ── Define Transitions ─────────────────────────────────────
-idle.to(loading, event="FETCH")
-loaded.to(loading, event="REFRESH")
-error.to(loading, event="RETRY", guard="hasRetriesLeft")
-error.to(idle, event="CANCEL")
+# `.to()` RETURNS a Transition; hand them to build_machine(transitions=...)
+fetch = idle.to(loading, event="FETCH")
+refresh = loaded.to(loading, event="REFRESH")
+retry = error.to(loading, event="RETRY", guard="hasRetriesLeft")
+cancel = error.to(idle, event="CANCEL")
 
 
 # ── Define Logic ────────────────────────────────────────────
@@ -412,7 +851,7 @@ def store_items(interpreter, context, event, action_def):
 
 @action
 def store_error(interpreter, context, event, action_def):
-    context["error"] = str(event.data)
+    context["error"] = str(event.error)
 
 
 @guard
@@ -422,16 +861,20 @@ def has_retries_left(context, event):
 
 @service
 def fetch_items(interpreter, context, event):
-    import requests
-
-    resp = requests.get("https://api.example.com/items")
-    return resp.json()
+    # In real code: an HTTP call. Its return value becomes `event.data`.
+    return [
+        {
+            "id": 1,
+            "name": "widget",
+        }
+    ]
 
 
 # ── Build and Run ───────────────────────────────────────────
 machine = build_machine(
     id="itemLoader",
     states=[idle, loading, loaded, error],
+    transitions=[fetch, refresh, retry, cancel],
     actions=[store_items, store_error],
     guards=[has_retries_left],
     services=[fetch_items],
@@ -444,7 +887,8 @@ machine = build_machine(
 
 interp = SyncInterpreter(machine).start()
 interp.send("FETCH")
-print(interp.active_state_ids)
+print(interp.active_state_ids)  # {'itemLoader.loaded'}
+print(interp.context["items"])  # [{'id': 1, 'name': 'widget'}]
 interp.stop()
 ```
 
@@ -454,11 +898,12 @@ interp.stop()
 |-----------|------|:--------:|-------------|
 | `id` | `str` | **Yes** | Machine identifier. |
 | `states` | `list[State]` | **Yes** | All top-level states. |
-| `transitions` | `list[Transition]` | No | Additional transitions (beyond those created by `.to()`). |
+| `transitions` | `list[Transition]` | No | The machine's transitions. `State.to()` only *builds* a `Transition` object; it is not registered until listed here (inside a `StateMachine` class the metaclass does this for you). |
 | `actions` | `list[callable]` | No | Action functions (decorated with `@action` or raw). |
 | `guards` | `list[callable]` | No | Guard functions (decorated with `@guard` or raw). |
 | `services` | `list[callable]` | No | Service functions (decorated with `@service` or raw). |
 | `context` | `dict` | No | Initial context. |
+| `root` | `State` | No | Machine-level properties (see [Machine-Level Properties](#machine-level-properties)). |
 
 ---
 
@@ -768,7 +1213,7 @@ With `reenter=True`, sending `REFRESH` while in `"polling"` will:
 1. Run exit actions on `"polling"`
 2. Run entry actions on `"polling"` (e.g., restart a timer)
 
-Without `reenter=True`, the state would stay in `"polling"` and **no entry/exit actions would fire**.
+Without `reenter=True`, the state would stay in `"polling"` and **no entry/exit actions would fire**. (For a state *with children*, a self-transition without `reenter` still resets the children: the active child exits and the `initial` child is entered again, while the state itself stays — XState v5 semantics. See [Core Concepts → Self-Transitions](../core-concepts/#self-transitions).)
 
 ---
 
@@ -1549,7 +1994,7 @@ interp.stop()
 | IDE autocomplete | ✅✅ | ✅ | ✅ |
 | Decorators (`@action`, `@guard`) | ✅ | ❌ (use `.action()`) | ✅ |
 | `@state.enter` / `@state.exit` | ✅ | ❌ | ❌ |
-| `\|` operator for guards | ✅ | ❌ (use multiple `.transition()`) | ✅ |
+| `\|` operator to combine transitions for one event | ✅ | ❌ (use multiple `.transition()`) | ✅ |
 | `.internal()` transitions | ✅ | ✅ (via `internal=True`) | ✅ |
 | Dynamic construction | ❌ | ✅✅ | ✅ |
 | Hierarchy | ✅ | ✅ (via `.child_states()`) | ✅ (via `states=[...]`) |

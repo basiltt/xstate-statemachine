@@ -1,0 +1,163 @@
+{
+  "name": "always_transitions",
+  "description": "Eventless transitions settle after each event; the first enabled always branch wins.",
+  "tags": [
+    "always",
+    "eventless",
+    "guards"
+  ],
+  "machine": {
+    "id": "triage",
+    "initial": "idle",
+    "states": {
+      "idle": {
+        "on": {
+          "SUBMIT": "checking"
+        }
+      },
+      "checking": {
+        "entry": "startCheck",
+        "always": [
+          {
+            "target": "rejected",
+            "guard": "isBlocked"
+          },
+          {
+            "target": "approved",
+            "guard": "isTrusted"
+          },
+          {
+            "target": "review"
+          }
+        ]
+      },
+      "approved": {
+        "type": "final"
+      },
+      "rejected": {
+        "type": "final"
+      },
+      "review": {
+        "on": {
+          "APPROVE": "approved"
+        }
+      }
+    }
+  },
+  "logic": {
+    "guards": {
+      "isBlocked": false,
+      "isTrusted": false
+    }
+  },
+  "steps": [
+    {
+      "send": "SUBMIT"
+    },
+    {
+      "send": "APPROVE"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "triage.idle"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "triage.review"
+          ],
+          "context": {},
+          "actions": [
+            "startCheck"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "triage.approved"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "done",
+          "output": null
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "triage.idle"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "triage.review"
+          ],
+          "context": {},
+          "actions": [
+            "startCheck"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "triage.approved"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "done",
+          "output": null
+        }
+      ],
+      "machine_hash": "939c95b5bd0e56d3",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "triage",
+        "machine_hash": "939c95b5bd0e56d3",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "done",
+        "context": {},
+        "state_ids": [
+          "triage.approved"
+        ],
+        "value": "approved",
+        "configuration": [
+          "triage",
+          "triage.approved"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"triage\",\n  \"machine_hash\": \"939c95b5bd0e56d3\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"done\",\n  \"context\": {},\n  \"state_ids\": [\n    \"triage.approved\"\n  ],\n  \"value\": \"approved\",\n  \"configuration\": [\n    \"triage\",\n    \"triage.approved\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

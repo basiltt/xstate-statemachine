@@ -23,7 +23,7 @@ def get_console() -> Console:
 
 
 def configure_console(args: argparse.Namespace) -> Console:
-    """Build the console from the global flags on *args* (idempotent)."""
+    """Build the console from the global flags on *args* (rebuilds and caches it on every call)."""
     global _console
     _console = Console(
         detect(

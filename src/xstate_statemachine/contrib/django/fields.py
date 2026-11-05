@@ -75,6 +75,46 @@ def sibling_values(
     }
 
 
+class _StateColumn(models.CharField):  # type: ignore[misc]  # CharField is untyped (Any base)
+    """The denormalised ``<name>_state`` column with a loud width check.
+
+    🔥 A wide parallel chart's joined leaf ids can exceed ``max_length``:
+    SQLite stores them, Postgres raises ``StringDataRightTruncation``
+    mid-transaction. Checking on write turns that into a clear
+    `ValidationError` naming the remedy on every backend.
+
+    🏛️ ``deconstruct()`` reports a plain ``CharField`` so migrations are
+    unchanged.
+    """
+
+    def deconstruct(self) -> Any:
+        """Serialise as a stock ``CharField`` (no migration change)."""
+        name, _path, args, kwargs = super().deconstruct()
+        return name, "django.db.models.CharField", args, kwargs
+
+    def get_prep_value(self, value: Any) -> Any:
+        """Reject a value wider than the column.
+
+        Args:
+            value: The joined leaf ids (or ``None``).
+
+        Returns:
+            The prepared value.
+
+        Raises:
+            ValidationError: ``len(value) > max_length``.
+        """
+        value = super().get_prep_value(value)
+        limit = self.max_length
+        if isinstance(value, str) and limit and len(value) > limit:
+            raise ValidationError(
+                f"{self.name}: the active configuration ({len(value)} "
+                f"chars) exceeds state_max_length={limit}; raise "
+                f"StatechartField(state_max_length=...)."
+            )
+        return value
+
+
 class _SiblingTransform(Transform):  # type: ignore[misc]  # Transform is untyped (Any base)
     """``statechart__state`` → the ``statechart_state`` column itself."""
 
@@ -168,7 +208,7 @@ class StatechartField(models.JSONField):  # type: ignore[misc]  # JSONField is u
         """Fresh instances of the sibling fields, keyed by column name."""
         n = self.name
         return {
-            f"{n}_state": models.CharField(
+            f"{n}_state": _StateColumn(
                 max_length=self.state_max_length,
                 null=True,
                 blank=True,
@@ -228,7 +268,12 @@ class StatechartField(models.JSONField):  # type: ignore[misc]  # JSONField is u
         if value is None:
             return None
         if isinstance(value, str):
-            value = json.loads(value)
+            try:
+                value = json.loads(value)
+            except ValueError as exc:
+                raise ValidationError(
+                    f"{self.name} holds malformed JSON: {exc}"
+                ) from exc
         if not isinstance(value, dict):
             raise ValidationError(
                 "StatechartField stores a snapshot dict, got "
@@ -244,11 +289,18 @@ class StatechartField(models.JSONField):  # type: ignore[misc]  # JSONField is u
         return value
 
     def get_prep_value(self, value: Any) -> Any:
+        """Validate (type and X0.4 size cap) and prepare a snapshot.
+
+        Raises:
+            SnapshotTooLargeError: The snapshot exceeds the cap.
+            ValidationError: Not a dict / malformed JSON string.
+        """
         return super().get_prep_value(self._check(value))
 
     def from_db_value(
         self, value: Any, expression: Any, connection: Any
     ) -> Any:
+        """Decode a stored snapshot and re-apply the X0.4 cap on read."""
         return self._check(
             super().from_db_value(value, expression, connection)
         )

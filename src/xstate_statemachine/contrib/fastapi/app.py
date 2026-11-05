@@ -19,7 +19,10 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 from ...exceptions import XStateMachineError
-from ..starlette._http import problem_for_exception, status_for_exception
+from ..starlette._http import (
+    problem_for_exception,
+    problem_for_exception_logged,
+)
 
 __all__ = ["compose_lifespan", "instrument_app"]
 
@@ -71,28 +74,27 @@ def instrument_app(
     #    probes twice and nested `registry.lifespan` in itself -- startup
     #    ran twice and the inner shutdown drained the registry while the
     #    outer was still "running". Instrumenting is once per registry.
+    # 🔥 Review CW-29: keyed by the registry ITSELF (identity), not
+    #    `id(registry)` -- ids are reused after garbage collection, so a
+    #    recreated registry looked instrumented and was silently skipped.
     done = getattr(app.state, "xsm_instrumented", None)
     if done is None:
-        done = set()
+        done = []
         app.state.xsm_instrumented = done
-    if id(registry) in done:
+    if any(seen is registry for seen in done):
         return app
-    done.add(id(registry))
-    app.router.routes.append(registry.health_route(health_path))
-    app.router.routes.append(registry.ready_route(ready_path))
+    done.append(registry)
+    # 📝 Probes go FIRST: appended after a catch-all mount at ``/`` they
+    #    were unreachable.
+    app.router.routes.insert(0, registry.ready_route(ready_path))
+    app.router.routes.insert(0, registry.health_route(health_path))
     inner = app.router.lifespan_context
     app.router.lifespan_context = compose_lifespan(registry, inner)
     if exception_handlers:
 
         async def handle(request: Request, exc: Exception) -> Response:
             """Map an `XStateMachineError` to a problem response (logging 5xx)."""
-            if status_for_exception(exc) >= 500:
-                import logging
-
-                logging.getLogger(__name__).error(
-                    "🔥 %s on %s", type(exc).__name__, request.url.path
-                )
-            return problem_for_exception(exc)
+            return problem_for_exception_logged(exc, request.url.path)
 
         app.add_exception_handler(XStateMachineError, handle)
         # 🛡️ #266 battle (X0.7): a route the APP adds beside the generated

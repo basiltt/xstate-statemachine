@@ -393,9 +393,120 @@ editor_editing --> editor_idle : CLOSE
 @enduml
 ```
 
+## 🔎 What the diagram shows
+
+Both exporters draw more than plain event edges. The chart below has a timer, an invoked service, an eventless branch and a final state:
+
+```python
+from xstate_statemachine import MachineLogic, create_machine
+
+config = {
+    "id": "upload",
+    "initial": "idle",
+    "states": {
+        "idle": {
+            "on": {
+                "START": "sending",
+            },
+        },
+        "sending": {
+            "after": {
+                "5000": "timedOut",
+            },
+            "invoke": {
+                "src": "send",
+                "onDone": "checking",
+                "onError": "failed",
+            },
+        },
+        "checking": {
+            "always": [
+                {
+                    "target": "done",
+                    "guard": "isOk",
+                },
+                {
+                    "target": "failed",
+                },
+            ],
+        },
+        "timedOut": {
+            "on": {
+                "RETRY": "sending",
+            },
+        },
+        "failed": {
+            "on": {
+                "RETRY": "sending",
+            },
+        },
+        "done": {
+            "type": "final",
+        },
+    },
+}
+logic = MachineLogic(
+    guards={
+        "isOk": lambda ctx, event: True,
+    },
+    services={
+        "send": lambda interpreter, ctx, event: 1,
+    },
+)
+print(create_machine(config, logic=logic).to_mermaid())
+```
+
+```text
+stateDiagram-v2
+[*] --> upload
+state "upload" as upload {
+    [*] --> idle
+    state "idle" as idle
+    state "sending" as sending
+    state "checking" as checking
+    state "timedOut" as timedOut
+    state "failed" as failed
+    state "done" as done
+    done --> [*]
+}
+idle --> sending : START
+sending --> timedOut : after 5000ms
+sending --> checking : invoke onDone
+sending --> failed : invoke onError
+checking --> done : always [isOk]
+checking --> failed : always
+timedOut --> sending : RETRY
+failed --> sending : RETRY
+```
+
+| Chart feature | Drawn as |
+|:--|:--|
+| `after` | an edge labelled `after 5000ms` (`after NAME` for a named delay) |
+| `invoke` | one edge for `onDone` and one for `onError`, labelled `invoke onDone` / `invoke onError` |
+| `always` | an edge labelled `always`, with the guard appended (`always [isOk]`) |
+| a `final` state | an edge to `[*]` inside its parent |
+| a `parallel` state | its regions separated by a `--` divider (see below) |
+
+`xsm diagram upload.json -f ascii` prints the same facts as text, a state tree followed by one `from --EVENT-> to` line per transition (the glyphs are `o` for a state and `@` for a final state):
+
+```text
++ upload  initial=idle
+|-- o idle
+|-- o sending  after 5000  invoke send
+|-- o checking  always
+|-- o timedOut
+|-- o failed
+`-- @ done
+
+upload.idle --START-> upload.sending
+upload.sending --after 5000-> upload.timedOut
+upload.sending --invoke 'send' onDone-> upload.checking
+upload.checking --always [isOk]-> upload.done
+```
+
 ## 🎛️ Parallel State Diagrams
 
-Parallel states are also exported, but both exporters render each parallel region as an ordinary nested composite state — there is no parallel-specific visual marker (no Mermaid `--` region divider, no distinct styling in PlantUML). The nesting itself is what shows you the regions:
+Parallel states are exported with a `--` divider between their regions, in both Mermaid and PlantUML. Each region is a nested composite state:
 
 ```python
 from xstate_statemachine import create_machine
@@ -467,6 +578,7 @@ state "player" as player {
             state "loading" as loading
             state "streaming" as streaming
         }
+        --
         state "audio" as audio {
             [*] --> muted
             state "muted" as muted
@@ -474,6 +586,7 @@ state "player" as player {
         }
     }
     state "stopped" as stopped
+    stopped --> [*]
 }
 playing --> stopped : STOP
 loading --> streaming : VIDEO_READY
@@ -494,7 +607,7 @@ xsm diagram checkout.json -f plantuml -o docs/  # docs/checkout.puml
 xsm docs machines/*.json -o docs/             # a Markdown page per machine, diagram embedded
 ```
 
-`xsm diagram` calls the same `to_mermaid()` / `to_plantuml()` shown above, so the output is identical to the Python API. See the [CLI Tool](../cli/) guide.
+`xsm diagram` calls the same `to_mermaid()` / `to_plantuml()` shown above, so the output is identical to the Python API. `-f ascii` is CLI-only: a state tree plus one `from --EVENT-> to` line per transition (see [What the diagram shows](#what-the-diagram-shows)). See the [CLI Tool](../cli/) guide.
 
 ### Auto-Generate Documentation Script
 

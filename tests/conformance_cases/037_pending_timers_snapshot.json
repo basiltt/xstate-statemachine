@@ -1,0 +1,159 @@
+{
+  "name": "pending_timers_snapshot",
+  "description": "Ends with a pending after timer and a pending delayed raise, so the Python snapshot vector exercises the deadlines and scheduled_sends layouts.",
+  "tags": [
+    "after",
+    "raise",
+    "snapshot"
+  ],
+  "machine": {
+    "id": "t",
+    "initial": "waiting",
+    "states": {
+      "waiting": {
+        "entry": {
+          "type": "raise",
+          "params": {
+            "event": {
+              "type": "NUDGE",
+              "n": 1
+            },
+            "delay": 5000,
+            "id": "nudge"
+          }
+        },
+        "after": {
+          "1000": "expired",
+          "BACKOFF": {
+            "target": "retrying",
+            "actions": "backoff"
+          }
+        },
+        "on": {
+          "NUDGE": {
+            "actions": "nudged"
+          }
+        }
+      },
+      "expired": {
+        "type": "final"
+      },
+      "retrying": {}
+    }
+  },
+  "logic": {
+    "delays": {
+      "BACKOFF": 2500
+    }
+  },
+  "steps": [
+    {
+      "advance_ms": 300
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "t.waiting"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "t.waiting"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "t.waiting"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "t.waiting"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "95856d72870a10d2",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "t",
+        "machine_hash": "95856d72870a10d2",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "t.waiting"
+        ],
+        "value": "waiting",
+        "configuration": [
+          "t",
+          "t.waiting"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [
+          {
+            "kind": "event",
+            "type": "NUDGE",
+            "payload": {
+              "n": 1
+            },
+            "remaining_ms": 4700.0,
+            "send_id": "nudge"
+          }
+        ],
+        "deadlines": [
+          {
+            "state_id": "t.waiting",
+            "entry_seq": 1,
+            "due_at_wall": 0.0,
+            "delay_ms": 1000,
+            "event_type": "after.1000.t.waiting"
+          },
+          {
+            "state_id": "t.waiting",
+            "entry_seq": 1,
+            "due_at_wall": 0.0,
+            "delay_ms": 2500,
+            "event_type": "after.BACKOFF.t.waiting"
+          }
+        ],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"t\",\n  \"machine_hash\": \"95856d72870a10d2\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"t.waiting\"\n  ],\n  \"value\": \"waiting\",\n  \"configuration\": [\n    \"t\",\n    \"t.waiting\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [\n    {\n      \"kind\": \"event\",\n      \"type\": \"NUDGE\",\n      \"payload\": {\n        \"n\": 1\n      },\n      \"remaining_ms\": 4700.0,\n      \"send_id\": \"nudge\"\n    }\n  ],\n  \"deadlines\": [\n    {\n      \"state_id\": \"t.waiting\",\n      \"entry_seq\": 1,\n      \"due_at_wall\": 0.0,\n      \"delay_ms\": 1000,\n      \"event_type\": \"after.1000.t.waiting\"\n    },\n    {\n      \"state_id\": \"t.waiting\",\n      \"entry_seq\": 1,\n      \"due_at_wall\": 0.0,\n      \"delay_ms\": 2500,\n      \"event_type\": \"after.BACKOFF.t.waiting\"\n    }\n  ],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

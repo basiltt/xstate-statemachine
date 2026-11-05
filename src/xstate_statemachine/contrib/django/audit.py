@@ -229,8 +229,18 @@ def record_refused_send(
     final state is answered ``InterpreterStoppedError`` before any step
     runs, so no plugin hook fires and the audit trail had a hole exactly
     where a user tried something the workflow no longer allowed. That
-    attempt is recorded as ``unhandled`` with its actor, reason and the
-    error -- nothing changed, but it happened.
+    attempt is recorded as ``unhandled`` with its actor and reason --
+    nothing changed, but it happened.
+
+    📝 ``TransitionLog`` has no ``error`` column and ``created`` is the
+    write time (not the record's ``ts``): the error class is NOT stored.
+    Adding the column needs a migration, deliberately left to a release
+    that bumps the schema.
+
+    Args:
+        plugin: The send's audit plugin.
+        instance: The row sent to.
+        ctx: The send context (``receipt``, ``event``).
     """
     receipt = ctx.get("receipt")
     if receipt is None or not isinstance(

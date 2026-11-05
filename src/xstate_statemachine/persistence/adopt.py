@@ -195,7 +195,16 @@ def from_state_ids(
         value=interp.value,
         deadlines=_deadlines(interp, active) if timers else [],
     )
-    blob = json.dumps(snap, indent=2, default=str)
+    # 🛡️ P-21: strict JSON. `default=str` turned a Decimal / datetime /
+    #    UUID in the adopted context into a str with no error, and the
+    #    round-trip below cannot notice the change of type.
+    try:
+        blob = json.dumps(snap, indent=2)
+    except (TypeError, ValueError) as exc:
+        raise InvalidConfigError(
+            f"from_state_ids: the adopted context is not JSON-serialisable "
+            f"({exc}); convert the value to a JSON type first."
+        ) from exc
     # ✅ Round-trip: the engine's own restore validates shape, identity,
     #    ids and legality -- a blob it would refuse is never returned.
     type(interp).from_snapshot(blob, machine)

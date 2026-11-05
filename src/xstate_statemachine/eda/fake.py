@@ -116,14 +116,17 @@ class _Core:
                 coll.clear()
 
     def published_on(self, topic: str) -> List[Envelope]:
+        """Envelopes published on *topic*, in publish order (a copy)."""
         with self._lock:
             return [e for t, e in self._log if t == topic]
 
     def pending(self, topic: str) -> int:
+        """Return how many envelopes wait on *topic* (undelivered)."""
         with self._lock:
             return len(self._queues.get(topic, ()))
 
     def topics(self) -> List[str]:
+        """Return the sorted names of every topic that has a queue."""
         with self._lock:
             return sorted(self._queues)
 

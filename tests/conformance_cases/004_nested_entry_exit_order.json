@@ -1,0 +1,258 @@
+{
+  "name": "nested_entry_exit_order",
+  "description": "Three-level hierarchy; a transition crossing branches exits deepest-first and enters outermost-first; a parent-level transition applies to every substate.",
+  "tags": [
+    "hierarchy",
+    "entry-exit-order"
+  ],
+  "machine": {
+    "id": "m",
+    "initial": "a",
+    "states": {
+      "a": {
+        "entry": "e_a",
+        "exit": "x_a",
+        "initial": "a1",
+        "states": {
+          "a1": {
+            "entry": "e_a1",
+            "exit": "x_a1",
+            "initial": "a1x",
+            "states": {
+              "a1x": {
+                "entry": "e_a1x",
+                "exit": "x_a1x",
+                "on": {
+                  "NEXT": "a1y"
+                }
+              },
+              "a1y": {
+                "entry": "e_a1y",
+                "exit": "x_a1y",
+                "on": {
+                  "JUMP": "#m.b.b2"
+                }
+              }
+            }
+          }
+        },
+        "on": {
+          "RESET": "b"
+        }
+      },
+      "b": {
+        "entry": "e_b",
+        "exit": "x_b",
+        "initial": "b1",
+        "states": {
+          "b1": {
+            "entry": "e_b1",
+            "exit": "x_b1"
+          },
+          "b2": {
+            "entry": "e_b2",
+            "exit": "x_b2",
+            "on": {
+              "BACK": "#m.a"
+            }
+          }
+        }
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "NEXT"
+    },
+    {
+      "send": "JUMP"
+    },
+    {
+      "send": "BACK"
+    },
+    {
+      "send": "RESET"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "m.a.a1.a1x"
+        ],
+        "context": {},
+        "actions": [
+          "e_a",
+          "e_a1",
+          "e_a1x"
+        ],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.a.a1.a1y"
+          ],
+          "context": {},
+          "actions": [
+            "x_a1x",
+            "e_a1y"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.b.b2"
+          ],
+          "context": {},
+          "actions": [
+            "x_a1y",
+            "x_a1",
+            "x_a",
+            "e_b",
+            "e_b2"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.a.a1.a1x"
+          ],
+          "context": {},
+          "actions": [
+            "x_b2",
+            "x_b",
+            "e_a",
+            "e_a1",
+            "e_a1x"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.b.b1"
+          ],
+          "context": {},
+          "actions": [
+            "x_a1x",
+            "x_a1",
+            "x_a",
+            "e_b",
+            "e_b1"
+          ],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "m.a.a1.a1x"
+        ],
+        "context": {},
+        "actions": [
+          "e_a",
+          "e_a1",
+          "e_a1x"
+        ],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.a.a1.a1y"
+          ],
+          "context": {},
+          "actions": [
+            "x_a1x",
+            "e_a1y"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.b.b2"
+          ],
+          "context": {},
+          "actions": [
+            "x_a1y",
+            "x_a1",
+            "x_a",
+            "e_b",
+            "e_b2"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.a.a1.a1x"
+          ],
+          "context": {},
+          "actions": [
+            "x_b2",
+            "x_b",
+            "e_a",
+            "e_a1",
+            "e_a1x"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.b.b1"
+          ],
+          "context": {},
+          "actions": [
+            "x_a1x",
+            "x_a1",
+            "x_a",
+            "e_b",
+            "e_b1"
+          ],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "7694e600593626ac",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "m",
+        "machine_hash": "7694e600593626ac",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "m.b.b1"
+        ],
+        "value": {
+          "b": "b1"
+        },
+        "configuration": [
+          "m",
+          "m.b",
+          "m.b.b1"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"m\",\n  \"machine_hash\": \"7694e600593626ac\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"m.b.b1\"\n  ],\n  \"value\": {\n    \"b\": \"b1\"\n  },\n  \"configuration\": [\n    \"m\",\n    \"m.b\",\n    \"m.b.b1\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

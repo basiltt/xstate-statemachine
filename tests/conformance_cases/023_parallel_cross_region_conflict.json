@@ -1,0 +1,145 @@
+{
+  "name": "parallel_cross_region_conflict",
+  "description": "Two regions both react to E, but the first one targets outside the parallel state. Its exit set covers the second transition, so the second is dropped from the microstep (SCXML conflict resolution: the earlier transition in document order is kept).",
+  "tags": [
+    "parallel",
+    "conflict",
+    "divergence-probe"
+  ],
+  "machine": {
+    "id": "m",
+    "initial": "p",
+    "states": {
+      "p": {
+        "type": "parallel",
+        "states": {
+          "r1": {
+            "initial": "a",
+            "states": {
+              "a": {
+                "on": {
+                  "E": {
+                    "target": "#m.outside",
+                    "actions": "r1Took"
+                  }
+                }
+              }
+            }
+          },
+          "r2": {
+            "initial": "c",
+            "states": {
+              "c": {
+                "on": {
+                  "E": {
+                    "target": "d",
+                    "actions": "r2Took"
+                  }
+                }
+              },
+              "d": {
+                "entry": "e_d"
+              }
+            }
+          }
+        }
+      },
+      "outside": {
+        "entry": "e_outside"
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "E"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "m.p.r1.a",
+          "m.p.r2.c"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.outside"
+          ],
+          "context": {},
+          "actions": [
+            "r1Took",
+            "e_outside"
+          ],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "m.p.r1.a",
+          "m.p.r2.c"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.outside"
+          ],
+          "context": {},
+          "actions": [
+            "r1Took",
+            "e_outside"
+          ],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "f61a95dbd5f48242",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "m",
+        "machine_hash": "f61a95dbd5f48242",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "m.outside"
+        ],
+        "value": "outside",
+        "configuration": [
+          "m",
+          "m.outside"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"m\",\n  \"machine_hash\": \"f61a95dbd5f48242\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"m.outside\"\n  ],\n  \"value\": \"outside\",\n  \"configuration\": [\n    \"m\",\n    \"m.outside\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

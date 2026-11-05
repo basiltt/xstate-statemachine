@@ -125,6 +125,23 @@ end
 return gone
 """
 
+#: KEYS[1]=keys SET, ARGV=[member, snapshot-key]*. SREMs the members whose
+#: snapshot hash no longer exists (expired by ``ttl_s``) and returns them.
+#: 🔥 review CM-01: `list_keys` must not advertise a key `load()` answers
+#: None for, and the SET must not grow without bound.
+_PRUNE_KEYS = """
+local gone = {}
+local i = 1
+while i <= #ARGV do
+  if redis.call('EXISTS', ARGV[i+1]) == 0 then
+    redis.call('SREM', KEYS[1], ARGV[i])
+    gone[#gone + 1] = ARGV[i]
+  end
+  i = i + 2
+end
+return gone
+"""
+
 #: KEYS[1]=lock ARGV[1]=token. Compare-and-delete: only the owner releases.
 _UNLOCK = """
 if redis.call('GET', KEYS[1]) == ARGV[1] then
@@ -358,6 +375,13 @@ class _Layout:
             *_dl_args(key, deadlines),
         ]
 
+    def prune_key_args(self, members: Sequence[Any]) -> List[str]:
+        """ARGV for `_PRUNE_KEYS`: each key-set member and its snapshot key."""
+        out: List[str] = []
+        for m in members:
+            out.extend([_s(m), self.k.snap(_s(m))])
+        return out
+
     def prune_args(self, members: Sequence[Any]) -> List[str]:
         """Build the prune script's ARGV.
 
@@ -371,6 +395,10 @@ class _Layout:
         for m in members:
             out.extend([_s(m), self.k.snap(_member_key(m))])
         return out
+
+
+def _gone_set(gone: Any) -> "set[str]":
+    return {_s(g) for g in gone}
 
 
 def _saved_version(res: Any, key: str, expected_version: Optional[int]) -> int:

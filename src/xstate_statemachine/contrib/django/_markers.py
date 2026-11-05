@@ -14,12 +14,15 @@
 from __future__ import annotations
 
 import contextlib
+import logging
 import threading
 from typing import Any, Dict, Iterator, List
 
 from ...exceptions import XStateMachineError
 
 __all__ = ["_marker_plugins", "_marker_session"]
+
+logger = logging.getLogger(__name__)
 
 
 def _marker_plugins(plugins: List[Any], using: str) -> List[Any]:
@@ -99,15 +102,23 @@ def _marker_session(markers: List[Any]) -> Iterator[None]:
     from ...persistence.locking import current_session
 
     token = current_session.set(object())
-    for m in markers:
-        _enter(m)
+    entered: List[Any] = []
     try:
+        # 🔥 `_enter` inside the try: a failure on the 2nd marker must
+        #    still leave the 1st (reference count) and reset the token.
+        for m in markers:
+            _enter(m)
+            entered.append(m)
         yield
     finally:
-        for m in markers:
+        for m in entered:
             try:
                 m.discard_marks()
-            except Exception:  # pragma: no cover - best effort
-                pass
+            except Exception:  # noqa: BLE001 - cleanup must continue
+                logger.warning(
+                    "discarding buffered marks of %r failed",
+                    m,
+                    exc_info=True,
+                )
             _leave(m)
         current_session.reset(token)

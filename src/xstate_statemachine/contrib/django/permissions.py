@@ -75,8 +75,12 @@ class PermissionGuard(_PermissionGuardBase):
         object_level: Also pass the row (``obj=``) to the backend
             (default ``True``); the model backend then answers ``False``
             for object checks, so rely on it only with an object-aware
-            backend -- a global permission is also accepted via
-            ``fallback_global=True`` (default).
+            backend.
+        fallback_global: Also accept the global permission when the
+            object check says no (default ``True``).
+
+    Raises:
+        ValueError: Both flags are ``False`` (it would deny every row).
     """
 
     def __init__(
@@ -90,6 +94,13 @@ class PermissionGuard(_PermissionGuardBase):
         ):
             raise ValueError(
                 "PermissionGuard needs 'app_label.codename' permission names"
+            )
+        if not object_level and not fallback_global:
+            # 🔥 neither branch of `check` could ever grant for a row:
+            #    always-deny is a misconfiguration, not a policy.
+            raise ValueError(
+                "PermissionGuard(object_level=False, fallback_global=False) "
+                "would deny every row; enable at least one"
             )
         self.perms: Tuple[str, ...] = tuple(perms)
         self.object_level = object_level

@@ -235,8 +235,25 @@ def save_raw(
         if res.rowcount == 1:
             new_version = int(_current_version(conn, t, key) or 1)
         else:
-            conn.execute(insert(s).values(key=key, version=1, **values))
-            new_version = 1
+            try:
+                # 🔥 Two concurrent first saves both miss the UPDATE; the
+                #    loser's INSERT hits the primary key. The nested
+                #    transaction keeps the outer one usable on Postgres and
+                #    the UPDATE is retried once.
+                with nested(conn):
+                    conn.execute(
+                        insert(s).values(key=key, version=1, **values)
+                    )
+                new_version = 1
+            except IntegrityError:
+                res = conn.execute(
+                    update(s)
+                    .where(s.c.key == key)
+                    .values(version=s.c.version + 1, **values)
+                )
+                if res.rowcount != 1:
+                    raise
+                new_version = int(_current_version(conn, t, key) or 1)
     write_deadlines(conn, t, s.name, key, deadlines)
     return new_version
 

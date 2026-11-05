@@ -27,6 +27,7 @@ synchronous, blocking operations.
 import asyncio
 import functools
 import copy
+import dataclasses
 import inspect
 import json
 import logging
@@ -34,16 +35,20 @@ import math
 import threading
 import time
 import warnings
+import weakref
 from typing import (
     cast,
+    AbstractSet,
     Any,
     Iterable,
+    Iterator,
     Awaitable,
     NamedTuple,
     Callable,
     Dict,
     Generic,
     List,
+    Mapping,
     Optional,
     Sequence,
     FrozenSet,
@@ -82,6 +87,7 @@ from .exceptions import (
     InvalidEventPayloadError,
     UnknownEventError,
     ActorSpawningError,
+    UnresolvedTargetError,
     ImplementationMissingError,
     InvalidConfigError,
     RestoredChainError,
@@ -108,6 +114,7 @@ from .actions import (
     LOG,
     PURE,
     ActionEnqueuer,
+    choose_branches,
 )
 from .models import (
     SPAWN_BLOCKING_PREFIX,
@@ -122,7 +129,7 @@ from .models import (
 from .plugins import PluginBase, global_plugins
 from .resolver import resolve_target_state
 from . import persistence
-from .clock import Clock, RealClock
+from .clock import Clock, RealClock, SimulatedClock
 
 # This TypeVar allows methods to return the specific subclass instance (self).
 TInterpreter = TypeVar("TInterpreter", bound="BaseInterpreter[Any]")
@@ -144,6 +151,16 @@ _UNLABELLED_WARNED_MAX = 4096
 
 #: Every event kind the core algorithm can be asked to process.
 AnyEvent = Union[Event, DoneEvent, AfterEvent, ErrorEvent]
+
+
+def _doc_order_key(node: "StateNode[Any]") -> int:
+    """Sort key: a node's document (pre-order) position, see `doc_order`."""
+    return node.doc_order
+
+
+def _owns_history(node: "StateNode[Any]") -> bool:
+    """True when *node* declares a ``type: "history"`` child."""
+    return any(child.type == "history" for child in node.states.values())
 
 
 # -----------------------------------------------------------------------------
@@ -210,14 +227,17 @@ class _LogicTarget:
     __slots__ = ("_handle",)
 
     def __init__(self, handle: Any) -> None:
+        """Wrap a running actor-logic handle (`RunningLogic`)."""
         self._handle = handle
 
     @property
     def id(self) -> str:
+        """The invocation id the logic runs under."""
         return str(getattr(self._handle._invocation, "id", "logic"))
 
     @property
     def status(self) -> str:
+        """`"running"` until the logic finished, then `"stopped"`."""
         return "stopped" if self._handle.finished else "running"
 
     def send(self, event: Any, **payload: Any) -> None:
@@ -251,6 +271,7 @@ class _LogicTarget:
         handle.receive(event)
 
     def send_threadsafe(self, event: Any, **payload: Any) -> None:
+        """Same as `send`: the handle's `receive` is thread-safe."""
         self.send(event, **payload)
 
 
@@ -441,6 +462,18 @@ _WARNED_ACTION_ERROR_POLICY_DEFAULT: bool = False
 _ACCEPTS_KWARG_CACHE: Dict[Tuple[int, str], bool] = {}
 
 
+def _new_actor_suffix() -> str:
+    """A fresh unique suffix for an anonymous actor / invoke id.
+
+    📝 `uuid` is imported here, not at module level: it is only needed when
+    an anonymous child is spawned, and importing it eagerly is paid by every
+    ``import xstate_statemachine``.
+    """
+    import uuid
+
+    return str(uuid.uuid4())
+
+
 def _accepts_kwarg(fn: Callable[..., Any], name: str) -> bool:
     """``True`` if calling *fn* with keyword *name* is signature-legal.
 
@@ -475,10 +508,190 @@ def _accepts_kwarg(fn: Callable[..., Any], name: str) -> bool:
     return result
 
 
+class _CallableMemo:
+    """Memoise a pure predicate over callables, keyed weakly (#307 perf).
+
+    ⚡ The engines asked `inspect` the same questions about the same
+    callables on EVERY call -- "is this action a coroutine function?",
+    "does this guard take a third ``params`` argument?" -- and on a guarded
+    counter that introspection was 27 % of an event's cost. The answer
+    depends only on the callable object, which `MachineLogic` holds for the
+    life of the machine, so it is computed once per object.
+
+    🧷 Keys are weak references: an adapted DSL callback dies with its
+    façade instead of being pinned by the memo. A callable that is not
+    hashable or not weak-referenceable is recomputed on every call, which
+    is exactly the previous behaviour.
+
+    Args:
+        compute: The predicate; must depend only on the callable itself.
+    """
+
+    __slots__ = ("_compute", "_cache")
+
+    def __init__(self, compute: Callable[[Any], bool]) -> None:
+        self._compute = compute
+        self._cache: "weakref.WeakKeyDictionary[Any, bool]" = (
+            weakref.WeakKeyDictionary()
+        )
+
+    def __call__(self, fn: Any) -> bool:
+        try:
+            return self._cache[fn]
+        except KeyError:
+            pass
+        except TypeError:  # unhashable or not weak-referenceable
+            return self._compute(fn)
+        verdict = self._compute(fn)
+        try:
+            self._cache[fn] = verdict
+        except TypeError:  # no `__weakref__` slot
+            pass
+        return verdict
+
+
+def _async_shape(callable_obj: Any) -> bool:
+    """``True`` for every callable shape that would return an awaitable.
+
+    🏛️ #60 / LC-58: a bare ``__code__.co_flags`` check saw only a plain
+    ``async def``. ``functools.partial(async_fn)``, an object with an
+    ``async def __call__`` and an async generator all slipped through and
+    were CALLED by the sync engine -- the coroutine object was silently
+    discarded, so the action never ran and nobody was told. Partials and
+    decorators are unwrapped, then every async shape is checked.
+    """
+    fn: Any = callable_obj
+    while isinstance(fn, functools.partial):
+        fn = fn.func
+    fn = inspect.unwrap(fn)
+    if inspect.iscoroutinefunction(fn) or inspect.isasyncgenfunction(fn):
+        return True
+    call = getattr(type(fn), "__call__", None)
+    if call is not None and not inspect.isfunction(fn):
+        call = inspect.unwrap(call)
+        if inspect.iscoroutinefunction(call) or inspect.isasyncgenfunction(
+            call
+        ):
+            return True
+    return False
+
+
+def _guard_takes_params(fn: Any) -> bool:
+    """``True`` if a guard accepts the third ``params`` positional argument.
+
+    Two-argument guards ``(context, event)`` predate parameterised guards
+    and keep working unchanged; a guard declaring a third positional
+    parameter (or ``*args``) receives the resolved params as well.
+    Un-introspectable callables are treated as two-argument guards.
+    """
+    try:
+        parameters = inspect.signature(fn).parameters.values()
+    except (TypeError, ValueError):  # pragma: no cover - builtins
+        return False
+    positional = 0
+    for p in parameters:
+        if p.kind is inspect.Parameter.VAR_POSITIONAL:
+            return True
+        if p.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ):
+            positional += 1
+    return positional >= 3
+
+
+#: Memoised callable-shape predicates shared by both engines.
+_is_async_shape = _CallableMemo(_async_shape)
+_is_coroutine_function = _CallableMemo(inspect.iscoroutinefunction)
+_guard_accepts_params = _CallableMemo(_guard_takes_params)
+
+
+def _copy_initial_context(value: Any) -> Any:
+    """Deep-copy a machine's declared context for a new interpreter.
+
+    🛡️ Review PD-11: a context holding an uncopyable handle (a
+    `threading.Lock`, a DB session, an open socket) made `copy.deepcopy`
+    raise `TypeError` at interpreter construction, so such a machine
+    could not be started at all -- through `create_machine` and through
+    the class façade alike. As for `_context_before_image`, the copy
+    falls back to a SHALLOW one: the interpreter then shares those
+    handles with the machine definition (and with every other interpreter
+    built from it), which is the only thing a handle in a static
+    ``context`` can mean. The fallback is logged so an unintended share
+    stays visible; a ``context`` factory gives each interpreter its own.
+
+    Args:
+        value: The declared (or factory-produced) initial context.
+
+    Returns:
+        Any: A deep copy, or a shallow copy when deep-copying fails.
+    """
+    try:
+        return copy.deepcopy(value)
+    except Exception as exc:  # TypeError / pickling errors from a handle
+        logger.warning(
+            "⚠️ Initial context could not be deep-copied (%s: %s); the "
+            "interpreter shares the uncopyable values with the machine "
+            "definition. Build them in a `context` factory to give each "
+            "interpreter its own.",
+            type(exc).__name__,
+            exc,
+        )
+        return dict(value) if isinstance(value, Mapping) else value
+
+
+def _delay_takes_mapping(fn: Any) -> bool:
+    """``True`` if a named-delay callable takes ONE ``{context, event}``
+    mapping; ``False`` for the legacy ``(context, event)`` form.
+
+    Un-introspectable callables use the legacy form.
+    """
+    try:
+        params = inspect.signature(fn).parameters.values()
+    except (TypeError, ValueError):  # pragma: no cover - builtins
+        return False
+    positional = [
+        p
+        for p in params
+        if p.kind
+        in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        )
+    ]
+    takes_varargs = any(
+        p.kind is inspect.Parameter.VAR_POSITIONAL for p in params
+    )
+    return not takes_varargs and len(positional) == 1
+
+
+#: Memoised form of `_delay_takes_mapping` (BI-26, see `_CallableMemo`).
+_delay_accepts_mapping = _CallableMemo(_delay_takes_mapping)
+
+
 _ACCEPTS_KWARG_KEEPALIVE: List[Any] = []
 
-#: ⚡ Shared empty actor-id set for `_execute_transition` (never mutated).
+#: ⚡ Shared empty actor-id set for `_execute_microstep` (never mutated).
 _NO_IDS: FrozenSet[str] = frozenset()
+
+#: ⚡ Shared empty exit set of a transition that exits nothing.
+_NO_STATES: FrozenSet["StateNode[Any]"] = frozenset()
+
+
+class _StepPlan(NamedTuple):
+    """What one transition of a microstep exits and enters.
+
+    Attributes:
+        exit: The active states it exits (XState ``computeExitSet``).
+        entry: The states it enters, in document order.
+        opaque: A multi or history target -- may run actions the static
+            entry set does not show; the rollback checkpoint is taken.
+    """
+
+    exit: Set["StateNode[Any]"]
+    entry: List["StateNode[Any]"]
+    opaque: bool
+
 
 #: ⚡ The init / exit trigger events are constant, payload-less sentinels;
 #: `Event` is an immutable NamedTuple, so one instance each is safe to share
@@ -506,17 +719,38 @@ class PendingInvocation(NamedTuple):
 class _RollbackRequested(Exception):
     """Internal signal: an action raised and the policy is not ``continue``.
 
-    Raised inside `_execute_transition`'s atomic block so the EXISTING
+    Raised inside `_execute_microstep`'s atomic block so the EXISTING
     rollback path (built for transition-resolution failures in 0.6.0) is
-    reused for action failures. Never escapes `_execute_transition`.
+    reused for action failures. Never escapes `_execute_microstep`.
     """
 
     def __init__(
         self, action_def: ActionDefinition, original: BaseException
     ) -> None:
+        """Record the failing action and the exception it raised."""
         super().__init__(action_def.type)
         self.action_def = action_def
         self.original = original
+
+
+class _NestedActionsFailed(Exception):
+    """Internal signal: an action inside `choose` / `pure` /
+    `enqueueActions` failed.
+
+    🏛️ The nested list runs through the SAME `_execute_actions`, which
+    already reported each failure (log + `on_action_error`) and returns
+    them. Carrying the list out of `_execute_builtin_action` lets the
+    OUTER `_execute_actions` hand it to `actionErrorPolicy` exactly as if
+    the failing action had been written at the top level -- before this,
+    the returned failures were discarded and `rollback` / `fail` silently
+    committed a half-run transition. Never escapes `_execute_actions`.
+    """
+
+    def __init__(
+        self, failures: List[Tuple[ActionDefinition, BaseException]]
+    ) -> None:
+        super().__init__(failures[0][0].type)
+        self.failures = failures
 
 
 class BaseInterpreter(Generic[TContext]):
@@ -574,10 +808,15 @@ class BaseInterpreter(Generic[TContext]):
         "_guard_denied_this_step",
         "_history",
         "_internal_queue",
+        "_keep_entry_order",
+        "_leaf_entry",
+        "_leaf_entry_seq",
+        "_microstep_changed",
         "_interpreter_class",
         "_invoked_as",
         "_last_action_error",
         "_lifecycle_failures",
+        "_pending_completion",
         "_pending_actor_snapshots",
         "_pending_guard_error",
         "_plugins",
@@ -585,10 +824,12 @@ class BaseInterpreter(Generic[TContext]):
         "_restart_services_on_start",
         "_restored_from_snapshot",
         "_states_to_invoke",
+        "_invoke_trigger",  # 0.12.0
         "_restart_timers_on_start",
         "_armed_after",  # #264
         "_entry_seq",  # #264
         "_restored_deadlines",  # #264
+        "_dormant_timer_states",
         "_restart_timers_mode",  # #264
         "_running_logic",  # #267
         "_scheduled_sends",
@@ -678,9 +919,14 @@ class BaseInterpreter(Generic[TContext]):
         #: is a single call. The previous try/except-TypeError fallback
         #: invoked a clock TWICE when its body raised TypeError for an
         #: unrelated reason, and surfaced that error with the lane lost.
-        self._clock_accepts_sync: bool = _accepts_kwarg(
-            self.clock.set_timeout, "sync"
-        )
+        #: ⚡ The library's own clocks take `sync=`; probing their signature
+        #: on every construction (a bound method is a fresh object each
+        #: time, so the memo never hit) was ~3 % of a `SyncInterpreter`
+        #: build in the 1,000-instance benchmark.
+        self._clock_accepts_sync: bool = type(self.clock) in (
+            RealClock,
+            SimulatedClock,
+        ) or _accepts_kwarg(self.clock.set_timeout, "sync")
         #: 🛡️ #51: effective strictness -- the ctor flag wins over config.
         self.strict: bool = machine.strict if strict is None else bool(strict)
         self.parent: Optional["BaseInterpreter[Any]"] = None
@@ -701,6 +947,26 @@ class BaseInterpreter(Generic[TContext]):
 
         # 🌳 State & Actor Management
         self._active_state_nodes: Set[StateNode[Any]] = set()
+        #: 🔢 When each active leaf was entered: a stamp from
+        #: `_leaf_entry_seq`, larger = entered later. XState keeps the active
+        #: states as a list (`snapshot._nodes`) -- the states a microstep
+        #: leaves in place keep their position, the states it enters are
+        #: appended in document order -- and `selectEventlessTransitions`
+        #: visits the leaves in that order. Sorting the leaves by
+        #: ``(stamp, doc_order)`` reproduces it. A leaf without a stamp (a
+        #: restored configuration) sorts first, in document order, which is
+        #: the order XState rebuilds on `restoreSnapshot`. Stale entries of
+        #: exited leaves are harmless: a leaf is stamped again on entry.
+        self._leaf_entry: Dict[StateNode[Any], int] = {}
+        self._leaf_entry_seq: int = 0
+        #: True while a microstep re-enters exactly what it exited without
+        #: recording history: XState then keeps the previous snapshot, so
+        #: the re-entered leaves keep their stamps.
+        self._keep_entry_order: bool = False
+        #: Whether the last eventless microstep changed anything (see
+        #: `_watch_eventless`); the settle loops stop re-selecting `always`
+        #: transitions after one that did not, as XState's `macrostep` does.
+        self._microstep_changed: bool = True
         #: Remembered configurations for history pseudo-states, keyed by the
         #: *parent* state id. Recorded on exit, replayed when a transition
         #: targets a `type: "history"` child of that parent.
@@ -751,6 +1017,11 @@ class BaseInterpreter(Generic[TContext]):
         #: ⏰ #264: deadlines parked by `from_snapshot` until `start()`
         #: decides how to re-arm them (`restart_timers` mode).
         self._restored_deadlines: List["persistence.Deadline"] = []
+        #: ⏰ Ids of restored states whose ``after`` timers have NOT been
+        #: armed since `from_snapshot` (`has_dormant_timers`). A state
+        #: leaves the set when its timers are armed; a timer that FIRED
+        #: (its handle released) is not dormant.
+        self._dormant_timer_states: Set[str] = set()
         #: ⏰ #264: how `start()` treats parked deadlines: ``"restart"``
         #: (from zero, the #128 behaviour), ``"resume"`` (remaining wall
         #: time) or ``"fire_due"`` (resume + fire the matured ones now).
@@ -771,6 +1042,10 @@ class BaseInterpreter(Generic[TContext]):
                 List[Tuple[ActionDefinition, BaseException]],
             ]
         ] = []
+        #: 🏁 A machine completion reached INSIDE an open action-error
+        #: transaction, as ``(output,)``; applied by `_execute_microstep`
+        #: only once the transaction commits. ``None`` = nothing pending.
+        self._pending_completion: Optional[Tuple[Any]] = None
         #: Events held back under ``onUnhandled: "defer"``, replayed after
         #: the next successful transition. Empty under other policies.
         self._deferred_events: List[AnyEvent] = []
@@ -832,6 +1107,12 @@ class BaseInterpreter(Generic[TContext]):
         #: engine and for either service kind: "it does not make sense to
         #: start an invocation in a state that will be exited immediately".
         self._states_to_invoke: List[StateNode[Any]] = []
+        #: 📨 0.12.0: the event that ENTERED each state awaiting invocation,
+        #: by state id, so a deferred `invoke` can still see it -- its
+        #: `input` factory receives it (XState: `input: ({event}) => ...`).
+        #: With no `input` declared the service receives `{}`, as XState
+        #: passes `undefined`; the payload is never forwarded implicitly.
+        self._invoke_trigger: Dict[str, AnyEvent] = {}
         #: ⏱️ #128: re-arm `after` timers of the restored configuration on
         #: the next `start()`.
         self._restart_timers_on_start: bool = False
@@ -886,13 +1167,19 @@ class BaseInterpreter(Generic[TContext]):
         raw = machine.initial_context
         if callable(raw):
             produced = raw({"input": input})
-            return copy.deepcopy(produced) if produced is not None else {}
+            return (
+                _copy_initial_context(produced) if produced is not None else {}
+            )
         # ⚡ A flat dict of immutable scalars (the overwhelmingly common
         #    initial context, decided once at build: `context_is_flat`) is
         #    copied with `dict()` -- 11x cheaper than `deepcopy` and
         #    observationally identical, since there is nothing nested to
         #    alias. Anything else keeps the deep copy.
-        context = dict(raw) if machine.context_is_flat else copy.deepcopy(raw)
+        context = (
+            dict(raw)
+            if machine.context_is_flat
+            else _copy_initial_context(raw)
+        )
         # 📥 Expose input to the machine even without a context factory.
         #    Deliberately ONLY under `context["input"]` (0.7.x contract):
         #    letting input overwrite declared keys would make
@@ -1105,7 +1392,11 @@ class BaseInterpreter(Generic[TContext]):
         """Reports whether an event would cause a transition right now.
 
         Guards are evaluated, so this is an accurate prediction rather than a
-        purely structural check. It has no side effects on the configuration.
+        purely structural check. It does not change the configuration or
+        `context`, but because guards really RUN, their own side effects
+        happen and the guard plugin hooks (`on_guard_evaluated` /
+        `on_guard_error`) fire for the hypothetical evaluation (BI-30) --
+        a metrics plugin counts them like real ones.
 
         Args:
             event (Union[str, Event, Dict[str, Any]]): The event to test.
@@ -1140,19 +1431,14 @@ class BaseInterpreter(Generic[TContext]):
         """
         if isinstance(event, (Event, AfterEvent, DoneEvent, ErrorEvent)):
             return event
-        if isinstance(event, str):
-            return Event(type=event)
-        if isinstance(event, dict):
-            event_type = event.get("type")
-            if not isinstance(event_type, str):
-                raise TypeError(
-                    "❌ Event dict must contain a string 'type' key."
-                )
-            payload = {k: v for k, v in event.items() if k != "type"}
-            return Event(type=event_type, payload=payload)
-        # 🔌 #305: an object implementing `__xstate_event__` is accepted
-        #    here too, so `sendTo` specs and helpers share the adapter.
-        if callable(getattr(event, "__xstate_event__", None)):
+        # 🏛️ BI-34: ONE normaliser. `can()`, `emit`, `raise` and `sendTo`
+        #    specs follow the same rules as `send()` (non-empty str type,
+        #    str payload keys, the #305 `__xstate_event__` adapter) and
+        #    raise the same `InvalidEventError` -- a `TypeError` subclass,
+        #    so callers catching TypeError are unaffected.
+        if isinstance(event, (str, dict)) or callable(
+            getattr(event, "__xstate_event__", None)
+        ):
             return BaseInterpreter._prepare_event(event)
         raise TypeError(f"❌ Unsupported event type: {type(event).__name__}")
 
@@ -1377,7 +1663,7 @@ class BaseInterpreter(Generic[TContext]):
             #    send's timer) has no step to charge; `_step_soft_error`
             #    would otherwise attach to the NEXT event's receipt.
             return
-        self._step_soft_error = ActorSpawningError(
+        self._step_soft_error = UnresolvedTargetError(
             f"{action} target {to!r} did not resolve to a live actor; "
             f"'{getattr(undelivered, 'type', undelivered)}' was not delivered."
         )
@@ -1538,6 +1824,7 @@ class BaseInterpreter(Generic[TContext]):
     def _persist_event_reporting(
         self, event: Any, *, lane: Optional[str] = None
     ) -> Dict[str, Any]:
+        """Serialise one pending event for a snapshot; report a refusal (#159)."""
         # 🔔 #159: `persist_event` raises `SnapshotSerializationError` (#131)
         #    for a pending event with non-JSON data; this is the one place it
         #    enters the snapshot, so report it via `on_snapshot_error` before
@@ -1839,7 +2126,7 @@ class BaseInterpreter(Generic[TContext]):
             #    "which revision wrote it?" -- what a human and the #263
             #    migrator need. `None` when the chart declares none.
             "machine_version": self.machine.version,
-            "taken_at": time.time(),
+            "taken_at": self.wall_now(),  # 🕰️ leaves the process
             "status": self.status,
             # 🧊 Deep-copy so the snapshot is a true point-in-time capture.
             #    Returning the live dict made later execution retroactively
@@ -1887,10 +2174,9 @@ class BaseInterpreter(Generic[TContext]):
             #    REMAINING at snapshot time, so a restore re-arms them and a
             #    state whose only exit is a delayed self-raise is not wedged.
             "scheduled_sends": self._persist_scheduled_sends(),
-            # ⏰ #305 (layout v4): durable `after` deadlines anchored to the
-            #    wall clock (`persistence.Deadline`). Reserved for #264;
-            #    every engine writes `[]` today so the layout is fixed
-            #    before the feature lands and needs no second bump.
+            # ⏰ #305 (layout v4) / #264: durable `after` deadlines -- every
+            #    armed timer plus every parked restored one, anchored to
+            #    `wall_now()` (`persistence.Deadline`); see `_persist_deadlines`.
             "deadlines": [d.to_dict() for d in self._persist_deadlines()],
             # 🕰️ Remembered history, so a restored machine can still honour a
             #    later transition to a history state.
@@ -2078,6 +2364,111 @@ class BaseInterpreter(Generic[TContext]):
                     True,
                 )
         raise MachineVersionMismatchError(machine.id, expected, found)
+
+    @classmethod
+    def from_state(
+        cls: Type[TInterpreter],
+        machine: MachineNode[Any],
+        state: Union[str, Iterable[str]],
+        *,
+        context: Optional[Dict[str, Any]] = None,
+        clock: Optional[Clock] = None,
+        plugins: Optional[Iterable[PluginBase[Any]]] = None,
+        restart_services: bool = False,
+        restart_timers: Union[bool, str, None] = None,
+    ) -> TInterpreter:
+        """Build an interpreter that is already IN *state* (0.12.0).
+
+        The "state string on a model row" case: the row says the order is
+        in ``review``, so construct the machine there -- without running
+        entry actions, exactly like a snapshot restore -- and continue.
+        Call ``start()`` afterwards as usual (it resumes rather than
+        re-entering the initial state).
+
+        🏛️ Implemented as a minimal snapshot handed to `from_snapshot`, so
+        the configuration goes through the same legality checks (an active
+        leaf in every region, ancestors active) instead of a second,
+        slightly different restore path. ``machine_hash`` verification is
+        skipped: there is no persisted hash to compare.
+
+        Args:
+            machine: The machine definition.
+            state: One state, or several for parallel regions. Each is an
+                absolute id (``"order.paid.packing"``) or a dot path relative
+                to the machine root (``"paid.packing"``). A compound or
+                parallel state is completed to its initial leaves, as
+                entering it would.
+            context: Context values layered over the machine's defaults
+                (shallow merge, like a snapshot's context).
+            clock: Clock for the new interpreter.
+            plugins: Plugins to attach before anything runs.
+            restart_services: Re-invoke the restored states' ``invoke``
+                services on ``start()`` (see `from_snapshot`).
+            restart_timers: Re-arm the restored states' ``after`` timers on
+                ``start()`` (see `from_snapshot`).
+
+        Returns:
+            TInterpreter: A ``running`` interpreter in the given state.
+
+        Raises:
+            StateNotFoundError: A state id does not exist in *machine*.
+            SnapshotCorruptError: The states do not form a legal
+                configuration (e.g. two leaves of one non-parallel parent).
+
+        Example:
+            >>> from xstate_statemachine import create_machine, SyncInterpreter
+            >>> m = create_machine({"id": "flow", "initial": "draft", "states": {
+            ...     "draft": {"on": {"SUBMIT": "review"}},
+            ...     "review": {"on": {"APPROVE": "done"}}, "done": {}}})
+            >>> i = SyncInterpreter.from_state(m, "review").start()
+            >>> sorted(i.current_state_ids)
+            ['flow.review']
+            >>> i.send("APPROVE"); sorted(i.current_state_ids)
+            ['flow.done']
+        """
+        from .persistence.snapshot import SNAPSHOT_VERSION
+
+        wanted = [state] if isinstance(state, str) else list(state)
+        leaf_nodes: List[StateNode[Any]] = []
+        for ref in wanted:
+            node = machine.get_state_by_id(ref)
+            if node is None and not ref.startswith(f"{machine.id}."):
+                node = machine.get_state_by_id(f"{machine.id}.{ref}")
+            if node is None:
+                raise StateNotFoundError(target=ref, reference_id=machine.id)
+            leaf_nodes.extend(_initial_leaves_of(node))
+        leaves = [n.id for n in leaf_nodes]
+        # 🏁 Restored straight into a top-level final state: the machine is
+        #    finished, exactly as if it had got there itself.
+        status = (
+            "done"
+            if leaf_nodes
+            and all(n.is_final and n.parent is machine for n in leaf_nodes)
+            else "running"
+        )
+
+        snapshot: Dict[str, Any] = {
+            "version": SNAPSHOT_VERSION,
+            "machine_id": machine.id,
+            "machine_hash": None,
+            "machine_version": None,
+            "taken_at": None,
+            "status": status,
+            "context": dict(context or {}),
+            "state_ids": leaves,
+            "configuration": leaves,
+            "output": None,
+            "error": None,
+        }
+        return cls.from_snapshot(
+            json.dumps(snapshot),
+            machine,
+            verify_machine_hash=False,
+            restart_services=restart_services,
+            restart_timers=restart_timers,
+            clock=clock,
+            plugins=plugins,
+        )
 
     @classmethod
     def from_snapshot(
@@ -2318,10 +2709,9 @@ class BaseInterpreter(Generic[TContext]):
         #    `restart_services` note in the docstring.
         interpreter.status = snapshot["status"]
         interpreter._restored_from_snapshot = True  # #240
-        # ⏱️ #128: `after` timers are not persisted (a deadline is relative
-        #    to a clock that no longer exists). Opt in to re-arming them from
-        #    zero on `start()`; defaults to the `restart_services` choice so
-        #    the common "bring it all back" call is one flag.
+        # ⏱️ #128: timers are parked by a restore and re-armed by `start()`
+        #    only when opted in; the default follows the `restart_services`
+        #    choice so the common "bring it all back" call is one flag.
         # ⏰ #264: `restart_timers` widened -- `True` == "restart" (from
         #    zero, #128), "resume" re-arms the REMAINING wall time from the
         #    persisted deadlines, "fire_due" resumes and fires the matured
@@ -2351,6 +2741,10 @@ class BaseInterpreter(Generic[TContext]):
         #    ancestors); fall back to leaf ids for snapshots written by
         #    older versions.
         interpreter._active_state_nodes.clear()
+        # 🔢 No entry order is persisted: XState's `restoreSnapshot` rebuilds
+        #    its state list from the state value, i.e. leaves in document
+        #    order -- what unstamped leaves sort as (`_leaf_entry`).
+        interpreter._leaf_entry.clear()
         restore_ids = snapshot.get("configuration") or snapshot["state_ids"]
         for state_id in restore_ids:
             node = machine.get_state_by_id(state_id)
@@ -2387,6 +2781,9 @@ class BaseInterpreter(Generic[TContext]):
                 "The 'configuration' list has lost its leaf entries."
             )
 
+        interpreter._dormant_timer_states = {
+            node.id for node in interpreter._active_state_nodes if node.after
+        }
         interpreter.output = snapshot.get("output")
         recorded_error = snapshot.get("error")
         interpreter._deferred_events = [
@@ -2433,12 +2830,26 @@ class BaseInterpreter(Generic[TContext]):
 
         # 🕰️ Restore remembered history so a later transition to a history
         #    state still resolves after a restart.
+        # 🔥 An id the machine does not have (a state renamed since the
+        #    blob was written) cannot be remembered; say so instead of
+        #    silently truncating history -- `configuration` raises for the
+        #    same mismatch, history at least logs it.
         for parent_id, node_ids in (snapshot.get("history") or {}).items():
             nodes = [
                 node
                 for node in (machine.get_state_by_id(nid) for nid in node_ids)
                 if node is not None
             ]
+            owner_known = machine.get_state_by_id(parent_id) is not None
+            if len(nodes) != len(node_ids) or not owner_known:
+                logger.warning(
+                    "⚠️ Snapshot history for '%s' names state(s) machine "
+                    "'%s' does not have; the unknown ids are dropped.",
+                    parent_id,
+                    machine.id,
+                )
+                if not owner_known:
+                    continue
             if nodes:
                 interpreter._history[parent_id] = nodes
 
@@ -2469,6 +2880,18 @@ class BaseInterpreter(Generic[TContext]):
                 #    injected one -- the same split #117 fixed for roots.
                 restart_timers=restart_timers,
                 clock=clock,
+                # 🔐 #205: the payload must not choose its own checking
+                #    level for a CHILD either -- a nested record declaring
+                #    `version: 0` skipped the drift check the caller asked
+                #    for. A pinned root hash pins each child to its own
+                #    machine's fingerprint; plugins see child refusals.
+                minimum_version=minimum_version,
+                expected_machine_hash=(
+                    child_machine.structure_hash
+                    if expected_machine_hash is not None
+                    else None
+                ),
+                plugins=plugins,
                 on_version_mismatch=on_version_mismatch,
                 migrator=migrator,  # #263: children follow the same policy
             )
@@ -2483,6 +2906,13 @@ class BaseInterpreter(Generic[TContext]):
             restored_actor = interpreter._actors.get(actor_id)
             if restored_actor is not None:
                 interpreter._system[system_id] = restored_actor
+            else:
+                logger.warning(
+                    "⚠️ systemId '%s' names actor '%s', which was not "
+                    "restored; the registration is dropped.",
+                    system_id,
+                    actor_id,
+                )
 
         interpreter._restart_services_on_start = restart_services
         logger.info(
@@ -2683,6 +3113,7 @@ class BaseInterpreter(Generic[TContext]):
                 handle.cleanup()
 
     def _cleanup_all_running_logic(self) -> None:
+        """Run the cleanup of every live actor-logic handle (#267)."""
         handles, self._running_logic = self._running_logic, {}
         for handle in handles.values():
             handle.cleanup()
@@ -2699,6 +3130,7 @@ class BaseInterpreter(Generic[TContext]):
         self._send_threadsafe_any(done)  # engine-minted: drives onDone
 
     def _fail_logic(self, invocation: Any, exc: BaseException) -> None:
+        """Fail one actor-logic invocation: drop its handle, deliver `error.platform`."""
         handle = self._running_logic.pop(invocation.id, None)
         if handle is not None:
             handle.cleanup()
@@ -2710,9 +3142,32 @@ class BaseInterpreter(Generic[TContext]):
         self._send_threadsafe_any(err)
 
     def _send_threadsafe_any(self, event: Any) -> None:
-        """Both engines define `send_threadsafe`; the base does not know
-        which (async returns a future, sync None) -- call it dynamically."""
-        getattr(self, "send_threadsafe")(event)
+        """Deliver *event* through the engine's `send_threadsafe` (the
+        async engine returns a future, the sync one ``None``; ignored)."""
+        self.send_threadsafe(event)
+
+    def send_threadsafe(self, *args: Any, **kwargs: Any) -> Any:
+        """Queue an event from ANY thread (engine-specific, #305).
+
+        Declared here (BI-24) so the base calls it through the type
+        checker instead of a `getattr` that hid a missing implementation
+        until a worker thread hit it at runtime.
+
+        The signature is deliberately open (`*args, **kwargs`): each engine
+        declares its own (the async one takes `internal=`).
+
+        Args:
+            *args: The event (any shape `send()` accepts).
+            **kwargs: Keyword payload, plus engine-specific options.
+
+        Returns:
+            Any: Engine-specific (a future on the async engine, ``None``
+            on the sync one).
+
+        Raises:
+            NotImplementedError: Always, on the abstract base.
+        """
+        raise NotImplementedError  # pragma: no cover
 
     @property
     def has_dormant_timers(self) -> bool:
@@ -2726,10 +3181,16 @@ class BaseInterpreter(Generic[TContext]):
         health check that a deadline the configuration relies on is not
         armed; `pending_deadlines()` lists what would be.
         """
-        if not any(state.after for state in self._active_state_nodes):
+        # 📝 Per STATE, not "no timed state is armed": a parallel machine
+        #    whose one region re-armed its timer after the restore still
+        #    has the other region's deadline dormant. Handles alone cannot
+        #    say this -- a fired timer releases its handle while its state
+        #    (guard refused) stays active -- hence the restore-time set.
+        dormant = self._dormant_timer_states
+        if not dormant:
             return False
-        return not any(
-            self._timer_handles.get(state.id)
+        return any(
+            state.id in dormant
             for state in self._active_state_nodes
             if state.after
         )
@@ -2756,15 +3217,48 @@ class BaseInterpreter(Generic[TContext]):
 
     def _rearm_dormant_timers(self) -> int:
         """Arm every ``after`` timer of the active configuration that has
-        no live handle (#128). Returns how many were armed.
+        no live handle (#128, #264).
 
-        Deadlines restart from zero: a snapshot records that a timer was
-        pending, not how far along it was. That is the SCXML `<send delay>`
-        contract -- scheduled relative to when the actor (re)starts -- and
-        is strictly better than a timer that never fires.
+        The `restart_timers` mode decides the delay each timer gets:
+
+        - ``"restart"``: the declared delay, from zero (the #128 contract:
+          scheduled relative to when the actor restarts).
+        - ``"resume"``: the REMAINING wall time of the persisted deadline
+          (`persistence.Deadline`), clamped to ``[0, delay it was armed
+          with]`` so a stepped-back clock or a redeployed shorter delay
+          never fires early or waits longer than armed.
+        - ``"fire_due"``: as ``"resume"``; matured deadlines arm at 0 ms
+          and the caller pumps them before `start()` returns.
+
+        Duplicate records for one ``(state, event)`` resolve to the newest
+        ``entry_seq`` (an older one is a stale visit), then the earliest
+        due time. Timers are armed most-overdue first.
+
+        Returns:
+            int: How many states had their timers armed.
+
+        Raises:
+            StateNotFoundError: (``"resume"`` / ``"fire_due"``) a parked
+                deadline names a state outside the active configuration.
+                Raised before anything is armed or consumed.
         """
         armed = 0
         mode = self._restart_timers_mode
+        # 🛡️ #264 / #263: a parked deadline whose state is not in the
+        #    active configuration any more (a migration renamed it) cannot
+        #    be re-armed. Fail LOUDLY -- a silently dropped SLA is the
+        #    exact failure durable timers exist to prevent -- and fail
+        #    BEFORE anything is armed or the parked records are consumed,
+        #    so a refused `start()` leaves them intact for a retry or a
+        #    re-persist. ("restart" re-arms from the declared delays and
+        #    ignores the records, so it has nothing to orphan.)
+        if mode in ("resume", "fire_due") and self._restored_deadlines:
+            active = {s.id for s in self._active_state_nodes}
+            orphans = sorted(
+                {d.state_id for d in self._restored_deadlines} - active
+            )
+            if orphans:
+                raise StateNotFoundError(target=orphans[0])
         parked, self._restored_deadlines = self._restored_deadlines, []
         by_state: Dict[str, Dict[str, float]] = {}
         if mode in ("resume", "fire_due"):
@@ -2818,15 +3312,6 @@ class BaseInterpreter(Generic[TContext]):
                 continue
             self._schedule_state_timers_with(state, by_state.get(state.id))
             armed += 1
-        # 🛡️ #264 / #263: a parked deadline whose state is not in the active
-        #    configuration any more (a migration renamed it) cannot be
-        #    re-armed. Fail LOUDLY -- a silently dropped SLA is the exact
-        #    failure durable timers exist to prevent.
-        if mode in ("resume", "fire_due"):
-            active = {s.id for s in self._active_state_nodes}
-            orphans = sorted({d.state_id for d in parked} - active)
-            if orphans:
-                raise StateNotFoundError(target=orphans[0])
         return armed
 
     def _restart_dormant_invocations(self) -> None:
@@ -2999,13 +3484,49 @@ class BaseInterpreter(Generic[TContext]):
             "Subclasses must implement the '_after_timer' method."
         )
 
+    def _invoke_input(
+        self, invocation: InvokeDefinition, trigger: Optional[AnyEvent]
+    ) -> Any:
+        """The ``input`` a service receives on its ``invoke.<id>`` event.
+
+        🏛️ XState v5 contract (verified against xstate 5.33.3): a declared
+        ``input`` -- static or ``input: ({context, event}) => ...`` -- is
+        resolved against the parent's context AND the event that entered
+        the state, so the factory sees the triggering event. With no
+        ``input`` declared the actor receives *nothing* (``undefined`` in
+        XState; ``{}`` here, the 0.7.x convention). Forwarding the
+        triggering event's payload by default would make a Stately export
+        behave differently under this engine than under XState, so a chart
+        that wants the payload declares it: ``"input": event_payload``
+        (`xstate_statemachine.event_payload`) or ``lambda ctx, ev:
+        ev.payload``. Child MACHINES follow the same rule.
+
+        Args:
+            invocation: The invoke being armed.
+            trigger: The event whose transition entered the state, if any.
+
+        Returns:
+            Any: The resolved input; ``{}`` when none is declared.
+        """
+        resolved = invocation.resolve_input(self.context, trigger)
+        if resolved is not None:
+            return resolved
+        return {}
+
     def _invoke_service(
         self,
         invocation: InvokeDefinition,
         service: Union[Callable[..., Any], "MachineNode[Any]"],
         owner_id: str,
+        trigger: Optional[AnyEvent] = None,
     ) -> Union[None, Awaitable[None]]:
         """Handles an invoked service -- a callable, or a child MACHINE.
+
+        Args:
+            invocation: The invoke definition.
+            service: The implementation, or a child machine.
+            owner_id: Id of the state that owns the invocation.
+            trigger: The event that entered the owning state (0.12.0).
 
         Raises:
             NotImplementedError: This method must be implemented by a concrete
@@ -3054,6 +3575,9 @@ class BaseInterpreter(Generic[TContext]):
             The first non-``None`` `Receipt` a plugin returned, else
             ``None`` (proceed).
         """
+        # ⚡ No plugins, no interceptors: the common case on the send path.
+        if not self._plugins:
+            return None
         seen: List[Any] = []
         for plugin in self._plugins:
             receipt = plugin.on_before_send(self, event)
@@ -3142,13 +3666,11 @@ class BaseInterpreter(Generic[TContext]):
             InvalidEventPayloadError: a schema is registered for the type
                 and rejected the payload (applies regardless of `strict`).
         """
-        # 🏛️ #79: engine-minted events are never "unknown"; a USER event
-        #    is checked whatever it is called -- `Event("done.typo")` from
-        #    application code is a typo like any other.
         # 🏛️ #79/#98: engine-minted events are never "unknown"; a USER
-        #    event is checked whatever it is called. `is_known_event` no
-        #    longer grants a by-name exemption, so a forged
-        #    `done.invoke.NEVER` or `___xstate_x` is rejected like `TYPO`.
+        #    event is checked whatever it is called -- `Event("done.typo")`
+        #    from application code is a typo like any other, and a forged
+        #    `done.invoke.NEVER` or `___xstate_x` is rejected like `TYPO`
+        #    (`is_known_event` grants no by-name exemption).
         # ⚡ Nothing to check for the common configuration: not strict and
         #    no schemas. Decided before the (comparatively costly)
         #    provenance test so the hot path is one attribute read.
@@ -3160,22 +3682,14 @@ class BaseInterpreter(Generic[TContext]):
         #    is USER traffic (engine-minted ones are recognised above by
         #    provenance). It is name-checked like any other user event; it
         #    is not a plain `Event`, so it has no payload for a schema.
-        if not isinstance(event, Event):
-            if self.strict and not self.machine.is_known_event(
-                event.type, user_sent=True
-            ):
-                raise UnknownEventError(
-                    event.type,
-                    self.machine.id,
-                    sorted(self.machine.known_events),
-                )
-            return
         if self.strict and not self.machine.is_known_event(
             event.type, user_sent=True
         ):
             raise UnknownEventError(
                 event.type, self.machine.id, sorted(self.machine.known_events)
             )
+        if not isinstance(event, Event):
+            return
         schema = self.machine.event_schemas.get(event.type)
         if schema is not None:
             validate = getattr(schema, "validate", None)
@@ -3191,6 +3705,7 @@ class BaseInterpreter(Generic[TContext]):
     _RESERVED_SEND_KWARGS: Tuple[str, ...] = ("wait", "priority")
 
     def _warn_reserved_payload_keys(self, event: Any) -> None:
+        """Warn when a dict-form payload uses a reserved `send()` keyword (#39)."""
         payload = getattr(event, "payload", None)
         # ⚡ `if payload` -- an empty dict (the overwhelmingly common
         #    `send("TYPE")` case) cannot clash; skip the comprehension.
@@ -3243,6 +3758,14 @@ class BaseInterpreter(Generic[TContext]):
         """
         # 1️⃣ Input is a simple string: create a new Event.
         if isinstance(event_or_type, str):
+            if not event_or_type:
+                # 🛡️ BI-11: "" is the engine's EVENTLESS sentinel
+                #    (`_select_transitions` routes it to the `always`
+                #    selection); a user event of that type would get
+                #    eventless handling. The dict form already refused it.
+                raise InvalidEventError(
+                    "Event type must be a non-empty str, got ''."
+                )
             return Event(type=event_or_type, payload=payload)
 
         # 🔌 #305: the `__xstate_event__` adapter protocol. A domain object
@@ -3273,8 +3796,10 @@ class BaseInterpreter(Generic[TContext]):
             if payload and isinstance(produced, dict):
                 # Keyword payload merges OVER the adapter's dict, so a call
                 # site can annotate (`send(order, source="retry")`).
-                produced = {**produced, **payload}
-            return BaseInterpreter._prepare_event(produced)
+                return BaseInterpreter._prepare_event({**produced, **payload})
+            # 📝 BI-12: an adapter returning an `Event` gets the same
+            #    call-site annotation (merged below, never dropped).
+            return BaseInterpreter._prepare_event(produced, **payload)
 
         # 2️⃣ Input is a dictionary: convert to an Event.
         if isinstance(event_or_type, dict):
@@ -3307,12 +3832,33 @@ class BaseInterpreter(Generic[TContext]):
         if isinstance(
             event_or_type, (Event, DoneEvent, AfterEvent, ErrorEvent)
         ):
-            return event_or_type
+            if not payload:
+                return event_or_type
+            # 🛡️ BI-12: keyword payload used to be DISCARDED silently here
+            #    (`send(Event("X"), foo=1)` delivered `{}`). A user `Event`
+            #    takes it merged over its own payload, like the adapter's
+            #    dict form; an engine event's payload is engine data and
+            #    cannot be annotated, so that is refused loudly.
+            if type(event_or_type) is Event:
+                return dataclasses.replace(
+                    event_or_type,
+                    payload={**(event_or_type.payload or {}), **payload},
+                )
+            raise InvalidEventError(
+                f"Keyword payload {sorted(payload)!r} cannot be added to a "
+                f"{type(event_or_type).__name__}; pass a str or dict event."
+            )
 
         # 4️⃣ Duck-typing: handle "foreign" Event objects (for testing robustness).
         if hasattr(event_or_type, "type") and hasattr(
             event_or_type, "payload"
         ):
+            if payload:
+                raise InvalidEventError(
+                    f"Keyword payload {sorted(payload)!r} cannot be added "
+                    f"to a {type(event_or_type).__name__}; pass a str or "
+                    f"dict event."
+                )
             # Trust and forward as-is to preserve any subclass information.
             # 📝 foreign duck-typed event, forwarded as-is on purpose.
             return cast(AnyEvent, event_or_type)
@@ -3327,13 +3873,64 @@ class BaseInterpreter(Generic[TContext]):
     # ⚙️ Core State Transition Logic (The Template Method)
     # -------------------------------------------------------------------------
 
+    def _raise_unresolved_target(
+        self,
+        transition: TransitionDefinition,
+        target_str: Optional[str],
+        event: AnyEvent,
+    ) -> None:
+        """Raise (and report) `StateNotFoundError` for *target_str*."""
+        # Name the SOURCE too, so the failing transition is identifiable
+        # from the exception alone (the sync engine always did this).
+        exc = StateNotFoundError(target_str or "", transition.source.id)
+        # 🔔 #134: fire `on_resolve_error` HERE, at the one place both
+        #    engines raise it, so the hook cannot fire on one engine and
+        #    not the other (it used to live in the async loop only).
+        self._report_resolve_error(exc, event)
+        raise exc
+
+    def _resolve_multi_target(
+        self, transition: TransitionDefinition, event: AnyEvent
+    ) -> Tuple[StateNode[Any], ...]:
+        """Live-resolve every target of a multi-target transition.
+
+        Only reached when build-time validation could not resolve them all
+        (``strict_targets=False``). Raises `StateNotFoundError` for the
+        first target that still does not resolve, and `InvalidConfigError`
+        when the resolved targets are not in different regions of one
+        parallel state.
+        """
+        from .validation import multi_target_problem
+
+        nodes: List[StateNode[Any]] = []
+        for target_str in transition.target_strs:
+            node = self._resolve_target_state_node(transition, target_str)
+            if node is None:
+                self._raise_unresolved_target(transition, target_str, event)
+            assert node is not None  # narrowed: the call above raised
+            nodes.append(node)
+        problem = multi_target_problem(nodes)
+        if problem is not None:
+            raise InvalidConfigError(
+                f"Transition '{transition.event}' on state "
+                f"'{transition.source.id}': {problem}."
+            )
+        return tuple(nodes)
+
     def _resolve_target_state_node(
-        self, transition: TransitionDefinition
+        self,
+        transition: TransitionDefinition,
+        target_str: Optional[str] = None,
     ) -> Optional[StateNode[Any]]:
-        """Resolves a transition's target string to a concrete StateNode."""
+        """Resolves a transition's target string to a concrete StateNode.
+
+        *target_str* defaults to the transition's (first) target; a
+        multi-target transition resolves each of its `target_strs`.
+        """
         root = self.machine
         parent = transition.source.parent
-        target_str = transition.target_str
+        if target_str is None:
+            target_str = transition.target_str
 
         if not target_str:
             return None
@@ -3413,18 +4010,30 @@ class BaseInterpreter(Generic[TContext]):
         )
         return None
 
-    async def _process_event(self, event: AnyEvent) -> None:
+    async def _process_event(
+        self,
+        event: AnyEvent,
+        selected: Optional[List[TransitionDefinition]] = None,
+    ) -> None:
         """Executes a single, complete "step" of the SCXML algorithm.
 
         Selects the optimal transition set for `event` — one transition per
-        orthogonal region — and executes each in turn.
+        orthogonal region — and executes it as ONE microstep
+        (`_execute_microstep`).
 
         Args:
             event (AnyEvent): The event to process.
+            selected: Transitions the caller already selected for *event*
+                (the eventless settle loop), so no guard is evaluated a
+                second time; the caller reset `_pending_guard_error` before
+                selecting.
         """
         # 1. Select every transition this event triggers (one per region).
-        self._pending_guard_error = None
-        transitions = self._select_transitions(event)
+        if selected is None:
+            self._pending_guard_error = None
+            transitions = self._select_transitions(event)
+        else:
+            transitions = selected
         guard_error = self._pending_guard_error
         if guard_error is not None:
             self._pending_guard_error = None
@@ -3432,26 +4041,11 @@ class BaseInterpreter(Generic[TContext]):
             if guard_error is None:
                 self._handle_unhandled_event(event)
                 return
-        # 2. Execute each selected transition in isolation. A transition may
-        #    be invalidated by an earlier one in the same macrostep (its source
-        #    is no longer active), so re-check liveness before executing.
-        #    (⚡ Inlined rather than a helper coroutine: on the sync engine's
-        #    trampoline every extra `async def` frame is ~0.7 µs per event.)
-        for transition in transitions:
-            if (
-                len(transitions) > 1
-                and transition.source not in self._active_state_nodes
-            ):
-                logger.debug(
-                    "⏭️  Skipping stale transition from '%s'.",
-                    transition.source.id,
-                )
-                continue
-            await self._execute_transition(transition, event)
-
-        # -------------------------------------------------------------------------
-        # 🎬 Built-in Action Support
-        # -------------------------------------------------------------------------
+        # 2. Execute the selected set as one microstep: conflicting
+        #    transitions are dropped first, then every exit, every
+        #    transition's actions, every entry (XState v5 `microstep`).
+        else:
+            await self._execute_microstep(transitions, event)
 
         if guard_error is None:
             return
@@ -3563,10 +4157,26 @@ class BaseInterpreter(Generic[TContext]):
         #    a bare service key must match the MIDDLE segment too. Matching
         #    only the suffix silently missed every auto-id actor (the uuid is
         #    the last segment), so `send_to("worker", ...)` dropped the event.
+        # 👪 BI-29: the reserved `parent` name is resolved before the fuzzy
+        #    scan, so an auto-id child whose key happens to be "parent"
+        #    cannot shadow the real parent.
+        if spec in ("parent", "#parent") and self.parent is not None:
+            return self.parent
+        # 🏷️ BI-29: match on the segments AFTER this actor's own id. A
+        #    child `root:kid` names its children `root:kid:worker:<uuid>`;
+        #    `split(":")[1:]` included `kid` -- its OWN name -- so
+        #    `sendTo("kid")` matched every grandchild.
+        own = len(self.id) + 1
+        prefix = f"{self.id}:"
         matches = [
             actor
             for actor_id, actor in self._actors.items()
-            if spec in actor_id.split(":")[1:]
+            if spec
+            in (
+                actor_id[own:].split(":")
+                if actor_id.startswith(prefix)
+                else actor_id.split(":")[1:]
+            )
         ]
         if len(matches) == 1:
             return matches[0]
@@ -3584,14 +4194,17 @@ class BaseInterpreter(Generic[TContext]):
         for actor_id, source_key in self._actor_sources.items():
             if source_key == spec and actor_id in self._actors:
                 return self._actors[actor_id]
-        if spec in ("parent", "#parent") and self.parent is not None:
-            return self.parent
         # 🎭 #267: an invocation id of running actor LOGIC (from_callback /
         #    from_iterator). Not an interpreter -- wrapped so `_deliver`
         #    can `.send()` it uniformly.
         handle = self._running_logic.get(spec)
         if handle is not None:
-            return _LogicTarget(handle)  # type: ignore[return-value]
+            # ⚠️ `_LogicTarget` is NOT an interpreter: it carries only the
+            #    `id` / `status` / `send` / `send_threadsafe` surface the
+            #    delivery leaves use. The annotation stays the interpreter
+            #    type so the two engines' `_deliver` signatures need no
+            #    Protocol yet (follow-up: an `_ActorRef` Protocol).
+            return _LogicTarget(handle)  # type: ignore[return-value]  # duck-typed ActorRef
         return None
 
     def _system_registry(self) -> Dict[str, "BaseInterpreter[Any]"]:
@@ -3667,9 +4280,17 @@ class BaseInterpreter(Generic[TContext]):
         if spec is None:
             return None
         if callable(spec):
-            spec = spec({"context": self.context, "event": event})
-        if isinstance(spec, (int, float)):
-            return float(spec)
+            # 🔥 BI-16: an inline delay callable is user code exactly like
+            #    a named one, and is contained the same way (it used to
+            #    propagate out of state entry while a named one was
+            #    logged and ignored).
+            try:
+                spec = spec({"context": self.context, "event": event})
+            except Exception:  # noqa: BLE001 -- user code
+                logger.exception(
+                    "🔥 Inline delay callable raised; ignoring this timer."
+                )
+                return None
         if isinstance(spec, str):
             named = self.machine.logic.delays.get(spec)
             if named is None:
@@ -3686,22 +4307,45 @@ class BaseInterpreter(Generic[TContext]):
                 #    delay written that way must not be a hard TypeError at
                 #    startup. The legacy `(context, event)` form still works.
                 named = self._call_delay_callable(named, event)
-            # 🛡️ A misconfigured delay must not crash the machine at start.
-            #    `float()` on a string or dict raises, and this runs inside
-            #    `_schedule_state_tasks` during entry, so an unusable value
-            #    took the whole interpreter down instead of disabling one
-            #    timer.
+            return self._delay_ms(named, spec)
+        return self._delay_ms(spec, spec)
+
+    @staticmethod
+    def _delay_ms(value: Any, declared: Any) -> Optional[float]:
+        """Coerce a resolved delay to finite milliseconds, or ``None``.
+
+        🛡️ BI-16: ONE place decides what a usable delay is, for `after`,
+        delayed `raise` and delayed `sendTo` alike. A misconfigured delay
+        must not crash the machine (this runs during state entry), so an
+        unusable value disables that one timer -- LOUDLY: before, an inline
+        callable returning a non-number fell through with no log at all,
+        ``True`` passed as 1 ms, and NaN / inf were filtered on the
+        `after` path only.
+
+        Args:
+            value: What the declaration resolved to.
+            declared: The declaration itself, for the log line.
+
+        Returns:
+            Optional[float]: Milliseconds, or ``None`` when unusable.
+        """
+        if value is None:
+            return None
+        ms: Optional[float] = None
+        if not isinstance(value, bool):
             try:
-                return float(named) if named is not None else None
+                ms = float(value)
             except (TypeError, ValueError):
-                logger.error(
-                    "🔥 Named delay '%s' resolved to %r, which is not a "
-                    "number of milliseconds. Ignoring this timer.",
-                    spec,
-                    named,
-                )
-                return None
-        return None
+                ms = None
+        if ms is None or not math.isfinite(ms):
+            logger.error(
+                "🔥 Delay %r resolved to %r, which is not a finite number "
+                "of milliseconds. Ignoring this timer.",
+                declared,
+                value,
+            )
+            return None
+        return ms
 
     def _call_delay_callable(self, fn: Callable[..., Any], event: Any) -> Any:
         """Invokes a named-delay callable under either calling convention.
@@ -3715,25 +4359,10 @@ class BaseInterpreter(Generic[TContext]):
         """
         args = {"context": self.context, "event": event}
         try:
-            signature = inspect.signature(fn)
-            positional = [
-                p
-                for p in signature.parameters.values()
-                if p.kind
-                in (
-                    inspect.Parameter.POSITIONAL_ONLY,
-                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                )
-            ]
-            takes_varargs = any(
-                p.kind is inspect.Parameter.VAR_POSITIONAL
-                for p in signature.parameters.values()
-            )
-        except (TypeError, ValueError):  # pragma: no cover - builtins
-            positional, takes_varargs = [], False
-
-        try:
-            if not takes_varargs and len(positional) == 1:
+            # ⚡ BI-26: the arity is memoised per callable (weak-keyed, like
+            #    the guard memo) -- `inspect.signature` on every timer
+            #    arm cost tens of microseconds.
+            if _delay_accepts_mapping(fn):
                 return fn(args)
             return fn(self.context, event)
         except Exception:
@@ -3785,12 +4414,23 @@ class BaseInterpreter(Generic[TContext]):
     def _apply_assign(self, params: Any, event: AnyEvent) -> None:
         """Applies an `assign` action to the machine context.
 
+        Pinned by ``tests/test_xstate_v5_ordering_parity.py``
+        (``TestAssignComputesAgainstThePriorContext``, ``TestJsonAssignWithoutAssignmentWrapper``).
+
         Args:
-            params (Any): The action's params, carrying `assignment`.
+            params (Any): The action's params: ``{"assignment": ...}`` (what
+                `assign()` builds), or -- JSON form -- the property mapping
+                itself.
             event (AnyEvent): The triggering event.
         """
+        # 📝 `params.assignment` when present, else `params` itself: the
+        #    spellings the Rust engine and the XState translation accept
+        #    (`{"type": "xstate.assign", "params": {"count": 1}}`). Up to
+        #    0.12 the bare form was silently ignored.
         assignment = (
-            params.get("assignment") if isinstance(params, dict) else params
+            params.get("assignment", params)
+            if isinstance(params, dict)
+            else params
         )
         if assignment is None:
             return
@@ -3801,17 +4441,38 @@ class BaseInterpreter(Generic[TContext]):
         ctx = cast(Dict[str, Any], self.context)
         if callable(assignment):
             produced = assignment(args)
-            if isinstance(produced, dict):
-                ctx.update(produced)
+            # 📝 BI-14: ``None`` is an explicit no-op (an assigner that
+            #    mutated `context` in place and returned nothing). Any
+            #    Mapping is merged. Anything else -- a pydantic model, a
+            #    list -- used to be IGNORED, so the step reported success
+            #    on stale context; it is now an action error, contained
+            #    by `actionErrorPolicy` like any action that raised.
+            if produced is None:
+                return
+            if not isinstance(produced, Mapping):
+                raise TypeError(
+                    f"assign() function must return a mapping of context "
+                    f"updates (or None); got {type(produced).__name__}."
+                )
+            ctx.update(produced)
             return
         if isinstance(assignment, dict):
-            for key, value in assignment.items():
-                ctx[key] = value(args) if callable(value) else value
+            # 🧮 XState v5 `assign`: EVERY property is computed against the
+            #    context as it was BEFORE this action, then all are merged --
+            #    `{"a": lambda a: a["context"]["b"], "b": 1}` gives `a` the
+            #    old `b`. Before 0.12.0 each property was written as soon as
+            #    it was computed, so later ones saw earlier ones' writes.
+            updates = {
+                key: value(args) if callable(value) else value
+                for key, value in assignment.items()
+            }
+            ctx.update(updates)
 
     def _collect_builtin_followups(
         self,
         canonical: str,
         action_def: ActionDefinition,
+        params: Any,
         event: AnyEvent,
     ) -> List[Any]:
         """Handles a built-in action, returning any actions it produced.
@@ -3824,12 +4485,13 @@ class BaseInterpreter(Generic[TContext]):
         Args:
             canonical (str): The canonical built-in action name.
             action_def (ActionDefinition): The action being executed.
+            params (Any): The action's params, ALREADY resolved by the
+                caller -- a dynamic-params callable runs once per execution.
             event (AnyEvent): The triggering event.
 
         Returns:
             List[Any]: Nested action definitions to execute next.
         """
-        params = self._resolve_params(action_def.params, event) or {}
 
         # 🛟 Bound nested action expansion. `pure`, `choose` and
         #    `enqueueActions` all return further actions, so a callback that
@@ -3838,7 +4500,7 @@ class BaseInterpreter(Generic[TContext]):
         #    older versions and an Exception here, previously left the machine
         #    in an indeterminate state. A depth counter turns an authoring
         #    mistake into a clear, contained log message.
-        depth = getattr(self, "_action_depth", 0)
+        depth = self._action_depth
         if depth > self.MAX_ACTION_DEPTH:
             logger.error(
                 "🔁 Nested action expansion exceeded %d levels while handling "
@@ -3878,12 +4540,13 @@ class BaseInterpreter(Generic[TContext]):
             return produced if isinstance(produced, list) else [produced]
 
         if canonical == CHOOSE:
-            conditions = (
-                params.get("conditions", [])
-                if isinstance(params, dict)
-                else []
-            )
-            for branch in conditions:
+            # 🔀 First branch whose guard passes (or that has none) wins --
+            #    XState's `enqueueActions(({check}) => ...)` translation of
+            #    `choose`. `params.branches` is the JSON dialect (the
+            #    conformance fixtures, the Rust engine); `params.conditions`
+            #    is what `choose()` builds. Before 0.12.0 only `conditions`
+            #    was read, so a JSON `choose` silently ran no branch.
+            for branch in choose_branches(params):
                 guard_cfg = branch.get("guard", branch.get("cond"))
                 if guard_cfg is None or self._is_guard_satisfied(
                     GuardDefinition(guard_cfg), event
@@ -3951,7 +4614,7 @@ class BaseInterpreter(Generic[TContext]):
         transition: TransitionDefinition,
         event: AnyEvent,
     ) -> None:
-        """Executes one selected transition, mutating the active configuration.
+        """Executes one selected transition as its own microstep.
 
         Args:
             transition (TransitionDefinition): The transition to execute.
@@ -3960,95 +4623,346 @@ class BaseInterpreter(Generic[TContext]):
         Raises:
             StateNotFoundError: If the transition's target cannot be resolved.
         """
-        # 1. A "targetless" transition only executes actions without changing state.
+        await self._execute_microstep((transition,), event)
+
+    def _plan_transition(
+        self, transition: TransitionDefinition, event: AnyEvent
+    ) -> Optional[_StepPlan]:
+        """The exit and entry sets of one transition, or ``None``.
+
+        ``None`` means the transition changes no state: it is targetless,
+        or an internal self-transition. Computed against the CURRENT
+        configuration, before anything in the microstep runs -- which is
+        what XState's `removeConflictingTransitions` compares, and what
+        makes a history target expand to the pre-transition configuration.
+
+        Raises:
+            StateNotFoundError: If the transition's target cannot be resolved.
+        """
+        # 1. A "targetless" transition only executes actions.
         if not transition.target_str:
-            logger.debug(
-                "🎬 Executing targetless transition for event '%s'.",
-                event.type,
-            )
-            await self._execute_internal_transition(transition, event)
-            return
+            return None
 
         # 2. Resolve the target state node. ⚡ Build-time validation already
         #    resolved and memoised it on the transition; only a target the
         #    validator could not resolve (`strict_targets=False`) takes the
         #    slow multi-strategy path here.
-        target_state = (
-            transition.resolved_target
-            or self._resolve_target_state_node(transition)
+        multi = len(transition.target_strs) > 1
+        targets: Union[StateNode[Any], Tuple[StateNode[Any], ...]]
+        if multi:
+            targets = (
+                transition.resolved_targets
+                or self._resolve_multi_target(transition, event)
+            )
+            target_state = targets[0]
+        else:
+            resolved = (
+                transition.resolved_target
+                or self._resolve_target_state_node(transition)
+            )
+            if resolved is None:
+                self._raise_unresolved_target(
+                    transition, transition.target_str, event
+                )
+            assert resolved is not None  # narrowed: the call above raised
+            target_state = targets = resolved
+
+        # 3. ⚡ An ATOMIC self-transition without `reenter: True` changes
+        #    nothing: it only executes actions. (A compound or parallel
+        #    source exits and re-enters its children -- see
+        #    `_compute_entry_set` -- so it takes the general path.)
+        if (
+            not multi
+            and target_state is transition.source
+            and not transition.reenter
+            and not target_state.states
+        ):
+            return None
+
+        # 🧭 Domain and the COMPLETE entry set (targets, their ancestors
+        #    below the domain, and every default descendant), in document
+        #    order. A history target is expanded here, *before* exiting, so
+        #    the remembered configuration is the pre-transition one.
+        domain, states_to_enter = self._transition_geometry(
+            transition, targets
         )
-        if target_state is None:
-            # Name the SOURCE too, so the failing transition is identifiable
-            # from the exception alone (the sync engine always did this).
-            exc = StateNotFoundError(
-                transition.target_str, transition.source.id
-            )
-            # 🔔 #134: fire `on_resolve_error` HERE, at the one place both
-            #    engines raise it, so the hook cannot fire on one engine and
-            #    not the other (it used to live in the async loop only).
-            self._report_resolve_error(exc, event)
-            raise exc
+        states_to_exit = self._compute_states_to_exit(domain)
+        if not states_to_exit and not states_to_enter:
+            return None  # nothing exits or enters: actions only
+        return _StepPlan(
+            states_to_exit,
+            states_to_enter,
+            multi or target_state.type == "history",
+        )
 
-        # 3. A self-transition without `reenter: True` is an "internal" transition.
-        # It executes actions but does not exit or re-enter the source state.
-        if target_state == transition.source and not transition.reenter:
-            logger.debug(
-                "🎬 Executing internal self-transition for event '%s'.",
-                event.type,
-            )
-            await self._execute_internal_transition(transition, event)
+    def _remove_conflicting_transitions(
+        self, plans: List[Tuple[TransitionDefinition, Optional[_StepPlan]]]
+    ) -> List[Tuple[TransitionDefinition, Optional[_StepPlan]]]:
+        """XState v5's ``removeConflictingTransitions`` (SCXML Appendix D).
+
+        Two transitions conflict when their exit sets intersect. The later
+        one (in selection order: document order for an event, entry order
+        for the eventless pass) wins only when its source is a descendant
+        of the earlier one's source; otherwise it is preempted. A
+        transition that exits nothing never conflicts.
+
+        Pinned by ``tests/test_xstate_v5_ordering_parity.py``
+        (``TestConflictingTransitionsShareOneMicrostep``).
+
+        Args:
+            plans: ``(transition, plan)`` pairs in selection order.
+
+        Returns:
+            The pairs to execute, in selection order.
+        """
+        filtered: List[Tuple[TransitionDefinition, Optional[_StepPlan]]] = []
+        for t1, plan1 in plans:
+            exit1 = plan1.exit if plan1 is not None else _NO_STATES
+            preempted = False
+            to_remove: List[TransitionDefinition] = []
+            for t2, plan2 in filtered:
+                exit2 = plan2.exit if plan2 is not None else _NO_STATES
+                if exit1.isdisjoint(exit2):
+                    continue
+                if self._is_proper_descendant(t1.source, t2.source):
+                    to_remove.append(t2)
+                else:
+                    preempted = True
+                    break
+            if preempted:
+                logger.debug(
+                    "⏭️  Transition from '%s' preempted by a conflicting one.",
+                    t1.source.id,
+                )
+                continue
+            if to_remove:
+                filtered = [p for p in filtered if p[0] not in to_remove]
+            filtered.append((t1, plan1))
+        return filtered
+
+    def _configuration_preserved(
+        self,
+        states_to_exit: Set[StateNode[Any]],
+        states_to_enter: Sequence[StateNode[Any]],
+    ) -> bool:
+        """True when a microstep re-enters exactly the states it exits and
+        records no history.
+
+        That is XState's "nothing changed" test at the end of ``microstep``
+        (same set of state nodes, same ``historyValue`` object): the
+        previous snapshot is kept. A history value is recorded whenever an
+        exited state owns a history node, even if it records the same
+        states again.
+
+        Args:
+            states_to_exit: The microstep's exit set.
+            states_to_enter: The microstep's entry set.
+
+        Returns:
+            bool: Whether the configuration and the history are unchanged.
+        """
+        if len(states_to_exit) != len(states_to_enter):
+            return False
+        if not states_to_exit.issuperset(states_to_enter):
+            return False
+        return not (
+            self.machine.has_history_states
+            and any(_owns_history(s) for s in states_to_exit)
+        )
+
+    def _watch_eventless(
+        self,
+        event: AnyEvent,
+        selected: Sequence[TransitionDefinition],
+        states_to_exit: AbstractSet[StateNode[Any]],
+        states_to_enter: Sequence[StateNode[Any]],
+        preserved: bool,
+    ) -> Optional[Tuple[Any, int]]:
+        """Starts deciding whether an eventless microstep changes anything.
+
+        XState's ``macrostep`` selects eventless transitions again only
+        after a microstep that produced a NEW snapshot (or after an internal
+        event): a microstep that re-enters exactly what it exited, records
+        no history, starts or stops no actor and assigns nothing keeps the
+        snapshot, so a self-targeting ``always`` runs once instead of
+        looping. Configuration, history and invokes are known before the
+        microstep runs; context (Python actions may mutate it in place, the
+        analogue of XState's ``assign``) and spawned actors are compared
+        afterwards by `_settle_eventless_watch`.
+
+        Args:
+            event: The microstep's event; only the eventless one is watched.
+            selected: The transitions the microstep takes.
+            states_to_exit: Its exit set.
+            states_to_enter: Its entry set.
+            preserved: `_configuration_preserved` for those sets.
+
+        Returns:
+            ``None`` when the answer is already "changed" (or the event is
+            not eventless), else ``(context before-image, actor count)``.
+        """
+        self._microstep_changed = True
+        if event.type != "" or not preserved:
+            return None
+        if any(s.invoke for s in states_to_exit) or any(
+            s.invoke for s in states_to_enter
+        ):
+            return None
+        may_mutate = (
+            any(t.actions for t in selected)
+            or any(s.exit for s in states_to_exit)
+            or any(s.entry for s in states_to_enter)
+        )
+        image = self._context_before_image() if may_mutate else None
+        return image, len(self._actors)
+
+    def _settle_eventless_watch(
+        self, watch: Optional[Tuple[Any, int]]
+    ) -> None:
+        """Completes `_watch_eventless` once the microstep has run."""
+        if watch is None:
             return
+        image, actors = watch
+        self._microstep_changed = self._context_changed(image) or (
+            len(self._actors) != actors
+        )
 
-        # 4. All other transitions are "external" and will cause a state change.
+    async def _execute_microstep(
+        self,
+        transitions: Sequence[TransitionDefinition],
+        event: AnyEvent,
+    ) -> None:
+        """Executes the transitions selected for one event as ONE microstep.
+
+        XState v5 / SCXML ``microstep``: conflicting transitions are
+        dropped (`_remove_conflicting_transitions`), then every state the
+        remaining ones exit is exited (reverse document order), then each
+        transition's actions run (selection order), then every state they
+        enter is entered (document order).
+
+        🏛️ Architecture decision: before 0.12.0 each selected transition ran
+        as its own exit → actions → entry sequence, one after the other,
+        re-checking only that the next one's source was still active. Two
+        regions' transitions interleaved their actions, and a transition
+        whose source the first one had exited AND re-entered ran anyway.
+
+        Pinned by ``tests/test_xstate_v5_ordering_parity.py``
+        (``TestExitOrderIsReverseDocumentOrder``, ``TestConflictingTransitionsShareOneMicrostep``).
+
+        Args:
+            transitions: The selected transitions, in selection order.
+            event (AnyEvent): The triggering event.
+
+        Raises:
+            StateNotFoundError: If a transition's target cannot be resolved.
+        """
+        plans = [(t, self._plan_transition(t, event)) for t in transitions]
+        if len(plans) > 1:
+            plans = self._remove_conflicting_transitions(plans)
+        steps = [plan for _, plan in plans if plan is not None]
+        if not steps:
+            # 🎬 Nothing exits or enters: actions only, each transition its
+            #    own context transaction (`_execute_internal_transition`).
+            # ⚡ `_watch_eventless` inlined for the named-event case: it
+            #    only marks the microstep as changing the snapshot.
+            self._microstep_changed = True
+            watch = (
+                self._watch_eventless(
+                    event, [t for t, _ in plans], _NO_STATES, (), True
+                )
+                if event.type == ""
+                else None
+            )
+            for transition, _ in plans:
+                await self._execute_internal_transition(transition, event)
+            if watch is not None:
+                self._settle_eventless_watch(watch)
+            # 🔔 An actions-only microstep is still a new snapshot (XState
+            #    v5 notifies observers for every one): a counter's `assign`
+            #    must reach `subscribe()` listeners. Before 0.12.0 only the
+            #    exit/enter path below notified. Once per microstep.
+            if self._subscribers:
+                self._notify_subscribers()
+            return
+        selected = [transition for transition, _ in plans]
+        states_to_exit: Set[StateNode[Any]]
+        states_to_enter: List[StateNode[Any]]
+        if len(steps) == 1:
+            states_to_exit = steps[0].exit
+            states_to_enter = steps[0].entry
+        else:
+            states_to_exit = set().union(*(step.exit for step in steps))
+            states_to_enter = sorted(
+                {s for step in steps for s in step.entry}, key=_doc_order_key
+            )
+
         snapshot_before = self._active_state_nodes.copy()
+        # 🔢 Entry order (`_leaf_entry`): XState keeps the previous snapshot
+        #    -- and the position of every state in it -- when a microstep
+        #    re-enters exactly the states it exited and records no history.
+        #    The stamps of the exited leaves are kept for a rollback.
+        keep_order = False
+        exited_stamps: Optional[List[Tuple[StateNode[Any], Optional[int]]]]
+        exited_stamps = None
+        if self.machine.has_always_transitions:
+            keep_order = self._configuration_preserved(
+                states_to_exit, states_to_enter
+            )
+            exited_stamps = [
+                (s, self._leaf_entry.get(s))
+                for s in states_to_exit
+                if not s.states
+            ]
         # 👶 #60 review: remember which actors already existed so a rollback
-        #    can tell which ones a `spawn_*` action in THIS transition's
-        #    action list created. Without this snapshot, a spawn that
+        #    can tell which ones a `spawn_*` action in THIS microstep's
+        #    action lists created. Without this snapshot, a spawn that
         #    succeeds and is followed by a later action that raises left the
         #    child running and registered even after the whole transition was
         #    undone -- orphaned from any active state and reachable only
         #    until the parent itself eventually stopped.
         # ⚡ Most machines spawn nothing; share one empty set then.
         actor_ids_before = set(self._actors) if self._actors else _NO_IDS
-        domain, path_to_enter = self._transition_geometry(
-            transition, target_state
+        # ⚡ `_watch_eventless` inlined for the named-event case (see above).
+        self._microstep_changed = True
+        watch = (
+            self._watch_eventless(
+                event, selected, states_to_exit, states_to_enter, keep_order
+            )
+            if event.type == ""
+            else None
         )
-        states_to_exit = self._compute_states_to_exit(domain, target_state)
 
         # 🧷 Context is snapshotted only when a rollback could need it: a
         #    deepcopy per transition on the "continue" hot path would be a
         #    measurable tax for a feature the machine has opted out of.
         # ⚡ #27 follow-up: ...and only when a user action can actually
         #    RUN. The checkpoint cost ~22% throughput on an idle `rollback`
-        #    machine whose transitions had no actions at all. History
-        #    targets are conservatively treated as "may run actions".
+        #    machine whose transitions had no actions at all. History and
+        #    multi targets are conservatively treated as "may run actions".
         context_before: Optional[TContext] = (
             copy.deepcopy(self.context)
             if self.machine.action_error_policy != "continue"
             and (
-                transition.actions
-                or target_state.type == "history"
+                any(t.actions for t in selected)
+                or any(step.opaque for step in steps)
                 or any(s.exit for s in states_to_exit)
-                or any(s.subtree_has_actions for s in path_to_enter)
+                or any(s.subtree_has_actions for s in states_to_enter)
             )
             else None
         )
         internal_depth_before = self._internal_queue_depth()
+        # 🕰️ BI-31: `_exit_states` records history for exited owners; a
+        #    rolled-back step must not leave history from a transition
+        #    that never happened (a later snapshot would persist it).
+        #    ⚡ Only machines that declare history pay for the copy.
+        history_before: Optional[Dict[str, List[StateNode[Any]]]] = (
+            dict(self._history) if self.machine.has_history_states else None
+        )
+        # 🧾 The transition a failure is reported against: the one whose
+        #    actions are running, else the first of the microstep.
+        current = selected[0]
 
-        # 🕰️ A history pseudo-state is never entered itself. Replace it with
-        #    the remembered configuration (or the default), computed *before*
-        #    exiting so the recorded history is the pre-transition one.
-        history_targets: List[StateNode[Any]] = []
-        if target_state.type == "history":
-            history_targets = self._resolve_history_target(target_state)
-            # Enter down to the history node's parent, then the remembered
-            # set. The parent is entered as part of each remembered node's own
-            # path, so entering it here as well would trigger its default
-            # `initial` descent and activate the wrong child alongside the
-            # restored one.
-            path_to_enter = []
-
-        # 5. Execute the transition sequence in the correct SCXML order.
+        # Execute the microstep in the correct SCXML order.
         #
         # 🏛️ Architecture decision: `_exit_states` and `_enter_states` are the
         # sole authorities on `_active_state_nodes` membership — they discard
@@ -4070,64 +4984,58 @@ class BaseInterpreter(Generic[TContext]):
         #    `_enter_states`/`_exit_states` report their action failures via
         #    this stack instead of raising, so the policy is applied once,
         #    here, for every action slot. See `_execute_lifecycle_actions`.
-        self._lifecycle_failures.append((transition, []))
+        self._lifecycle_failures.append((current, []))
         try:
             await self._exit_states(
                 # ⚡ A single state to exit (every flat transition and most
                 #    nested ones) needs no sort.
                 #
-                # 🔀 Depth alone leaves ties between sibling parallel
-                #    regions, so set iteration order decided which exited
-                #    first -- the same machine and event could emit exit
-                #    actions in a different order between runs, which is
-                #    untestable and makes cleanup logic subtly unreliable.
-                #    `id` is a stable secondary key.
+                # 🔀 XState / SCXML `exitStates`: REVERSE DOCUMENT ORDER.
+                #    Descendants exit before their ancestors and parallel
+                #    regions exit one whole region at a time, the region
+                #    declared last first. (Before 0.12.0 the key was
+                #    `(depth, id)` descending, which interleaved regions --
+                #    every leaf, then every region -- and let an id's
+                #    spelling decide which region went first.)
                 (
                     list(states_to_exit)
                     if len(states_to_exit) <= 1
                     else sorted(
                         states_to_exit,
-                        key=lambda s: (s.depth, s.id),
+                        key=_doc_order_key,
                         reverse=True,
                     )
                 ),
                 event,
             )
-            failed_actions: List[Tuple[ActionDefinition, BaseException]] = (
-                await self._execute_actions(transition.actions, event)
-                if transition.actions  # ⚡ no coroutine for an empty list
-                else []
-            )
-            if failed_actions:
-                self._apply_action_error_policy(transition, failed_actions)
-            await self._enter_states(path_to_enter, event)
-
-            # 🕰️ Restore the remembered configuration for a history target.
-            #
-            # 🏛️ Architecture decision: build ONE combined entry path and make
-            #    a SINGLE `_enter_states` call. The explicit-child guard inside
-            #    `_enter_states` is computed per call, so entering each
-            #    remembered leaf separately meant each call saw only its own
-            #    path: restoring `r1.y` walked through `r1`, which could not
-            #    tell that `y` was explicitly targeted and so ALSO ran its
-            #    default `initial` descent into `r1.x`. Deep history into a
-            #    parallel state therefore activated TWO leaves in one region —
-            #    a configuration SCXML forbids and that breaks the
-            #    one-state-per-region invariant the whole library rests on.
-            if target_state.type == "history":
-                combined_path: List[StateNode[Any]] = []
-                for node in history_targets:
-                    for step in self._get_path_to_state(node, stop_at=domain):
-                        if step not in combined_path:
-                            combined_path.append(step)
-                if combined_path:
-                    await self._enter_states(combined_path, event)
+            failed_actions: List[Tuple[ActionDefinition, BaseException]] = []
+            for transition in selected:
+                if not transition.actions:  # ⚡ no coroutine for an empty list
+                    continue
+                current = transition
+                failed = await self._execute_actions(transition.actions, event)
+                if failed:
+                    failed_actions.extend(failed)
+                    self._apply_action_error_policy(transition, failed)
+            current = selected[0]
+            # 🗺️ ONE flat pass over the precomputed entry set, in document
+            #    order (XState / SCXML `enterStates`): a parallel state's
+            #    regions are entered in declaration order whichever of them
+            #    holds the target, and a history target's remembered
+            #    configuration is part of the same set -- so no compound
+            #    is ever entered twice or descended into a default child
+            #    alongside the restored one.
+            self._keep_entry_order = keep_order
+            try:
+                await self._enter_state_set(states_to_enter, event)
+            finally:
+                self._keep_entry_order = False
             # 🧾 Entry/exit failures surface here, after the whole sequence
             #    ran, so `"continue"` still commits the complete new
             #    configuration while `"rollback"`/`"fail"` undo all of it.
             lifecycle_failed = self._lifecycle_failures[-1][1]
             if lifecycle_failed:
-                self._apply_action_error_policy(transition, lifecycle_failed)
+                self._apply_action_error_policy(current, lifecycle_failed)
             failed_actions = failed_actions or lifecycle_failed
         except Exception as rollback_cause:
             requested = isinstance(rollback_cause, _RollbackRequested)
@@ -4135,7 +5043,7 @@ class BaseInterpreter(Generic[TContext]):
                 logging.WARNING if requested else logging.ERROR,
                 "💥 Transition on '%s' failed; rolling back to the "
                 "pre-transition configuration.",
-                transition.source.id,
+                current.source.id,
                 exc_info=not requested,
             )
             # ⏱️ Tear down what a PARTIAL entry armed. States entered before
@@ -4149,6 +5057,11 @@ class BaseInterpreter(Generic[TContext]):
                     await _maybe
             self._active_state_nodes.clear()
             self._active_state_nodes.update(snapshot_before)
+            for node, stamp in exited_stamps or ():
+                if stamp is None:
+                    self._leaf_entry.pop(node, None)
+                else:
+                    self._leaf_entry[node] = stamp
 
             # ⏱️ Re-arm what exiting tore down. `_exit_states` cancels each
             #    exited state's `after` timers and invoked services, so a
@@ -4156,12 +5069,21 @@ class BaseInterpreter(Generic[TContext]):
             #    a rolled-back state with `after: {250: "timeout"}` would never
             #    time out again. Re-scheduling makes the rollback a true
             #    restore rather than a cosmetic one.
-            for node in snapshot_before:
-                if node in states_to_exit:
-                    self._schedule_state_tasks(node)
+            #    🔢 BI-31: in DOCUMENT order, not set-iteration order, so
+            #    timers sharing a delay fire -- and invokes restart -- in
+            #    a deterministic order. 📝 A restored invoke is a NEW
+            #    invocation: its service runs again from the start.
+            for node in sorted(
+                (n for n in snapshot_before if n in states_to_exit),
+                key=_doc_order_key,
+            ):
+                self._schedule_state_tasks(node)
+            if history_before is not None:
+                self._history.clear()
+                self._history.update(history_before)
 
             # 👶 #60 review: stop and unregister any actor a `spawn_*`
-            #    action in THIS transition's action list created before a
+            #    action in THIS microstep's action lists created before a
             #    LATER action raised. Left alone, the child interpreter's
             #    event loop task kept running and it stayed reachable via
             #    `self._actors`/the system registry even though the
@@ -4179,9 +5101,12 @@ class BaseInterpreter(Generic[TContext]):
                     if actor is not None:
                         await self._stop_actor_leaf(actor)
 
+            # 🏁 A completion reached by the rolled-back step never
+            #    happened (status stays "running", or `fail` stops it).
+            self._pending_completion = None
             if self._finish_rollback(
                 rollback_cause,
-                transition,
+                current,
                 context_before,
                 internal_depth_before,
             ):
@@ -4189,19 +5114,29 @@ class BaseInterpreter(Generic[TContext]):
             raise
         finally:
             self._lifecycle_failures.pop()
+        if self._pending_completion is not None:
+            self._commit_completion()
+        if watch is not None:
+            self._settle_eventless_watch(watch)
 
-        # 6. Notify plugins and subscribers of the completed transition.
+        # Notify plugins and subscribers of the completed microstep.
         if not failed_actions:
             self.last_transition_ok = True
-        self._publish_soft_step_error()  # #133
-        for plug in self._plugins:
-            plug.on_transition(
-                self,
-                snapshot_before,
-                self._active_state_nodes.copy(),
-                transition,
-            )
-        self._notify_subscribers()
+        if self._step_soft_error is not None:
+            self._publish_soft_step_error()  # #133
+        if self._plugins:
+            # ⚡ One copy per microstep, not one per plugin per transition
+            #    (`snapshot_before` is already a private copy). Never the
+            #    live set, so no plugin can mutate the configuration.
+            from_states = snapshot_before
+            to_states = self._active_state_nodes.copy()
+            for plug in self._plugins:
+                for transition in selected:
+                    plug.on_transition(
+                        self, from_states, to_states, transition
+                    )
+        if self._subscribers:
+            self._notify_subscribers()
 
     async def _execute_internal_transition(
         self,
@@ -4240,14 +5175,17 @@ class BaseInterpreter(Generic[TContext]):
             return
         if not failed:
             self.last_transition_ok = True
-        self._publish_soft_step_error()  # #133
-        for plug in self._plugins:
-            plug.on_transition(
-                self,
-                self._active_state_nodes,
-                self._active_state_nodes,
-                transition,
-            )
+        if self._step_soft_error is not None:
+            self._publish_soft_step_error()  # #133
+        if self._plugins:
+            # 🧊 A copy, never the LIVE set: a plugin that stores
+            #    `to_states` must not see it change later, and one that
+            #    mutates it must not corrupt the configuration. (A `set`,
+            #    not a frozenset: the hook is typed `Set` and plugins in
+            #    the wild call set methods on it.)
+            config = set(self._active_state_nodes)
+            for plug in self._plugins:
+                plug.on_transition(self, config, config, transition)
 
     async def _execute_actions(
         self, actions: List[ActionDefinition], event: AnyEvent
@@ -4321,6 +5259,11 @@ class BaseInterpreter(Generic[TContext]):
                         )
                     except asyncio.CancelledError:
                         raise
+                    except _NestedActionsFailed as nested:
+                        # 📝 Already reported by the nested run; only the
+                        #    policy is left to apply (by our caller).
+                        failed.extend(nested.failures)
+                        return failed
                     except Exception as exc:  # noqa: BLE001 -- user params
                         self._report_action_failure(action_def, event, exc)
                         failed.append((action_def, exc))
@@ -4447,20 +5390,25 @@ class BaseInterpreter(Generic[TContext]):
             action_def (ActionDefinition): The action being executed.
             event (Event): The triggering event.
         """
+        # ⚡ Resolve params ONCE: a dynamic-params callable is user code and
+        #    may be expensive or have side effects; it used to run twice.
+        params = self._resolve_params(action_def.params, event) or {}
         # 🧮 Shared semantics first; may yield nested actions to run.
         followups = self._collect_builtin_followups(
-            canonical, action_def, event
+            canonical, action_def, params, event
         )
         if followups:
             self._action_depth += 1
             try:
-                await self._execute_actions(
+                nested_failures = await self._execute_actions(
                     [ActionDefinition(f) for f in followups], event
                 )
             finally:
                 self._action_depth -= 1
-
-        params = self._resolve_params(action_def.params, event) or {}
+            if nested_failures:
+                # 🔥 Propagate so `actionErrorPolicy` sees a failure in a
+                #    `choose` / `pure` / `enqueueActions` branch.
+                raise _NestedActionsFailed(nested_failures)
 
         if canonical == RAISE:
             target_event = self._resolve_event_spec(params.get("event"), event)
@@ -4481,10 +5429,15 @@ class BaseInterpreter(Generic[TContext]):
             await self._deliver(actor, target_event, delay, params.get("id"))
 
         elif canonical == SEND_PARENT:
-            if self.parent is None:
-                logger.warning("⚠️ sendParent called with no parent actor.")
-                return
             target_event = self._resolve_event_spec(params.get("event"), event)
+            if self.parent is None:
+                # 🔔 BI-15: the sibling of an unresolved `sendTo` -- an
+                #    addressed event with no destination is a reported DROP
+                #    and a soft step error, not just a log line (#133).
+                self._report_unresolved_target(
+                    "sendParent", "<no parent>", target_event
+                )
+                return
             delay = self._resolve_delay(params.get("delay"), event)
             self._notify_event_sent(self.parent, target_event)
             await self._deliver(
@@ -4535,8 +5488,9 @@ class BaseInterpreter(Generic[TContext]):
             if self.parent is not None:
                 await self._deliver(self.parent, escalate_event, None, None)
             else:
-                logger.error(
-                    "🔥 escalate() with no parent actor: %r", error_payload
+                # 🔔 BI-15: reported like an unresolved `sendTo` (#133).
+                self._report_unresolved_target(
+                    "escalate", "<no parent>", escalate_event
                 )
 
         elif canonical == STOP_CHILD:
@@ -4637,14 +5591,15 @@ class BaseInterpreter(Generic[TContext]):
     ) -> None:
         """Run a state's ``entry``/``exit`` list and record any failures.
 
-        🏛️ Architecture decision (#27 review): `_enter_states` and
-        `_exit_states` are recursive and are called from several places
-        (transitions, `start()`, history restore). Raising from inside them
-        would unwind that recursion at an arbitrary depth and leave the
-        configuration torn -- exactly what the rollback exists to prevent.
-        Instead, failures are appended to the innermost open transaction on
-        `_lifecycle_failures`; the transaction owner applies the policy once
-        the whole exit → actions → enter sequence has run. Outside any
+        🏛️ Architecture decision (#27 review): failures are DEFERRED so the
+        policy is applied once per microstep, after exit, transition
+        actions and entry have all run. Raising from inside the exit / entry
+        passes (called from transitions, `start()`, history restore) would
+        stop them half-way and leave the configuration torn -- exactly what
+        the rollback exists to prevent. Instead, failures are appended to
+        the innermost open transaction on `_lifecycle_failures`; the
+        transaction owner applies the policy once the whole exit → actions
+        → enter sequence has run. Outside any
         transaction (`start()`), failures are reported against a synthetic
         init transition so `start()` honours the policy too.
         """
@@ -4685,49 +5640,71 @@ class BaseInterpreter(Generic[TContext]):
         states_to_enter: List[StateNode[Any]],
         event: Optional[AnyEvent] = None,
     ) -> None:
-        """Enters a list of states in order, running actions and tasks.
+        """Enters *states_to_enter* plus their default descendants.
 
-        This method follows the SCXML algorithm for state entry. For each
-        state, it:
-        1.  Adds the state to the active configuration.
-        2.  Executes all 'entry' actions.
-        3.  Schedules any `after` timers or `invoke` services defined on the state.
-        4.  If the state is a final state, it checks if its parent is now "done".
-        5.  Recursively enters the initial substate of a compound state or all
-            substates of a parallel state.
+        The given states are completed with every default descendant they
+        imply (a compound's ``initial`` child unless one of its children is
+        already listed; every region of a parallel state not already
+        listed) and the whole set is entered in DOCUMENT ORDER, exactly
+        like XState's ``enterStates``. ``start()`` calls this with
+        ``[machine]``; transitions use the precomputed set from
+        `_transition_geometry` and call `_enter_state_set` directly.
 
         Args:
-            states_to_enter (List[StateNode]): An ordered list of states to
-                enter, from the outermost ancestor to the innermost child.
-            event (Optional[Event]): The event that triggered this state entry.
+            states_to_enter (List[StateNode]): States to enter, e.g. an
+                entry path from an ancestor down to a target.
+            event (Optional[Event]): The event that triggered this entry.
+
+        Raises:
+            InvalidConfigError: A compound state on the way has no
+                resolvable ``initial`` child.
+        """
+        to_enter: Set[StateNode[Any]] = set(states_to_enter)
+        self._complete_entry_set(to_enter)
+        await self._enter_state_set(
+            sorted(to_enter, key=_doc_order_key), event
+        )
+
+    async def _enter_state_set(
+        self,
+        ordered: Sequence[StateNode[Any]],
+        event: Optional[AnyEvent] = None,
+    ) -> None:
+        """Enters an already complete, document-ordered set of states.
+
+        For each state, in order: add it to the configuration, run its
+        ``entry`` actions, arm its ``after`` timers / record its invokes,
+        and -- for a final state -- raise ``done.state.*`` or complete the
+        machine (`_check_and_fire_on_done`). No default descent happens
+        here; the set already contains every state to enter.
+
+        🏛️ Architecture decision: entry used to recurse -- a parallel
+        state entered the regions NOT on the entry path first and the
+        targeted region last, and every caller had to pass "explicit
+        child" hints so a compound did not also descend into its default
+        child next to the target. XState / SCXML compute the entry set
+        first and enter it in document order; doing the same makes the
+        order the chart's declaration order and removes the hints.
+
+        Pinned by ``tests/test_xstate_v5_ordering_parity.py``
+        (``TestParallelEntryIsDocumentOrder``, ``TestMultiTargetParallelEntry``).
         """
         trigger_event = event or _INIT_EVENT  # ⚡ shared immutable sentinel
-
-        # 🗺️ Index the remaining path so a compound state can tell whether the
-        #    caller already named which child to descend into.
-        #
-        # 🏛️ Architecture decision: `_enter_states` used to descend into a
-        # compound's `initial` child unconditionally, *in addition* to walking
-        # the explicit entry path. When the path already named a deeper sibling
-        # (e.g. an external transition targeting `B.b2` while `B.initial` is
-        # `b1`), both `b1` and `b2` ended up active — two simultaneously active
-        # leaves inside one non-parallel region, which SCXML forbids. The
-        # phantom leaf then participated in the next selection pass and could
-        # win, executing the wrong transition and duplicating its actions.
-        explicit_children = {
-            state.parent.id: state
-            for state in states_to_enter
-            if state.parent is not None
-        }
-        explicit_child_ids = {
-            state.id for state in states_to_enter if state.parent is not None
-        }
-
         # ⚡ One level check per call, not one per state: `logger.debug`
         #    costs ~0.4 us even when disabled, and this runs per entered node.
         debug = logger.isEnabledFor(logging.DEBUG)
-        for state in states_to_enter:
+        # 🔢 Entry order of the leaves (see `_leaf_entry`). ⚡ Only a machine
+        #    with `always` transitions ever reads it.
+        stamp = (
+            self.machine.has_always_transitions and not self._keep_entry_order
+        )
+        # 🎉 Parallel states already reported done by this pass.
+        completed: Optional[Set[StateNode[Any]]] = None
+        for state in ordered:
             self._active_state_nodes.add(state)
+            if stamp and not state.states:
+                self._leaf_entry_seq += 1
+                self._leaf_entry[state] = self._leaf_entry_seq
             if debug:
                 logger.debug("➡️  Entering state: '%s'.", state.id)
 
@@ -4740,26 +5717,48 @@ class BaseInterpreter(Generic[TContext]):
                     state.entry, trigger_event
                 )
             if state.owns_tasks:  # ⚡ no `after` / `invoke` -> nothing to arm
-                self._schedule_state_tasks(state)
+                self._schedule_state_tasks(state, trigger_event)
 
             # 🎉 If we entered a final state, check if its parent is now complete.
             if state.is_final:
-                await self._check_and_fire_on_done(state)
+                if completed is None:
+                    completed = set()
+                await self._check_and_fire_on_done(
+                    state, trigger_event, completed
+                )
 
-            # 🗺️ Handle automatic entry into child states.
+    @staticmethod
+    def _complete_entry_set(to_enter: Set[StateNode[Any]]) -> None:
+        """Adds every default descendant *to_enter* implies, in place.
+
+        XState's ``addDescendantStatesToEnter``: a compound state with none
+        of its children in the set gets its ``initial`` child (recursively);
+        a parallel state gets every region not already in the set. Callers
+        put each target's ancestors in the set first, so "a child is in the
+        set" is exactly "the path already names which child to enter".
+
+        Raises:
+            InvalidConfigError: A compound state has children but no
+                resolvable ``initial`` child -- entering it would leave the
+                machine without an active leaf.
+        """
+        stack = list(to_enter)
+        while stack:
+            state = stack.pop()
             if state.type == "compound" and state.initial:
-                # ⏭️ Skip the default descent when the entry path already
-                #    specifies which child of this state to enter.
-                if state.id in explicit_children:
+                # ⚡ One C-level membership test per compound state instead
+                #    of a generator over its children (this runs on every
+                #    `start()` and every entry into a compound state).
+                if not to_enter.isdisjoint(state.states.values()):
                     continue
                 initial_child = state.states.get(state.initial)
-                if initial_child:
-                    await self._enter_states([initial_child], trigger_event)
-                else:
+                if initial_child is None:
                     raise InvalidConfigError(
                         f"❌ Initial state '{state.initial}' not found in "
                         f"compound state '{state.id}'."
                     )
+                to_enter.add(initial_child)
+                stack.append(initial_child)
             elif state.type == "compound" and state.states:
                 # 🚨 A compound state with children but no resolvable
                 #    `initial` cannot produce an active leaf. Left unchecked
@@ -4771,28 +5770,20 @@ class BaseInterpreter(Generic[TContext]):
                     "'initial' explicitly."
                 )
             elif state.type == "parallel":
-                # For parallel states, enter all child regions simultaneously.
-                # 🌐 Enter every region EXCEPT one already named by the entry
-                #    path (that region is walked explicitly, and entering
-                #    it again would trigger its default `initial` descent
-                #    and activate the wrong child alongside the target).
-                #    History pseudo-states are never entered as regions.
-                regions = [
-                    child
-                    for child in state.states.values()
-                    if child.type != "history"
-                    and child.id not in explicit_child_ids
-                ]
-                if regions:
-                    await self._enter_states(regions, trigger_event)
+                # 🌐 Every region not already on the entry path. History
+                #    pseudo-states are never entered as regions.
+                for region in state.states.values():
+                    if region.type != "history" and region not in to_enter:
+                        to_enter.add(region)
+                        stack.append(region)
 
     def _record_history(self, states_to_exit: List[StateNode[Any]]) -> None:
         """Remembers the active configuration of states being exited.
 
-        Called immediately before exit actions run. For every state that owns
-        at least one `type: "history"` child, the currently active descendants
-        are stored so a later transition targeting that history node can
-        restore them.
+        Called immediately before exit actions run. For every EXITED state
+        that owns at least one `type: "history"` child, the currently active
+        descendants are stored so a later transition targeting that history
+        node can restore them.
 
         🏛️ Architecture decision: history is keyed by the *parent* id rather
         than by the history node itself. A parent may declare both a shallow
@@ -4800,29 +5791,24 @@ class BaseInterpreter(Generic[TContext]):
         configuration — the shallow/deep distinction is applied at restore
         time, not at record time.
 
+        🏛️ Architecture decision: only the owner's OWN exit records, as in
+        XState v5 / SCXML ``exitStates``. Before 0.12.0 every ancestor of an
+        exited state was a candidate, so a transition between two states
+        inside the owner (which never leaves it) overwrote its history, and
+        a later transition to the history node from inside the owner
+        restored that instead of the history default.
+
+        Pinned by ``tests/test_xstate_v5_ordering_parity.py``
+        (``TestHistoryRecordsOnlyOnOwnerExit``).
+
         Args:
             states_to_exit (List[StateNode]): The states about to be exited.
         """
         if not self.machine.has_history_states:
             return  # ⚡ nothing to remember for; see MachineNode.has_history_states
-        exiting = set(states_to_exit)
-        # 🕰️ Candidates are the exiting states *and* their ancestors: a
-        #    transition out of a nested leaf exits the leaf and its parents,
-        #    and it is the history-owning ancestor whose configuration must be
-        #    remembered. Walking up from each exiting node covers both the
-        #    "parent is exiting too" and "only descendants are exiting" cases.
-        candidates: Set[StateNode[Any]] = set()
-        for node in exiting:
-            current: Optional[StateNode[Any]] = node
-            while current is not None:
-                candidates.add(current)
-                current = current.parent
-
-        for state in candidates:
-            # 🕰️ Only parents that actually declare a history child matter.
-            if not any(
-                child.type == "history" for child in state.states.values()
-            ):
+        for state in states_to_exit:
+            # 🕰️ Only exited states that actually declare a history child.
+            if not _owns_history(state):
                 continue
             remembered = [
                 node
@@ -4914,11 +5900,20 @@ class BaseInterpreter(Generic[TContext]):
     ) -> None:
         """Exits a list of states in order, canceling tasks and running actions.
 
-        This method follows the SCXML algorithm for state exit. For each state, it:
-        1.  Cancels any running tasks (`after` timers, `invoke` services)
-            owned by the state.
-        2.  Executes all 'exit' actions.
+        This follows XState v5 ``exitStates``, which resolves
+        ``[...state.exit, ...state.invoke.map(def => stopChild(def.id))]``
+        for each state. For each state, it:
+
+        1.  Executes all 'exit' actions -- while the state's invoked
+            actors are still running, so an exit action can still
+            ``sendTo`` one of them (a final ``FLUSH``).
+        2.  Cancels the tasks the state owns (`after` timers, `invoke`
+            services / child actors).
         3.  Removes the state from the active configuration.
+
+        Pinned by ``tests/test_review_fixes_engine.py``
+        (``TestExitActionsRunBeforeInvokesStop``) and the exit-order classes
+        of ``tests/test_xstate_v5_ordering_parity.py``.
 
         Args:
             states_to_exit (List[StateNode]): An ordered list of states to
@@ -4935,19 +5930,22 @@ class BaseInterpreter(Generic[TContext]):
         for state in states_to_exit:
             if debug:
                 logger.debug("⬅️  Exiting state: '%s'.", state.id)
-            # 🛑 Crucially, cancel tasks before running exit actions.
-            #    ⚡ A state that declares no `after` / `invoke` owns nothing
-            #    to cancel (delayed sends are owned by the root, which is
-            #    never exited by a transition).
-            if state.owns_tasks:
-                _pending = self._cancel_state_tasks(state)
-                if _pending is not None:
-                    await _pending
-            # ⚙️ Then, run the synchronous exit actions (⚡ only if any).
+            # ⚙️ Exit actions first (⚡ only if any). 🏛️ BI-09: up to 0.12
+            #    the state's invokes were cancelled BEFORE its exit actions,
+            #    so an exit action's `sendTo(<invoke id>)` found no target.
             if state.exit:
                 await self._execute_lifecycle_actions(
                     state.exit, trigger_event
                 )
+            # 🛑 Then stop what the state owns (XState's `stopChild` for
+            #    each invoke, appended after `exit`). ⚡ A state that
+            #    declares no `after` / `invoke` owns nothing to cancel
+            #    (delayed sends are owned by the root, which is never
+            #    exited by a transition).
+            if state.owns_tasks:
+                _pending = self._cancel_state_tasks(state)
+                if _pending is not None:
+                    await _pending
             # 🗑️ Finally, remove from the active set.
             self._active_state_nodes.discard(state)
             # 📞 #204: exited before its macrostep settled -> never invoked.
@@ -4960,108 +5958,162 @@ class BaseInterpreter(Generic[TContext]):
     # 🔎 State Evaluation & Pathfinding Helpers
     # -------------------------------------------------------------------------
 
-    def _is_state_done(self, state_node: StateNode[Any]) -> bool:
-        """Recursively determines if a compound or parallel state is "done".
+    def _is_in_final_state(self, state_node: StateNode[Any]) -> bool:
+        """XState v5's ``isInFinalState`` over the active configuration.
 
-        This is a key part of the SCXML algorithm for `onDone` transitions.
-        - A state with `type: 'final'` is always done.
-        - A `compound` state is done if its currently active child state is done.
-        - A `parallel` state is done only if ALL of its child regions are done.
+        - A ``compound`` state is in a final state when one of its own
+          ``final`` children is active -- not when a deeper descendant is.
+        - A ``parallel`` state is when every region is. A history child is
+          a pseudo-state, not a region, and is skipped (a parallel state
+          with a history child used to never complete).
+        - Any other state is when it is itself ``final``.
 
         Args:
             state_node (StateNode): The state to check for completion.
 
         Returns:
-            bool: `True` if the state is considered "done", otherwise `False`.
+            bool: `True` if the state is in a final state.
         """
-        # 🏁 Base case: A final state is inherently "done".
-        if state_node.is_final:
-            return True
-
-        # 🧠 Compound state: Its "doneness" is determined by its active child.
         if state_node.type == "compound":
-            active_child = next(
-                (
-                    s
-                    for s in self._active_state_nodes
-                    if s.parent == state_node
-                ),
-                None,
+            active = self._active_state_nodes
+            return any(
+                child.is_final and child in active
+                for child in state_node.states.values()
             )
-            # If no child is active, it cannot be done.
-            if not active_child:
-                return False
-            # Recursively check the child, handling nested complex states.
-            return self._is_state_done(active_child)
-
-        # 🌐 Parallel state: All child regions must be independently "done".
         if state_node.type == "parallel":
-            for region in state_node.states.values():
-                # 🕰️ A history child is a pseudo-state, not a region. It is
-                #    never entered, so demanding that it be "done" made a
-                #    parallel state with a history child NEVER complete —
-                #    `onDone` silently never fired.
-                if region.type == "history":
-                    continue
-                active_in_region = [
-                    d
-                    for d in self._active_state_nodes
-                    if self._is_descendant(d, region)
-                ]
-                # If a region is not active, the parallel state is not done.
-                if not active_in_region:
-                    return False
-                # The region itself is "done" if any of its active states are done.
-                if not any(self._is_state_done(d) for d in active_in_region):
-                    return False
-            # If all regions passed the check, the parallel state is done.
-            return True
+            return all(
+                self._is_in_final_state(region)
+                for region in state_node.states.values()
+                if region.type != "history"
+            )
+        return bool(state_node.is_final)
 
-        # For atomic, non-final states.
-        return False
+    async def _raise_done_state(self, node: StateNode[Any], data: Any) -> None:
+        """Queues the internal ``done.state.<node id>`` event."""
+        logger.info("🎉 State '%s' is done.", node.id)
+        await self._dispatch_internal(
+            _engine_done(type=f"done.state.{node.id}", data=data, src=node.id)
+        )
 
     async def _check_and_fire_on_done(
-        self, final_state: StateNode[Any]
+        self,
+        final_state: StateNode[Any],
+        event: Optional[AnyEvent] = None,
+        completed: Optional[Set[StateNode[Any]]] = None,
     ) -> None:
-        """Bubbles up from a final state to fire parent `onDone` transitions.
+        """Raises the ``done.state.*`` events a newly entered final state
+        causes, or completes the machine (XState v5 ``enterStates``).
 
-        When a state machine enters a `final` state, this method is called to
-        check if the parent (or any ancestor) is now considered "done"
-        according to `_is_state_done`. If so, it dispatches the corresponding
-        `done.state.*` event to trigger the `onDone` transition.
+        1. The final state's parent, when it is a compound state, receives
+           ``done.state.<parent>`` carrying the final state's ``output``.
+        2. Then, starting at the parent if it is a parallel state (else the
+           grandparent): while that ancestor is a parallel state whose
+           regions are all in final states (`_is_in_final_state`),
+           ``done.state.<ancestor>`` is raised and the walk moves up.
+           *completed* (one set per entry pass) keeps a parallel state from
+           being reported twice when several of its regions finish in the
+           same microstep.
+        3. If the walk ran past the root, the machine completes: the output
+           is resolved, every active state's ``exit`` actions run (reverse
+           document order, root last) and the status becomes ``"done"``.
+
+        Every raised event is queued, whether or not the state declares an
+        ``onDone`` -- one nobody handles reaches a ``"*"`` handler or is
+        dropped like any unhandled engine event.
+
+        🏛️ Architecture decision: before 0.12.0 the ancestors were walked for
+        the FIRST one with an ``onDone`` that was "done" (a compound counted
+        as done when its active child was, recursively), only that one was
+        notified, and only a final state directly under the root completed
+        the machine. A compound grandparent therefore fired ``onDone`` when
+        a nested compound finished (XState never completes it), and a
+        parallel state's ``onDone`` was skipped when the finishing region
+        had its own.
+
+        Pinned by ``tests/test_xstate_v5_ordering_parity.py``
+        (``TestDoneStatePropagation``, ``TestExitActionsRunOnCompletion``, ``TestDoneStateIsAnInternalEvent``).
 
         Args:
             final_state (StateNode): The final state that was just entered.
+            event (Optional[Event]): The event of the step that entered it;
+                handed to the exit actions run on completion.
+            completed (Optional[Set[StateNode]]): Parallel states already
+                reported by this entry pass.
         """
-        ancestor = final_state.parent
-        while ancestor:
-            if ancestor.on_done and self._is_state_done(ancestor):
-                logger.info(
-                    "🎉 State '%s' is done, firing onDone event.", ancestor.id
-                )
-                # 📨 Create and send the synthetic `done.state.*` event,
-                #    carrying the final state's `output` as done data.
-                done_event = _engine_done(
-                    type=f"done.state.{ancestor.id}",
-                    data=self._resolve_output(final_state),
-                    src=ancestor.id,
-                )
-                await self._dispatch_internal(done_event)
-                # Per SCXML, only fire for the first completed ancestor.
-                return
-            ancestor = ancestor.parent
+        parent = final_state.parent
+        if parent is None:  # pragma: no cover - the root is never final
+            return
+        if completed is None:
+            completed = set()
+        marker = parent if parent.type == "parallel" else parent.parent
+        if parent.type == "compound" and parent.parent is not None:
+            # 📨 (XState also raises one for the root; the machine is done
+            #    by then and never processes it.)
+            await self._raise_done_state(
+                parent, self._resolve_output(final_state)
+            )
+        reached_parallel_root = False
+        while (
+            marker is not None
+            and marker.type == "parallel"
+            and marker not in completed
+            and self._is_in_final_state(marker)
+        ):
+            completed.add(marker)
+            if marker.parent is None:
+                reached_parallel_root = True
+            else:
+                await self._raise_done_state(marker, None)
+            marker = marker.parent
+        if marker is not None:
+            return
 
         # 🏁 A top-level final state completes the machine itself.
         #
         # 📝 A machine-level `output` declaration wins over the final state's
         #    own, matching XState: the machine describes what the *actor*
         #    produces, the final state only contributes done-data upward.
-        if final_state.parent is self.machine or final_state.parent is None:
+        if self.status == "running":
             machine_output = getattr(self.machine, "machine_output", None)
-            if machine_output is not None:
-                self._complete(self._resolve_output_value(machine_output))
-            else:
-                self._complete(self._resolve_output(final_state))
+            output = (
+                self._resolve_output_value(machine_output)
+                if machine_output is not None
+                else (
+                    None
+                    if reached_parallel_root
+                    else self._resolve_output(final_state)
+                )
+            )
+            # 🚪 XState v5 microstep: once the machine is done, the exit
+            #    actions of EVERY still-active state -- the final state just
+            #    entered and the root included -- run, in reverse document
+            #    order, after the output was resolved. The configuration is
+            #    kept (a done snapshot still reports its final state).
+            trigger_event = event or _EXIT_EVENT
+            for state in sorted(
+                self._active_state_nodes, key=_doc_order_key, reverse=True
+            ):
+                if state.exit:
+                    await self._execute_lifecycle_actions(
+                        state.exit, trigger_event
+                    )
+            if self._lifecycle_failures:
+                # 🧾 Inside a microstep transaction: a deferred entry/exit
+                #    failure may still roll this step back, and a machine
+                #    already reported "done" (hooks fired, teardown
+                #    scheduled) cannot be un-completed. The transaction
+                #    owner applies it on commit (`_commit_completion`).
+                if self._pending_completion is None:
+                    self._pending_completion = (output,)
+                return
+            self._complete(output)
+
+    def _commit_completion(self) -> None:
+        """Apply a completion `_check_and_fire_on_done` deferred while a
+        microstep transaction was open (see `_pending_completion`)."""
+        pending, self._pending_completion = self._pending_completion, None
+        if pending is not None:
+            self._complete(pending[0])
 
     def _resolve_output_value(self, output: Any) -> Any:
         """Resolves an `output` declaration to a concrete value.
@@ -5146,13 +6198,32 @@ class BaseInterpreter(Generic[TContext]):
         would be surprising and would break existing machines. Only a total
         absence of `onError` counts as unhandled.
 
+        A ``"*"`` or partial descriptor matching ``error.platform.<id>``
+        (``"error.*"``, ``"error.platform.*"``) on any active state counts
+        as well: since XState v5 parity those descriptors receive engine
+        events, so the failure is consumed there and the machine keeps
+        running, as it does in XState.
+
         Args:
             invocation (Any): The `InvokeDefinition` that failed.
 
         Returns:
-            bool: `True` if any `onError` transition is declared.
+            bool: `True` if any `onError` transition -- or a wildcard /
+            partial descriptor that receives the failure -- is declared.
         """
-        return bool(getattr(invocation, "on_error", None))
+        if getattr(invocation, "on_error", None):
+            return True
+        invoke_id = getattr(invocation, "id", None)
+        if not invoke_id:
+            return False
+        event_type = f"error.platform.{invoke_id}"
+        for state in list(self._active_state_nodes):
+            if (state._on_partials or state._on_has_wildcard) and any(
+                key != event_type
+                for key in self._matching_descriptors(state, event_type)
+            ):
+                return True
+        return False
 
     # 📨 Maximum events held under ``onUnhandled: "defer"`` before the
     #    oldest is evicted. A permanently-unhandled event type must not
@@ -5233,6 +6304,7 @@ class BaseInterpreter(Generic[TContext]):
     def _notify_unhandled(
         self, event: AnyEvent, active: Set[str], disposition: str
     ) -> None:
+        """Fire `on_unhandled_event` for an event no transition took."""
         # #195: a caller-built `DoneEvent` / `AfterEvent` is user traffic
         # and reaches the policy like a plain `Event`; the hook's annotated
         # `Event` type is widened accordingly.
@@ -5428,7 +6500,8 @@ class BaseInterpreter(Generic[TContext]):
         #    is what makes `current_state_ids` stop lying about the leaf.
         self._active_state_nodes.clear()
         self.status = "stopped"
-        self._notify_subscribers()
+        if self._subscribers:
+            self._notify_subscribers()
         self._on_terminal("stopped")
         for plugin in self._plugins:
             plugin.on_interpreter_stop(self)
@@ -5457,7 +6530,8 @@ class BaseInterpreter(Generic[TContext]):
             hook = getattr(plugin, "on_error", None)
             if callable(hook):
                 hook(self, error)
-        self._notify_subscribers()
+        if self._subscribers:
+            self._notify_subscribers()
         self._on_terminal("error")
 
     def _complete(self, output: Any) -> None:
@@ -5510,6 +6584,25 @@ class BaseInterpreter(Generic[TContext]):
         """Engine-specific: run `_teardown()` now (sync) or as a task (async)."""
         raise NotImplementedError  # pragma: no cover
 
+    def _report_dropped(self, events: List[AnyEvent]) -> None:
+        """Fire `on_event_dropped` for events a teardown discards (#129).
+
+        Shared by both engines' `_teardown` so the two cannot disagree on
+        what a stranded event is: an accepted event that will never run is
+        a drop, whichever queue it sat in. The reason follows `status` --
+        ``"stopped"`` after `stop()`, ``"not_running"`` after the machine
+        reached ``"done"`` / ``"error"``.
+
+        Args:
+            events: The events being discarded, in queue order.
+        """
+        if not events:
+            return
+        reason = "stopped" if self.status == "stopped" else "not_running"
+        for ev in events:
+            for plugin in self._plugins:
+                plugin.on_event_dropped(self, ev, reason)
+
     def _unregister_from_system(self) -> None:
         """Remove every registry entry pointing at THIS interpreter (#57).
 
@@ -5535,10 +6628,14 @@ class BaseInterpreter(Generic[TContext]):
         - the bare wildcard ``"*"`` matches anything and is always last.
 
         🏛️ Architecture decision: ordering matters -- SCXML and XState both
-        require the most specific descriptor to win. Engine-synthesised
-        events (`done.*`, `error.*`, `after.*`, `xstate.*`) match ONLY an
-        exact key: a user's ``"*"`` means "any event I might receive", not
-        "swallow my own timers and service results".
+        require the most specific descriptor to win.
+
+        ``system=True`` returns the exact key only. The selection walk uses
+        it for engine-synthesised events (`done.*`, `error.*`, `after.*`,
+        `xstate.*`) so that a state's OWN `onDone` / `after` / `onError`
+        handler -- which is not an `on` key -- is ranked before its
+        ``"*"`` and partial descriptors; it then offers those descriptors
+        to the engine event too, as XState's ``getCandidates`` does.
 
         ⚡ #55 part 2: reads the index `StateNode` precompiles at build
         time (`_on_partials`, `_on_has_wildcard`) instead of scanning the
@@ -5551,10 +6648,6 @@ class BaseInterpreter(Generic[TContext]):
         matches: List[str] = []
         if event_type in on_map:
             matches.append(event_type)
-        # 🏛️ #79: engine-synthesised events match ONLY an exact key -- a
-        #    `"*"` handler must not swallow `done.invoke.*`. Decided by
-        #    provenance: a user event that merely LOOKS reserved still
-        #    reaches `"*"` and `"prefix.*"` descriptors.
         if system:
             return matches
         for key, prefix in node._on_partials:  # already longest-first
@@ -5564,445 +6657,488 @@ class BaseInterpreter(Generic[TContext]):
             matches.append("*")
         return matches
 
-    def _collect_eligible_transitions(
-        self,
-        state: StateNode[Any],
-        event: AnyEvent,
-        guard_cache: Optional[Dict[int, bool]] = None,
-    ) -> List[TransitionDefinition]:
-        """Collects every eligible transition on one state's ancestor chain.
+    def _node_candidates(
+        self, node: StateNode[Any], event: AnyEvent
+    ) -> Iterator[TransitionDefinition]:
+        """Every transition declared on *node* that matches *event*.
 
-        Walks from `state` up to the machine root, gathering transitions that
-        match `event` and whose guard is satisfied. This is the per-leaf half
-        of transition selection; callers decide how to rank the results.
+        XState's ``getCandidates`` for one state, in priority order: the
+        exact ``on`` key, then partial descriptors (longest first), then
+        ``"*"``; for an engine event the state's own ``onDone`` / ``after``
+        / ``onError`` handler comes right after the exact key and the
+        wildcard descriptors last. Guards are NOT evaluated here -- see
+        `_first_enabled`. A forbidden transition is yielded like any other.
 
         Args:
-            state (StateNode): The active state to start the upward walk from.
-            event (AnyEvent): The event being
-                processed.
-            guard_cache (Optional[Dict[int, bool]]): Memo of guard results for
-                the current selection pass, keyed by transition identity. When
-                several parallel regions share an ancestor, this ensures that
-                ancestor's guard is evaluated exactly once. Pass `None` to
-                disable memoisation.
+            node (StateNode): The state whose handlers are listed.
+            event (AnyEvent): The (named) event being processed.
+
+        Yields:
+            TransitionDefinition: The candidates, in order.
+        """
+        event_type = event.type
+        on_map = node.on
+        system = is_system_event(event)
+
+        # 📨 Standard `on` event transitions, including wildcard and partial
+        #    descriptors, most specific first. ⚡ Inline the exact-key case
+        #    (no partial descriptors, no wildcard -- the overwhelming
+        #    majority of nodes): no method call, no list allocation.
+        #    `_matching_descriptors` stays the authority for every other
+        #    shape (and returns only the exact key for an engine event).
+        if not node._on_partials and not node._on_has_wildcard:
+            if event_type and event_type in on_map:
+                yield from on_map[event_type]
+        else:
+            for key in self._matching_descriptors(
+                node, event_type, system=system
+            ):
+                yield from on_map[key]
+
+        # 🏁 `onDone` transitions for compound/parallel states -- EVERY
+        #    declared alternative, in document order (MOD-02: a list such
+        #    as `[{guard, target}, {target}]` used to lose its fallback).
+        #    They all carry the same `done.state.<id>` event, so one check
+        #    covers the list; `_first_enabled` evaluates the guards.
+        on_done = node.on_done
+        if on_done is not None and on_done.event == event_type:
+            yield from node.on_done_transitions
+        if not system:
+            return
+
+        # ⏰ `after` transitions for timed events.
+        #
+        # 🛡️ #203: matched on PROVENANCE, like `done` / `error` below
+        #    (#195). A hand-built or forged-record `AfterEvent` is user
+        #    traffic and must not fire a timer whose deadline has not
+        #    elapsed; only the engine's own `_fire` (which mints via
+        #    `_engine_after`) may drive an `after` transition.
+        if node.after and isinstance(event, AfterEvent):
+            for transitions in node.after.values():
+                for t in transitions:
+                    if t.event == event_type:
+                        yield t
+
+        # 🤖 `onDone`/`onError` for invoked services. `ErrorEvent` (#80) is
+        #    a distinct type so consumers can branch on it, but it routes
+        #    through `inv.on_error` the same way.
+        if node.invoke and isinstance(event, (DoneEvent, ErrorEvent)):
+            for inv in node.invoke:
+                if event.src != inv.id:
+                    continue
+                # 🛡️ #195: a completion drives `onDone` / `onError` only for
+                #    an invocation that is OUTSTANDING. A `done.invoke.<id>`
+                #    naming a finished, never-started or foreign invocation
+                #    -- however it was produced -- matches nothing (SCXML
+                #    6.4.2: events from a cancelled invocation are ignored).
+                if not self._completion_is_for_live_invocation(
+                    node, inv, event
+                ):
+                    continue
+                for t in inv.on_done + inv.on_error:
+                    if t.event == event_type:
+                        yield t
+                # 🎯 #130: an `escalate` from the invoked child arrives as
+                #    `_engine_error(type="xstate.error.actor.<runtime id>")`,
+                #    not `error.platform.<id>`. It is a failure of THIS
+                #    invocation and XState routes it to `onError`; match
+                #    the declared `onError` transitions by `src` alone.
+                if isinstance(event, ErrorEvent) and event_type.startswith(
+                    "xstate.error.actor."
+                ):
+                    yield from inv.on_error
+
+        # ✳️ XState v5 `getCandidates`: `"*"` and `"prefix.*"` match engine-
+        #    generated events too (`done.invoke.*`, `error.platform.*`,
+        #    `after.*`, `done.state.*`). They rank after this state's own
+        #    exact handlers above -- an `onDone` / `after` / `onError` on
+        #    the SAME state still wins -- but a wildcard on a deeper state
+        #    outranks an ancestor's handler, exactly as for user events.
+        if node._on_partials or node._on_has_wildcard:
+            for key in self._matching_descriptors(node, event_type):
+                if key != event_type:
+                    yield from on_map[key]
+
+    def _first_enabled(
+        self, node: StateNode[Any], event: AnyEvent
+    ) -> Optional[TransitionDefinition]:
+        """XState's ``StateNode.next``: *node*'s first enabled candidate.
+
+        Guards are evaluated in candidate order and evaluation STOPS at the
+        first transition whose guard holds (or that has none): later
+        candidates' guards never run. A forbidden transition is returned
+        as is -- it consumes the event (the caller drops it from the
+        selection).
+
+        Args:
+            node (StateNode): The state whose handlers are tried.
+            event (AnyEvent): The event being processed.
 
         Returns:
-            List[TransitionDefinition]: Eligible transitions, ordered from the
-            deepest source state upward.
+            Optional[TransitionDefinition]: The enabled transition, or
+            ``None`` when *node* does not handle *event*.
         """
-        eligible: List[TransitionDefinition] = []
+        for t in self._node_candidates(node, event):
+            # 🚫 A forbidden transition consumes the event here so no
+            #    ancestor handler can see it.
+            if t.forbidden:
+                return t
+            if self._is_guard_satisfied(t.guard_def, event):
+                return t
+            if t.guard_def is not None and self._pending_guard_error is None:
+                # 🚦 #153: declared, matched, refused by guard.
+                # 🧯 #170: a guard that CRASHED under
+                #    guardErrorPolicy="raise" is not a denial; `Receipt.error`
+                #    carries that case and `denied` stays False, as
+                #    documented ("the guard returned False").
+                self._guard_denied_this_step = True
+        return None
 
-        def _passes(transition: TransitionDefinition) -> bool:
-            """Evaluates a transition's guard, memoised per selection pass.
+    def _transition_node(
+        self,
+        node: StateNode[Any],
+        event: AnyEvent,
+        active: Set[StateNode[Any]],
+    ) -> List[TransitionDefinition]:
+        """XState v5's ``transitionNode``: descend the active tree.
 
-            🏛️ Architecture decision: guards are documented as pure predicates,
-            but in practice users write ones with side effects (counters,
-            metrics, logging). Evaluating a shared ancestor's guard once per
-            region would multiply those side effects by the region count and
-            fire `on_guard_evaluated` plugin hooks N times for a single logical
-            decision. Memoising keeps evaluation count independent of the
-            machine's parallel width.
-            """
-            if guard_cache is None:
-                return self._is_guard_satisfied(transition.guard_def, event)
-            key = id(transition)
-            if key not in guard_cache:
-                guard_cache[key] = self._is_guard_satisfied(
-                    transition.guard_def, event
-                )
-            return guard_cache[key]
+        A compound state asks its active child first and consults its own
+        handlers only when the child (and everything below it) had none; a
+        parallel state asks every active region, in document order, and
+        consults its own handlers only when NO region had one.
 
-        # 🧭 Determine which transition flavours are in play for this event.
-        is_explicit_transient_event = event.type == ""
-        # ⚡ Hot path: the event's kind does not change while walking the
-        #    ancestor chain; decide it once per call, not once per level.
-        event_type = event.type
-        system = is_system_event(event)
-        is_after = system and isinstance(event, AfterEvent)
-
-        current: Optional[StateNode[Any]] = state
-        while current:
-            # 📨 Standard `on` event transitions, including wildcard and
-            #    partial descriptors, most specific first.
-            if not is_explicit_transient_event:
-                blocked = False
-                on_map = current.on
-                # ⚡ Inline the exact-key case (no partial descriptors, no
-                #    wildcard -- the overwhelming majority of nodes) so a
-                #    flat machine skips a method call and a list allocation
-                #    per ancestor level. `_matching_descriptors` stays the
-                #    authority for every other shape.
-                keys: Sequence[str]
-                if not current._on_partials and not current._on_has_wildcard:
-                    keys = (
-                        (event_type,)
-                        if event_type and event_type in on_map
-                        else ()
-                    )
-                else:
-                    keys = self._matching_descriptors(
-                        current, event_type, system=system
-                    )
-                for key in keys:
-                    for t in on_map[key]:
-                        # 🚫 A forbidden transition consumes the event here so
-                        #    no ancestor handler can see it.
-                        if t.forbidden:
-                            blocked = True
-                            break
-                        if _passes(t):
-                            eligible.append(t)
-                        elif (
-                            t.guard_def is not None
-                            and self._pending_guard_error is None
-                        ):
-                            # 🚦 #153: declared, matched, refused by guard.
-                            # 🧯 #170: a guard that CRASHED under
-                            #    guardErrorPolicy="raise" is not a denial;
-                            #    `Receipt.error` carries that case and
-                            #    `denied` stays False, as documented ("the
-                            #    guard returned False").
-                            self._guard_denied_this_step = True
-                    if blocked:
-                        break
-                if blocked:
-                    logger.debug(
-                        "🚫 Event '%s' forbidden at '%s'; stopping upward "
-                        "search.",
-                        event.type,
-                        current.id,
-                    )
-                    break
-
-            # ⚡ Transient `""` ("always") transitions.
-            #
-            # 🏛️ #196: eligible ONLY for the eventless selection pass
-            #    (`event.type == ""`, run by `_settle_transient_transitions`
-            #    after every macrostep), never as a candidate for a NAMED
-            #    event. SCXML 3.13: eventless transitions are selected in
-            #    their own microstep once the event's own transitions have
-            #    been taken. Letting an `always` compete for a named event
-            #    meant a deeper `always` OUTRANKED a shallower handler for
-            #    that event (deepest-source wins), so the event was
-            #    consumed by a transition that had nothing to do with it and
-            #    its own handler's actions never ran -- under a spinning
-            #    `always` every external event silently "applied" nothing.
-            if is_explicit_transient_event and "" in current.on:
-                for t in current.on[""]:
-                    if _passes(t):
-                        eligible.append(t)
-
-            # 🏁 `onDone` transitions for compound/parallel states.
-            if current.on_done and current.on_done.event == event_type:
-                if _passes(current.on_done):
-                    eligible.append(current.on_done)
-
-            # ⏰ `after` transitions for timed events.
-            #
-            # 🛡️ #203: matched on PROVENANCE, like `done` / `error` below
-            #    (#195). A hand-built or forged-record `AfterEvent` is user
-            #    traffic and must not fire a timer whose deadline has not
-            #    elapsed; only the engine's own `_fire` (which mints via
-            #    `_engine_after`) may drive an `after` transition.
-            if is_after and current.after:
-                for transitions in current.after.values():
-                    for t in transitions:
-                        if t.event == event_type and _passes(t):
-                            eligible.append(t)
-
-            # 🤖 `onDone`/`onError` for invoked services. `ErrorEvent`
-            #    (#80) is a distinct type so consumers can branch on it,
-            #    but it routes through `inv.on_error` the same way.
-            if isinstance(event, (DoneEvent, ErrorEvent)) and current.invoke:
-                for inv in current.invoke:
-                    if event.src != inv.id:
-                        continue
-                    # 🛡️ #195: a completion drives `onDone` / `onError`
-                    #    only for an invocation that is OUTSTANDING. A
-                    #    `done.invoke.<id>` naming a finished, never-
-                    #    started or foreign invocation -- however it was
-                    #    produced -- matches nothing (SCXML 6.4.2: events
-                    #    from a cancelled invocation are ignored).
-                    if not self._completion_is_for_live_invocation(
-                        current, inv, event
-                    ):
-                        continue
-                    for t in inv.on_done + inv.on_error:
-                        if t.event == event.type and _passes(t):
-                            eligible.append(t)
-                    # 🎯 #130: an `escalate` from the invoked child arrives as
-                    #    `_engine_error(type="xstate.error.actor.<runtime id>")`,
-                    #    not `error.platform.<id>`. It is a failure of THIS
-                    #    invocation and XState routes it to `onError`; match
-                    #    the declared `onError` transitions by `src` alone.
-                    if isinstance(event, ErrorEvent) and event.type.startswith(
-                        "xstate.error.actor."
-                    ):
-                        for t in inv.on_error:
-                            if _passes(t):
-                                eligible.append(t)
-
-            current = current.parent
-
-        return eligible
+        Returns:
+            List[TransitionDefinition]: The transitions selected below and
+            at *node*, in document order (forbidden ones included).
+        """
+        selected: List[TransitionDefinition] = []
+        for child in node.states.values():
+            if child in active:
+                selected.extend(self._transition_node(child, event, active))
+        if selected:
+            return selected
+        own = self._first_enabled(node, event)
+        return [own] if own is not None else selected
 
     def _select_transitions(
         self, event: AnyEvent
     ) -> List[TransitionDefinition]:
-        """Selects the optimal transition set for an event, one per region.
+        """Selects the transitions an event (or the eventless pass) enables.
 
-        Implements the SCXML `selectTransitions` rule. For each active atomic
-        state, the most deeply nested eligible transition is chosen. Because
-        orthogonal (parallel) regions each contribute their own active leaf,
-        this naturally yields one transition *per region* rather than a single
-        winner for the whole machine.
+        A named event: XState v5's ``selectTransitions`` (``transitionNode``,
+        see `_transition_node`) -- at most one transition per region, from
+        the deepest state that handles the event; a state's own handlers
+        are consulted only when nothing below it matched. Eventless
+        (``event.type == ""``): `_select_eventless_transitions`.
 
-        🏛️ Architecture decision: a previous implementation returned a single
-        `max(...)` across the entire configuration, so an event handled by two
-        parallel regions advanced only one of them. Selecting per leaf and then
-        de-duplicating fixes that while preserving the single-fire behaviour
-        for a transition defined on a shared ancestor — the same object is
-        selected by several leaves but executed only once.
+        Guards are evaluated lazily: for each state, candidates are tried in
+        order and the walk stops at the first enabled one, so a guard is
+        evaluated only when its transition could actually be taken.
+
+        🏛️ Architecture decision: before 0.12.0 every active leaf walked up to
+        the root evaluating EVERY matching candidate's guard (memoised per
+        pass), and the deepest eligible transition per leaf won. That ran
+        guards XState never evaluates (an ancestor's, a later candidate's
+        on the same state), and let a parallel state's own handler be
+        selected next to a region's transition for the same event.
+
+        Pinned by ``tests/test_xstate_v5_ordering_parity.py``
+        (``TestGuardEvaluationOrder``, ``TestWildcardMatchesEngineEvents``).
 
         Args:
-            event (AnyEvent): The event being
-                processed.
+            event (AnyEvent): The event being processed.
 
         Returns:
-            List[TransitionDefinition]: The transitions to execute, ordered
-            deepest-source-first and free of duplicates.
+            List[TransitionDefinition]: The selected transitions in document
+            order, free of duplicates; forbidden transitions are not listed
+            (they only stop the search).
         """
-        # 🍃 Only atomic/final leaves seed selection; ancestors are reached by
-        #    the upward walk inside `_collect_eligible_transitions`.
+        if event.type == "":
+            return self._select_eventless_transitions(event)
         active = self._active_state_nodes
-        # ⚡ Hot path (#307 benchmark): a non-parallel machine has exactly
-        #    ONE active leaf. Skip the leaf filter, both sorts and the
-        #    de-dup set. `_collect_eligible_transitions` walks UP from the
-        #    leaf, so its list is already deepest-source first and the
-        #    winner is its first entry -- the same element `max` by depth
-        #    returns (`max` keeps the first of equal keys).
-        if len(active) == 1:
-            (leaf,) = active
-            return self._collect_eligible_transitions(leaf, event, {})[:1]
-
-        leaves = [
-            s for s in active if s.is_atomic or s.is_final or not s.states
+        leaves = [s for s in active if not s.states or s.is_final]
+        if len(leaves) == 1:
+            # ⚡ Hot path: a configuration without an active parallel state
+            #    is one chain, so the descent is the walk UP from the leaf --
+            #    the first state with an enabled transition wins.
+            node: Optional[StateNode[Any]] = leaves[0]
+            while node is not None:
+                own = self._first_enabled(node, event)
+                if own is not None:
+                    return [] if own.forbidden else [own]
+                node = node.parent
+            return []
+        return [
+            t
+            for t in self._transition_node(self.machine, event, active)
+            if not t.forbidden
         ]
-        # 🛟 Fallback: if the configuration has no leaf (defensive), consider
-        #    every active node so behaviour degrades gracefully.
-        if not leaves:
-            leaves = list(active)
 
-        selected: List[TransitionDefinition] = []
-        seen: Set[int] = set()
-        # 🧠 Memo shared across all leaves in this pass, so a transition on an
-        #    ancestor common to several regions is guard-evaluated exactly once.
-        guard_cache: Dict[int, bool] = {}
+    def _select_eventless_transitions(
+        self, event: AnyEvent
+    ) -> List[TransitionDefinition]:
+        """XState v5's ``selectEventlessTransitions``.
 
-        # 🔽 Deterministic ordering: deepest leaves first, then by id.
+        For every active atomic state, in ENTRY order (see `_leaf_entry`):
+        walk up from it and take the first ``always`` transition whose
+        guard holds, stopping the walk there. A guard on an ancestor shared
+        by several regions is therefore evaluated once per region whose walk
+        reaches it -- exactly as often as XState evaluates it. Conflicts are
+        resolved by the microstep (`_remove_conflicting_transitions`) in the
+        same order, so the leaf entered first wins a conflict.
+
+        🏛️ Architecture decision: before 0.12.0 the leaves were visited in
+        document order. XState visits them in the order its snapshot holds
+        them -- the states a microstep keeps stay in place, the ones it
+        enters are appended -- so after one region moved, a guard of the
+        OTHER region was evaluated first, and a conflict between two
+        regions' ``always`` transitions could go the other way.
+
+        Pinned by ``tests/test_xstate_v5_ordering_parity.py``
+        (``TestAlwaysOrderFollowsEntryOrder``).
+
+        Args:
+            event (AnyEvent): The eventless pseudo-event (type ``""``).
+
+        Returns:
+            List[TransitionDefinition]: The enabled ``always`` transitions,
+            in entry order of the states that selected them.
+        """
+        leaves = [s for s in self._active_state_nodes if not s.states]
         if len(leaves) > 1:
-            leaves.sort(key=lambda s: (-s.depth, s.id))
+            entry = self._leaf_entry
+            leaves.sort(key=lambda s: (entry.get(s, 0), s.doc_order))
+        selected: List[TransitionDefinition] = []
         for leaf in leaves:
-            eligible = self._collect_eligible_transitions(
-                leaf, event, guard_cache
-            )
-            if not eligible:
-                continue
-
-            # 🏆 This leaf's winner is the transition on its deepest ancestor:
-            #    the first entry of the upward walk (see the fast path above).
-            winner = eligible[0]
-
-            # 🧹 De-duplicate by identity so an ancestor transition shared by
-            #    several regions fires exactly once.
-            if id(winner) not in seen:
-                seen.add(id(winner))
-                selected.append(winner)
-
-        # 🔽 Execute deepest-source-first for predictable action ordering.
-        if len(selected) > 1:
-            selected.sort(key=lambda t: -t.source.depth)
+            node: Optional[StateNode[Any]] = leaf
+            found: Optional[TransitionDefinition] = None
+            while node is not None and found is None:
+                for t in node.on.get("", ()):
+                    if self._is_guard_satisfied(t.guard_def, event):
+                        found = t
+                        break
+                node = node.parent
+            if found is not None and found not in selected:
+                selected.append(found)
         return selected
 
     def _compute_states_to_exit(
-        self, domain: Optional[StateNode[Any]], target_state: StateNode[Any]
+        self,
+        domain: Optional[StateNode[Any]],
     ) -> Set[StateNode[Any]]:
-        """Determines which active states an external transition must exit.
+        """XState's ``computeExitSet``: the active states a transition exits.
 
-        Normally every active descendant of the transition domain is exited.
-        When the domain is a `parallel` state, that would sweep up the *sibling*
-        regions as well — but only the branch containing the target is re-entered
-        by `_get_path_to_state`, so the siblings would be exited and never
-        restored, silently killing them.
+        Every active state that is a proper descendant of the transition
+        domain -- or every active state, the root included, when the domain
+        is ``None`` ("above the root", a re-entering transition on the
+        root). The caller orders them (reverse document order).
 
-        🏛️ Architecture decision: this is why the exit set is scoped to the
-        domain's child that actually contains the target whenever the domain is
-        parallel. Orthogonal regions are independent by definition: a transition
-        inside one region must not disturb the others unless it exits the
-        parallel state itself (in which case the domain is an ancestor of the
-        parallel node, not the node itself, and the full sweep is correct).
+        🏛️ Architecture decision: when the domain is a parallel state (a
+        transition from one region into a sibling region), EVERY region
+        exits, not only the targeted one, and `_compute_entry_set`
+        re-enters the others through their initial states -- XState v5 and
+        SCXML semantics. Before 0.12.0 the exit set was scoped to the targeted
+        region, so the source region silently stayed put.
+
+        Pinned by ``tests/test_xstate_v5_ordering_parity.py``
+        (``TestCrossRegionTargetHasParallelDomain``).
 
         Args:
-            domain (Optional[StateNode]): The transition domain (LCCA), or
-                `None` when the machine root is the domain.
-            target_state (StateNode): The resolved target of the transition.
+            domain (Optional[StateNode]): The transition domain, or `None`
+                when it lies above the machine root.
 
         Returns:
-            Set[StateNode]: The active states to exit, innermost-first ordering
-            applied by the caller.
+            Set[StateNode]: The active states to exit.
         """
-        candidates = {
+        active = self._active_state_nodes
+        if domain is None:
+            return set(active)
+        return {
             s
-            for s in self._active_state_nodes
-            if self._is_descendant(s, domain) and s is not domain
+            for s in active
+            if s is not domain and self._is_descendant(s, domain)
         }
 
-        # 🌐 Scope to one region when the domain is a parallel state, so
-        #    orthogonal siblings are left untouched.
-        if domain is not None and domain.type == "parallel":
-            branch: Optional[StateNode[Any]] = target_state
-            while branch is not None and branch.parent is not domain:
-                branch = branch.parent
-            if branch is not None:
-                candidates = {
-                    s
-                    for s in candidates
-                    if s is branch or self._is_descendant(s, branch)
-                }
-
-        return candidates
-
     def _transition_geometry(
-        self, transition: TransitionDefinition, target_state: StateNode[Any]
+        self,
+        transition: TransitionDefinition,
+        target_state: Union[StateNode[Any], Sequence[StateNode[Any]]],
     ) -> Tuple[Optional[StateNode[Any]], List[StateNode[Any]]]:
         """The static part of a transition's execution plan, memoised.
 
-        ⚡ Returns ``(domain, path_to_enter)``. Both depend only on the
-        machine tree and the resolved target, never on the live
-        configuration, so they are computed once per transition and served
-        from `TransitionDefinition._geometry` thereafter. History targets
-        are handled by the caller (their entry path is resolved live).
+        ⚡ Returns ``(domain, states_to_enter)``: the transition domain and
+        the COMPLETE entry set -- the targets, their ancestors below the
+        domain and every default descendant -- in document order. Both
+        depend only on the machine tree and the resolved targets, never on
+        the live configuration, so they are computed once per transition
+        and served from `TransitionDefinition._geometry` thereafter.
 
-        The memo is keyed on ``id(target_state)``: a transition that is
+        A history target depends on the recorded history, so it is
+        expanded (and the result not memoised) on every call.
+
+        The memo is keyed on the targets' identity: a transition that is
         resolved at run time (unresolvable at build under
         ``strict_targets=False``) may legitimately land on a different node
         later, and must not be served the first answer.
 
+        Args:
+            transition: The transition being taken.
+            target_state: Its resolved target, or every target of a
+                multi-target transition.
+
         Returns:
-            Tuple[Optional[StateNode], List[StateNode]]: the LCCA (``None``
-            when the machine root is the domain) and the parent-to-child
-            entry path from the domain down to the target. The list is a
-            fresh copy so callers may mutate it.
+            Tuple[Optional[StateNode], List[StateNode]]: the domain (``None``
+            when it lies above the root) and the states to enter, outermost
+            first. The list is a fresh copy so callers may mutate it.
         """
+        # 📝 A sequence means several targets. Tested on the CONTAINER, not
+        #    with `isinstance(x, StateNode)`: a process that imported the
+        #    package twice (`src.xstate_statemachine` and
+        #    `xstate_statemachine`) holds nodes of the other copy's class.
+        targets: Tuple[StateNode[Any], ...]
+        key: Any
+        if isinstance(target_state, (list, tuple)):
+            targets = tuple(target_state)
+            key = (
+                id(targets[0])
+                if len(targets) == 1
+                else tuple(map(id, targets))
+            )
+            has_history = any(t.type == "history" for t in targets)
+        else:
+            # ⚡ The single-target shape of nearly every transition: no
+            #    tuple or generator work, and no runtime `StateNode[Any]`
+            #    subscription (the generic was evaluated on every event).
+            single = cast("StateNode[Any]", target_state)
+            targets = (single,)
+            key = id(single)
+            has_history = single.type == "history"
         memo = transition._geometry
-        if memo is not None and memo[0] == id(target_state):
+        if not has_history and memo is not None and memo[0] == key:
             return memo[1], list(memo[2])
-        domain = self._find_transition_domain(transition, target_state)
-        path = self._get_path_to_state(target_state, stop_at=domain)
-        transition._geometry = (id(target_state), domain, tuple(path))
-        return domain, path
+        effective: List[StateNode[Any]] = []
+        for target in targets:
+            if target.type == "history":
+                effective.extend(self._resolve_history_target(target))
+            else:
+                effective.append(target)
+        domain = self._find_transition_domain(transition, effective)
+        entry = self._compute_entry_set(effective, domain)
+        if not has_history:
+            transition._geometry = (key, domain, tuple(entry))
+        return domain, entry
+
+    def _compute_entry_set(
+        self,
+        targets: Sequence[StateNode[Any]],
+        domain: Optional[StateNode[Any]],
+    ) -> List[StateNode[Any]]:
+        """XState's ``computeEntrySet`` for one transition, document-ordered.
+
+        Every target and each of its ancestors strictly below *domain*
+        (every ancestor, root included, when *domain* is ``None``); when
+        the domain is a parallel state, each of its regions that holds no
+        target (re-entered through its initial state); then every default
+        descendant those imply (`_complete_entry_set`).
+
+        Pinned by ``tests/test_xstate_v5_ordering_parity.py``
+        (``TestCompoundSelfTargetWithoutReenter``).
+
+        Args:
+            targets: The EFFECTIVE targets (a history node already replaced
+                by the configuration it restores).
+            domain: The transition domain; ``None`` means "above the root".
+        """
+        to_enter: Set[StateNode[Any]] = set()
+        for target in targets:
+            if target is domain:
+                # 🔁 A transition targeting its own source without
+                #    `reenter` (the only way a target IS the domain): the
+                #    source is neither exited nor entered, but its active
+                #    descendants exit and its default descendants are
+                #    entered again (XState `computeEntrySet` /
+                #    `addDescendantStatesToEnter`). Before 0.12.0 a compound
+                #    source ran the transition's actions and nothing else.
+                implied: Set[StateNode[Any]] = {target}
+                self._complete_entry_set(implied)
+                implied.discard(target)
+                to_enter |= implied
+                continue
+            node: Optional[StateNode[Any]] = target
+            while node is not None and node is not domain:
+                to_enter.add(node)
+                node = node.parent
+        if domain is not None and domain.type == "parallel":
+            # 🌐 Every region exits (see `_compute_states_to_exit`); the
+            #    ones holding no target come back through `initial`.
+            for region in domain.states.values():
+                if region.type != "history" and region not in to_enter:
+                    to_enter.add(region)
+        self._complete_entry_set(to_enter)
+        return sorted(to_enter, key=_doc_order_key)
 
     def _find_transition_domain(
-        self, transition: TransitionDefinition, target_state: StateNode[Any]
+        self,
+        transition: TransitionDefinition,
+        target_state: Union[StateNode[Any], Sequence[StateNode[Any]]],
     ) -> Optional[StateNode[Any]]:
-        """Calculates the transition domain (LCCA) for an external transition.
+        """XState v5's ``getTransitionDomain``.
 
-        The "domain" is the least common compound ancestor (LCCA) of the source
-        and target states. It determines which states are exited and entered.
+        * a transition that does NOT re-enter and whose targets all lie
+          inside its source (the source itself included) has the SOURCE as
+          its domain: the source stays active;
+        * otherwise the domain is the least common ancestor of the source
+          and the targets, i.e. the nearest PROPER ancestor of the source
+          that contains every target. That ancestor may be a parallel
+          state: a transition from one region into a sibling region has
+          the parallel state as its domain. With ``reenter: true`` the
+          domain is therefore always ABOVE the source, so the source exits
+          and re-enters even when the target is one of its descendants;
+        * a re-entering transition on the machine root has no such
+          ancestor: the domain is ``None`` ("above the root") and the root
+          itself exits and re-enters.
 
-        For a self-transition (including re-entering ones), the domain is
-        always the parent state, which ensures the source state is correctly
-        exited and re-entered.
+        Pinned by ``tests/test_xstate_v5_ordering_parity.py``
+        (``TestReenterHasDomainAboveTheSource``).
 
         Args:
-            transition (TransitionDefinition): The external transition to analyze.
-            target_state (StateNode): The pre-resolved target state node.
+            transition (TransitionDefinition): The transition to analyse.
+            target_state: Its effective target(s) (history already
+                expanded).
 
         Returns:
-            Optional[StateNode]: The state node that is the LCCA, or None if the
-            root is the domain.
+            Optional[StateNode]: The domain.
         """
-        parent = transition.source.parent or self.machine
-
-        # For any self-transition, the domain is the parent. This forces an
-        # exit/re-entry cycle for the source state.
-        if target_state == transition.source:
-            return parent
-
-        # Standard case: Compute the Least Common Compound Ancestor (LCCA).
-        source_ancestors = self._get_ancestors(transition.source)
-        target_ancestors = self._get_ancestors(target_state)
-        common_ancestors = source_ancestors & target_ancestors
-
-        # 🎯 When the target is an ancestor of the source, the LCCA *is* the
-        # target. Using it directly as the domain would make
-        # `_get_path_to_state(target, stop_at=domain)` return an empty path,
-        # so the machine would exit down to the target and never re-enter it —
-        # left on a non-atomic ancestor with no active leaf.
-        #
-        # 🏛️ Architecture decision: step up to the target's PARENT rather than
-        # discarding the target from the candidate set. Discarding re-ran
-        # `max()` over the remaining common ancestors, which for a region of a
-        # `parallel` state selected the parallel node itself — placing every
-        # *sibling* region in `states_to_exit` while the entry path only
-        # re-entered the targeted region. The siblings were exited and never
-        # restored, permanently killing them. The parent is the correct domain:
-        # it exits and re-enters exactly the target subtree.
-        if target_state in source_ancestors:
-            return target_state.parent or self.machine
-
-        if not common_ancestors:
-            # Fallback to parent (or machine root) if no commonality is found.
-            return parent
-
-        # The LCCA is the deepest common ancestor.
-        return max(common_ancestors, key=lambda n: n.depth)
+        targets: Sequence[StateNode[Any]] = (
+            target_state
+            if isinstance(target_state, (list, tuple))
+            else (cast("StateNode[Any]", target_state),)
+        )
+        source = transition.source
+        if not transition.reenter and all(
+            t is source or self._is_proper_descendant(t, source)
+            for t in targets
+        ):
+            return source
+        node = source.parent
+        while node is not None:
+            if all(self._is_proper_descendant(t, node) for t in targets):
+                return node
+            node = node.parent
+        return None if transition.reenter else self.machine
 
     @staticmethod
-    def _get_path_to_state(
-        to_state: StateNode[Any], *, stop_at: Optional[StateNode[Any]] = None
-    ) -> List[StateNode[Any]]:
-        """Builds the ordered list of states to enter to reach a target.
-
-        This method traces the ancestry from the target state (`to_state`) up
-        to, but not including, a specified `stop_at` ancestor (typically the
-        transition domain). The resulting path is then reversed to provide the
-        correct parent-to-child entry order.
-
-        Args:
-            to_state (StateNode): The destination state.
-            stop_at (Optional[StateNode]): The ancestor at which to stop
-                traversing.
-
-        Returns:
-            List[StateNode]: A list of states to be entered, from outermost
-            to innermost.
-        """
-        path: List[StateNode[Any]] = []
-        current: Optional[StateNode[Any]] = to_state
-        while current and current is not stop_at:
-            path.append(current)
-            current = current.parent
-        # Reverse to get parent -> child order for correct state entry.
-        path.reverse()
-        return path
-
-    @staticmethod
-    def _get_ancestors(node: StateNode[Any]) -> Set[StateNode[Any]]:
-        """Gets the set of all ancestors of a node, including the node itself.
-
-        Args:
-            node (StateNode): The node from which to find ancestors.
-
-        Returns:
-            Set[StateNode]: A set containing the node and all of its parents.
-        """
-        ancestors: Set[StateNode[Any]] = set()
+    def _is_proper_descendant(
+        node: StateNode[Any], ancestor: StateNode[Any]
+    ) -> bool:
+        """True when *ancestor* lies strictly above *node* in the tree."""
+        steps = node.depth - ancestor.depth
+        if steps <= 0:
+            return False
         current: Optional[StateNode[Any]] = node
-        while current:
-            ancestors.add(current)
-            current = current.parent
-        return ancestors
+        for _ in range(steps):
+            current = current.parent if current is not None else None
+        return current is ancestor
 
     @staticmethod
     def _is_descendant(
@@ -6026,13 +7162,23 @@ class BaseInterpreter(Generic[TContext]):
         if not ancestor:
             return True
         # Check for self or if the ID indicates a child relationship.
+        # ⚠️ BI-28: an id-PREFIX test is only correct because the model
+        #    refuses sibling keys where one is a dotted extension of the
+        #    other (`v2` next to `v2.0` raises InvalidConfigError
+        #    "ambiguous" at build time). Relaxing that check would silently
+        #    break exit sets and history; use a parent walk
+        #    (`_is_proper_descendant`) if it ever changes.
         return node.id.startswith(f"{ancestor.id}.") or node == ancestor
 
     # -------------------------------------------------------------------------
     # 🛡️ Task & Guard Management
     # -------------------------------------------------------------------------
 
-    def _schedule_state_tasks(self, state: StateNode[Any]) -> None:
+    def _schedule_state_tasks(
+        self,
+        state: StateNode[Any],
+        trigger: Optional[AnyEvent] = None,
+    ) -> None:
         """Schedules `after` and `invoke` tasks for a state upon its entry.
 
         This method dispatches to the abstract `_after_timer` and
@@ -6040,12 +7186,19 @@ class BaseInterpreter(Generic[TContext]):
         sync/async subclasses to handle the actual execution.
 
         Args:
-            state (StateNode): The state being entered.
+            state: The state being entered.
+            trigger: The event whose transition entered *state*, handed to
+                the state's invokes when they are armed. ``None`` for the
+                initial entry and for re-arming after a rollback.
         """
         self._schedule_state_timers(state)
         # 📞 #204: invokes are DEFERRED to the end of the macrostep (SCXML
         #    6.1); see `_arm_pending_invokes`.
         self._states_to_invoke.append(state)
+        if trigger is not None:
+            self._invoke_trigger[state.id] = trigger
+        else:
+            self._invoke_trigger.pop(state.id, None)
 
     def _arm_pending_invokes(self) -> None:
         """Arm `invoke`s for states entered this macrostep and still active.
@@ -6065,8 +7218,9 @@ class BaseInterpreter(Generic[TContext]):
         pending, self._states_to_invoke = self._states_to_invoke, []
         active = self._active_state_nodes
         for state in pending:
+            trigger = self._invoke_trigger.pop(state.id, None)
             if state in active and state.invoke:
-                self._schedule_state_invokes(state)
+                self._schedule_state_invokes(state, trigger)
 
     def _schedule_state_timers(self, state: StateNode[Any]) -> None:
         """Arm every ``after`` timer *state* declares (#128 split).
@@ -6083,6 +7237,8 @@ class BaseInterpreter(Generic[TContext]):
     ) -> None:
         """Arm *state*'s timers; *remaining* (event type → ms left) overrides
         the declared delay for a `"resume"` / `"fire_due"` restore (#264)."""
+        if self._dormant_timer_states:
+            self._dormant_timer_states.discard(state.id)
         self._entry_seq += 1
         seq = self._entry_seq
         # 🕒 Schedule `after` timers.
@@ -6157,8 +7313,17 @@ class BaseInterpreter(Generic[TContext]):
                     state.id,
                 )
 
-    def _schedule_state_invokes(self, state: StateNode[Any]) -> None:
-        """Start every ``invoke`` *state* declares (#128 split)."""
+    def _schedule_state_invokes(
+        self,
+        state: StateNode[Any],
+        trigger: Optional[AnyEvent] = None,
+    ) -> None:
+        """Start every ``invoke`` *state* declares (#128 split).
+
+        Args:
+            state: The entered state whose invokes are armed.
+            trigger: The event that entered it, if any (0.12.0).
+        """
         # 📞 Schedule `invoke` services.
         for invocation in state.invoke:
             service_callable = (
@@ -6168,13 +7333,15 @@ class BaseInterpreter(Generic[TContext]):
             )
             # 💥 Fail-fast if the service implementation is missing.
             if service_callable is None:
-                # FIX: Reverted error message to match test suite expectations.
                 raise ImplementationMissingError(
                     f"Service '{invocation.src}' referenced by "
                     f"state '{state.id}' is not registered."
                 )
             self._invoke_service(
-                invocation, service_callable, owner_id=state.id
+                invocation,
+                service_callable,
+                owner_id=state.id,
+                trigger=trigger,
             )
             logger.debug(
                 "📞 Invoking service '%s' for state '%s'.",
@@ -6249,7 +7416,6 @@ class BaseInterpreter(Generic[TContext]):
         # 🔍 Find the guard function in the machine's logic.
         guard_callable = self.machine.logic.guards.get(guard.type)
         if not guard_callable:
-            # FIX: Reverted error message to match test suite expectations.
             raise ImplementationMissingError(
                 f"Guard '{guard.type}' not implemented."
             )
@@ -6332,7 +7498,8 @@ class BaseInterpreter(Generic[TContext]):
 
         Args:
             guard (GuardDefinition): The `stateIn` guard, whose params carry
-                the state id under `state` (or `value`).
+                the state id under `stateValue` (XState's own key, which the
+                structural hash already reads), `state` or `value`.
             event (AnyEvent): The current event,
                 used only to resolve callable params.
 
@@ -6342,7 +7509,9 @@ class BaseInterpreter(Generic[TContext]):
         params = self._resolve_params(guard.params, event)
         target = None
         if isinstance(params, dict):
-            target = params.get("state", params.get("value"))
+            target = params.get("stateValue")
+            if target is None:
+                target = params.get("state", params.get("value"))
         elif isinstance(params, str):
             target = params
         if not isinstance(target, str) or not target:
@@ -6417,26 +7586,35 @@ class BaseInterpreter(Generic[TContext]):
         """
         if params is None:
             return fn(context, event)
-        try:
-            signature = inspect.signature(fn)
-            accepts = len(
-                [
-                    p
-                    for p in signature.parameters.values()
-                    if p.kind
-                    in (
-                        inspect.Parameter.POSITIONAL_ONLY,
-                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                    )
-                ]
-            )
-            has_varargs = any(
-                p.kind is inspect.Parameter.VAR_POSITIONAL
-                for p in signature.parameters.values()
-            )
-        except (TypeError, ValueError):  # pragma: no cover - builtins
-            return fn(context, event)
-
-        if has_varargs or accepts >= 3:
+        # ⚡ The arity is inspected once per guard callable, not per call
+        #    (`_guard_accepts_params` is a weak-keyed memo, #307 perf).
+        if _guard_accepts_params(fn):
             return fn(context, event, params)
         return fn(context, event)
+
+
+def _initial_leaves_of(node: "StateNode[Any]") -> List["StateNode[Any]"]:
+    """The leaf states entering *node* would activate, without side effects.
+
+    Used by `BaseInterpreter.from_state` so a caller may name a compound
+    or parallel state and get a legal configuration: a compound state
+    contributes its ``initial`` child's leaves, a parallel state every
+    region's leaves, and an atomic or final state itself.
+    """
+    if node.is_atomic or node.is_final or not node.states:
+        return [node]
+    if node.type == "parallel":
+        out: List["StateNode[Any]"] = []
+        for region in node.states.values():
+            out.extend(_initial_leaves_of(region))
+        return out
+    initial_key = node.initial
+    child: Optional["StateNode[Any]"] = (
+        node.states.get(initial_key) if initial_key else None
+    )
+    if child is None:
+        # 📝 A compound state with no `initial` cannot be entered; report
+        #    it as the node itself and let the legality check refuse it
+        #    with its usual message rather than guessing a child.
+        return [node]
+    return _initial_leaves_of(child)

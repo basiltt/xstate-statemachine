@@ -30,6 +30,7 @@ from ._http import (
     ForbiddenError,
     problem,
     problem_for_exception,
+    problem_for_exception_logged,
     receipt_body,
     refuse_reserved_send_keys,
 )
@@ -71,9 +72,8 @@ async def transition_stream(
         return problem(403, "Origin not allowed")
     try:
         await registry.authorize(request, name, key, None)
-        snapshot = await registry.peek(name, key)
     except Exception as exc:  # noqa: BLE001 -- mapped, never leaked
-        return problem_for_exception(exc)
+        return problem_for_exception_logged(exc, f"SSE connect {name}/{key}")
     if registry.draining:
         # 🔥 battle #275: a server in shutdown answered 429 ("too many
         #    connections") -- a client would back off and retry THIS
@@ -81,10 +81,26 @@ async def transition_stream(
         return problem(503, "Shutting down")
     if not registry.try_open_connection(name, key):
         return problem(429, "Too many connections for this instance")
+    # 🔥 Review CW-16: SUBSCRIBE FIRST, then read the snapshot. The old
+    #    order (peek, then subscribe) lost a transition committed in
+    #    between: the client held a stale snapshot and never heard of it.
+    #    Now such a transition shows up in BOTH the snapshot and the
+    #    queue -- a harmless repeat (`seq` > `seq0` tells the client).
     sub = registry.subscribers.subscribe(name, str(key))
     seq0 = registry.subscribers.seq(name, str(key))
     released: List[bool] = []
     watcher: List["asyncio.Task[None]"] = []
+    try:
+        snapshot = await registry.peek(name, key)
+        # 🔥 Review CW-32: a `context_serializer` returning a non-JSON
+        #    value used to abort the response with a traceback AFTER the
+        #    200 headers went out; encode the first frame up front so it
+        #    is an ordinary 500 problem instead.
+        first_frame = _sse("snapshot", snapshot, seq0)
+    except Exception as exc:  # noqa: BLE001 -- mapped, never leaked
+        registry.subscribers.unsubscribe(sub)
+        registry.close_connection(name, key)
+        return problem_for_exception_logged(exc, f"SSE snapshot {name}/{key}")
 
     def release() -> None:
         # 🔥 battle #275: idempotent; runs from the generator's `finally`
@@ -113,7 +129,7 @@ async def transition_stream(
         try:
             if _owns_receive(request):
                 watcher.append(asyncio.ensure_future(watch_disconnect()))
-            yield _sse("snapshot", snapshot, seq0)
+            yield first_frame
             while True:
                 try:
                     item = await asyncio.wait_for(
@@ -253,7 +269,10 @@ async def _push_loop(
             await websocket.close(code=WS_INTERNAL_ERROR)
         except Exception:  # noqa: BLE001 -- already closed
             pass
-    except Exception:  # noqa: BLE001 -- socket gone
+    except Exception:  # noqa: BLE001 -- socket gone, or a bug worth a trace
+        # 📝 Review CW-32: usually the peer is gone (not worth a warning),
+        #    but a swallowed bug here once looked exactly the same.
+        logger.debug("📡 websocket pump for %r ended", key, exc_info=True)
         return
 
 
@@ -293,7 +312,6 @@ def websocket_endpoint(
                 return
             try:
                 await registry.authorize(websocket, name, key, None)
-                snapshot = await registry.peek(name, key)
             except ForbiddenError:
                 await websocket.close(code=WS_POLICY_VIOLATION)
                 return
@@ -310,9 +328,19 @@ def websocket_endpoint(
                 await websocket.close(code=WS_TRY_AGAIN_LATER)
                 return
             self._opened = True
+            # 🔥 Review CW-16: subscribe BEFORE the snapshot read (and
+            #    before the network-bound `accept()`), so a transition
+            #    committed in between is queued, not lost.
+            self._sub = registry.subscribers.subscribe(name, key)
+            try:
+                snapshot = await registry.peek(name, key)
+            except Exception:  # noqa: BLE001 -- never leaked to the peer
+                logger.exception("📡 websocket snapshot failed for %r", key)
+                await self.on_disconnect(websocket, WS_INTERNAL_ERROR)
+                await websocket.close(code=WS_INTERNAL_ERROR)
+                return
             try:
                 await websocket.accept()
-                self._sub = registry.subscribers.subscribe(name, key)
                 await websocket.send_json({"kind": "snapshot", **snapshot})
             except BaseException:
                 # 🔥 battle #275: Starlette calls `on_disconnect` only when
@@ -369,7 +397,9 @@ def websocket_endpoint(
                 await websocket.close(code=WS_POLICY_VIOLATION)
                 return
             except Exception as exc:  # noqa: BLE001 -- mapped, not leaked
-                resp = problem_for_exception(exc)
+                resp = problem_for_exception_logged(
+                    exc, f"websocket {etype!r} on {name}/{self._key}"
+                )
                 await self._reply(
                     websocket,
                     {"kind": "error", **json.loads(bytes(resp.body))},

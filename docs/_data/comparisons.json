@@ -211,7 +211,7 @@
       },
       {
         "feature": "REST / DRF",
-        "ours": "`StatechartViewSetMixin` generates one DRF `@action` per event (plus drf-spectacular schema); routers for FastAPI, Flask, Litestar, Starlette",
+        "ours": "`StatechartViewSetMixin` generates one DRF `@action` per event (plus drf-spectacular schema); FastAPI router, Litestar controller, Flask/Quart blueprints, Starlette registry helpers",
         "theirs": "DIY: call the transition from a DRF view",
         "source": "django-fsm-2 4.2.4: no REST helpers in the package; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
@@ -235,13 +235,13 @@
       },
       {
         "feature": "Persistence",
-        "ours": "`StatechartField` on your Django model row (queryable `__state` / `in_state()`), or snapshots in SQLite, Redis, SQLAlchemy, files",
+        "ours": "`StatechartField` on your Django model row (queryable `__state` / `in_state()`), or snapshots in SQLite, Redis, SQLAlchemy, Django ORM (`DjangoStore`), files",
         "theirs": "The Django model row (native)",
         "source": "django-fsm-2 4.2.4: the state is a model field; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
       {
         "feature": "XState JSON portability",
-        "ours": "Runs XState / Stately JSON unmodified; shares the chart with a TypeScript frontend",
+        "ours": "Reads XState v5 JSON (Stately export) and follows XState v5 statechart semantics; engine event names keep the v4 spelling",
         "theirs": "No: transitions are Python decorators",
         "source": "django-fsm-2 4.2.4: no import / export format; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       }
@@ -308,7 +308,7 @@
       },
       {
         "feature": "REST / DRF",
-        "ours": "`StatechartViewSetMixin` generates one DRF `@action` per event (plus drf-spectacular schema); routers for FastAPI, Flask, Litestar, Starlette",
+        "ours": "`StatechartViewSetMixin` generates one DRF `@action` per event (plus drf-spectacular schema); FastAPI router, Litestar controller, Flask/Quart blueprints, Starlette registry helpers",
         "theirs": "No",
         "source": "transitions 0.9.3: no web integration; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
@@ -332,13 +332,13 @@
       },
       {
         "feature": "Persistence",
-        "ours": "`StatechartField` on your Django model row (queryable `__state` / `in_state()`), or snapshots in SQLite, Redis, SQLAlchemy, files",
+        "ours": "`StatechartField` on your Django model row (queryable `__state` / `in_state()`), or snapshots in SQLite, Redis, SQLAlchemy, Django ORM (`DjangoStore`), files",
         "theirs": "DIY: pickle the model or store `state`",
         "source": "transitions 0.9.3: `MarkupMachine` can dump the definition, not a runtime snapshot; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
       {
         "feature": "XState JSON portability",
-        "ours": "Runs XState / Stately JSON unmodified; shares the chart with a TypeScript frontend",
+        "ours": "Reads XState v5 JSON (Stately export) and follows XState v5 statechart semantics; engine event names keep the v4 spelling",
         "theirs": "No (`MarkupMachine` has its own dict format)",
         "source": "transitions 0.9.3: `transitions.extensions.markup.MarkupMachine`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       }
@@ -405,7 +405,7 @@
       },
       {
         "feature": "REST / DRF",
-        "ours": "`StatechartViewSetMixin` generates one DRF `@action` per event (plus drf-spectacular schema); routers for FastAPI, Flask, Litestar, Starlette",
+        "ours": "`StatechartViewSetMixin` generates one DRF `@action` per event (plus drf-spectacular schema); FastAPI router, Litestar controller, Flask/Quart blueprints, Starlette registry helpers",
         "theirs": "No",
         "source": "python-statemachine 3.2.1: no web integration; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
@@ -429,13 +429,13 @@
       },
       {
         "feature": "Persistence",
-        "ours": "`StatechartField` on your Django model row (queryable `__state` / `in_state()`), or snapshots in SQLite, Redis, SQLAlchemy, files",
+        "ours": "`StatechartField` on your Django model row (queryable `__state` / `in_state()`), or snapshots in SQLite, Redis, SQLAlchemy, Django ORM (`DjangoStore`), files",
         "theirs": "`MachineMixin` stores the state on a model field",
         "source": "python-statemachine 3.2.1: `statemachine.mixins.MachineMixin`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
       {
         "feature": "XState JSON portability",
-        "ours": "Runs XState / Stately JSON unmodified; shares the chart with a TypeScript frontend",
+        "ours": "Reads XState v5 JSON (Stately export) and follows XState v5 statechart semantics; engine event names keep the v4 spelling",
         "theirs": "Reads its own JSON / YAML / SCXML documents, not XState JSON",
         "source": "python-statemachine 3.2.1: `statemachine.io` (json, yaml, scxml); ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       }

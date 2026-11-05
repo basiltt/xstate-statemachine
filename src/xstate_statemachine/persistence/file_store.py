@@ -53,7 +53,7 @@ from ..exceptions import (
     StoreError,
 )
 from .deadline import Deadline, check_deadline_record
-from .store import BaseStore, check_record_fields
+from .store import BaseStore, StoreUnavailableOSError, check_record_fields
 
 __all__ = ["FORMAT_VERSION", "FileStore", "encode_key", "decode_key"]
 
@@ -389,7 +389,13 @@ class FileStore(BaseStore):
         self.directory = Path(directory)
         self.stale_lock_after = float(stale_lock_after)
         self.fsync = bool(fsync)
-        self.directory.mkdir(parents=True, exist_ok=True)
+        try:
+            self.directory.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            # 🛡️ P-06: an unusable directory is an unavailable store.
+            raise StoreUnavailableOSError(
+                f"FileStore: cannot create {self.directory}: {exc}"
+            ) from exc
         if os.name == "posix":
             with contextlib.suppress(OSError):
                 os.chmod(self.directory, 0o700)
@@ -528,10 +534,13 @@ class FileStore(BaseStore):
         return rec
 
     def _write_atomic(self, path: Path, rec: Dict[str, Any]) -> None:
-        fd, tmp = tempfile.mkstemp(
-            prefix=".tmp-", suffix=_SUFFIX, dir=str(self.directory)
-        )
+        tmp: Optional[str] = None
         try:
+            # 🛡️ P-06: `mkstemp` is INSIDE the try -- ENOSPC / EACCES /
+            #    a vanished directory here used to escape as a bare OSError.
+            fd, tmp = tempfile.mkstemp(
+                prefix=".tmp-", suffix=_SUFFIX, dir=str(self.directory)
+            )
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
                 json.dump(rec, fh, separators=(",", ":"))
                 fh.flush()
@@ -551,9 +560,11 @@ class FileStore(BaseStore):
                     if attempt == _WRITE_RETRIES - 1:
                         raise
                     time.sleep(_WRITE_RETRY_SLEEP)
+            self._fsync_directory()
         except BaseException as exc:
-            with contextlib.suppress(OSError):
-                os.unlink(tmp)
+            if tmp is not None:
+                with contextlib.suppress(OSError):
+                    os.unlink(tmp)
             if isinstance(exc, OSError):
                 # 🛡️ #263 battle: ENOSPC / EIO / a stuck rename escaped as
                 #    a bare OSError, outside `except XStateMachineError`.
@@ -562,6 +573,28 @@ class FileStore(BaseStore):
                     exc, f"FileStore could not write {path.name}: {exc}"
                 ) from exc
             raise
+
+    def _fsync_directory(self) -> None:
+        """Make the rename itself durable (POSIX).
+
+        ⚡ P-10: ``fsync`` on the temp file protects its CONTENT, but the
+        directory entry that ``os.replace`` swapped lives in the directory;
+        without this a power loss after `save()` returned can resurrect the
+        previous record. Windows cannot open a directory for ``fsync``
+        (NTFS journals the rename), so it is skipped there.
+        """
+        if not self.fsync or os.name != "posix":
+            return
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        # 📝 Best-effort: the rename already happened, so a filesystem that
+        #    refuses a directory fsync (EINVAL) must not turn a committed
+        #    write into a reported failure.
+        with contextlib.suppress(OSError):
+            dir_fd = os.open(str(self.directory), flags)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
 
     # -- primitives ----------------------------------------------------------------------
     def _load_raw(
@@ -626,11 +659,21 @@ class FileStore(BaseStore):
             return new_version
 
     def _delete_raw(self, key: str) -> bool:
-        try:
-            os.unlink(self._path(key))
-            return True
-        except FileNotFoundError:
-            return False
+        path = self._path(key)
+        # 🔒 P-07: under the key's lock, like `_save_raw`. Unlocked, a save
+        #    that had already read version 3 could replace the file we just
+        #    unlinked and resurrect the record at version 4.
+        with self._maybe_lock(key, timeout=10.0):
+            try:
+                os.unlink(path)
+                return True
+            except FileNotFoundError:
+                return False
+            except OSError as exc:
+                # 🛡️ P-06: EACCES / a Windows sharing violation / EIO.
+                raise _store_write_error(
+                    exc, f"FileStore could not delete {path.name}: {exc}"
+                ) from exc
 
     def _forget_raw(self, key: str) -> Dict[str, int]:
         existed = self._delete_raw(key)
@@ -642,7 +685,14 @@ class FileStore(BaseStore):
 
     def _list_keys_raw(self, prefix: str, limit: int) -> List[str]:
         keys: List[str] = []
-        for p in self.directory.iterdir():
+        try:
+            entries = list(self.directory.iterdir())
+        except OSError as exc:
+            # 🛡️ P-06: the directory vanished or became unreadable.
+            raise StoreUnavailableOSError(
+                f"FileStore: cannot list {self.directory}: {exc}"
+            ) from exc
+        for p in entries:
             name = p.name
             if not name.endswith(_SUFFIX) or name.startswith(".tmp-"):
                 continue
@@ -657,6 +707,17 @@ class FileStore(BaseStore):
                     key = decode_key(stem)
                 except (ValueError, UnicodeDecodeError):
                     continue  # not ours
+                # 🛡️ P-08: only a name that `encode_key` would have written
+                #    for this key is ours. `Order.xsm.json` decodes to
+                #    "Order" but `load("Order")` reads `%4frder...`; `%2f`
+                #    decodes to a key `load` refuses. Advertising either
+                #    broke `list_versions` for the whole listing.
+                try:
+                    _validate_file_key(key)
+                except InvalidKeyError:
+                    continue
+                if _file_stem(key) != stem:
+                    continue
             if key.startswith(prefix):
                 keys.append(key)
         keys.sort()
@@ -761,7 +822,14 @@ class FileStore(BaseStore):
     def _os_lock(
         self, lock_path: Path, key: str, deadline: float, timeout: float
     ) -> Iterator[None]:
-        fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        try:
+            fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        except OSError as exc:
+            # 🛡️ P-06: the lock file cannot be opened (EACCES, EMFILE,
+            #    directory removed): an unavailable store, not a bare OSError.
+            raise StoreUnavailableOSError(
+                f"FileStore: cannot open lock file {lock_path.name}: {exc}"
+            ) from exc
         try:
             while True:
                 if _try_lock(fd):

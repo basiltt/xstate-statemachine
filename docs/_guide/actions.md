@@ -68,6 +68,34 @@ This order is guaranteed and consistent across all interpreter types.
 # 4. showSpinner   (entry action on "submitting")
 ```
 
+### Nested and parallel states
+
+When a transition leaves or enters several states at once, the engine
+follows XState v5 (and SCXML) exactly:
+
+- **Exit actions** run in *reverse document order*: innermost states
+  first, ancestors after their descendants, and in a parallel state one
+  whole region at a time, the region declared last first.
+- **Transition actions** run next, in the order they are listed.
+- **Entry actions** run in *document order*: ancestors before their
+  descendants, regions one at a time in the order they are declared —
+  including the region that holds the target.
+- With `"reenter": true` the source state itself exits and re-enters, even
+  when the target is one of its own children.
+- When **several regions** of a parallel state take a transition for the
+  same event, all of them form one step: every exit first, then each
+  transition's actions (regions in document order), then every entry. Two
+  transitions whose exits overlap conflict, and only one of them runs
+  ([Parallel States → When Several Regions Handle the Same
+  Event](../parallel/#when-several-regions-handle-the-same-event)).
+- When the machine reaches a **top-level final state**, the `exit` actions
+  of every state still active — the final state and the machine root
+  included — run after the final state's `entry` actions, innermost first,
+  and then `status` becomes `"done"`.
+
+[Parallel States → Entry and Exit Order](../parallel/#entry-and-exit-order)
+has a worked example.
+
 ## 📄 JSON Actions
 
 ### Single Action (String)
@@ -486,6 +514,109 @@ config — each returns a plain action definition, so they also work as raw JSON
 | `escalate` | Raise an error to the parent |
 | `forward_to` | Forward the current event to another actor |
 
+### `emit` and `interpreter.on()` — notify external listeners
+
+`emit` publishes an event to code **outside** the machine. In JSON it is `{"type": "emit", "params": {"event": {...}}}`; the event is not sent to the machine itself. Subscribe with `interpreter.on(event_type, listener)` — use `"*"` to receive every emitted event. The listener gets an `Event` (`.type`, `.payload`), and `on()` returns a callable that unsubscribes:
+
+```python
+from xstate_statemachine import SyncInterpreter, create_machine
+
+config = {
+    "id": "m",
+    "initial": "idle",
+    "states": {
+        "idle": {
+            "on": {
+                "GO": {
+                    "target": "done",
+                    "actions": [
+                        {
+                            "type": "emit",
+                            "params": {
+                                "event": {
+                                    "type": "TOAST",
+                                    "text": "hi",
+                                },
+                            },
+                        }
+                    ],
+                },
+            },
+        },
+        "done": {},
+    },
+}
+
+interp = SyncInterpreter(create_machine(config)).start()
+toasts = []
+unsubscribe = interp.on("TOAST", toasts.append)
+interp.send("GO")
+print(toasts)
+# [Event(type='TOAST', payload={'text': 'hi'})]
+unsubscribe()
+interp.stop()
+```
+
+The `log` built-in writes `params.expr` (a string, or a callable of `{context, event}`) to the library logger at INFO, prefixed with `[label]` when `params.label` is given. `cancel` (`{"type": "cancel", "params": {"sendId": "<id>"}}`) disarms a delayed `raise` / `sendTo` that was given that `id`, before it fires.
+
+### `assign` — update context
+
+`assign({...})` maps context keys to new values; a value may be a callable of
+`{context, event}`. As in XState v5, **every** property of one `assign` is
+computed against the context as it was *before* that action, and the
+results are merged afterwards — a property never sees what another property
+of the same `assign` just wrote, so two keys can swap without a temporary:
+
+```python
+from xstate_statemachine import SyncInterpreter, assign, create_machine
+
+config = {
+    "id": "m",
+    "initial": "a",
+    "context": {
+        "left": "x",
+        "right": "y",
+    },
+    "states": {
+        "a": {
+            "on": {
+                "SWAP": {
+                    "actions": assign(
+                        {
+                            "left": lambda args: args["context"]["right"],
+                            "right": lambda args: args["context"]["left"],
+                        }
+                    ),
+                },
+            },
+        },
+    },
+}
+
+interp = SyncInterpreter(create_machine(config)).start()
+interp.send("SWAP")
+assert interp.context == {
+    "left": "y",
+    "right": "x",
+}
+```
+
+Separate `assign` actions run in order, each seeing what the previous ones
+wrote (exit actions, then the transition's actions, then entry actions).
+To derive one key from another key's *new* value, use two `assign`s or a
+single callable `assign(lambda args: {...})` that returns the whole update.
+
+In JSON, `assign` is `{"type": "xstate.assign", "params": {"assignment":
+{...}}}` (what `assign()` builds) or, equivalently, the property mapping
+directly as `params`: `{"type": "xstate.assign", "params": {"count": 1}}`.
+`"assign"` works as the type too. When `params` has an `assignment` key,
+that key is the mapping.
+
+> **Changed in 0.12.0:** the properties of one `assign` used to be written
+> one at a time, so a later property's callable saw an earlier property's
+> new value; and the JSON form without the `assignment` wrapper was
+> silently ignored.
+
 ### `choose` — branch on guards
 
 ```python
@@ -543,6 +674,54 @@ interp = SyncInterpreter(create_machine(config, logic=logic)).start()
 interp.send("CLASSIFY")
 print(interp.context["tier"])  # gold
 ```
+
+The same action in plain JSON (the form a Stately export or a hand-written
+config uses) is `xstate.choose` with `params.branches`. The branches are
+tried in order and the first whose guard passes runs; a branch without a
+guard always passes. Branch guards may be composite (`and` / `or` / `not`)
+or the built-in `stateIn`:
+
+```json
+{
+  "type": "xstate.choose",
+  "params": {
+    "branches": [
+      {
+        "guard": {
+          "type": "stateIn",
+          "params": {
+            "stateValue": "#m.p.mode.night"
+          }
+        },
+        "actions": "atNight"
+      },
+      {
+        "guard": {
+          "type": "and",
+          "params": {
+            "guards": [
+              "isAdmin",
+              {
+                "type": "not",
+                "params": {
+                  "guard": "isBanned"
+                }
+              }
+            ]
+          }
+        },
+        "actions": "adminByDay"
+      },
+      {
+        "actions": "otherwise"
+      }
+    ]
+  }
+}
+```
+
+`params.conditions` (what the `choose()` helper builds) is accepted as a
+synonym of `params.branches`.
 
 ### `enqueue_actions` — imperative queueing
 
@@ -1136,6 +1315,16 @@ interp.stop()
 
 <div class="stately" data-machine="055d558d66" data-height="320" data-title="order"></div>
 
+> **What a provider contributes (0.12.0).** Discovery scans the instance's public
+> **bound methods and `@staticmethod`s** (a pure guard needs no `self`). A method
+> named like a **built-in action** -- `log`, `cancel`, `stop`, `send_to`, ... -- is
+> bound and runs *instead of* the built-in, exactly as a same-named entry in an
+> explicit `MachineLogic` does; for a `logic_modules` module the same holds for a
+> function *defined* in that module, not for one merely imported into it (`from
+> logging import log` cannot hijack `log`). Passing `logic=` **together with**
+> `logic_modules` / `logic_providers` emits a `UserWarning`: the explicit logic is
+> used and the other sources are not scanned.
+
 ### Global Registration
 
 For large applications, register modules globally so all machines can discover them:
@@ -1175,5 +1364,5 @@ loader.register_logic_module(my_services)
 - **[Context](../context/)** — the data that actions typically mutate
 - **[Services & Invoke](../services/)** — actions triggered by `onDone` / `onError` service callbacks
 - **[Pythonic API](../pythonic-api/)** — `@action` decorator and `State.enter()`/`State.exit()` decorators
-- **[Core Concepts](../core-concepts/)** — action execution order (entry → transition → exit)
+- **[Core Concepts](../core-concepts/)** — action execution order (exit → transition → entry)
 - **[Interpreters](../interpreters/)** — how actions interact with sync vs async interpreters

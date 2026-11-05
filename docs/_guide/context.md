@@ -612,7 +612,10 @@ print(interp.context["count"])  # 2
 interp.stop()
 ```
 
-See [Actions](../actions/) for the full list of built-in action creators, including `assign`.
+All callables of one `assign` see the context as it was before the action
+(XState v5); the updates are merged afterwards. See [Actions →
+`assign`](../actions/#assign-update-context) for what that means for keys that
+depend on each other, and for the full list of built-in action creators.
 
 ## Typed Context — Letting the Checker Catch Your Typos
 

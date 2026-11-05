@@ -90,7 +90,20 @@ class TestSingleBuild(_Quiet):
 class TestAcceptsKwargMemo(_Quiet):
     def test_signature_inspected_once_per_function(self) -> None:
         bi._ACCEPTS_KWARG_CACHE.clear()
-        clock = RealClock()
+        # ⚡ 0.12.0: the library's own clocks are known to take `sync=`,
+        #    so building on a `RealClock` never inspects a signature.
+        with mock.patch.object(
+            bi.inspect, "signature", wraps=bi.inspect.signature
+        ) as sig:
+            for _ in range(5):
+                SyncInterpreter(create_machine(TOGGLE), clock=RealClock())
+        self.assertEqual(0, sig.call_count)
+
+        # A custom clock is inspected ONCE; the memo serves the rest.
+        class MyClock(RealClock):
+            pass
+
+        clock = MyClock()
         with mock.patch.object(
             bi.inspect, "signature", wraps=bi.inspect.signature
         ) as sig:
@@ -134,10 +147,15 @@ class TestGeometryMemo(_Quiet):
         t = i.machine.states["A"].on["NEXT"][0]
         b = i.machine.states["B"]
         a = i.machine.states["A"]
-        _, path_b = i._transition_geometry(t, b)
-        _, path_a = i._transition_geometry(t, a)
+        domain_b, path_b = i._transition_geometry(t, b)
+        domain_a, path_a = i._transition_geometry(t, a)
         self.assertEqual([b], path_b)
-        self.assertEqual([a], path_a)
+        self.assertIs(i.machine, domain_b)
+        # Re-resolved onto its own source, the (non-reentering) transition
+        # has the source as its domain and enters nothing -- XState v5's
+        # getTransitionDomain. The memo must not serve `[b]` for it.
+        self.assertEqual([], path_a)
+        self.assertIs(a, domain_a)
 
     def test_nested_and_parallel_traces_unchanged(self) -> None:
         """Same event script, geometry memo warm vs cold: identical trace."""

@@ -52,10 +52,12 @@ __all__ = [
     "StateNotFoundError",
     "ImplementationMissingError",
     "ActorSpawningError",
+    "UnresolvedTargetError",
     "NotSupportedError",
     "RestoredError",
     "UnhandledEventError",
     "TransitionFailedError",
+    "TransitionNotAllowedError",
     "SnapshotVersionError",
     "SnapshotDriftError",
     "QueueOverflowError",
@@ -78,6 +80,7 @@ __all__ = [
     "StoreUnavailableError",
     "SnapshotTooLargeError",
     "InvalidKeyError",
+    "ExplorationLimitError",
 ]
 
 # -----------------------------------------------------------------------------
@@ -91,9 +94,47 @@ class XStateMachineError(Exception):
     Catching this exception allows a developer to handle any error originating
     from the state machine's logic, providing a reliable top-level error
     boundary. It is the common ancestor for all other exceptions in this module.
+
+    🏛️ Picklability (RU-11): most subclasses take structured constructor
+    arguments but pass only a formatted message to ``Exception.__init__``,
+    so the default ``__reduce__`` (``cls(*self.args)``) could not rebuild
+    them -- crossing a ``multiprocessing`` / ``concurrent.futures`` /
+    Celery boundary raised ``TypeError`` instead of the error. The ORIGINAL
+    constructor arguments are therefore captured in ``__new__`` and replayed
+    by ``__reduce__``, for this class and every subclass, with no per-class
+    boilerplate.
     """
 
-    pass
+    _xsm_init: Tuple[Tuple[Any, ...], "dict[str, Any]"]
+
+    def __new__(cls, *args: Any, **kwargs: Any) -> "XStateMachineError":
+        self = super().__new__(cls, *args)
+        # 📝 Stored under one private name; `__reduce__` drops it from the
+        #    pickled state because the rebuild re-creates it.
+        self._xsm_init = (args, kwargs)
+        return self
+
+    def __reduce__(self) -> Tuple[Any, ...]:
+        """Rebuild through the original constructor arguments."""
+        args, kwargs = getattr(self, "_xsm_init", (self.args, {}))
+        state = {k: v for k, v in self.__dict__.items() if k != "_xsm_init"}
+        return (_rebuild_error, (type(self), args, kwargs), state or None)
+
+
+def _rebuild_error(
+    cls: Any, args: Tuple[Any, ...], kwargs: "dict[str, Any]"
+) -> Any:
+    """Unpickle helper: call *cls* with its original constructor arguments.
+
+    Args:
+        cls: The exception class to instantiate.
+        args: Positional arguments the original instance was built with.
+        kwargs: Keyword arguments the original instance was built with.
+
+    Returns:
+        The reconstructed exception.
+    """
+    return cls(*args, **kwargs)
 
 
 class InvalidConfigError(XStateMachineError):
@@ -206,6 +247,26 @@ class ActorSpawningError(XStateMachineError):
     pass
 
 
+class UnresolvedTargetError(ActorSpawningError):
+    """Recorded as a step's soft error when an addressed event reached no
+    live actor.
+
+    `sendTo`, `forwardTo`, `sendParent` and `escalate` deliver to an actor
+    the machine names. When nothing by that name is alive the event is
+    DROPPED (`on_event_dropped(..., "unresolved_target")`) and the step
+    that tried is marked failed with this error (`receipt.error`,
+    `last_error`); the transition itself still commits, because its other
+    actions already ran.
+
+    📝 Review BI-32: through 0.11 this case surfaced as a bare
+    `ActorSpawningError`, although nothing was being spawned. It stays a
+    subclass so existing ``except ActorSpawningError`` handlers keep
+    working; catch this class to tell a dead target from a failed spawn.
+    """
+
+    pass
+
+
 class NotSupportedError(XStateMachineError):
     """Raised for features incompatible with the current interpreter mode.
 
@@ -278,6 +339,32 @@ class UnhandledEventError(XStateMachineError):
             f"Event '{event_type}' is not handled in any active state "
             f"{self.active_states} and the machine's onUnhandled policy "
             f"is 'error'."
+        )
+
+
+class TransitionNotAllowedError(XStateMachineError):
+    """Raised by a strict Pythonic ``StateMachine`` for a declared event
+    that no active state will take right now.
+
+    🏛️ Unlike ``onUnhandled: "error"`` (which stops the machine) this is a
+    refusal at the call site: the event is never dispatched and the
+    configuration is untouched, so the caller can recover and try
+    something else -- the behaviour a ``TransitionNotAllowed`` user of
+    python-statemachine expects.
+
+    Attributes:
+        event_type: The event that was refused.
+        active_states: The leaf state ids that were active, relative to
+            the machine root.
+    """
+
+    def __init__(self, event_type: str, active_states: Iterable[str]):
+        self.event_type = event_type
+        self.active_states = sorted(active_states)
+        shown = ", ".join(self.active_states)
+        super().__init__(
+            f"Can't '{event_type}' when in '{shown}': no enabled "
+            f"transition for this event (strict mode)."
         )
 
 
@@ -768,3 +855,33 @@ class InvalidKeyError(StoreError, ValueError):
     """A store key is unusable: empty, too long, or -- for `FileStore` --
     one that could escape the directory or collide on a case-folding
     filesystem."""
+
+
+# -----------------------------------------------------------------------------
+# 🗺️ Graph exploration (#269)
+# -----------------------------------------------------------------------------
+class ExplorationLimitError(XStateMachineError):
+    """`shortest_paths` found more configurations than ``max_configs``.
+
+    🐛 #269 battle (A3): a wide parallel chart has a configuration count
+    exponential in its regions; with no bound the traversal ran until the
+    snapshot cache or the clock gave out. ``found`` is the partial result
+    so far (shortest paths are already final for every entry).
+
+    📝 RU-36: defined here with every other `XStateMachineError` (and
+    exported at the package root); ``xstate_statemachine.graph`` re-exports
+    it for the import path that existed before.
+
+    Attributes:
+        limit: The ``max_configs`` bound that was exceeded.
+        found: ``{configuration: Path}`` discovered before the cut.
+    """
+
+    def __init__(self, limit: int, found: "dict[Any, Any]") -> None:
+        super().__init__(
+            f"graph: more than {limit} reachable configurations; raise "
+            f"max_configs (or None), lower max_depth, or explore a "
+            f"sub-chart."
+        )
+        self.limit = limit
+        self.found = found

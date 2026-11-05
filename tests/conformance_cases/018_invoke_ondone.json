@@ -1,0 +1,147 @@
+{
+  "name": "invoke_ondone",
+  "description": "An invoked service completes with a result; onDone transitions and runs its action.",
+  "tags": [
+    "invoke",
+    "services"
+  ],
+  "machine": {
+    "id": "profile",
+    "initial": "idle",
+    "context": {
+      "user": null
+    },
+    "states": {
+      "idle": {
+        "on": {
+          "LOAD": "loading"
+        }
+      },
+      "loading": {
+        "invoke": {
+          "src": "fetchUser",
+          "id": "fetchUser",
+          "onDone": {
+            "target": "ready",
+            "actions": "saveUser"
+          },
+          "onError": "failed"
+        }
+      },
+      "ready": {
+        "type": "final"
+      },
+      "failed": {}
+    }
+  },
+  "logic": {
+    "services": {
+      "fetchUser": {
+        "result": {
+          "name": "Ada"
+        }
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "LOAD"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "profile.idle"
+        ],
+        "context": {
+          "user": null
+        },
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "profile.ready"
+          ],
+          "context": {
+            "user": null
+          },
+          "actions": [
+            "saveUser"
+          ],
+          "status": "done",
+          "output": null
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "profile.idle"
+        ],
+        "context": {
+          "user": null
+        },
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "profile.ready"
+          ],
+          "context": {
+            "user": null
+          },
+          "actions": [
+            "saveUser"
+          ],
+          "status": "done",
+          "output": null
+        }
+      ],
+      "machine_hash": "357d0a40c0f8002f",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "profile",
+        "machine_hash": "357d0a40c0f8002f",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "done",
+        "context": {
+          "user": null
+        },
+        "state_ids": [
+          "profile.ready"
+        ],
+        "value": "ready",
+        "configuration": [
+          "profile",
+          "profile.ready"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"profile\",\n  \"machine_hash\": \"357d0a40c0f8002f\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"done\",\n  \"context\": {\n    \"user\": null\n  },\n  \"state_ids\": [\n    \"profile.ready\"\n  ],\n  \"value\": \"ready\",\n  \"configuration\": [\n    \"profile\",\n    \"profile.ready\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

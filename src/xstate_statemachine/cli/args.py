@@ -44,6 +44,36 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------
 
 
+class _SingleUseStore(argparse.Action):
+    """Store one value and refuse a second occurrence of the same option.
+
+    📝 CLI-008: ``argparse`` silently keeps the last of two ``-jp`` values,
+    which resolved an ambiguous hierarchy without telling anyone.
+    """
+
+    def __call__(
+        self,
+        parser: argparse.ArgumentParser,
+        namespace: argparse.Namespace,
+        values: Any,
+        option_string: Optional[str] = None,
+    ) -> None:
+        """Store *values*, or exit with a usage error on a repeat.
+
+        Args:
+            parser: The parser, used to report the error.
+            namespace: Where the value is stored.
+            values: The parsed option value.
+            option_string: The flag as typed.
+
+        Raises:
+            SystemExit: Via ``parser.error`` when the option repeats.
+        """
+        if getattr(namespace, self.dest, None) is not None:
+            parser.error(f"Only one {option_string} may be supplied.")
+        setattr(namespace, self.dest, values)
+
+
 def _non_negative_int(text: str) -> int:
     """argparse type for depth / count bounds (#269 battle)."""
     try:
@@ -80,6 +110,7 @@ def _add_file_input_args(parser: argparse.ArgumentParser) -> None:
         "-jp",
         "--json-parent",
         metavar="PATH",
+        action=_SingleUseStore,
         help="Path to the JSON file that represents the *parent* machine in a hierarchy.",
     )
     parser.add_argument(
@@ -265,7 +296,7 @@ def _add_simulation_option_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument(
         "--sleep-time",
-        type=int,
+        type=_non_negative_int,
         default=2,
         help="Sleep duration in seconds for the simulation. Default: 2.",
     )
@@ -341,7 +372,8 @@ examples:
   xsm validate machine.json
   xsm list-templates
   xsm info
-  xsm plugins                           list installed third-party plugins  xsm update                            upgrade to the latest release
+  xsm plugins                           list installed third-party plugins
+  xsm update                            upgrade to the latest release
   python -m xstate_statemachine setup   Windows: fix a blocked xsm.exe launcher
             """,
     )
@@ -983,15 +1015,10 @@ def validate_args(parser: argparse.ArgumentParser) -> None:
     Raises:
         SystemExit: Exits the program if validation fails.
     """
-    # 🧪 Validate that --json-parent is only supplied once.
-    # We check the raw `sys.argv` because `argparse` will have already processed it.
-    jp_count = sys.argv.count("--json-parent") + sys.argv.count("-jp")
-    if jp_count > 1:
-        logger.error(
-            "❌ Validation Error: The --json-parent flag can only be specified once."
-        )
-        parser.error("Only one --json-parent may be supplied.")
-
+    # 📝 CLI-008: "--json-parent given twice" is rejected by
+    #    `_SingleUseStore` while parsing. It used to be counted in
+    #    `sys.argv`, which missed `--json-parent=a --json-parent=b` and
+    #    `-jpfoo`, and broke for any caller passing its own argv list.
     # ✅ If this point is reached, the arguments are valid.
     logger.info("✅ All command-line arguments are valid.")
 

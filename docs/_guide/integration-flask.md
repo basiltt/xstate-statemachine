@@ -3,7 +3,7 @@ title: "Flask integration"
 description: "An init_app extension, a statechart blueprint, session-keyed wizards and a flask xsm CLI — plus a Quart shim — over any StateStore."
 ---
 
-Flask has a very large install base, and (as of October 2026) PyPI has no Flask extension for statecharts -- no `flask-fsm`, `flask-statemachine` or `flask-transitions`. This extra follows the canonical `init_app` pattern. You get an `XState` extension that keeps its state in `app.extensions`, so the application-factory pattern is safe. `act()` gives you *create → act → persist → discard* on any `StateStore`. There is a blueprint with the same route table as the FastAPI router, a cookie-backed `SessionStore` for small multi-step wizards, and `flask xsm` commands for the machines your app registers. Quart, Flask's async twin, is served by a shim built on the same core.
+Flask has a very large install base. This extra follows the canonical `init_app` pattern. You get an `XState` extension that keeps its state in `app.extensions`, so the application-factory pattern is safe. `act()` gives you *create → act → persist → discard* on any `StateStore`. There is a blueprint with the same route table as the FastAPI router, a cookie-backed `SessionStore` for small multi-step wizards, and `flask xsm` commands for the machines your app registers. Quart, Flask's async twin, is served by a shim built on the same core.
 
 ## Install
 
@@ -122,7 +122,7 @@ assert (
 
 ## Reference
 
-### `XState(app=None)` and `init_app(app, store, *, lock=None, plugins=(), inbox=None, principal=None, log=None, max_body_bytes=1 MiB, heartbeat_s=15, max_connections_per_key=16, allowed_origins=(), cli=True)`
+### `XState(app=None)` and `init_app(app, store, *, lock=None, plugins=(), inbox=None, principal=None, log=None, clock=None, migrator=None, max_body_bytes=None, heartbeat_s=15, max_connections_per_key=16, allowed_origins=(), cli=True, error_handlers=True)`
 
 Binds a store and its policies to *app*. The state lives in `app.extensions["xstate"]`. Nothing is stored on the extension object, so two apps built from one `XState()` never share a store. `lock` is `OptimisticLock()` (the default) or `PessimisticLock()`. `inbox` together with `principal` enables principal-scoped `Idempotency-Key` deduplication (X0.2), and `principal` is **required** whenever `inbox` is set. `log` attaches an `AuditPlugin` and backs `GET /<id>/history`. With `cli=True`, `flask xsm` is registered. The extension also sets `g.xsm` on each request (`g.xsm.act(...)`, `g.xsm.peek(...)`).
 
@@ -307,7 +307,9 @@ with app.test_request_context(method="POST"):
 
 A JSON response whose status comes from the **core** table, `xstate_statemachine.receipts.receipt_to_status`: 200 for a transition or a no-op, 202 for deferred, 409 when a guard denies, 422 when an idempotency key is reused with a different body, 500 for an action error (class name only). An idempotency refusal comes back as an RFC 9457 problem. `problem_response(exc)` builds a problem for any exception, containing a fixed title and the class name, **never** `str(exc)`. A `StoreUnavailableError` (the store's backend is down) is a **503** problem logged as one WARNING line per request, not a traceback (#306 battle).
 
-### `create_statechart_blueprint(xsm, name, url_prefix, *, per_event_routes=False, create_if_missing=True)`
+### `create_statechart_blueprint(xsm, name, url_prefix, *, per_event_routes=False, create_if_missing=True, blueprint_name=None)`
+
+`blueprint_name` sets the name the blueprint is registered under (default `xsm_<name>`); pass one when the same chart is mounted twice or two charts share a `name`, since Flask refuses duplicate blueprint names.
 
 | Route | Does |
 |:--|:--|
@@ -452,7 +454,7 @@ assert (
 
 | Flask | Quart | Python | Tested in CI |
 |:--|:--|:--|:--|
-| 2.3 – 3.1 | 0.19+ (optional) | 3.9 – 3.14 | ✅ `[flask]` cell, Quart + Flask-WTF installed |
+| 2.3 – 3.1 | 0.19+ (optional) | 3.9 – 3.15 | ✅ `[flask]` cell, Quart + Flask-WTF installed |
 
 ## Troubleshooting
 
