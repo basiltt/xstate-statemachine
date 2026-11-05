@@ -453,7 +453,11 @@ def _make_probe_class() -> type:
     The import is deferred to call time to avoid a circular import at
     module load (`sync_interpreter` imports from this package too).
     """
-    from .sync_interpreter import SyncInterpreter
+    # ⚡ Bound once here, not on every `_execute_actions` call: an `import`
+    #    statement inside the hot method cost two module-dict lookups per
+    #    step of the pure API.
+    from .actions import ASSIGN, resolve_builtin
+    from .sync_interpreter import SyncInterpreter, _Done
 
     class _Probe(SyncInterpreter[Any]):
         """A SyncInterpreter that records actions rather than executing them."""
@@ -469,11 +473,9 @@ def _make_probe_class() -> type:
             list -- the shared base algorithm `await`s this leaf (#60) and
             the action-error machinery (#27) sees a clean run.
             """
-            from .actions import ASSIGN, resolve_builtin
-            from .sync_interpreter import _Done
-
+            recorded = self._recorded
             for action_def in actions or []:
-                self._recorded.append(action_def)
+                recorded.append(action_def)
                 if resolve_builtin(action_def.type) == ASSIGN:
                     self._apply_assign(
                         self._resolve_params(action_def.params, event) or {},
@@ -599,7 +601,7 @@ def _capture(probe: Any) -> PureSnapshot:
     elif probe.status == "error":
         status = "error"
     snap = PureSnapshot(
-        state_ids=set(probe.current_state_ids),
+        state_ids=probe.current_state_ids,  # the property builds a set
         configuration={node.id for node in probe._active_state_nodes},
         context=copy.deepcopy(probe.context),
         status=status,
@@ -665,7 +667,10 @@ def transition(
         #    transition.
         return snapshot, []
     probe, recorded = _build_probe(machine, snapshot, None)
-    probe.send(probe._coerce_event(event))
+    # ⚡ `send()` normalises the event itself (`_prepare_event_reporting`,
+    #    the same rules as `_coerce_event`); normalising here first made
+    #    every step pay twice.
+    probe.send(event)
     # 📭 Hand back a COPY of the recorded list: the probe is cached and its
     #    list is cleared on the next call, so a caller holding the list
     #    across calls would otherwise see it emptied under them.
