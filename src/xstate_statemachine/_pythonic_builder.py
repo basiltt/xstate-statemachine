@@ -23,6 +23,12 @@ from .machine_logic import (
 )
 from .models import MachineNode
 
+#: Accepted ``history=`` values.
+_HISTORY_KINDS = frozenset({"shallow", "deep"})
+
+#: Root keys the builder owns; ``root()`` may not set them.
+_ROOT_RESERVED = frozenset({"id", "states", "initial"})
+
 # -------------------------------------------------------------------------
 # Builder API: MachineBuilder
 # -------------------------------------------------------------------------
@@ -93,7 +99,9 @@ class MachineBuilder:
 
         Raises:
             InvalidConfigError: If ``name`` is already defined,
-                or ``final`` and ``parallel`` are both True.
+                ``final`` and ``parallel`` are both True, ``history`` is
+                combined with either, or ``history`` is not
+                ``"shallow"`` / ``"deep"``.
         """
         if name in self._states:
             raise InvalidConfigError(f"Duplicate state name '{name}'")
@@ -101,6 +109,19 @@ class MachineBuilder:
             raise InvalidConfigError(
                 f"State '{name}' cannot be both " f"final and parallel"
             )
+        if history is not None:
+            # 🛡️ Before 0.12.0 `history=` silently overwrote the type a
+            #    `final=` / `parallel=` flag had just set.
+            if history not in _HISTORY_KINDS:
+                raise InvalidConfigError(
+                    f"State '{name}': history must be one of "
+                    f"{sorted(_HISTORY_KINDS)}, not {history!r}"
+                )
+            if final or parallel:
+                raise InvalidConfigError(
+                    f"State '{name}': a history pseudo-state cannot also "
+                    f"be final or parallel"
+                )
         config: Dict[str, Any] = {}
         if final:
             config["type"] = "final"
@@ -110,7 +131,9 @@ class MachineBuilder:
             config["type"] = "history"
             config["history"] = history
         if on:
-            config["on"] = on
+            # 📝 A copy: `always` below adds a "" key, which must not land
+            #    in the caller's dict (often reused for several states).
+            config["on"] = dict(on)
         if entry:
             config["entry"] = entry
         if exit:
@@ -148,7 +171,32 @@ class MachineBuilder:
         reenter: bool = False,
         internal: bool = False,
     ) -> "MachineBuilder":
-        """Add a transition between states."""
+        """Add a transition between states.
+
+        Args:
+            source: The source state name (top level).
+            event: The event type.
+            target: The target state name; ``""`` for an internal
+                transition.
+            guard: Optional guard name.
+            actions: Optional action names.
+            reenter: Force exit/re-entry on a self-transition.
+            internal: An internal transition (no state change).
+
+        Returns:
+            This builder, for chaining.
+
+        Raises:
+            InvalidConfigError: ``internal=True`` with a target. The
+                target used to be dropped without a word.
+        """
+        if internal and target:
+            raise InvalidConfigError(
+                f"Transition '{source}' --{event}--> '{target}': "
+                f"internal=True takes no target (an internal transition "
+                f'stays in its state). Pass target="" or drop '
+                f"internal=True."
+            )
         self._transitions.append(
             {
                 "source": source,
@@ -170,17 +218,46 @@ class MachineBuilder:
         states: Optional[Dict[str, Dict[str, Any]]] = None,
         parallel: bool = False,
     ) -> "MachineBuilder":
-        """Add child states to an existing state."""
+        """Add child states to an existing state.
+
+        Args:
+            parent: The (top-level) state that receives the children.
+            initial: The initial child (compound parents only).
+            states: Child name to raw state config.
+            parallel: Make *parent* a parallel state.
+
+        Returns:
+            This builder, for chaining.
+
+        Raises:
+            InvalidConfigError: *parent* is unknown, ``initial`` is given
+                with ``parallel=True`` (regions have no initial child;
+                it used to be dropped silently), or a child name is
+                already defined on *parent*.
+        """
         if parent not in self._states:
             raise InvalidConfigError(
                 f"Parent state '{parent}' not found. "
                 f"Add it with .state() first"
             )
+        if initial and parallel:
+            raise InvalidConfigError(
+                f"State '{parent}': a parallel state has no initial "
+                f"child (every region is active); drop initial="
+            )
         parent_config = self._states[parent]
         if parallel:
             parent_config["type"] = "parallel"
         if states:
-            parent_config["states"] = states
+            # 📝 Merge, so a second call adds children instead of
+            #    silently replacing the first call's.
+            existing = parent_config.setdefault("states", {})
+            clash = sorted(set(existing) & set(states))
+            if clash:
+                raise InvalidConfigError(
+                    f"State '{parent}' already has child state(s) {clash}"
+                )
+            existing.update(states)
         if initial and not parallel:
             parent_config["initial"] = initial
         return self
@@ -209,7 +286,18 @@ class MachineBuilder:
 
         Returns:
             This builder, for chaining.
+
+        Raises:
+            InvalidConfigError: A structural key (``id``, ``states``,
+                ``initial``) is given: those come from the builder's own
+                calls and used to be overwritten silently at build().
         """
+        reserved = sorted(set(properties) & _ROOT_RESERVED)
+        if reserved:
+            raise InvalidConfigError(
+                f"root() cannot set {reserved}: use the MachineBuilder "
+                f"id, .state() and initial=True instead."
+            )
         self._root.update(properties)
         return self
 
@@ -247,9 +335,9 @@ class MachineBuilder:
             A ``MachineNode`` ready for interpreter use.
 
         Raises:
-            InvalidConfigError: If no initial state is defined
-                and the machine has more than one non-parallel
-                state, or if a transition source is invalid.
+            InvalidConfigError: If a transition source is not a
+                top-level state. A missing initial state only logs a
+                warning (the engine accepts such charts).
         """
         # Validate initial state is defined (unless single
         # parallel root or single state)

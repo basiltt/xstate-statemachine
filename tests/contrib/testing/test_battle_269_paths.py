@@ -18,7 +18,18 @@ TRI = {
         "c": {},
     },
 }
-BAD = {"id": "bad", "initial": "nope", "states": {"a": {}}}
+#: Builds, but cannot START: a compound state with two children and no
+#: `initial` is refused when it is entered (0.12.0 moved the other classic
+#: "cannot start" shape -- an `initial` naming no child -- to a build-time
+#: `InvalidConfigError`, which the plugin reports as a usage error; see
+#: `TestFailures.test_machine_that_cannot_build_is_a_usage_error`).
+BAD = {
+    "id": "bad",
+    "initial": "p",
+    "states": {"p": {"states": {"a": {}, "b": {}}}},
+}
+#: Does not even build: `initial` names no child state.
+UNBUILDABLE = {"id": "bad", "initial": "nope", "states": {"a": {}}}
 
 
 def _mod(body: str) -> str:
@@ -101,7 +112,24 @@ class TestFailures:
         #    whole session died, `test_other` never ran.
         r.assert_outcomes(passed=1, errors=1)
         r.stdout.fnmatch_lines(
-            ["*cannot generate xsm_path cases*does not start*nope*"]
+            ["*cannot generate xsm_path cases*does not start*'initial'*"]
+        )
+
+    def test_machine_that_cannot_build_is_a_usage_error(
+        self, xsm_pytester
+    ) -> None:
+        # 📝 A chart `create_machine()` refuses is a usage error naming the
+        #    test (the marker is wrong, not the run), as for a malformed
+        #    marker; the message carries the parser's own words.
+        xsm_pytester.makepyfile(_mod(f"""
+                @pytest.mark.xstate_machine({UNBUILDABLE!r})
+                def test_bad(xsm_path):
+                    pass
+                """))
+        r = run(xsm_pytester)
+        assert r.ret != 0
+        r.stdout.fnmatch_lines(  # a collection error is reported on stdout
+            ["*test_bad*create_machine failed*InvalidConfigError*nope*"]
         )
         assert "Traceback" not in r.stdout.str()
 

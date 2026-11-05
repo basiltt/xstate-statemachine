@@ -10,6 +10,7 @@ names from ``xstate_statemachine.pythonic``.
 # -------------------------------------------------------------------------
 # 📦 Standard Library Imports
 # -------------------------------------------------------------------------
+import copy
 import functools
 import inspect
 import logging
@@ -76,6 +77,12 @@ def _snake_to_camel(snake_str: str) -> str:
     return components[0] + "".join(x.title() for x in components[1:])
 
 
+#: A word boundary inside a camelCase / PascalCase identifier: lower or
+#: digit followed by upper (``slowDown``), or the last capital of an
+#: acronym that starts a new word (``HTTPError`` → ``HTTP|Error``).
+_WORD_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+
+
 @functools.lru_cache(maxsize=256)
 def _attr_to_event(attr_name: str) -> str:
     """Infer an event type from a transition's attribute name.
@@ -83,9 +90,22 @@ def _attr_to_event(attr_name: str) -> str:
     ``cycle`` → ``CYCLE``, ``slow_down`` → ``SLOW_DOWN`` and ``slowDown``
     → ``SLOW_DOWN``: the JSON convention is SCREAMING_SNAKE_CASE, and the
     inferred name must match what ``send("...")`` callers write.
+
+    An attribute already written in SCREAMING_SNAKE (``START_NOW``) is
+    kept as is, and acronyms stay together (``HTTPError`` →
+    ``HTTP_ERROR``, ``parseXML`` → ``PARSE_XML``). Before 0.12.0 every
+    capital started a new word, so ``START_NOW`` became
+    ``S_T_A_R_T__N_O_W``.
+
+    Args:
+        attr_name: The class attribute the transition is assigned to.
+
+    Returns:
+        The SCREAMING_SNAKE_CASE event type.
     """
-    snake = re.sub(r"(?<!^)(?=[A-Z])", "_", attr_name)
-    return snake.upper()
+    if attr_name.isupper():
+        return attr_name
+    return _WORD_BOUNDARY.sub("_", attr_name).upper()
 
 
 def _as_action_list(value: Any) -> List[Any]:
@@ -100,6 +120,96 @@ def _as_action_list(value: Any) -> List[Any]:
     if isinstance(value, (str, dict)):
         return [value]
     return list(value)
+
+
+def _tag(fn: Callable[..., Any], kind: str, name: Any) -> None:
+    """Mark *fn* as a DSL ``action`` / ``guard`` / ``service`` named *name*.
+
+    Shared by the decorators and the ``State`` decorator methods so the
+    checks live in one place.
+
+    Args:
+        fn: The callable to mark.
+        kind: ``"action"``, ``"guard"`` or ``"service"``.
+        name: The name the chart refers to it by.
+
+    Raises:
+        InvalidConfigError: *name* is not a non-empty string, *fn* is
+            already marked as a different kind (``@action`` stacked on
+            ``@guard`` silently changed its kind before 0.12.0), or *fn*
+            does not accept attributes (a bound method or a builtin).
+    """
+    if not isinstance(name, str) or not name:
+        raise InvalidConfigError(
+            f"@{kind} name must be a non-empty string, not {name!r}."
+        )
+    previous = getattr(fn, "_xsm_type", None)
+    if previous is not None and previous != kind:
+        raise InvalidConfigError(
+            f"{getattr(fn, '__name__', fn)!r} is already marked as a "
+            f"{previous}; one callable cannot also be a {kind}. Use two "
+            f"functions."
+        )
+    try:
+        setattr(fn, "_xsm_type", kind)
+        setattr(fn, "_xsm_name", name)
+    except (AttributeError, TypeError) as exc:
+        raise InvalidConfigError(
+            f"@{kind} cannot mark {fn!r}: it does not accept attributes. "
+            f"Decorate the plain function instead."
+        ) from exc
+
+
+def _explicit_name(value: Any, kind: str) -> Optional[str]:
+    """Validate the argument of ``@{kind}(...)``.
+
+    Args:
+        value: The decorator argument (``None`` for ``@{kind}()``).
+        kind: ``"action"``, ``"guard"`` or ``"service"``.
+
+    Returns:
+        The explicit name, or ``None`` to use the function's own name.
+
+    Raises:
+        InvalidConfigError: *value* is neither ``None`` nor a non-empty
+            string (``@action(123)`` and ``@action("")`` were accepted
+            before 0.12.0 and failed later as a missing implementation).
+    """
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value:
+        raise InvalidConfigError(
+            f"@{kind} name must be a non-empty string, not {value!r}."
+        )
+    return value
+
+
+def _callable_name(fn: Callable[..., Any], kind: str) -> str:
+    """The name *fn* registers under: ``_xsm_name``, else its camelCased
+    ``__name__``.
+
+    Args:
+        fn: A callable handed to the functional API.
+        kind: Its kind, for the error message.
+
+    Returns:
+        The registration name.
+
+    Raises:
+        InvalidConfigError: *fn* has neither an explicit name nor a
+            ``__name__`` (a ``functools.partial``, a callable object).
+    """
+    explicit = getattr(fn, "_xsm_name", None)
+    if explicit:
+        return str(explicit)
+    plain = getattr(fn, "__name__", None)
+    if not plain:
+        raise InvalidConfigError(
+            f"Cannot tell which {kind} name {fn!r} implements: it has no "
+            f"__name__. Decorate it with @{kind}('name') or wrap it in a "
+            f"named function."
+        )
+    return _snake_to_camel(plain)
 
 
 #: Attribute names a ``StateMachine`` subclass may not use for a state
@@ -168,12 +278,14 @@ class _StateMeta(type):
 
     @property
     def to(cls) -> Callable[..., "Transition"]:  # noqa: N805
+        """``State.to`` with the nested class itself as the source."""
         # 📝 `vars(State)` rather than `State.to`: the latter would hit this
         #    very property and recurse.
         return functools.partial(vars(State)["to"], cls)
 
     @property
     def internal(cls) -> Callable[..., "Transition"]:  # noqa: N805
+        """``State.internal`` with the nested class itself as the source."""
         return functools.partial(vars(State)["internal"], cls)
 
     def __get__(cls, instance: Any, owner: Any = None) -> Any:  # noqa: N805
@@ -418,8 +530,7 @@ class State(metaclass=_StateMeta):
             ``_xsm_name`` markers attached.
         """
         name = _snake_to_camel(fn.__name__)
-        setattr(fn, "_xsm_type", "action")
-        setattr(fn, "_xsm_name", name)
+        _tag(fn, "action", name)
         setattr(fn, "_xsm_state_enter", self)
         self._enter_decorators.append(fn)
         if name not in self.entry:
@@ -440,8 +551,7 @@ class State(metaclass=_StateMeta):
             ``_xsm_name`` markers attached.
         """
         name = _snake_to_camel(fn.__name__)
-        setattr(fn, "_xsm_type", "action")
-        setattr(fn, "_xsm_name", name)
+        _tag(fn, "action", name)
         setattr(fn, "_xsm_state_exit", self)
         self._exit_decorators.append(fn)
         if name not in self._exit_actions:
@@ -495,8 +605,7 @@ class State(metaclass=_StateMeta):
 
         def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
             name = _snake_to_camel(func.__name__)
-            setattr(func, "_xsm_type", "service")
-            setattr(func, "_xsm_name", name)
+            _tag(func, "service", name)
             setattr(func, "_xsm_state_service", self)
             entry: Dict[str, Any] = {"src": name}
             if id is not None:
@@ -550,6 +659,13 @@ class BoundState:
     __slots__ = ("_state", "_sm")
 
     def __init__(self, state: State, sm: Any) -> None:
+        """Wrap *state* for the running instance *sm*.
+
+        Args:
+            state: The ``State`` definition.
+            sm: The ``StateMachine`` instance (``Any``: that class lives
+                in ``_pythonic_class``, which imports this module).
+        """
         self._state = state
         self._sm = sm
 
@@ -560,6 +676,7 @@ class BoundState:
 
     @property
     def name(self) -> str:
+        """The state's name (its last path segment)."""
         return self._state.name
 
     @property
@@ -604,6 +721,12 @@ class _EventSender:
     __slots__ = ("_sm", "_event_types")
 
     def __init__(self, sm: Any, event_types: Set[str]) -> None:
+        """Bind the sender to an instance and the attribute's events.
+
+        Args:
+            sm: The running ``StateMachine`` instance.
+            event_types: The events the attribute's transitions use.
+        """
         self._sm = sm
         self._event_types = event_types
 
@@ -656,6 +779,20 @@ class Transition:
         reenter: bool = False,
         internal: bool = False,
     ) -> None:
+        """Record one transition (see the class docstring for the fields).
+
+        Raises:
+            InvalidConfigError: ``internal=True`` together with a target.
+                An internal transition never changes state, so the
+                target used to be dropped without a word.
+        """
+        if internal and target is not None:
+            raise InvalidConfigError(
+                f"Transition {_state_display_name(source)!r} -> "
+                f"{_state_display_name(target)!r}: internal=True takes no "
+                f"target (an internal transition stays in its state). "
+                f"Drop the target, or drop internal=True."
+            )
         self.source = source
         self.target = target
         self.event = event
@@ -666,6 +803,7 @@ class Transition:
 
     @property
     def event_types(self) -> Set[str]:
+        """The declared event (empty when it is inferred later)."""
         return {self.event} if self.event else set()
 
     def __get__(self, instance: Any, owner: Any = None) -> Any:
@@ -735,6 +873,7 @@ class TransitionGroup:
 
     @property
     def event_types(self) -> Set[str]:
+        """The declared events of the members (inferred ones excluded)."""
         return {t.event for t in self.transitions if t.event}
 
     def __get__(self, instance: Any, owner: Any = None) -> Any:
@@ -761,7 +900,7 @@ class TransitionGroup:
 def transition(
     source: State,
     event: str,
-    target: State,
+    target: Optional[State],
     *,
     guard: Optional[str] = None,
     actions: Optional[List[str]] = None,
@@ -775,7 +914,8 @@ def transition(
     Args:
         source: The source ``State``.
         event: The event name (required).
-        target: The target ``State``.
+        target: The target ``State``; ``None`` for an internal
+            transition.
         guard: Optional guard function name.
         actions: Optional list of action names.
         reenter: Whether to force exit/re-entry.
@@ -783,6 +923,9 @@ def transition(
 
     Returns:
         A ``Transition`` object.
+
+    Raises:
+        InvalidConfigError: ``internal=True`` with a target.
     """
     return Transition(
         source=source,
@@ -829,17 +972,15 @@ def action(fn_or_name: Any = None) -> Any:
     if callable(fn_or_name):
         # 📝 Used as @action (no parentheses)
         fn = fn_or_name
-        setattr(fn, "_xsm_type", "action")
-        setattr(fn, "_xsm_name", _snake_to_camel(fn.__name__))
+        _tag(fn, "action", _snake_to_camel(fn.__name__))
         return fn
     else:
         # 📝 Used as @action("customName")
-        name = fn_or_name
+        name = _explicit_name(fn_or_name, "action")
 
         def decorator(fn: _DecoratedF) -> _DecoratedF:
             """Tag *fn* as an action registered under the chosen name."""
-            setattr(fn, "_xsm_type", "action")
-            setattr(fn, "_xsm_name", name)
+            _tag(fn, "action", name or _snake_to_camel(fn.__name__))
             return fn
 
         return decorator
@@ -882,11 +1023,10 @@ def guard(fn_or_name: Any = None) -> Any:
                 f"Guard '{fn.__name__}' must be synchronous "
                 f"(guards cannot be async)"
             )
-        setattr(fn, "_xsm_type", "guard")
-        setattr(fn, "_xsm_name", _snake_to_camel(fn.__name__))
+        _tag(fn, "guard", _snake_to_camel(fn.__name__))
         return fn
     else:
-        name = fn_or_name
+        name = _explicit_name(fn_or_name, "guard")
 
         def decorator(fn: _DecoratedF) -> _DecoratedF:
             """Tag *fn* as a guard under the chosen name.
@@ -899,8 +1039,7 @@ def guard(fn_or_name: Any = None) -> Any:
                     f"Guard '{fn.__name__}' must be "
                     f"synchronous (guards cannot be async)"
                 )
-            setattr(fn, "_xsm_type", "guard")
-            setattr(fn, "_xsm_name", name)
+            _tag(fn, "guard", name or _snake_to_camel(fn.__name__))
             return fn
 
         return decorator
@@ -934,16 +1073,14 @@ def service(fn_or_name: Any = None) -> Any:
     """
     if callable(fn_or_name):
         fn = fn_or_name
-        setattr(fn, "_xsm_type", "service")
-        setattr(fn, "_xsm_name", _snake_to_camel(fn.__name__))
+        _tag(fn, "service", _snake_to_camel(fn.__name__))
         return fn
     else:
-        name = fn_or_name
+        name = _explicit_name(fn_or_name, "service")
 
         def decorator(fn: _DecoratedF) -> _DecoratedF:
             """Tag *fn* as a service registered under the chosen name."""
-            setattr(fn, "_xsm_type", "service")
-            setattr(fn, "_xsm_name", name)
+            _tag(fn, "service", name or _snake_to_camel(fn.__name__))
             return fn
 
         return decorator
@@ -963,6 +1100,16 @@ class CompileOverlay:
     events). Module-level ``State`` objects are routinely shared between
     machines, so those derivations live here, keyed by ``id(obj)``, and are
     merged in at compile time.
+
+    ⚠️ ``id()`` keys are only stable while the objects live: the owning
+    ``StateMachine`` class keeps every keyed ``State`` / ``Transition``
+    alive (``_xsm_states`` / ``_xsm_transitions``), so an overlay must
+    never outlive its class or be fed objects the class does not hold.
+
+    What the overlay does NOT cover (by design, documented so nobody
+    relies on more): a ``State`` takes its attribute name on first use
+    in a class body, and ``@state.enter`` / ``@state.exit`` /
+    ``@state.service`` register on the ``State`` object itself.
     """
 
     __slots__ = ("entry", "exit", "actions", "events")
@@ -974,15 +1121,19 @@ class CompileOverlay:
         self.events: Dict[int, str] = {}
 
     def event_of(self, t: "Transition") -> Optional[str]:
+        """The declared event of *t*, else the one inferred for it."""
         return t.event if t.event is not None else self.events.get(id(t))
 
     def entry_of(self, state: State) -> List[Any]:
+        """Overlay entry actions, then the state's own (a fresh list)."""
         return list(self.entry.get(id(state), [])) + list(state.entry)
 
     def exit_of(self, state: State) -> List[Any]:
+        """Overlay exit actions, then the state's own (a fresh list)."""
         return list(self.exit.get(id(state), [])) + list(state._exit_actions)
 
     def actions_of(self, t: "Transition") -> List[Any]:
+        """Overlay actions, then the transition's own (a fresh list)."""
         return list(self.actions.get(id(t), [])) + list(t.actions)
 
 
@@ -995,7 +1146,23 @@ def _compile_state(
     parent_parallel: bool = False,
     overlay: CompileOverlay = _NO_OVERLAY,
 ) -> Dict[str, Any]:
-    """Compile a single State into a JSON config dict entry."""
+    """Compile a single State into a JSON config dict entry.
+
+    Args:
+        state: The state to compile (recursively, with its children).
+        all_states_by_name: Unused here; forwarded to children for the
+            historical signature.
+        parent_parallel: The parent is a parallel state.
+        overlay: Class-derived entry/exit/transition additions.
+
+    Returns:
+        The state's config dict.
+
+    Raises:
+        InvalidConfigError: A final state with children, an initial
+            child of a parallel state, duplicate child names or several
+            initial children.
+    """
     # 📝 Validate: a final state cannot have CHILDREN.
     #
     # 🛡️ Outgoing transitions on a final state are deliberately allowed.
@@ -1030,8 +1197,8 @@ def _compile_state(
         config["type"] = "history"
         config["history"] = state.history
 
-    # 📝 Entry / Exit actions (defensive copy to avoid
-    # mutating State objects shared across builds)
+    # 📝 Entry / Exit actions (the overlay returns fresh lists, so
+    #    nothing below aliases a State object shared across builds)
     entry = overlay.entry_of(state)
     exit_acts = overlay.exit_of(state)
     if entry:
@@ -1039,27 +1206,31 @@ def _compile_state(
     if exit_acts:
         config["exit"] = exit_acts[0] if len(exit_acts) == 1 else exit_acts
 
-    # 📝 On (event transitions from State.on dict)
-    # Defensive deep copy to avoid mutating shared State objects
+    # 📝 On (event transitions from State.on dict). Deep copies here and
+    #    below: the config is handed to the parser and to callers, and a
+    #    later in-place edit of it must never reach a State object that
+    #    another machine shares.
     if state.on:
-        config["on"] = {
-            k: (v if not isinstance(v, dict) else dict(v))
-            for k, v in state.on.items()
-        }
+        config["on"] = copy.deepcopy(state.on)
 
     # 📝 Always → compiled to "on": {"": ...}
     if state.always is not None:
         if "on" not in config:
             config["on"] = {}
-        config["on"][""] = state.always
+        config["on"][""] = copy.deepcopy(state.always)
 
     # 📝 After (delayed transitions)
     if state.after:
-        config["after"] = state.after
+        config["after"] = copy.deepcopy(state.after)
 
-    # 📝 Invoke (services)
+    # 📝 Invoke (services). One level only: an entry's ``input`` may be a
+    #    factory or a live object, which must reach the engine as is.
     if state.invoke:
-        config["invoke"] = state.invoke
+        config["invoke"] = (
+            [dict(e) if isinstance(e, dict) else e for e in state.invoke]
+            if isinstance(state.invoke, list)
+            else dict(state.invoke)
+        )
 
     # 📝 onDone (completion transition)
     if state.on_done is not None:
@@ -1138,14 +1309,21 @@ def _compile_config(
         transitions: List of ``Transition`` or
             ``TransitionGroup`` objects.
         context: Optional initial context dict.
+        root: Optional ``State`` carrying machine-level properties
+            (see `_apply_root_properties`).
+        overlay: Class-derived additions (inferred events, convention
+            actions) merged in without mutating the objects.
 
     Returns:
         A JSON-compatible config dict suitable for
         ``create_machine()``.
 
     Raises:
-        InvalidConfigError: On duplicate states, missing
-            initial state, or unknown transition sources.
+        InvalidConfigError: On duplicate or multiple-initial states at
+            one level, a transition without an event, an unknown
+            transition source, or a ``State`` outside the tree whose
+            name matches several states in it. A missing initial state
+            only logs a warning (the engine accepts such charts).
     """
     # 🔍 Build flat lookup of all states by name
     # Uses dot-path keys to avoid collisions between
@@ -1157,6 +1335,9 @@ def _compile_config(
     #    resolved through the runtime's fuzzy last-segment fallback (#34)
     #    and fails outright under build-time target validation (#30).
     path_of: Dict[int, str] = {}
+    #: bare name -> every path carrying it (for `State` objects that are
+    #: not part of the tree, see `_path_for`).
+    paths_by_name: Dict[str, List[str]] = defaultdict(list)
 
     def _register_states(
         state_list: List[State],
@@ -1169,10 +1350,32 @@ def _compile_config(
             # Also register the bare name for transition
             # source lookups (backward compat)
             all_states_by_name[s.name] = s
+            paths_by_name[s.name].append(key)
             if s.states:
                 _register_states(s.states, prefix=key)
 
     _register_states(states)
+
+    def _path_for(state: State, role: str) -> Optional[str]:
+        """Path of *state*: by identity, else by a bare name that is
+        unique in the tree (``None`` when no state has that name).
+
+        🏛️ The bare-name fallback predates identity resolution and is
+        kept for ``State`` objects built outside the tree, but only when
+        it is unambiguous: before 0.12.0 a duplicated name silently bound
+        to whichever state was registered last.
+        """
+        path = path_of.get(id(state))
+        if path is not None:
+            return path
+        candidates = paths_by_name.get(state.name, [])
+        if len(candidates) > 1:
+            raise InvalidConfigError(
+                f"Transition {role} '{state.name}' is not a state of this "
+                f"machine and its name is ambiguous: {sorted(candidates)}. "
+                f"Use the State object from the tree itself."
+            )
+        return candidates[0] if candidates else None
 
     # 🔍 Validate top-level: duplicates, initial
     top_names: Set[Any] = set()
@@ -1235,15 +1438,15 @@ def _compile_config(
         # 🗺️ Resolve the source by IDENTITY first (two states may share a
         #    name under different parents); fall back to the bare name for
         #    `State` objects built outside this tree.
-        src_path = path_of.get(id(t.source))
+        src_path = _path_for(t.source, "source")
         if src_path is None:
-            if t.source.name not in all_states_by_name:
-                raise InvalidConfigError(
-                    f"Transition source "
-                    f"'{t.source.name}' "
-                    f"is not a defined state"
-                )
-            src_path = path_of[id(all_states_by_name[t.source.name])]
+            raise InvalidConfigError(
+                f"Transition source "
+                f"'{t.source.name}' "
+                f"is not a defined state"
+            )
+        if t.target is not None:
+            _path_for(t.target, "target")
         src = all_states_by_name[src_path]
         if src.final and src.states:
             raise InvalidConfigError(
@@ -1264,9 +1467,8 @@ def _compile_config(
     )
 
     for t in flat_transitions:
-        src_path = path_of.get(id(t.source))
-        if src_path is None:
-            src_path = path_of[id(all_states_by_name[t.source.name])]
+        # 📝 validated non-None in the loop above.
+        src_path = str(_path_for(t.source, "source"))
         # 📝 the event is validated non-None above.
         event_name = str(overlay.event_of(t))
         trans_by_source_event[src_path][event_name].append(t)
@@ -1286,7 +1488,7 @@ def _compile_config(
             for t in t_list:
                 entry: Dict[str, Any] = {}
                 if not t.internal and t.target is not None:
-                    path = path_of.get(id(t.target), t.target.name)
+                    path = _path_for(t.target, "target") or t.target.name
                     # A top-level target keeps its bare name (the
                     # established output format). A NESTED target is
                     # emitted as an absolute `#machine.path`, which is
@@ -1303,6 +1505,9 @@ def _compile_config(
                 if t.reenter:
                     entry["reenter"] = True
                 compiled.append(entry)
+            # 🏛️ Merge rule (pythonic-api spec): Transition objects REPLACE a
+            #    `State(on=)` entry for the same event -- `.to()` is the
+            #    more specific API. Pinned by TestMergeRules.
             if len(compiled) == 1:
                 state_config["on"][event] = compiled[0]
             else:
@@ -1376,6 +1581,29 @@ def _apply_root_properties(
 # -----------------------------------------------------------------
 
 
+def _register_once(
+    table: Dict[str, Any], name: str, fn: Callable[..., Any], kind: str
+) -> None:
+    """Add *fn* to *table* under *name*, refusing a second registration.
+
+    Args:
+        table: The action / guard / service table being filled.
+        name: The registration name.
+        fn: The (adapted) callable.
+        kind: Its kind, for the error message.
+
+    Raises:
+        InvalidConfigError: *name* is already registered. Before 0.12.0
+            the later callable silently replaced the earlier one.
+    """
+    if name in table:
+        raise InvalidConfigError(
+            f"Two {kind}s are registered as '{name}'; give one of them "
+            f"a different name (@{kind}('otherName'))."
+        )
+    table[name] = fn
+
+
 def _compile_logic_from_functions(
     actions: List[Callable[..., Any]],
     guards: List[Callable[..., Any]],
@@ -1396,9 +1624,11 @@ def _compile_logic_from_functions(
         A ``MachineLogic`` instance with populated dicts.
 
     Raises:
-        InvalidConfigError: If any function was decorated
-            with ``@state.enter`` or ``@state.exit``, which
-            are only valid inside a ``StateMachine`` class.
+        InvalidConfigError: If any function was decorated with
+            ``@state.enter``, ``@state.exit`` or ``@state.service``
+            (only valid inside a ``StateMachine`` class), a callable
+            decorated as one kind is passed as another, two callables
+            register the same name, or a callable has no name at all.
     """
     action_dict: Dict[str, ActionCallable] = {}
     guard_dict: Dict[str, GuardCallable] = {}
@@ -1428,15 +1658,20 @@ def _compile_logic_from_functions(
                 f"StateMachine class"
             )
 
-    for fn in actions:
-        name = getattr(fn, "_xsm_name", _snake_to_camel(fn.__name__))
-        action_dict[name] = adapt_callable(fn, "action")
-    for fn in guards:
-        name = getattr(fn, "_xsm_name", _snake_to_camel(fn.__name__))
-        guard_dict[name] = adapt_callable(fn, "guard")
-    for fn in services:
-        name = getattr(fn, "_xsm_name", _snake_to_camel(fn.__name__))
-        service_dict[name] = adapt_callable(fn, "service")
+    for kind, fns, table in (
+        ("action", actions, action_dict),
+        ("guard", guards, guard_dict),
+        ("service", services, service_dict),
+    ):
+        for fn in fns:
+            marked = getattr(fn, "_xsm_type", None)
+            if marked is not None and marked != kind:
+                raise InvalidConfigError(
+                    f"{fn!r} is decorated with @{marked} but was passed "
+                    f"in {kind}s=[...]; pass it in {marked}s=[...]."
+                )
+            name = _callable_name(fn, kind)
+            _register_once(table, name, adapt_callable(fn, kind), kind)
 
     return MachineLogic(
         actions=action_dict,
@@ -1467,23 +1702,38 @@ def _compile_logic_from_instance(
 
     Returns:
         A ``MachineLogic`` instance with bound callables.
+
+    Raises:
+        InvalidConfigError: Two different methods register the same
+            name for one kind, or a method carries an unknown kind.
     """
     action_dict: Dict[str, Any] = {}
     guard_dict: Dict[str, Any] = {}
     service_dict: Dict[str, Any] = {}
 
+    tables = {
+        "action": action_dict,
+        "guard": guard_dict,
+        "service": service_dict,
+    }
+    seen: Dict[int, None] = {}
     for fn in decorated:
+        if id(fn) in seen:
+            # 📝 One function under two attribute names (`b = a`).
+            continue
+        seen[id(fn)] = None
         name = getattr(fn, "_xsm_name")
         xsm_type = getattr(fn, "_xsm_type")
+        table = tables.get(xsm_type)
+        if table is None:
+            raise InvalidConfigError(
+                f"{fn!r} is marked with an unknown kind {xsm_type!r}; "
+                f"use @action, @guard or @service."
+            )
         bound = adapt_callable(
             functools.partial(fn, instance), xsm_type, sink=sink
         )
-        if xsm_type == "action":
-            action_dict[name] = bound
-        elif xsm_type == "guard":
-            guard_dict[name] = bound
-        elif xsm_type == "service":
-            service_dict[name] = bound
+        _register_once(table, name, bound, xsm_type)
 
     return MachineLogic(
         actions=action_dict,

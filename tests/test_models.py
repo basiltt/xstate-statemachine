@@ -259,20 +259,21 @@ class TestModels(unittest.TestCase):
         # ✅ Assert
         self.assertEqual(machine.type, "parallel")
 
-    def test_invalid_state_type_falls_back_to_compound(self) -> None:
-        """An invalid state type should default to 'compound' if it has children."""
-        logger.info("🧪 Testing fallback type for invalid state definitions.")
-        # 📋 Arrange: A state with an invalid type but with child states.
-        machine = create_machine(
-            {
-                "id": "m",
-                "states": {"a": {"type": "invalid_type", "states": {"b": {}}}},
-            }
-        )
-        # 🚀 Act
-        node = machine.get_state_by_id("m.a")
-        # ✅ Assert: The type should default to 'compound' because it has children.
-        self.assertEqual(node.type, "compound")
+    def test_invalid_state_type_is_refused(self) -> None:
+        """An invalid state type is a configuration error (MOD-03).
+
+        📝 It used to fall back to 'compound' with only a log line, so a
+        typo such as 'paralel' silently changed the execution semantics.
+        """
+        with self.assertRaisesRegex(InvalidConfigError, "invalid_type"):
+            create_machine(
+                {
+                    "id": "m",
+                    "states": {
+                        "a": {"type": "invalid_type", "states": {"b": {}}}
+                    },
+                }
+            )
 
     def test_get_next_state_utility_with_no_target(self) -> None:
         """`get_next_state` should return None for an internal transition."""
@@ -308,23 +309,18 @@ class TestModels(unittest.TestCase):
         self.assertEqual(action_obj.params, {"value": 42})
 
     def test_action_definition_with_empty_dict(self) -> None:
-        """Should handle an empty dictionary for an action definition."""
-        logger.info("🧪 Testing ActionDefinition with an empty dictionary.")
-        # 🚀 Act
-        action = ActionDefinition({})
-        # ✅ Assert: Type falls back to a known default.
-        self.assertEqual(action.type, "UnknownAction")
-        self.assertIsNone(action.params)
+        """An empty action dictionary has no `type` and is refused.
+
+        📝 It used to become an action named "UnknownAction" -- a name no
+        implementation is registered under (review MOD-08).
+        """
+        with self.assertRaisesRegex(InvalidConfigError, "'type'"):
+            ActionDefinition({})
 
     def test_action_definition_with_no_type_key(self) -> None:
-        """Should handle an action dictionary missing the 'type' key."""
-        logger.info("🧪 Testing ActionDefinition missing the 'type' key.")
-        # 🚀 Act
-        action = ActionDefinition({"params": {"info": "test"}})
-        # ✅ Assert: Type falls back, but params are still parsed.
-        self.assertEqual(action.type, "UnknownAction")
-        self.assertIsNotNone(action.params)
-        self.assertEqual(action.params.get("info"), "test")
+        """An action dictionary missing its 'type' key is refused (MOD-08)."""
+        with self.assertRaisesRegex(InvalidConfigError, "'type'"):
+            ActionDefinition({"params": {"info": "test"}})
 
     def test_invoke_definition_parsing(self) -> None:
         """Should correctly parse an `invoke` definition."""

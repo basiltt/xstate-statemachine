@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 import logging
 import queue
-from typing import Any, Dict, Iterator, Optional
+from typing import Any, Callable, Dict, Iterator, Optional
 
 from flask import Blueprint, Response
 from flask import request as flask_request
@@ -41,6 +41,9 @@ from ._http import (
     HTTPProblemError,
     MethodNotAllowedError,
     declared_events,
+    history_args,
+    history_items,
+    idempotency_key_from_header,
     is_idempotency_refusal,
     parse_json_body,
     principal_or_401,
@@ -48,6 +51,7 @@ from ._http import (
     receipt_body,
     refuse_reserved_send_keys,
 )
+from ._core import CLOSED
 from .extension import XState, problem_response, receipt_response
 
 logger = logging.getLogger(__name__)
@@ -144,8 +148,13 @@ def create_statechart_blueprint(
         payload = dict(payload)
         payload.pop("type", None)
         refuse_reserved_send_keys(payload)
-        idem = flask_request.headers.get(IDEMPOTENCY_HEADER)
-        if idem:
+        # 🔑 Review CW-03: validate like the Starlette stack -- 400 for a
+        #    malformed key, 501 when the app has no inbox to honour it.
+        idem = idempotency_key_from_header(
+            flask_request.headers.get(IDEMPOTENCY_HEADER),
+            has_inbox=r.inbox is not None,
+        )
+        if idem is not None:
             payload["idempotency_key"] = idem
         result: Dict[str, Any] = {}
         with xsm.act(name, key, principal=principal()) as interp:
@@ -252,7 +261,7 @@ def create_statechart_blueprint(
         if not r.origin_allowed(origin, flask_request.host):
             return problem_response(_OriginRefused())
         guard(key, None)
-        return _stream(r, name, key, xsm.peek(name, key))
+        return _stream(r, name, key, lambda: xsm.peek(name, key))
 
     @bp.get("/schema/diagram.mmd")
     @mapped
@@ -283,28 +292,39 @@ def _history(r: Any, name: str, key: str) -> Any:
             "History not enabled",
             detail="init_app(log=...) enables transition history",
         )
-    try:
-        after = int(flask_request.args.get("after", 0))
-        limit = min(int(flask_request.args.get("limit", 100)), 1000)
-    except ValueError:
-        raise BadRequestError("after/limit must be integers")
+    after, limit = history_args(flask_request.args)
     rows = r.log.read(r.store_key(name, key), after_seq=after, limit=limit)
-    return {
-        "items": [
-            {k: v for k, v in rec.to_dict().items() if k != "event_payload"}
-            for rec in rows
-        ]
-    }
+    return {"items": history_items(rows)}
 
 
-def _stream(r: Any, name: str, key: str, snapshot: Dict[str, Any]) -> Any:
+def _stream(
+    r: Any, name: str, key: str, read_snapshot: Callable[[], Dict[str, Any]]
+) -> Any:
     """``GET /<id>/stream`` -- SSE: a snapshot, then committed transitions
     published by `act()` in THIS process; ``?once=1`` ends after the
-    snapshot (health checks, tests)."""
+    snapshot (health checks, tests).
+
+    Args:
+        r: The app registry.
+        name: Machine name.
+        key: Instance key.
+        read_snapshot: Reads the current state body. Called AFTER the
+            subscription exists (review CW-16): a transition committed
+            between a snapshot read and the subscribe was lost; now it
+            appears in both -- a harmless repeat.
+
+    Returns:
+        The streaming response, or a 429 problem.
+    """
     q = r.fanout.subscribe(name, str(key))
     if q is None:
         return _problem(429, "Too many connections for this instance")
     seq0 = r.fanout.seq(name, str(key))
+    try:
+        snapshot = read_snapshot()
+    except BaseException:
+        r.fanout.unsubscribe(name, str(key), q)
+        raise
     once = flask_request.args.get("once") == "1"
 
     def body() -> Iterator[str]:
@@ -314,10 +334,13 @@ def _stream(r: Any, name: str, key: str, snapshot: Dict[str, Any]) -> Any:
                 return
             while True:
                 try:
-                    seq, data = q.get(timeout=r.heartbeat_s)
+                    item = q.get(timeout=r.heartbeat_s)
                 except queue.Empty:
                     yield ": heartbeat\n\n"
                     continue
+                if item is CLOSED:
+                    return  # cut off for lagging: reconnect = fresh snapshot
+                seq, data = item
                 yield sse("transition", data, seq)
         finally:
             r.fanout.unsubscribe(name, str(key), q)

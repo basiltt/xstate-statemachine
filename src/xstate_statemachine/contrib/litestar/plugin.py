@@ -89,12 +89,18 @@ def get_interpreter(
         if shared is not None:
             yield await shared
             return
+        # 🔥 Review CW-07: everything that can RAISE (an anonymous caller's
+        #    401, a missing `principal=` configuration) runs BEFORE the
+        #    future is published. Published first, a raise left `ready`
+        #    forever pending and a sibling dependency for the same key
+        #    awaited it -- a hung request. Still no `await` between the
+        #    `get` above and the publish below (check-and-set stays atomic).
+        principal = registry._principal_of(conn)
         ready: "asyncio.Future[Any]" = (
             asyncio.get_running_loop().create_future()
         )
-        open_acts[(name, k)] = ready
-        principal = registry._principal_of(conn)
         owner = _ActOwner(registry, name, k, principal, idem, ready)
+        open_acts[(name, k)] = ready
         try:
             interp = await owner.start()
             outcome: Optional[BaseException] = None
@@ -214,7 +220,9 @@ def _problem_handler(request: Any, exc: Exception) -> Any:
         #    as in the Starlette registry and Flask -- not an ERROR storm.
         logger.warning("🔌 store unavailable on %s: %s", request.url.path, exc)
     elif status_for_exception(exc) >= 500:
-        logger.error("🔥 %s on %s", type(exc).__name__, request.url.path)
+        logger.error(
+            "🔥 %s on %s", type(exc).__name__, request.url.path, exc_info=exc
+        )
     return to_litestar(problem_for_exception(exc))
 
 
@@ -254,6 +262,7 @@ class XStatePlugin(InitPluginProtocol, OpenAPISchemaPluginProtocol):
 
     @staticmethod
     def is_plugin_supported_type(value: Any) -> bool:
+        """Whether *value* is an event-union body type this plugin documents."""
         return isinstance(value, type) and hasattr(value, "__xsm_union__")
 
     def to_openapi_schema(

@@ -1,4 +1,4 @@
-﻿# src/xstate_statemachine/contrib/django/_deadlines.py
+# src/xstate_statemachine/contrib/django/_deadlines.py
 # -----------------------------------------------------------------------------
 # ⏰ Deadline-index primitives on the ORM (internal)
 # -----------------------------------------------------------------------------

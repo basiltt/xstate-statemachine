@@ -261,6 +261,35 @@ def snake_case_name(camel_name: str) -> str:
     return camel_to_snake(camel_name)
 
 
+#: 🛡️ CLI-005: names the generated module itself binds (imports, logger,
+#: decorators, entry point). A logic stub called ``time`` or ``logger`` used
+#: to replace ``import time`` / the logger, so e.g. a service named "time"
+#: died with ``AttributeError: 'function' object has no attribute 'sleep'``.
+MODULE_RESERVED_NAMES = frozenset(
+    {
+        "time",
+        "asyncio",
+        "logging",
+        "json",
+        "logger",
+        "Any",
+        "Dict",
+        "Union",
+        "Event",
+        "ActionDefinition",
+        "Interpreter",
+        "SyncInterpreter",
+        "action",
+        "guard",
+        "service",
+        "main",
+        "Path",
+        "create_machine",
+        "LogicLoader",
+    }
+)
+
+
 def logic_bindings(
     actions: Set[str], guards: Set[str], services: Set[str]
 ) -> Dict[str, str]:
@@ -276,7 +305,7 @@ def logic_bindings(
     sorted union of all three kinds, in one namespace, because they share
     one module. Deterministic: same input, same identifiers.
     """
-    taken: Set[str] = set()
+    taken: Set[str] = set(MODULE_RESERVED_NAMES)
     out: Dict[str, str] = {}
     for name in sorted(actions | guards | services):
         base = snake_case_name(name)
@@ -362,7 +391,32 @@ def escape_for_string(name: str) -> str:
     Returns:
         An escaped string safe for embedding in Python string literals.
     """
-    return name.replace("\\", "\\\\").replace('"', '\\"').replace("'", "\\'")
+    escaped = (
+        name.replace("\\", "\\\\").replace('"', '\\"').replace("'", "\\'")
+    )
+    # 🔥 Control characters and Unicode line separators end a Python line
+    #    inside a single-line literal: a raw newline made the generated
+    #    runner a SyntaxError while the CLI still exited 0 (CLI-004).
+    return "".join(
+        ch if ch.isprintable() else _control_escape(ch) for ch in escaped
+    )
+
+
+def _control_escape(ch: str) -> str:
+    """Return a backslash spelling of one non-printable character.
+
+    Args:
+        ch: A single non-printable character.
+
+    Returns:
+        A newline, carriage-return, tab, ``\\xNN`` or ``\\uNNNN`` escape
+        valid in any Python string literal.
+    """
+    named = {"\n": "\\n", "\r": "\\r", "\t": "\\t"}
+    if ch in named:
+        return named[ch]
+    code = ord(ch)
+    return f"\\x{code:02x}" if code < 0x100 else f"\\u{code:04x}"
 
 
 # ---------------------------------------------------------------------------

@@ -58,7 +58,16 @@ import json
 import threading
 import weakref
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Dict,
+    Iterable,
+    List,
+    Optional,
+    Set,
+    Tuple,
+)
 
 # -------------------------------------------------------------------------
 # 📥 Project-Specific Imports
@@ -67,6 +76,9 @@ from .graph import transition_coverage_targets
 from .models import MachineNode
 from .plugins import PluginBase
 from .validation import transitions_of, walk
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .models import StateNode, TransitionDefinition
 
 __all__ = [
     "COVERAGE_SCHEMA_VERSION",
@@ -141,10 +153,12 @@ class CoverageReport:
 
     @property
     def state_percent(self) -> float:
+        """Percent (0-100) of states entered at least once."""
         return _pct(self.states_visited, self.states_total)
 
     @property
     def transition_percent(self) -> float:
+        """Percent (0-100) of chart transitions taken at least once."""
         return _pct(self.transitions_hit, self.transitions_total)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -189,12 +203,15 @@ class CoverageReport:
         )
 
     def to_json(self) -> str:
+        """This report as the version-1 JSON document."""
         return reports_to_json([self])
 
     def to_text(self) -> str:
+        """This report as a plain-text summary."""
         return reports_to_text([self])
 
     def to_html(self) -> str:
+        """This report as a standalone HTML page."""
         return reports_to_html([self])
 
 
@@ -227,7 +244,10 @@ class _Build:
     """One machine OBJECT: its own transition index + the shared data.
 
     📝 Held only weakly (battle #270): a rebuilt chart per test must not
-    keep every earlier build, and its index, alive for the session. The
+    keep every earlier build, and its index, alive for the session. (The
+    shared `_MachineData` keeps a strong reference to the FIRST build of
+    each machine key, so one machine per key stays alive; it is the extra
+    rebuilds that are released.) The
     index is per build, so a recycled ``id()`` can never be looked up in
     an index that outlived its machine.
     """
@@ -238,7 +258,10 @@ class _Build:
         self, ref: "weakref.ref[Machine]", data: _MachineData
     ) -> None:
         machine = ref()
-        assert machine is not None
+        if machine is None:  # 🔥 not `assert`: -O would strip it (RU-39)
+            raise RuntimeError(
+                "_Build needs a live machine; its weakref already died"
+            )
         self.ref = ref
         self.index = _index_of(machine)
         self.data = data
@@ -329,6 +352,11 @@ class CoverageCollector(PluginBase[Any]):
             self._add_config(self._data_for(machine), machine, nodes)
 
     def on_interpreter_start(self, interpreter: Any) -> None:
+        """Record the configuration a restored interpreter starts in.
+
+        Args:
+            interpreter: The interpreter that is starting.
+        """
         # 📝 Fresh interpreters have an empty configuration here (the init
         #    `on_transition` records it); restored ones already sit in
         #    their configuration and this is the only place it is seen.
@@ -339,11 +367,18 @@ class CoverageCollector(PluginBase[Any]):
     def on_transition(
         self,
         interpreter: Any,
-        from_states: Any,
-        to_states: Any,
-        transition: Any,
+        from_states: Set[StateNode[Any]],
+        to_states: Set[StateNode[Any]],
+        transition: TransitionDefinition,
     ) -> None:
-        """Record the entered configuration and the taken transition."""
+        """Record the entered configuration and the taken transition.
+
+        Args:
+            interpreter: The interpreter that took the transition.
+            from_states: States active before it (unused).
+            to_states: States active after it.
+            transition: The chart transition that was taken.
+        """
         machine = getattr(interpreter, "machine", None)
         if not isinstance(machine, MachineNode):
             return

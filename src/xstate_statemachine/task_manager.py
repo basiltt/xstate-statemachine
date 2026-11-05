@@ -76,9 +76,23 @@ class TaskManager:
         # it from the tracking set. This is a crucial cleanup step that
         # prevents the `_tasks_by_owner` dictionary from growing indefinitely
         # and leaking memory.
-        task.add_done_callback(
-            lambda t: self._tasks_by_owner.get(owner_id, set()).discard(t)
-        )
+        task.add_done_callback(lambda t: self._forget(owner_id, t))
+
+    def _forget(self, owner_id: str, task: asyncio.Task[Any]) -> None:
+        """Drop a finished *task* and prune its owner key once empty (RU-31).
+
+        Args:
+            owner_id: The owner the task was added under.
+            task: The task that just finished.
+        """
+        # 🧹 Without the prune, one empty set stayed behind per distinct
+        #    owner id (e.g. per-invocation ids) for the life of the machine.
+        tasks = self._tasks_by_owner.get(owner_id)
+        if tasks is None:
+            return
+        tasks.discard(task)
+        if not tasks:
+            del self._tasks_by_owner[owner_id]
 
     def get_tasks_by_owner(self, owner_id: str) -> Set[asyncio.Task[Any]]:
         """Retrieves all tasks for a given owner.
@@ -109,9 +123,18 @@ class TaskManager:
         # 🛡️ Safely get tasks to avoid a KeyError if the owner_id has already
         # been cleaned up, which can happen in complex, fast-moving state
         # transitions.
-        tasks_to_cancel = self._tasks_by_owner.get(owner_id)
+        # 🏛️ RU-30: POP the owner's set BEFORE awaiting. The old code
+        #    deleted the key after the `await`, dropping any task another
+        #    coroutine had added under the same owner meanwhile -- an
+        #    orphan that no later `cancel_all()` could reach. A task added
+        #    during the await now lands in a fresh set and stays tracked.
+        tasks_to_cancel = self._tasks_by_owner.pop(owner_id, None)
         if not tasks_to_cancel:
             return  # ✅ No tasks for this owner, nothing to do.
+        # 🔁 Never cancel/await the task that is running this very call
+        #    (a service finishing and tearing down its own state).
+        current = asyncio.current_task()
+        tasks_to_cancel = {t for t in tasks_to_cancel if t is not current}
 
         logger.debug(
             "❌ Cancelling %d task(s) for owner '%s'.",
@@ -130,10 +153,7 @@ class TaskManager:
         # halting the cancellation of others.
         await asyncio.gather(*tasks_to_cancel, return_exceptions=True)
 
-        # 🧹 Clean up the tracking dictionary for this owner.
-        if owner_id in self._tasks_by_owner:
-            del self._tasks_by_owner[owner_id]
-            logger.debug("🗑️ Removed owner '%s' from task tracking.", owner_id)
+        logger.debug("🗑️ Removed owner '%s' from task tracking.", owner_id)
 
     async def cancel_all(self) -> None:
         """Cancels all tasks currently managed by this instance.
@@ -144,9 +164,16 @@ class TaskManager:
         """
         logger.info("🛑 Cancelling all managed tasks...")
         #   Flatten the dictionary of sets into a single list of all tasks.
+        current = asyncio.current_task()
         all_tasks = [
-            task for tasks in self._tasks_by_owner.values() for task in tasks
+            task
+            for tasks in self._tasks_by_owner.values()
+            for task in tasks
+            if task is not current
         ]
+        # 🧹 Clear BEFORE awaiting so a task added during the wait stays
+        #    tracked (same reasoning as `cancel_by_owner`, RU-30).
+        self._tasks_by_owner.clear()
 
         if not all_tasks:
             logger.info("🤷 No running tasks to cancel.")
@@ -160,6 +187,4 @@ class TaskManager:
         # ⏳ Wait for all cancellations to complete.
         await asyncio.gather(*all_tasks, return_exceptions=True)
 
-        # 🧹 Clear the entire tracking dictionary.
-        self._tasks_by_owner.clear()
         logger.info("✅ All managed tasks have been cancelled successfully.")

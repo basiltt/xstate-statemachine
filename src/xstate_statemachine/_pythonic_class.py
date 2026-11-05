@@ -6,11 +6,15 @@ Collects states, transitions and callbacks from a class body, binds
 naming-convention hooks, and provides the instance façade
 (``sm = Machine(); sm.cycle(); sm.state``).
 
-Nothing here mutates the ``State`` / ``Transition`` objects a class body
-declares: everything derived from the body (inferred event names,
+Everything derived from a class body (inferred event names,
 convention-bound actions) is recorded in a `CompileOverlay` that belongs
-to the class, so module-level ``State`` objects can be shared between
-machines safely.
+to the class rather than on the ``State`` / ``Transition`` objects, so
+module-level objects can be shared between machines. Three things DO
+touch the objects and are permanent: an unnamed ``State`` takes its
+attribute name on first use, a transition whose source/target is a
+nested ``class X(State)`` is re-pointed at the compiled ``State``, and
+``@state.enter`` / ``@state.exit`` / ``@state.service`` register on the
+state they decorate.
 """
 
 # -------------------------------------------------------------------------
@@ -23,6 +27,7 @@ import functools
 import inspect
 import logging
 from typing import (
+    TYPE_CHECKING,
     Any,
     Callable,
     Deque,
@@ -30,6 +35,7 @@ from typing import (
     FrozenSet,
     List,
     Optional,
+    Sequence,
     Set,
     Tuple,
     Union,
@@ -58,11 +64,16 @@ from .exceptions import (
     ImplementationMissingError,
     InterpreterStoppedError,
     InvalidConfigError,
+    NotSupportedError,
     TransitionNotAllowedError,
     UnknownEventError,
 )
 from .factory import create_machine as _original_create_machine
 from .models import MachineNode
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .clock import Clock
+    from .plugins import PluginBase
 
 logger = logging.getLogger("xstate_statemachine.pythonic")
 
@@ -108,6 +119,7 @@ def _is_plain_function(value: Any) -> bool:
 
 
 def _members(value: Union[Transition, TransitionGroup]) -> List[Transition]:
+    """The transitions of a single transition or a ``|`` group."""
     return value.transitions if isinstance(value, TransitionGroup) else [value]
 
 
@@ -138,19 +150,23 @@ class _Collected:
     # Convenience views -------------------------------------------------
     @property
     def states(self) -> List[State]:
+        """Top-level states, in declaration order."""
         return list(self.state_attrs.values())
 
     @property
     def transitions(self) -> List[Union[Transition, TransitionGroup]]:
+        """Top-level then nested-class transitions (groups kept)."""
         return list(self.transition_attrs.values()) + list(self.nested)
 
     def flat(self) -> List[Transition]:
+        """Every transition, groups expanded."""
         out: List[Transition] = []
         for t in self.transitions:
             out.extend(_members(t))
         return out
 
     def event_types(self, attr_name: str) -> Set[str]:
+        """Events (declared or inferred) of the attribute *attr_name*."""
         value = self.transition_attrs.get(attr_name) or self.nested_attrs.get(
             attr_name
         )
@@ -161,7 +177,13 @@ class _Collected:
         }
 
     def inherit(self, base: "_Collected") -> None:
-        """Start from a base class's collection (subclass wins on names)."""
+        """Start from a base class's collection (subclass wins on names).
+
+        🏛️ Only ``overlay.events`` is copied: entry/exit/transition
+        actions in the overlay are rebuilt by `_apply_conventions` for
+        every class, from the inherited ``plain`` methods, so a subclass
+        that overrides a hook does not also keep the base's binding.
+        """
         self.state_attrs.update(base.state_attrs)
         self.transition_attrs.update(base.transition_attrs)
         self.decorated.update(base.decorated)
@@ -193,9 +215,11 @@ def _build_nested_state(
     inside the body are all honoured; before 0.12.0 the transitions
     were silently dropped.
     """
+    _refuse_inherited_members(attr_name, klass)
     children: List[State] = []
     for child_name, child_value in vars(klass).items():
         if child_name.startswith("_"):
+            _warn_private(child_name, child_value, f"{cls_name}.{attr_name}")
             continue
         if _is_nested_state_class(child_value):
             children.append(
@@ -231,7 +255,83 @@ def _build_nested_state(
     return state
 
 
+def _is_dsl_member(value: Any) -> bool:
+    """A value the collectors would compile: a state or a transition."""
+    return _is_nested_state_class(value) or isinstance(
+        value, (State, Transition, TransitionGroup)
+    )
+
+
+def _refuse_inherited_members(attr_name: str, klass: type) -> None:
+    """Fail loudly when a nested state class inherits states/transitions.
+
+    Only the class's own body is compiled, so ``class p2(base_p)`` with a
+    ``base_p(State.Compound)`` that declares children compiled to an EMPTY
+    atomic state before 0.12.0. Merging the bases is not offered: their
+    ``State`` objects would sit in the tree twice and transitions declared
+    in the base body would bind to whichever copy registered last.
+
+    Args:
+        attr_name: The attribute the nested class is assigned to.
+        klass: The nested ``class X(State, ...)``.
+
+    Raises:
+        InvalidConfigError: A base between *klass* and ``State`` declares
+            states or transitions.
+    """
+    for base in klass.__mro__[1:]:
+        if base in (State, _Compound, _Parallel) or not issubclass(
+            base, State
+        ):
+            continue
+        inherited = sorted(
+            k
+            for k, v in vars(base).items()
+            if not k.startswith("__") and _is_dsl_member(v)
+        )
+        if inherited:
+            raise InvalidConfigError(
+                f"Nested state class '{attr_name}' inherits {inherited} "
+                f"from '{base.__name__}'; states and transitions are not "
+                f"inherited by nested state classes. Declare them in "
+                f"'{attr_name}' itself (base classes may still carry "
+                f"State keywords such as initial= or parallel=)."
+            )
+
+
+def _warn_private(name: str, value: Any, owner: str) -> None:
+    """Report a state / transition hidden behind a ``_name``.
+
+    Underscore names are skipped by the collectors (helpers, private
+    attributes); a ``State`` or transition there vanished from the chart
+    without a word before 0.12.0.
+
+    Args:
+        name: The attribute name.
+        value: Its value.
+        owner: ``Class`` or ``Class.state`` for the message.
+    """
+    if name.startswith("__") or not _is_dsl_member(value):
+        return
+    logger.warning(
+        "⚠️ %s.%s is a state or transition, but names starting with '_' "
+        "are not collected; it is NOT part of the chart. Rename it (use "
+        "State(name=...) / event=... to keep a private-looking name).",
+        owner,
+        name,
+    )
+
+
 def _check_reserved(attr_name: str, what: str) -> None:
+    """Refuse an attribute name that belongs to the instance façade.
+
+    Args:
+        attr_name: The class attribute name.
+        what: ``"state"``, ``"transition"`` or ``"callback"``.
+
+    Raises:
+        InvalidConfigError: *attr_name* is in ``_RESERVED_NAMES``.
+    """
     if attr_name in _RESERVED_NAMES:
         raise InvalidConfigError(
             f"'{attr_name}' is reserved: it is part of the StateMachine "
@@ -246,12 +346,14 @@ def _collect_namespace(
     """Walk a ``StateMachine`` subclass body into *c*."""
     for attr_name, attr_value in list(namespace.items()):
         if attr_name.startswith("_"):
+            _warn_private(attr_name, attr_value, cls_name)
             continue
         if _is_nested_state_class(attr_value):
             _check_reserved(attr_name, "state")
             c.state_attrs[attr_name] = _build_nested_state(
                 attr_name, attr_value, c, cls_name
             )
+            _shadow_lifecycle_state(attr_name, c, cls_name)
         elif isinstance(attr_value, State):
             # 🌳 `machine_root` carries machine-level properties
             #    (on/entry/exit/tags/parallel) rather than being a
@@ -275,6 +377,7 @@ def _collect_namespace(
             if not attr_value.name:
                 attr_value.name = attr_name
             c.state_attrs[attr_name] = attr_value
+            _shadow_lifecycle_state(attr_name, c, cls_name)
         elif isinstance(attr_value, (Transition, TransitionGroup)):
             _check_reserved(attr_name, "transition")
             _infer_events(attr_value, attr_name, c.overlay)
@@ -301,11 +404,56 @@ def _collect_namespace(
                     events[0] if events else attr_name.upper(),
                 )
         elif callable(attr_value) and hasattr(attr_value, "_xsm_type"):
+            # 🛡️ A decorated callable stays in the class namespace, so a
+            #    name like `send` or `stop` would replace the façade
+            #    method itself (`sm.send("GO")` ran the user's action
+            #    before 0.12.0). Plain methods are NOT checked: overriding
+            #    a façade method in a subclass is ordinary Python.
+            _check_reserved(attr_name, "callback")
+            if attr_name in _LIFECYCLE_NAMES:
+                raise InvalidConfigError(
+                    f"{cls_name}.{attr_name}: '{attr_name}' is the "
+                    f"machine's lifecycle method and cannot name a "
+                    f"decorated callback. Rename the method and keep the "
+                    f"chart name with @action('{attr_name}')."
+                )
             c.decorated[attr_name] = attr_value
             c.plain.pop(attr_name, None)
         elif _is_plain_function(attr_value):
             c.plain[attr_name] = attr_value
             c.decorated.pop(attr_name, None)
+
+
+def _shadow_lifecycle_state(
+    attr_name: str, c: _Collected, cls_name: str
+) -> None:
+    """Keep ``sm.start()`` / ``sm.stop()`` the lifecycle for a state
+    called ``start`` / ``stop``.
+
+    The state stays in the chart (``sm.state == "start"`` and
+    ``matches("start")`` work); only the ``sm.start`` attribute is given
+    to the lifecycle method, as for a transition of that name. Before
+    0.12.0 ``sm.stop()`` raised ``TypeError: 'BoundState' object is not
+    callable``.
+
+    Args:
+        attr_name: The state's attribute name.
+        c: The collection being built.
+        cls_name: The machine class name, for the warning.
+    """
+    if attr_name not in _LIFECYCLE_NAMES:
+        return
+    c.shadowing.add(attr_name)
+    logger.warning(
+        "⚠️ %s.%s is a state, but %s() is the machine's lifecycle method "
+        "and keeps that meaning: sm.%s is the method, not the state. "
+        "Query the state with sm.matches(%r).",
+        cls_name,
+        attr_name,
+        attr_name,
+        attr_name,
+        attr_name,
+    )
 
 
 def _resolve_class_refs(c: _Collected) -> None:
@@ -356,6 +504,7 @@ def _all_states(states: List[State]) -> Dict[str, List[State]]:
 
 
 def _state_paths(states: List[State]) -> Dict[int, str]:
+    """``id(state)`` to dot path from the machine root, for every state."""
     paths: Dict[int, str] = {}
 
     def _walk(s: State, prefix: str) -> None:
@@ -376,7 +525,8 @@ def _state_paths(states: List[State]) -> Dict[int, str]:
 
 class _Conventions:
     """``before``/``after`` hooks keyed by event type (``"*"`` = every
-    transition); ``bound`` is the set of attribute names consumed."""
+    event that causes a transition), still unbound (``self`` is supplied
+    per instance by ``StateMachine._bind_hooks``)."""
 
     def __init__(self) -> None:
         self.before: Dict[str, List[Callable[..., Any]]] = (
@@ -396,10 +546,17 @@ def _mark_action(fn: Callable[..., Any]) -> str:
 
 
 def _prepend(table: Dict[int, List[Any]], key: int, item: Any) -> None:
+    """Insert *item* first in ``table[key]`` (see `_apply_conventions`)."""
     table.setdefault(key, []).insert(0, item)
 
 
 def _reject_async_hook(fn: Callable[..., Any], cls_name: str) -> None:
+    """Refuse an ``async def`` before_/after_ hook.
+
+    Raises:
+        InvalidConfigError: *fn* is a coroutine function; plugin hooks
+            are not awaited.
+    """
     if inspect.iscoroutinefunction(fn):
         raise InvalidConfigError(
             f"{cls_name}.{fn.__name__}: before_/after_ hooks run from "
@@ -421,13 +578,15 @@ def _apply_specific_hook(
     or are left alone (``on_<anything>`` is too generic to warn about)."""
 
     def _warn(kind: str, suffix: str) -> None:
+        article = "an" if kind[0] in "aeiou" else "a"
         logger.warning(
-            "⚠️ %s.%s looks like a %s hook but '%s' is not a %s of this "
+            "⚠️ %s.%s looks like a %s hook but '%s' is not %s %s of this "
             "machine; it will never run.",
             cls_name,
             attr_name,
             kind,
             suffix,
+            article,
             kind,
         )
 
@@ -447,6 +606,18 @@ def _apply_specific_hook(
 
     all_events = {e for t in c.flat() for e in [c.overlay.event_of(t)] if e}
     lower_events = {e.lower(): e for e in all_events}
+    # 📝 Events declared only through `State(on={...})` dicts. before_ /
+    #    after_ hooks are dispatched by event type, so they work for these
+    #    too; `on_<event>` is compiled onto Transition objects and cannot.
+    #    Before 0.12.0 a before_/after_ hook for a dict event was reported
+    #    as "will never run" and indeed never ran.
+    dict_events = {
+        e.lower(): e
+        for group in by_name.values()
+        for s in group
+        for e in (s.on or {})
+        if e and e not in all_events
+    }
     for prefix in ("before_", "after_", "on_"):
         if not attr_name.startswith(prefix):
             continue
@@ -454,6 +625,19 @@ def _apply_specific_hook(
         evs = c.event_types(suffix) or (
             {lower_events[suffix]} if suffix in lower_events else set()
         )
+        if not evs and suffix in dict_events:
+            if prefix == "on_":
+                logger.warning(
+                    "⚠️ %s.%s: '%s' is declared only in a State(on={...}) "
+                    "dict, and on_<event> hooks attach to transitions made "
+                    "with .to(); it will never run. Declare the transition "
+                    "with .to(), or list the action in the dict entry.",
+                    cls_name,
+                    attr_name,
+                    dict_events[suffix],
+                )
+                return
+            evs = {dict_events[suffix]}
         if not evs:
             if prefix != "on_":
                 _warn("event", suffix)
@@ -480,6 +664,12 @@ def _apply_generic_hook(
     by_name: Dict[str, List[State]],
     cls_name: str,
 ) -> None:
+    """Bind ``on_enter_state`` / ``on_exit_state`` / ``on_transition`` /
+    ``before_transition`` / ``after_transition``.
+
+    ``on_transition`` reaches ``.to()`` transitions only: a
+    ``State(on={...})`` entry has no object to attach an action to.
+    """
     if attr_name in ("on_enter_state", "on_exit_state"):
         name = _mark_action(fn)
         c.decorated[attr_name] = fn
@@ -521,7 +711,9 @@ def _apply_conventions(c: _Collected, cls_name: str) -> _Conventions:
     Specific hooks are applied first and generic hooks last; because each
     binding is PREPENDED, the resulting order inside a slot is generic,
     then specific, then explicitly listed actions -- the python-statemachine
-    order, independent of where the methods sit in the class body.
+    order, independent of where the methods sit in the class body. The
+    order is pinned in ``tests/test_pythonic_dsl_v2.py`` (naming
+    conventions).
     """
     conv = _Conventions()
     by_name = _all_states(c.states)
@@ -546,11 +738,26 @@ class _StateMachineMeta(type):
 
     def __new__(
         mcs, name: str, bases: Tuple[type, ...], namespace: Dict[str, Any]
-    ) -> Any:
-        # Skip processing for the base StateMachine class
-        if name == "StateMachine" and not any(
-            hasattr(b, "_xsm_is_base") for b in bases
-        ):
+    ) -> "_StateMachineMeta":
+        """Collect and compile-prepare a ``StateMachine`` subclass body.
+
+        Args:
+            name: The class name.
+            bases: Its bases.
+            namespace: The class body.
+
+        Returns:
+            The new class, carrying the ``_xsm_*`` collection attributes.
+
+        Raises:
+            InvalidConfigError: A reserved name, an unresolvable nested
+                class reference, an inherited nested-class member, or an
+                ``async def`` before_/after_ hook.
+        """
+        # 🏛️ The base class is the one with no machine-class base. Telling
+        #    it apart by NAME (as before 0.12.0) meant a user class called
+        #    `StateMachine` could be mistaken for it and never compiled.
+        if not any(isinstance(b, _StateMachineMeta) for b in bases):
             cls = super().__new__(mcs, name, bases, namespace)
             setattr(cls, "_xsm_is_base", True)
             return cls
@@ -650,7 +857,16 @@ class StateMachine(metaclass=_StateMachineMeta):
     logged when the class is defined so the collision is never a surprise
     at run time. Names that would break the façade itself (``send``,
     ``state``, ``context``, ``status``, ...) raise ``InvalidConfigError``
-    instead; see ``_RESERVED_NAMES``.
+    instead; see ``_RESERVED_NAMES``. The same holds for a decorated
+    callback (``@action def send``); a STATE called ``start`` / ``stop``
+    stays in the chart but, like such a transition, leaves ``sm.start``
+    / ``sm.stop`` to the lifecycle.
+
+    **before_/after_ hooks.** ``after_<event>`` and ``after_transition``
+    run once per event, after its macrostep settled. A hook that raises
+    is contained (logged) and cannot veto the transition; use a guard
+    for that. When a ``before_*`` hook exists, guards are evaluated
+    twice per event (once to decide whether the hook runs).
 
     Class Attributes:
         machine_id: Optional machine ID (defaults to class name).
@@ -700,8 +916,8 @@ class StateMachine(metaclass=_StateMachineMeta):
         state: Union[None, str, List[str]] = None,
         engine: Optional[str] = None,
         strict: Optional[bool] = None,
-        plugins: Optional[List[Any]] = None,
-        clock: Optional[Any] = None,
+        plugins: Optional[Sequence["PluginBase[Any]"]] = None,
+        clock: Optional["Clock"] = None,
     ) -> None:
         """Build and (for the sync engine) start a machine instance.
 
@@ -726,13 +942,10 @@ class StateMachine(metaclass=_StateMachineMeta):
             return
         cls = type(self)
         chosen = engine or cls.engine
-        if chosen == "auto":
-            chosen = "async" if cls._xsm_has_async else "sync"
-        if chosen not in ("sync", "async"):
+        if chosen not in ("sync", "async", "auto"):
             raise InvalidConfigError(
                 f"engine must be 'sync', 'async' or 'auto', not {chosen!r}"
             )
-        self.engine = chosen
         self.strict = cls.strict if strict is None else strict
         self._xsm_results: Deque[Any] = collections.deque(
             maxlen=RESULT_SINK_MAXLEN
@@ -745,6 +958,15 @@ class StateMachine(metaclass=_StateMachineMeta):
             validate=cls.validate_logic,
         )
         self._xsm_machine: MachineNode[Any] = machine
+        if chosen == "auto":
+            # 📝 Decided from the BUILT logic tables, not only from the
+            #    decorated callables: a plain `async def` bound by name
+            #    (`actions=["do_it"]`) also needs the asyncio engine.
+            #    Before 0.12.0 it was missed and the sync engine refused
+            #    the action at the first send.
+            has_async = cls._xsm_has_async or _logic_has_async(machine)
+            chosen = "async" if has_async else "sync"
+        self.engine = chosen
 
         if chosen == "async":
             from .interpreter import Interpreter
@@ -762,7 +984,10 @@ class StateMachine(metaclass=_StateMachineMeta):
             #    entry actions, as a snapshot restore would. `from_state`
             #    builds the interpreter itself, so `strict` is set after.
             interp = engine_cls.from_state(
-                machine, state, context=context, clock=clock
+                machine,
+                _qualify_paths(machine.id, state),
+                context=context,
+                clock=clock,
             )
             interp.strict = self.strict
 
@@ -782,6 +1007,14 @@ class StateMachine(metaclass=_StateMachineMeta):
     def _bind_hooks(
         self, hooks: Dict[str, List[Callable[..., Any]]]
     ) -> Dict[str, List[Callable[..., Any]]]:
+        """Bind the class's before_/after_ hooks to this instance.
+
+        Args:
+            hooks: Event type to unbound hook functions.
+
+        Returns:
+            Event type to adapted callables taking the action shape.
+        """
         return {
             event: [
                 adapt_callable(functools.partial(fn, self), "action")
@@ -792,7 +1025,20 @@ class StateMachine(metaclass=_StateMachineMeta):
 
     @classmethod
     def _compiled_config(cls) -> Dict[str, Any]:
-        """The context-free XState config, compiled once per class."""
+        """The context-free XState config, compiled once per class.
+
+        🏛️ Cached in the class's OWN ``__dict__`` (a subclass compiles
+        its own) and never invalidated: ``machine_id``, ``machine_root``
+        and the chart are class-definition data, and ``initial_context``
+        is applied per build, outside the cache. Assigning those
+        attributes after the first instance is not supported. Two
+        threads racing the first compile both compile and one identical
+        result wins. Every caller gets a deep copy, so the cached dict is
+        never handed out.
+
+        Returns:
+            A fresh copy of the compiled config.
+        """
         cached = cls.__dict__.get("_xsm_config_cache")
         if cached is None:
             cached = _compile_config(
@@ -814,10 +1060,34 @@ class StateMachine(metaclass=_StateMachineMeta):
         sink: Optional[Any],
         validate: bool,
     ) -> MachineNode[Any]:
+        """Compile the chart and bind the callbacks of *instance* to it.
+
+        Args:
+            instance: The object whose methods implement the logic.
+            context: Context override (else ``initial_context``).
+            sink: Collector for action results (``None``: not needed).
+            validate: Fail now for logic the chart names but nobody
+                implements.
+
+        Returns:
+            The built ``MachineNode``.
+
+        Raises:
+            ImplementationMissingError: *validate* and logic is missing.
+            NotSupportedError: A plain ``async def`` guard bound by name.
+        """
         config = cls._compiled_config()
         ctx = context if context is not None else cls.initial_context
         if ctx is not None:
-            config["context"] = copy.deepcopy(ctx)
+            # 🛡️ PD-11: a context holding an uncopyable handle (a lock, a
+            #    DB session) must not make the class unusable. The engine
+            #    applies the same fallback (`_copy_initial_context`) and
+            #    logs it; here the shallow copy keeps the class attribute
+            #    itself from being aliased by the compiled config.
+            try:
+                config["context"] = copy.deepcopy(ctx)
+            except Exception:
+                config["context"] = dict(ctx)
         logic = _compile_logic_from_instance(
             instance=instance, decorated=cls._xsm_decorated, sink=sink
         )
@@ -841,7 +1111,7 @@ class StateMachine(metaclass=_StateMachineMeta):
         actor systems), or when you only need the chart itself
         (``to_json()``, diagrams, code generation) and no logic at all.
         ``before_*`` / ``after_*`` naming-convention hooks need the
-        instance façade and are reported if present.
+        instance façade; if the class has any, a warning names them.
 
         Args:
             context: Optional context override.
@@ -871,6 +1141,11 @@ class StateMachine(metaclass=_StateMachineMeta):
             )
         instance = cls.__new__(cls)
         object.__setattr__(instance, "_xsm_logic_only", True)
+        # 📝 A logic-only instance: `StateMachine.__init__` returns at once
+        #    on the flag, but a subclass `__init__` still runs, so the
+        #    attributes it sets exist for the callbacks. mypy refuses an
+        #    explicit `__init__` call on an instance [misc]; here running
+        #    it is the point.
         instance.__init__()  # type: ignore[misc]
         return cls._build_machine(
             instance=instance, context=context, sink=None, validate=validate
@@ -891,6 +1166,7 @@ class StateMachine(metaclass=_StateMachineMeta):
 
     @property
     def status(self) -> str:
+        """The interpreter status (``"running"``, ``"stopped"``, ...)."""
         return str(self._xsm_interp.status)
 
     def start(self) -> Any:
@@ -905,6 +1181,7 @@ class StateMachine(metaclass=_StateMachineMeta):
         return self
 
     async def _astart(self) -> "StateMachine":
+        """Async half of `start`: start the engine, return ``self``."""
         await self._xsm_interp.start()
         return self
 
@@ -920,20 +1197,24 @@ class StateMachine(metaclass=_StateMachineMeta):
         return None
 
     def __enter__(self) -> "StateMachine":
+        """Sync engine: the machine is already running; stop on exit."""
         if self.engine == "async":
             raise TypeError("Use `async with` for an async-engine machine.")
         return self
 
     def __exit__(self, *exc: Any) -> None:
+        """Stop the machine, exceptions included."""
         self._xsm_interp.stop()
 
     async def __aenter__(self) -> "StateMachine":
+        """Async engine: start the machine; it stops on exit."""
         if self.engine != "async":
             raise TypeError("Use a plain `with` for a sync-engine machine.")
         await self._xsm_interp.start()
         return self
 
     async def __aexit__(self, *exc: Any) -> None:
+        """Stop the machine, exceptions included."""
         await self._xsm_interp.stop()
 
     # ------------------------------------------------------------------
@@ -964,6 +1245,14 @@ class StateMachine(metaclass=_StateMachineMeta):
         return self._fold_results()
 
     async def _asend(self, ev: Event) -> Any:
+        """Async `send`: strict check, dispatch, fold the action results.
+
+        Args:
+            ev: The coerced event.
+
+        Returns:
+            The folded action results (see `_fold_results`).
+        """
         # 🔒 Concurrent `gather(sm.go(), sm.next())` must not interleave
         #    their result sinks; the interpreter processes sends in order
         #    anyway, so serialising here costs nothing observable.
@@ -978,6 +1267,15 @@ class StateMachine(metaclass=_StateMachineMeta):
 
     @staticmethod
     def _coerce(event: Union[str, Event], payload: Dict[str, Any]) -> Event:
+        """Turn the arguments of ``send`` into one ``Event``.
+
+        Args:
+            event: An event type or an ``Event``.
+            payload: Keyword payload, merged over the event's own.
+
+        Returns:
+            The event to dispatch (a new one when anything was merged).
+        """
         if isinstance(event, Event):
             if payload:
                 merged = {**(event.payload or {}), **payload}
@@ -986,6 +1284,19 @@ class StateMachine(metaclass=_StateMachineMeta):
         return Event(type=str(event), payload=dict(payload))
 
     def _strict_check(self, ev: Event) -> None:
+        """Refuse *ev* at the call site in strict mode.
+
+        Checked here, before dispatch, so the caller gets the exception
+        (inside the async run loop it could only be logged).
+
+        Args:
+            ev: The event about to be sent.
+
+        Raises:
+            InterpreterStoppedError: The machine is not running.
+            UnknownEventError: The chart does not declare ``ev.type``.
+            TransitionNotAllowedError: No active state takes it now.
+        """
         machine = self._xsm_machine
         if self._xsm_interp.status != "running":
             raise InterpreterStoppedError(
@@ -1000,6 +1311,16 @@ class StateMachine(metaclass=_StateMachineMeta):
             raise TransitionNotAllowedError(ev.type, self.configuration)
 
     def _fold_results(self) -> Any:
+        """Drain the action-result sink into the return value of ``send``.
+
+        The sink is shared with direct ``sm.interpreter.send`` calls and
+        cleared before every facade send, so only this send's results
+        are returned; it is bounded (`RESULT_SINK_MAXLEN`) so a machine
+        driven only through the interpreter does not grow it forever.
+
+        Returns:
+            ``None`` (no results), the single result, or a list.
+        """
         results = list(self._xsm_results)
         self._xsm_results.clear()
         if not results:
@@ -1012,6 +1333,7 @@ class StateMachine(metaclass=_StateMachineMeta):
     # 🔎 Introspection
     # ------------------------------------------------------------------
     def _relative(self, state_id: str) -> str:
+        """Strip the ``<machine id>.`` prefix from an absolute state id."""
         prefix = f"{self._xsm_machine.id}."
         if state_id.startswith(prefix):
             return state_id[len(prefix) :]
@@ -1068,6 +1390,7 @@ class StateMachine(metaclass=_StateMachineMeta):
         return frozenset(out)
 
     def __repr__(self) -> str:
+        """``Light(state='green', context={...})``."""
         leaves = sorted(self.configuration)
         shown: Any = leaves[0] if len(leaves) == 1 else leaves
         return (
@@ -1094,8 +1417,16 @@ def _bind_plain_methods_by_name(
     A plain method is bound only for a name the chart actually references
     and no decorated callable already provides, so helper methods are
     never swept in by accident. Runs on the built ``MachineNode``: its
-    ``logic`` tables are the live lookup the engine uses, and walking the
+    ``logic`` tables are the live lookup the engine uses (the engines
+    resolve every action/guard/service name through ``machine.logic``
+    at call time; nothing is snapshotted at build), and walking the
     parsed model keeps the ``cli`` extractor out of the import graph.
+    Underscore-prefixed methods are never collected, so they cannot be
+    bound by name.
+
+    Raises:
+        NotSupportedError: A plain ``async def`` method would be bound
+            as a guard.
     """
     from .testing_utils import logic_names
 
@@ -1116,9 +1447,68 @@ def _bind_plain_methods_by_name(
             fn = plain.get(name) or by_camel.get(name)
             if fn is None:
                 continue
+            if kind == "guard" and inspect.iscoroutinefunction(fn):
+                # 🔥 A coroutine object is truthy: an un-awaited `async
+                #    def` guard let every transition through before
+                #    0.12.0, with only a RuntimeWarning. Same rule as the
+                #    @guard decorator.
+                raise NotSupportedError(
+                    f"{cls.__name__}.{fn.__name__}: guard '{name}' must "
+                    f"be synchronous (guards cannot be async)."
+                )
             table[name] = adapt_callable(
                 functools.partial(fn, instance), kind, sink=sink
             )
+
+
+def _logic_has_async(machine: MachineNode[Any]) -> bool:
+    """``True`` when an action or service the machine carries is async.
+
+    The facade wraps every callback (`adapt_callable` points
+    ``__wrapped__`` at the underlying function), so the check looks
+    through the wrapper and through ``functools.partial``.
+
+    Args:
+        machine: The built machine.
+
+    Returns:
+        Whether the asyncio engine is needed.
+    """
+    logic = machine.logic
+    for fn in list(logic.actions.values()) + list(logic.services.values()):
+        inner = getattr(fn, "__wrapped__", fn)
+        inner = getattr(inner, "func", inner)
+        if inspect.iscoroutinefunction(inner):
+            return True
+    return False
+
+
+def _qualify_paths(
+    machine_id: str, state: Union[str, List[str]]
+) -> Union[str, List[str]]:
+    """Prefix relative ``state=`` paths with the machine id.
+
+    ``M(state="b")`` is documented as relative to the machine root;
+    `from_state` resolves it either way but logged "Lookup will fail" for
+    every relative path before 0.12.0.
+
+    Args:
+        machine_id: The machine's id.
+        state: One dot path or several (parallel regions).
+
+    Returns:
+        The same path(s), absolute.
+    """
+    prefix = f"{machine_id}."
+
+    def _one(path: str) -> str:
+        if path.startswith(("#", prefix)) or path == machine_id:
+            return path
+        return prefix + path
+
+    if isinstance(state, str):
+        return _one(state)
+    return [_one(p) for p in state]
 
 
 def _validate_logic(machine: MachineNode[Any], cls_name: str) -> None:

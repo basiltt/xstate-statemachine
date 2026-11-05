@@ -56,6 +56,7 @@ from .core import (
     state_tools,
     validate_agent_chart,
 )
+from .budgets import _spent_tokens, _spent_usd
 from .messages import AgentConfigError
 from .tools import ALL_TOOLS, ToolRegistry
 
@@ -311,7 +312,7 @@ class BudgetPlugin(PluginBase[Any]):
         ):
             return True
         return self.max_total_usd is not None and (
-            _num(totals.get("cost_usd", 0.0)) >= self.max_total_usd
+            _num(totals.get("cost_usd", 0.0), "cost_usd") >= self.max_total_usd
         )
 
     def guards(self) -> MachineLogic[Any]:
@@ -404,7 +405,7 @@ class BudgetPlugin(PluginBase[Any]):
         ctx = interpreter.context
         totals = dict(ctx.get("total_usage") or {})
         for k in _USAGE_KEYS:
-            totals[k] = totals.get(k, 0) + _num(usage.get(k, 0))
+            totals[k] = totals.get(k, 0) + _num(usage.get(k, 0), k)
         by_agent = dict(ctx.get("usage_by_agent") or {})
         aid = payload.get("agent_id")
         if aid:
@@ -413,7 +414,7 @@ class BudgetPlugin(PluginBase[Any]):
             #    forever. Sanitised like the totals; oldest evicted.
             by_agent.pop(str(aid), None)
             by_agent[str(aid)] = {
-                k: _num(usage.get(k, 0)) for k in _USAGE_KEYS
+                k: _num(usage.get(k, 0), k) for k in _USAGE_KEYS
             }
             while len(by_agent) > self.max_tracked_agents:
                 by_agent.pop(next(iter(by_agent)))
@@ -500,17 +501,18 @@ def _all_actions(node: Any) -> Iterable[Any]:
         yield from getattr(t, "actions", None) or ()
 
 
-def _num(value: Any) -> Any:
-    """A usage number from a child's report: non-numeric / bool / NaN /
-    negative counts never reduce or poison the rollup (0)."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+def _num(value: Any, key: str = "input_tokens") -> Any:
+    """A usage number from a child's report, sanitised like the per-agent
+    budget: negative -> 0 (no refunds), NaN / inf / garbage -> an
+    exhausting amount (FAIL CLOSED, review CM-06) so a faulty child can
+    never evade the global budget by reporting a bad number.
+    """
+    if isinstance(value, bool):
         return 0
-    # 🔥 #290 review (1): `inf` passed; `exceeded()` then raised
-    #    OverflowError inside a fail-open hook on EVERY later report --
-    #    the global budget was permanently disabled by one bad number.
-    if not math.isfinite(value) or value < 0:
-        return 0
-    return value
+    if key == "turns":
+        # 📝 a turn counter is not a budget dimension: junk counts as 0
+        return value if isinstance(value, int) and value > 0 else 0
+    return _spent_usd(value) if key == "cost_usd" else _spent_tokens(value)
 
 
 # -----------------------------------------------------------------------------

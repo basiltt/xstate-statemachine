@@ -9,9 +9,10 @@
 # machine that parks forever, an action that does nothing. Each is a class
 # of defect that no test can catch because nothing observable happens.
 #
-# This module walks the fully-built tree ONCE and reports every such problem
-# together, so a rename that breaks twenty transitions is one error message,
-# not twenty runtime surprises.
+# This module walks the fully-built tree ONCE and reports every problem of a
+# category together, so a rename that breaks twenty transitions is one error
+# message, not twenty runtime surprises. Categories are raised one at a
+# time, most severe first (see `validate_machine`).
 #
 # Validation is a separate module rather than inline in `MachineNode` because
 # it needs the WHOLE tree (targets resolve across branches), so it can only
@@ -27,6 +28,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     cast,
+    Container,
     Dict,
     FrozenSet,
     Iterator,
@@ -36,7 +38,7 @@ from typing import (
     Tuple,
 )
 
-from .actions import RAISE, resolve_builtin
+from .actions import BUILTIN_ACTION_PARAM_SPEC, RAISE, resolve_builtin
 from .exceptions import (
     InvalidConfigError,
     RootTargetError,
@@ -56,10 +58,22 @@ logger = logging.getLogger(__name__)
 
 
 def walk(node: "StateNode[Any]") -> Iterator["StateNode[Any]"]:
-    """Yield *node* and every descendant, depth-first."""
-    yield node
-    for child in node.states.values():
-        yield from walk(child)
+    """Yield *node* and every descendant, depth-first, in document order.
+
+    ⚡ Iterative (an explicit stack) rather than a recursive generator: the
+    nested ``yield from`` chain cost one generator frame per level for
+    every node, on every `create_machine()` (#307 benchmark). Children
+    are pushed in reverse so they pop in declaration order; the sequence
+    is exactly the recursive pre-order walk.
+    """
+    stack = [node]
+    pop = stack.pop
+    while stack:
+        current = pop()
+        yield current
+        children = current.states
+        if children:
+            stack.extend(reversed(list(children.values())))
 
 
 def transitions_of(
@@ -74,8 +88,8 @@ def transitions_of(
         label = "always" if event == "" else f"on '{event}'"
         for t in group:
             yield label, t
-    if node.on_done is not None:
-        yield "onDone", node.on_done
+    for t in node.on_done_transitions:
+        yield "onDone", t
     for delay, group in node.after.items():
         for t in group:
             yield f"after {delay!r}", t
@@ -101,8 +115,9 @@ def _targeted_transitions(
         for t in group:
             if t.target_str:
                 yield ("always" if event == "" else f"on '{event}'"), t
-    if node.on_done is not None and node.on_done.target_str:
-        yield "onDone", node.on_done
+    for t in node.on_done_transitions:
+        if t.target_str:
+            yield "onDone", t
     for delay, group in node.after.items():
         for t in group:
             if t.target_str:
@@ -240,10 +255,63 @@ def multi_target_problem(
     return None
 
 
+def _pending_targets(
+    machine: "MachineNode[Any]",
+) -> "Iterator[Tuple[TransitionDefinition, str, Any]]":
+    """Every targeted transition as ``(transition, kind, extra)``.
+
+    ⚡ The parser hands the validator this list as it builds the tree
+    (`MachineNode._targeted_transitions`, document order); a second walk
+    of the finished tree, filtering every transition for a target, was
+    ~7 % of `create_machine()` (#307 benchmark). The list is consumed
+    once; a later validation of the same machine (or a tree built outside
+    `MachineNode.__init__`) falls back to the walk, which yields the same
+    transitions in the same order.
+    """
+    pending = getattr(machine, "_targeted_transitions", None)
+    if pending is not None:
+        machine._targeted_transitions = None  # consumed
+        yield from pending
+        return
+    for node in walk(machine):
+        for group in node.on.values():
+            for t in group:
+                if t.target_strs:
+                    yield t, "on", None
+        for t in node.on_done_transitions:
+            if t.target_strs:
+                yield t, "onDone", None
+        for delay, group in node.after.items():
+            for t in group:
+                if t.target_strs:
+                    yield t, "after", delay
+        for inv in node.invoke:
+            for t in inv.on_done:
+                if t.target_strs:
+                    yield t, "invoke-done", inv.src
+            for t in inv.on_error:
+                if t.target_strs:
+                    yield t, "invoke-error", inv.src
+
+
+def _pending_label(t: "TransitionDefinition", kind: str, extra: Any) -> str:
+    """The finding label for a `_pending_targets` entry (built lazily: the
+    validator reads it only when a target is wrong)."""
+    if kind == "on":
+        return "always" if t.event == "" else f"on '{t.event}'"
+    if kind == "after":
+        return f"after {extra!r}"
+    if kind == "invoke-done":
+        return f"invoke '{extra}' onDone"
+    if kind == "invoke-error":
+        return f"invoke '{extra}' onError"
+    return kind  # "onDone"
+
+
 def _collect_findings(
     machine: "MachineNode[Any]",
 ) -> Tuple[List[str], List[str], List[str], List[str]]:
-    """Walk the tree once; gather the build-time findings.
+    """Check every targeted transition once; gather the build-time findings.
 
     Returns ``(unresolved, dead_loops, root_targets, bad_multi_targets)``.
     The lists have different severities downstream: `unresolved` is
@@ -255,53 +323,67 @@ def _collect_findings(
     dead_loops: List[str] = []
     root_targets: List[str] = []
     bad_multi: List[str] = []
+    findings = (unresolved, dead_loops, root_targets)
 
-    for node in walk(machine):
-        for label, t in _targeted_transitions(node):
-            # 🎯 #30: every target must resolve at build time. Uses the
-            #    resolver's standard strategies only -- NOT the interpreter's
-            #    last-segment fallbacks, which are what let a typo bind to an
-            #    unrelated state (#34).
-            resolved = [
-                (target_str, resolve_strict(target_str, t.source, machine))
-                for target_str in t.target_strs
-            ]
-            # ⚡ Memoise for the runtime (see TransitionDefinition.resolved_target).
-            t.resolved_target = resolved[0][1]
-            if len(resolved) > 1 and all(r is not None for _, r in resolved):
-                nodes = tuple(r for _, r in resolved if r is not None)
-                t.resolved_targets = nodes
-                problem = multi_target_problem(nodes)
-                if problem is not None:
-                    bad_multi.append(f"  {node.id}: {label} -> {problem}")
-            for target_str, target in resolved:
-                _check_one_target(
-                    machine,
-                    node,
-                    label,
-                    t,
-                    target_str,
-                    target,
-                    (unresolved, dead_loops, root_targets),
+    for t, kind, extra in _pending_targets(machine):
+        # 🎯 #30: every target must resolve at build time. Uses the
+        #    resolver's standard strategies only -- NOT the interpreter's
+        #    last-segment fallbacks, which are what let a typo bind to an
+        #    unrelated state (#34).
+        source = t.source
+        target_strs = t.target_strs
+        if len(target_strs) == 1:
+            # ⚡ The single-target shape of almost every transition: no
+            #    list, no all()/tuple() passes.
+            target_str = target_strs[0]
+            target = resolve_strict(target_str, source, machine)
+            t.resolved_target = target
+            _check_one_target(
+                machine, source, kind, extra, t, target_str, target, findings
+            )
+            continue
+        resolved = [
+            (target_str, resolve_strict(target_str, source, machine))
+            for target_str in target_strs
+        ]
+        # ⚡ Memoise for the runtime (see TransitionDefinition.resolved_target).
+        t.resolved_target = resolved[0][1]
+        if all(r is not None for _, r in resolved):
+            nodes = tuple(r for _, r in resolved if r is not None)
+            t.resolved_targets = nodes
+            problem = multi_target_problem(nodes)
+            if problem is not None:
+                bad_multi.append(
+                    f"  {source.id}: {_pending_label(t, kind, extra)} -> "
+                    f"{problem}"
                 )
+        for target_str, target in resolved:
+            _check_one_target(
+                machine, source, kind, extra, t, target_str, target, findings
+            )
     return unresolved, dead_loops, root_targets, bad_multi
 
 
 def _check_one_target(
     machine: "MachineNode[Any]",
     node: "StateNode[Any]",
-    label: str,
+    kind: str,
+    extra: Any,
     t: "TransitionDefinition",
     target_str: str,
     target: "Optional[StateNode[Any]]",
     findings: Tuple[List[str], List[str], List[str]],
 ) -> None:
-    """Record what is wrong with one resolved target of *t*, if anything."""
+    """Record what is wrong with one resolved target of *t*, if anything.
+
+    *kind* / *extra* describe where the transition is declared (see
+    `_pending_targets`); the label is formatted only for a finding.
+    """
     unresolved, dead_loops, root_targets = findings
     if target is None:
         unresolved.append(
-            f"  {node.id}: {label} -> target {target_str!r} "
-            f"does not resolve{_suggest(target_str, machine)}"
+            f"  {node.id}: {_pending_label(t, kind, extra)} -> target "
+            f"{target_str!r} does not resolve{_suggest(target_str, machine)}"
         )
     elif target is machine:
         # 🛑 #108: entering the ROOT enters nothing below it; the
@@ -313,13 +395,19 @@ def _check_one_target(
         #    `strict_targets=False` (which downgrades unresolvable
         #    targets to a warning) cannot reopen this hole.
         root_targets.append(
-            f"  {node.id}: {label} -> target {target_str!r} is the "
+            f"  {node.id}: {_pending_label(t, kind, extra)} -> target "
+            f"{target_str!r} is the "
             f"machine root; entering it empties the configuration. "
             f"Target the root's initial child "
             f"('#{machine.id}.{machine.initial}') or a specific "
             f"state."
         )
-    elif len(t.target_strs) == 1 and _is_dead_always_loop(label, t, target):
+    elif (
+        kind == "on"
+        and t.event == ""
+        and len(t.target_strs) == 1
+        and _is_dead_always_loop("always", t, target)
+    ):
         dead_loops.append(
             f"  {node.id}: always self-target can never make "
             f"progress -- the transition does not re-enter the "
@@ -356,7 +444,14 @@ def _collect_unknown_raises(machine: "MachineNode[Any]") -> List[str]:
     """
     findings: List[str] = []
 
-    def check(actions: Any, where: str) -> None:
+    def check(actions: "Sequence[ActionDefinition]", where: str) -> None:
+        """Record every static `raise` in *actions* that names an event no
+        state handles.
+
+        Args:
+            actions: The parsed actions to scan.
+            where: The owning location, prefixed to each finding.
+        """
         for action in actions:
             event_type = _static_raise_event_type(action)
             # #190: a `raise` is DISPATCHED, so a wildcard handler does
@@ -379,7 +474,16 @@ def _collect_unknown_raises(machine: "MachineNode[Any]") -> List[str]:
 
 
 def _suggest_event(event_type: str, machine: "MachineNode[Any]") -> str:
-    import difflib
+    """A "did you mean" hint naming the closest declared event, or "".
+
+    Args:
+        event_type: The undeclared event name.
+        machine: The machine whose `known_events` are searched.
+
+    Returns:
+        str: ``". Did you mean 'X'?"`` or an empty string.
+    """
+    import difflib  # 📝 lazy: only paid when a finding is reported
 
     close = difflib.get_close_matches(
         event_type, sorted(machine.known_events), n=1, cutoff=0.6
@@ -450,6 +554,13 @@ KNOWN_INVOKE_KEYS: FrozenSet[str] = (
     | _METADATA_KEYS
 )
 
+#: 🗝️ Keys `ActionDefinition` reads from an action OBJECT. A misspelled
+#: ``"parms"`` left the action with no params at all.
+KNOWN_ACTION_KEYS: FrozenSet[str] = frozenset({"type", "params"})
+
+#: 🗝️ Keys `GuardDefinition` reads from a guard OBJECT.
+KNOWN_GUARD_KEYS: FrozenSet[str] = frozenset({"type", "params", "children"})
+
 
 def _unknown_keys(config: Dict[str, Any], known: FrozenSet[str]) -> List[str]:
     """Human-readable hints for the keys of *config* not in *known*."""
@@ -467,13 +578,105 @@ def _unknown_keys(config: Dict[str, Any], known: FrozenSet[str]) -> List[str]:
         for k in config
         if isinstance(k, str) and k not in known and not k.startswith("x-")
     )
-    hints = []
+    # 🛡️ A non-string key (``{1: ...}``, possible only from Python) can
+    #    never be read by the parser; it used to be dropped from the report.
+    hints = [f"{k!r} (not a string)" for k in config if not isinstance(k, str)]
     for key in unknown:
         close = difflib.get_close_matches(key, sorted(known), n=1, cutoff=0.6)
         hints.append(
             f"'{key}'" + (f" (did you mean '{close[0]}'?)" if close else "")
         )
     return hints
+
+
+def _collect_action_keys(
+    raw: Any,
+    where: str,
+    out: List[str],
+    user_actions: Optional[Container[str]],
+) -> None:
+    """Report unknown keys of the action OBJECTS in *raw* (VAL-01).
+
+    Checks each action dict against `KNOWN_ACTION_KEYS` and, for a
+    built-in action, its ``params`` against the keys the built-in reads
+    (`BUILTIN_ACTION_PARAM_SPEC`): ``{"type": "raise", "params": {"event":
+    "X", "delya": 5}}`` used to build a raise with no delay. A type the
+    machine's logic implements is the USER's action (it resolves before
+    the built-in), so its params are not checked.
+
+    Args:
+        raw: An ``entry`` / ``exit`` / ``actions`` value.
+        where: The owning location, prefixed to each finding.
+        out: Accumulator for findings.
+        user_actions: Action names the machine's logic implements.
+    """
+    if raw is None or isinstance(raw, str):
+        return  # ⚡ the common shapes: nothing, or a bare action name
+    for item in raw if isinstance(raw, list) else [raw]:
+        if not isinstance(item, dict):
+            continue
+        action_type = item.get("type")
+        hints = _unknown_keys(item, KNOWN_ACTION_KEYS)
+        if hints:
+            out.append(f"{where} action {action_type!r}: {', '.join(hints)}")
+        params = item.get("params")
+        if not isinstance(params, dict) or not isinstance(action_type, str):
+            continue
+        if user_actions is not None and action_type in user_actions:
+            continue
+        canonical = resolve_builtin(action_type)
+        spec = BUILTIN_ACTION_PARAM_SPEC.get(canonical) if canonical else None
+        if spec is None:
+            continue
+        hints = _unknown_keys(params, spec[0] | spec[1])
+        if hints:
+            out.append(
+                f"{where} action {action_type!r} params: {', '.join(hints)}"
+            )
+
+
+def _collect_guard_keys(raw: Any, where: str, out: List[str]) -> None:
+    """Report unknown keys of a guard OBJECT and its nested guards (VAL-01).
+
+    Args:
+        raw: A transition's ``guard`` / ``cond`` value.
+        where: The owning location, prefixed to each finding.
+        out: Accumulator for findings.
+    """
+    if not isinstance(raw, dict):
+        return  # ⚡ a named guard (or nothing) has no keys
+    hints = _unknown_keys(raw, KNOWN_GUARD_KEYS)
+    if hints:
+        out.append(f"{where} guard {raw.get('type')!r}: {', '.join(hints)}")
+    children = raw.get("children")
+    if isinstance(children, list):
+        for child in children:
+            _collect_guard_keys(child, where, out)
+
+
+def _collect_transition_keys(
+    t: Dict[str, Any],
+    where: str,
+    out: List[str],
+    user_actions: Optional[Container[str]],
+) -> None:
+    """Report unknown keys of one transition dict, its actions and guard.
+
+    Args:
+        t: The transition dict.
+        where: The owning location, prefixed to each finding.
+        out: Accumulator for findings.
+        user_actions: Action names the machine's logic implements.
+    """
+    h = _unknown_keys(t, KNOWN_TRANSITION_KEYS)
+    if h:
+        out.append(f"{where}: {', '.join(h)}")
+    # ⚡ Probe before calling: most transitions carry neither key.
+    if "actions" in t:
+        _collect_action_keys(t["actions"], where, out, user_actions)
+    guard = t.get("guard", t.get("cond"))
+    if guard is not None:
+        _collect_guard_keys(guard, where, out)
 
 
 def _transition_dicts(raw: Any) -> Iterator[Dict[str, Any]]:
@@ -486,66 +689,101 @@ def _transition_dicts(raw: Any) -> Iterator[Dict[str, Any]]:
 
 
 def _collect_unknown_keys(
-    config: Dict[str, Any], path: str, known: FrozenSet[str], out: List[str]
+    config: Dict[str, Any],
+    path: str,
+    known: FrozenSet[str],
+    out: List[str],
+    user_actions: Optional[Container[str]] = None,
 ) -> None:
-    """#220: walk one state node (root included) and its transitions and
-    invokes, appending one line per offending config object to *out*."""
+    """#220: walk one state node (root included) and its transitions,
+    invokes, action objects and guard objects, appending one line per
+    offending config object to *out*.
+
+    Args:
+        config: The state's raw config dict.
+        path: The state's id, prefixed to each finding.
+        known: The keys this node may declare (root or state keys).
+        out: Accumulator for findings.
+        user_actions: Action names the machine's logic implements; their
+            ``params`` are the user's to define (see
+            `_collect_action_keys`).
+    """
     hints = _unknown_keys(config, known)
     if hints:
         out.append(f"{path}: {', '.join(hints)}")
-    # transitions: on / always / after / onDone
-    on = config.get("on")
-    if isinstance(on, dict):
-        for event, raw in on.items():
-            # ⚡ String shorthand ("EVENT": "target") carries no keys.
-            if isinstance(raw, str):
-                continue
-            for t in _transition_dicts(raw):
-                h = _unknown_keys(t, KNOWN_TRANSITION_KEYS)
-                if h:
-                    out.append(f"{path} on['{event}']: {', '.join(h)}")
-    for t in _transition_dicts(config.get("always")):
-        h = _unknown_keys(t, KNOWN_TRANSITION_KEYS)
-        if h:
-            out.append(f"{path} always: {', '.join(h)}")
-    after = config.get("after")
-    if isinstance(after, dict):
-        for delay, raw in after.items():
-            for t in _transition_dicts(raw):
-                h = _unknown_keys(t, KNOWN_TRANSITION_KEYS)
-                if h:
-                    out.append(f"{path} after[{delay!r}]: {', '.join(h)}")
-    for t in _transition_dicts(config.get("onDone")):
-        h = _unknown_keys(t, KNOWN_TRANSITION_KEYS)
-        if h:
-            out.append(f"{path} onDone: {', '.join(h)}")
-    # invokes
-    invoke = config.get("invoke")
-    invokes = invoke if isinstance(invoke, list) else [invoke]
-    for i, inv in enumerate(invokes):
-        if not isinstance(inv, dict):
-            continue
-        ipath = f"{path} invoke[{inv.get('id', i)}]"
-        h = _unknown_keys(inv, KNOWN_INVOKE_KEYS)
-        if h:
-            out.append(f"{ipath}: {', '.join(h)}")
-        for label in ("onDone", "onError"):
-            for t in _transition_dicts(inv.get(label)):
-                h = _unknown_keys(t, KNOWN_TRANSITION_KEYS)
-                if h:
-                    out.append(f"{ipath} {label}: {', '.join(h)}")
-    # children
-    states = config.get("states")
-    if isinstance(states, dict):
-        for key, child in states.items():
-            if isinstance(child, dict):
-                _collect_unknown_keys(
-                    child, f"{path}.{key}", KNOWN_STATE_KEYS, out
-                )
+    # ⚡ ONE pass over the node's (typically 1-3) keys, dispatching each
+    #    present key to its check. Probing every optional key with `.get`
+    #    (six probes per node, most of them misses) was the bulk of this
+    #    scan's cost on every `create_machine()` (#307 benchmark); the
+    #    per-key work (generators, lists, label formatting) is still paid
+    #    only when the key is present.
+    for key, raw in config.items():
+        if key == "on":
+            if isinstance(raw, dict):
+                for event, raw_t in raw.items():
+                    # ⚡ String shorthand ("EVENT": "target") carries no keys.
+                    if isinstance(raw_t, str):
+                        continue
+                    for t in _transition_dicts(raw_t):
+                        _collect_transition_keys(
+                            t, f"{path} on['{event}']", out, user_actions
+                        )
+        elif key == "states":
+            if isinstance(raw, dict):
+                for child_key, child in raw.items():
+                    if isinstance(child, dict):
+                        _collect_unknown_keys(
+                            child,
+                            f"{path}.{child_key}",
+                            KNOWN_STATE_KEYS,
+                            out,
+                            user_actions,
+                        )
+        elif key == "entry" or key == "exit":
+            # entry / exit action objects (VAL-01)
+            if raw is not None:
+                _collect_action_keys(raw, f"{path} {key}", out, user_actions)
+        elif key == "always":
+            if raw is not None:
+                for t in _transition_dicts(raw):
+                    _collect_transition_keys(
+                        t, f"{path} always", out, user_actions
+                    )
+        elif key == "after":
+            if isinstance(raw, dict):
+                for delay, raw_t in raw.items():
+                    for t in _transition_dicts(raw_t):
+                        _collect_transition_keys(
+                            t, f"{path} after[{delay!r}]", out, user_actions
+                        )
+        elif key == "onDone":
+            if raw is not None:
+                for t in _transition_dicts(raw):
+                    _collect_transition_keys(
+                        t, f"{path} onDone", out, user_actions
+                    )
+        elif key == "invoke":
+            if raw is not None:
+                invokes = raw if isinstance(raw, list) else [raw]
+                for i, inv in enumerate(invokes):
+                    if not isinstance(inv, dict):
+                        continue
+                    ipath = f"{path} invoke[{inv.get('id', i)}]"
+                    h = _unknown_keys(inv, KNOWN_INVOKE_KEYS)
+                    if h:
+                        out.append(f"{ipath}: {', '.join(h)}")
+                    for label in ("onDone", "onError"):
+                        for t in _transition_dicts(inv.get(label)):
+                            _collect_transition_keys(
+                                t, f"{ipath} {label}", out, user_actions
+                            )
 
 
 def validate_top_level_keys(
-    config: Dict[str, Any], *, strict_config: bool
+    config: Dict[str, Any],
+    *,
+    strict_config: bool,
+    user_actions: Optional[Container[str]] = None,
 ) -> None:
     """#216 / #220: refuse (or warn about) config keys the parser does not
     read -- at the root AND in every state, transition and invoke.
@@ -564,10 +802,19 @@ def validate_top_level_keys(
             offending key; ``False`` (the 0.8.x default, for callers who
             attach ad-hoc keys) logs one WARNING with the same list and a
             "did you mean" hint per key.
+        user_actions: Action names the machine's logic implements. Their
+            ``params`` belong to the user, so they are not checked against
+            the built-in of the same name (AGENTS.md: user actions win).
+
+    Raises:
+        InvalidConfigError: ``strict_config`` is ``True`` and at least one
+            key is unknown.
     """
     machine_id = config.get("id", "<machine>")
     findings: List[str] = []
-    _collect_unknown_keys(config, str(machine_id), KNOWN_ROOT_KEYS, findings)
+    _collect_unknown_keys(
+        config, str(machine_id), KNOWN_ROOT_KEYS, findings, user_actions
+    )
     if not findings:
         return
     msg = (
@@ -585,7 +832,12 @@ def validate_top_level_keys(
 def validate_machine(
     machine: "MachineNode[Any]", *, strict_targets: bool
 ) -> None:
-    """Run every build-time check and raise once with all findings.
+    """Run every build-time check; raise for the first failing category.
+
+    Each category lists ALL of its findings in one message. Categories are
+    checked in this priority order and the first non-empty one raises:
+    root targets, incompatible multi-targets, (strict machines) undeclared
+    raised events, non-progressing ``always`` loops, unresolvable targets.
 
     Args:
         machine: The fully constructed tree.

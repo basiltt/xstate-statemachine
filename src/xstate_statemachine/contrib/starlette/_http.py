@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from typing import Any, Callable, Dict, List, Optional
 
 from starlette.requests import HTTPConnection, Request
@@ -30,6 +31,7 @@ from ...exceptions import (
     LockTimeoutError,
     StoreUnavailableError,
     SnapshotDriftError,
+    SnapshotTooLargeError,
     UnknownEventError,
     XStateMachineError,
 )
@@ -46,6 +48,8 @@ from ...context_keys import (
     public_context as _public_context,
 )  # 🔑 #265: no `_xsm_*` keys in API bodies
 
+logger = logging.getLogger(__name__)
+
 __all__ = [
     "BadRequestError",
     "ForbiddenError",
@@ -59,11 +63,13 @@ __all__ = [
     "UnauthenticatedError",
     "UnsupportedMediaTypeError",
     "IdempotencyNotConfiguredError",
+    "PrincipalNotConfiguredError",
     "idempotency_key_from",
     "json_body",
     "principal_or_401",
     "problem",
     "problem_for_exception",
+    "problem_for_exception_logged",
     "receipt_body",
     "refuse_reserved_send_keys",
     "receipt_to_status",
@@ -154,6 +160,9 @@ class RequestTimeoutError(HTTPProblemError):
 
 #: Default upper bound on reading one request body.
 DEFAULT_BODY_TIMEOUT_S = 30.0
+#: Default request-body cap. 📝 Review CW-34: named for what it caps (it
+#: merely shares its value with the snapshot cap).
+DEFAULT_MAX_BODY_BYTES = DEFAULT_MAX_SNAPSHOT_BYTES
 
 
 async def read_body(
@@ -203,6 +212,21 @@ class IdempotencyNotConfiguredError(HTTPProblemError):
     title = "Idempotency-Key not supported: no idempotency inbox configured"
 
 
+class PrincipalNotConfiguredError(HTTPProblemError, ValueError):
+    """🔥 review CW-19: the registry has an inbox but no ``principal=``.
+
+    A server MISCONFIGURATION (500), raised per request because the same
+    registry is legitimately used with an explicit ``act(principal=)``;
+    typed so the 5xx path logs it with a clear name. Still a
+    `ValueError`, which is what callers caught before."""
+
+    status = 500
+    title = (
+        "Server misconfigured: StatechartRegistry(principal=) is required "
+        "with inbox= (X0.2)"
+    )
+
+
 class UnprocessableBodyError(HTTPProblemError):
     """The request body is not a JSON object (HTTP 422)."""
 
@@ -224,11 +248,25 @@ class ReservedKeyError(HTTPProblemError):
 
 #: `send()` keyword options a client body may never carry.
 RESERVED_SEND_KEYS = ("wait", "priority")
+#: Payload keys the ADAPTER owns. ``idempotency_key`` is set only from the
+#: validated ``Idempotency-Key`` header: a body that carried one skipped
+#: the header's length / charset check and the 501 "no inbox" refusal, so
+#: an over-long key produced a 200 whose event silently never ran (review
+#: CW-04). Kept apart from `RESERVED_SEND_KEYS`, which mirrors `send()`.
+ADAPTER_OWNED_PAYLOAD_KEYS = ("idempotency_key",)
 
 
 def refuse_reserved_send_keys(payload: Dict[str, Any]) -> None:
-    """Raise `ReservedKeyError` if *payload* names a `send()` option."""
-    if any(k in payload for k in RESERVED_SEND_KEYS):
+    """Raise `ReservedKeyError` if *payload* names a `send()` option or an
+    adapter-owned key (``idempotency_key``).
+
+    📝 A body ``id`` is NOT refused: it is ordinary event data, and the
+    inbox's default key function falls back to it only when no header
+    key was stamped -- send an ``Idempotency-Key`` header to dedupe.
+    """
+    if any(k in payload for k in RESERVED_SEND_KEYS) or any(
+        k in payload for k in ADAPTER_OWNED_PAYLOAD_KEYS
+    ):
         raise ReservedKeyError()
 
 
@@ -271,6 +309,7 @@ _STATUS_TABLE = (
     (InterpreterStoppedError, 409, "Instance is no longer running"),
     (LockTimeoutError, 409, "Lock timeout"),
     # 🔌 #306 battle: the backend is down, not the request. Retryable.
+    (SnapshotTooLargeError, 413, "Snapshot too large"),
     (StoreUnavailableError, 503, "Store unavailable"),
     (KeyNotFoundError, 404, "Not Found"),
     (InvalidKeyError, 400, "Invalid key"),
@@ -302,6 +341,34 @@ def problem_for_exception(exc: BaseException) -> JSONResponse:
         #    code expects (never the stored blob's contents).
         ext["machine_version"] = getattr(exc, "expected", None)
     return problem(status_for_exception(exc), title, **ext)
+
+
+def problem_for_exception_logged(
+    exc: BaseException, where: str = ""
+) -> JSONResponse:
+    """`problem_for_exception` that also leaves a server-side trace.
+
+    🔥 Review CW-22: handlers that mapped an unexpected exception to a
+    500 problem logged nothing -- a bug in a ``context_serializer`` or a
+    store driver reached the client as a bare class name and the
+    operator saw an empty log. A 5xx logs with its traceback (a backend
+    outage only one WARNING line, as in `send_event`); 4xx are the
+    caller's problem and stay quiet.
+
+    Args:
+        exc: The exception being answered.
+        where: A short label naming the route, for the log line.
+
+    Returns:
+        The RFC 9457 problem response.
+    """
+    if isinstance(exc, StoreUnavailableError):
+        logger.warning("🔌 store unavailable on %s: %s", where or "-", exc)
+    elif status_for_exception(exc) >= 500:
+        logger.error(
+            "🔥 %s on %s", type(exc).__name__, where or "-", exc_info=exc
+        )
+    return problem_for_exception(exc)
 
 
 # -----------------------------------------------------------------------------
@@ -447,7 +514,7 @@ def idempotency_key_from(conn: HTTPConnection) -> Optional[str]:
 async def json_body(
     request: Request,
     *,
-    max_body_bytes: int = DEFAULT_MAX_SNAPSHOT_BYTES,
+    max_body_bytes: int = DEFAULT_MAX_BODY_BYTES,
     timeout_s: float = DEFAULT_BODY_TIMEOUT_S,
 ) -> Dict[str, Any]:
     """Read a bounded ``application/json`` object body (X0.7).
@@ -474,8 +541,13 @@ async def json_body(
         return {}
     try:
         data = json.loads(raw)
-    except ValueError:
-        raise UnprocessableBodyError("Request body is not valid JSON")
+    except (ValueError, RecursionError):
+        # 🔥 Review CW-08: ~100k nested `[` (200 KB, inside the cap)
+        #    raised RecursionError -- not a ValueError -- and became a 500
+        #    with a logged traceback. Hostile nesting is a 422.
+        raise UnprocessableBodyError(
+            "Request body is not valid JSON"
+        ) from None
     if not isinstance(data, dict):
         raise UnprocessableBodyError()
     return data

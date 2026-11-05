@@ -26,8 +26,8 @@
 #   * `SimulatedClock.increment()` must fire timers in DUE order and, on the
 #     async engine, let the interpreter settle before returning -- otherwise
 #     the assertion after `increment` races the loop. It therefore has an
-#     awaitable form; calling it without `await` inside a loop is an error
-#     we detect rather than a silent race.
+#     awaitable form; calling it without `await` inside a loop is a mistake
+#     we detect (a RuntimeWarning) rather than a silent race.
 #   * A fired timer records `scheduled_for` / `fired_at` so lateness is data,
 #     not inference (#48 item 3).
 # -----------------------------------------------------------------------------
@@ -39,11 +39,30 @@ import asyncio
 import heapq
 import inspect
 import itertools
+import logging
+import math
 import threading
 import time
-from typing import Any, Awaitable, Callable, List, Optional, Union
+from typing import Any, Awaitable, Callable, List, Optional, Tuple, Union
 
 from typing import Protocol, runtime_checkable
+
+logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class WallClock(Protocol):
+    """Optional second protocol: a clock that knows epoch time (RU-28).
+
+    The engines read ``wall_now()`` with ``getattr`` for durable timers and
+    audit records (#305) and fall back to ``time.time()`` when a custom
+    clock lacks it -- so implement this on any `Clock` whose notion of
+    "now" is not the real one.
+    """
+
+    def wall_now(self) -> float:
+        """Seconds since the Unix epoch on this clock's timeline."""
+        ...
 
 
 @runtime_checkable
@@ -54,6 +73,13 @@ class Clock(Protocol):
     Python-specific addition, :meth:`pump`, which lets a clock that does
     not run its own thread or loop deliver due callbacks when the owner
     asks (the sync engine's `tick()`; see :class:`RealClock`).
+
+    📝 Delivery contract for ``pump()`` (RU-01/RU-02): a due batch is fired
+    in deadline order; a timer cleared by an earlier callback of the same
+    batch does NOT fire; an exception from one callback never prevents the
+    others from running -- the first one is re-raised after the batch.
+    A clock may also expose ``wall_now()`` (seconds since the epoch); the
+    engine reads it with ``getattr`` and falls back to ``time.time()``.
     """
 
     def now(self) -> float:
@@ -84,6 +110,62 @@ class Clock(Protocol):
     def pump(self) -> int:
         """Run every callback whose deadline has passed; return how many."""
         ...
+
+
+# -----------------------------------------------------------------------------
+# 🔥 Batch delivery shared by every clock lane
+# -----------------------------------------------------------------------------
+def _require_finite(value: float, what: str) -> None:
+    """Reject NaN/inf at the clock boundary (RU-26).
+
+    ``nan < 0`` is False, so a NaN would sail past the "cannot move
+    backwards" check and wedge ``now()`` forever (every later comparison
+    is False); ``inf`` would fire everything and pin ``now()`` at inf.
+
+    Args:
+        value: The number a caller handed to the clock.
+        what: Parameter name used in the error message.
+
+    Raises:
+        ValueError: If *value* is NaN or infinite.
+    """
+    if not math.isfinite(value):
+        raise ValueError(f"{what} must be a finite number, got {value!r}")
+
+
+def _fire_batch(timers: List["_Timer"]) -> Tuple[int, Optional[Exception]]:
+    """Run an already-popped due batch, one timer at a time.
+
+    🏛️ `due_before()` POPS every due timer first, so a callback that raised
+    used to drop the rest of the batch for good (RU-01), and a timer
+    cleared by an earlier sibling still ran (RU-02). Each timer is now
+    re-checked for ``cancelled`` right before it runs, and an exception is
+    contained so the remaining timers still fire.
+
+    Args:
+        timers: Timers in deadline order, as returned by `due_before`.
+
+    Returns:
+        ``(fired, first_error)``: how many callbacks ran and the first
+        exception any of them raised (``None`` when all succeeded). Later
+        errors are logged. The caller decides when to re-raise.
+    """
+    fired = 0
+    first_error: Optional[Exception] = None
+    for t in timers:
+        if t.cancelled:  # 📝 cleared by an earlier callback in this batch
+            continue
+        try:
+            t.fn()
+        except Exception as exc:
+            if first_error is None:
+                first_error = exc
+            else:
+                logger.error(
+                    "Clock timer callback raised: %r", exc, exc_info=exc
+                )
+        fired += 1
+    return fired, first_error
 
 
 # -----------------------------------------------------------------------------
@@ -153,14 +235,26 @@ class _DeadlineHeap:
         return t
 
     def cancel(self, t: Any) -> None:
+        """Mark a timer cancelled (lazy; O(1)). Idempotent, lock-free.
+
+        📝 A plain attribute store is atomic under the GIL, and a race with
+        `due_before` is benign: the timer is either skipped at pop time or
+        re-checked by `_fire_batch` right before it runs.
+        """
         if isinstance(t, _Timer):
             t.cancelled = True
 
-    def due_before(self, now: float) -> List[_Timer]:
-        """Pop and return the live timers whose deadline is at or before *now*.
+    def due_before(
+        self,
+        now: float,
+        owner_filter: Optional[Callable[[Any], bool]] = None,
+    ) -> List[_Timer]:
+        """Pop every live timer whose deadline is at or before *now*.
 
         Args:
             now: Current time on the owning clock's timeline.
+            owner_filter: When given, only timers whose ``owner`` satisfies
+                it are popped; due timers of other owners stay queued.
 
         Returns:
             Uncancelled timers in deadline order; cancelled ones are discarded.
@@ -169,13 +263,32 @@ class _DeadlineHeap:
         if not self._heap:  # ⚡ no lock for the empty case
             return out
         with self._lock:
+            if owner_filter is None:
+                while self._heap and self._heap[0].due <= now:
+                    t = heapq.heappop(self._heap)
+                    if not t.cancelled:
+                        out.append(t)
+                return out
+            # 🧵 Review ENG-06: a pump restricted to ONE owner's deadlines
+            #    (a child machine sharing its parent's `SimulatedClock`).
+            #    Due timers of other owners go back on the heap untouched;
+            #    they keep their `seq`, so the firing order is preserved.
+            keep: List[_Timer] = []
             while self._heap and self._heap[0].due <= now:
                 t = heapq.heappop(self._heap)
-                if not t.cancelled:
-                    out.append(t)
+                if t.cancelled:
+                    continue
+                (out if owner_filter(t.owner) else keep).append(t)
+            for t in keep:
+                heapq.heappush(self._heap, t)
         return out
 
+    def is_empty(self) -> bool:
+        """True when no timer (live or cancelled) is queued. Lock-free."""
+        return not self._heap
+
     def next_due(self) -> Optional[float]:
+        """Deadline of the earliest live timer, or ``None`` when idle."""
         with self._lock:
             while self._heap and self._heap[0].cancelled:
                 heapq.heappop(self._heap)
@@ -217,6 +330,7 @@ class RealClock:
         self._heap = _DeadlineHeap()
 
     def now(self) -> float:
+        """Monotonic seconds; the origin is process-specific."""
         return time.monotonic()
 
     def wall_now(self) -> float:
@@ -241,11 +355,17 @@ class RealClock:
             owner: Opaque owner recorded on heap timers.
             sync: ``True`` forces the heap (fired by `pump`), ``False`` uses
                 the running asyncio loop. ``None`` picks the loop when one is
-                running and the heap otherwise.
+                running and the heap otherwise. ⚠️ `loop.call_later` is not
+                thread-safe: the ``sync=False`` lane must be called from the
+                loop's own thread.
 
         Returns:
             A handle to pass to `clear_timeout`.
+
+        Raises:
+            ValueError: If *delay_sec* is NaN or infinite.
         """
+        _require_finite(delay_sec, "delay_sec")
         if sync is None:
             try:
                 asyncio.get_running_loop()
@@ -259,6 +379,7 @@ class RealClock:
         return self._heap.push(self.now() + max(0.0, delay_sec), fn, owner)
 
     def clear_timeout(self, handle: Any) -> None:
+        """Cancel a handle returned by `set_timeout`. Idempotent."""
         if isinstance(handle, asyncio.TimerHandle):
             handle.cancel()
         else:
@@ -273,12 +394,33 @@ class RealClock:
         # ⚡ The sync engine pumps at the top of EVERY send(); a machine
         #    with no timers armed must not pay for a lock + monotonic() +
         #    heap scan each time. An empty list is a plain attribute read.
-        if not self._heap._heap:
+        if self._heap.is_empty():
             return 0
-        fired = 0
-        for t in self._heap.due_before(self.now()):
-            t.fn()
-            fired += 1
+        fired, error = _fire_batch(self._heap.due_before(self.now()))
+        if error is not None:
+            raise error
+        return fired
+
+    def pump_filtered(self, owner_filter: Callable[[Any], bool]) -> int:
+        """`pump`, restricted to the deadlines whose owner passes the filter.
+
+        🧵 Review ENG-06: a `SyncInterpreter` child that shares its parent's
+        clock pumps on its own thread and must fire only its OWN deadlines;
+        the parent's stay queued for the parent's pump.
+
+        Args:
+            owner_filter: ``True`` for an ``owner`` tag this pump may fire.
+
+        Returns:
+            The number of timers fired.
+        """
+        if self._heap.is_empty():
+            return 0
+        fired, error = _fire_batch(
+            self._heap.due_before(self.now(), owner_filter)
+        )
+        if error is not None:
+            raise error
         return fired
 
     @property
@@ -310,9 +452,9 @@ class SimulatedClock:
         clock.increment(30_000)
 
     🏛️ `increment` returns an awaitable when called inside a running loop
-    and ``None`` otherwise, so the two idioms above are both correct and a
-    forgotten ``await`` inside a loop raises instead of racing (see
-    :class:`_MustAwait`).
+    and ``None`` otherwise, so the two idioms above are both correct. A
+    forgotten ``await`` inside a loop emits a ``RuntimeWarning`` (see
+    :class:`_MustAwait`) and the timers do NOT fire.
     """
 
     def __init__(self, *, wall_start: Optional[float] = None) -> None:
@@ -331,6 +473,7 @@ class SimulatedClock:
 
     # -- Clock protocol ----------------------------------------------------
     def now(self) -> float:
+        """Current virtual time in seconds."""
         return self._now
 
     def wall_now(self) -> float:
@@ -345,9 +488,25 @@ class SimulatedClock:
         owner: Any = None,
         sync: Optional[bool] = None,
     ) -> Any:
+        """Schedule *fn* at virtual ``now + delay_sec`` (never fires alone).
+
+        Args:
+            fn: Zero-argument callable run by `increment`/`set`/`pump`.
+            delay_sec: Delay in virtual seconds; negative is treated as 0.
+            owner: Opaque owner recorded on the timer.
+            sync: Ignored; a simulated clock has a single lane.
+
+        Returns:
+            A handle to pass to `clear_timeout`.
+
+        Raises:
+            ValueError: If *delay_sec* is NaN or infinite.
+        """
+        _require_finite(delay_sec, "delay_sec")
         return self._heap.push(self._now + max(0.0, delay_sec), fn, owner)
 
     def clear_timeout(self, handle: Any) -> None:
+        """Cancel a handle returned by `set_timeout`. Idempotent."""
         self._heap.cancel(handle)
 
     def pump(self) -> int:
@@ -356,12 +515,33 @@ class SimulatedClock:
         Returns:
             The number of timers fired (``0`` when none are armed).
         """
-        if not self._heap._heap:  # ⚡ see RealClock.pump
+        if self._heap.is_empty():  # ⚡ see RealClock.pump
             return 0
-        fired = 0
-        for t in self._heap.due_before(self._now):
-            t.fn()
-            fired += 1
+        fired, error = _fire_batch(self._heap.due_before(self._now))
+        if error is not None:
+            raise error
+        return fired
+
+    def pump_filtered(self, owner_filter: Callable[[Any], bool]) -> int:
+        """`pump`, restricted to the deadlines whose owner passes the filter.
+
+        See `RealClock.pump_filtered` (review ENG-06). The test-facing
+        `advance()` / `increment()` / `fire_until()` stay unfiltered: they
+        run on the test thread, which owns every attached interpreter.
+
+        Args:
+            owner_filter: ``True`` for an ``owner`` tag this pump may fire.
+
+        Returns:
+            The number of timers fired.
+        """
+        if self._heap.is_empty():
+            return 0
+        fired, error = _fire_batch(
+            self._heap.due_before(self._now, owner_filter)
+        )
+        if error is not None:
+            raise error
         return fired
 
     # -- test-facing API ---------------------------------------------------
@@ -385,9 +565,15 @@ class SimulatedClock:
         ⚠️ For callers that know they hold no running loop, or that run
         the sync engine from inside async code (`replay()` does): the
         `increment()` / `set()` API detects a running loop and returns an
-        awaitable instead, which `replay()` cannot use. Raises
-        ``ValueError`` on a backwards target.
+        awaitable instead, which `replay()` cannot use.
+
+        Args:
+            target: Absolute virtual time in seconds.
+
+        Raises:
+            ValueError: On a backwards or non-finite target.
         """
+        _require_finite(target, "target")
         if target < self._now:
             raise ValueError(
                 f"SimulatedClock.fire_until({target}) would move backwards "
@@ -398,16 +584,55 @@ class SimulatedClock:
     def increment(self, ms: float) -> Union[None, Awaitable[None]]:
         """Advance virtual time by *ms* and fire what became due, in order.
 
+        ⚠️ The return type depends on the ambient context (awaitable inside
+        a running loop, ``None`` otherwise), which one signature cannot
+        express; typed code should call `advance` / `advance_sync`.
+
         Timers are fired ONE AT A TIME, re-reading the heap between them,
         so a timer that schedules another timer inside the same window
         (an `after` chain) is honoured in the correct order.
         """
+        _require_finite(ms, "ms")
         if ms < 0:
             raise ValueError("SimulatedClock cannot move backwards")
         return self._advance_to(self._now + ms / 1000.0)
 
+    async def advance(self, ms: float) -> None:
+        """Typed async twin of `increment` -- always awaitable (RU-28).
+
+        ``await clock.increment(ms)`` is a ``mypy --strict`` error because
+        `increment` returns ``None`` outside a loop; use this from async
+        code instead.
+
+        Args:
+            ms: Milliseconds to advance; must be finite and >= 0.
+
+        Raises:
+            ValueError: On a negative or non-finite *ms*.
+        """
+        await self._drain_async(self._checked_target(ms))
+
+    def advance_sync(self, ms: float) -> None:
+        """Typed sync twin of `increment` -- never awaits (RU-28).
+
+        Args:
+            ms: Milliseconds to advance; must be finite and >= 0.
+
+        Raises:
+            ValueError: On a negative or non-finite *ms*.
+        """
+        self._drain_sync(self._checked_target(ms))
+
+    def _checked_target(self, ms: float) -> float:
+        """Validate a relative advance and return the absolute target."""
+        _require_finite(ms, "ms")
+        if ms < 0:
+            raise ValueError("SimulatedClock cannot move backwards")
+        return self._now + ms / 1000.0
+
     def set(self, ms: float) -> Union[None, Awaitable[None]]:
         """Jump to absolute virtual time *ms*; raises if that is in the past."""
+        _require_finite(ms, "ms")
         target = ms / 1000.0
         if target < self._now:
             raise ValueError(
@@ -425,16 +650,22 @@ class SimulatedClock:
         return _MustAwait(self._drain_async(target))
 
     def _drain_sync(self, target: float) -> None:
+        # 🔥 A raising callback must neither strand the rest of the window
+        #    nor leave `now()` mid-way: finish the drain, then re-raise the
+        #    first error (RU-01).
+        first_error: Optional[Exception] = None
         while True:
             nxt = self._heap.next_due()
             if nxt is None or nxt > target:
                 break
             self._now = nxt
-            for t in self._heap.due_before(nxt):
-                t.fn()
+            _, error = _fire_batch(self._heap.due_before(nxt))
+            first_error = first_error or error
             self._settle_sync()
         self._now = target
         self._settle_sync()
+        if first_error is not None:
+            raise first_error
 
     def _settle_sync(self) -> None:
         """Let every attached SYNC interpreter process what timers queued."""
@@ -444,16 +675,19 @@ class SimulatedClock:
                 result.close()
 
     async def _drain_async(self, target: float) -> None:
+        first_error: Optional[Exception] = None  # 🔥 see _drain_sync
         while True:
             nxt = self._heap.next_due()
             if nxt is None or nxt > target:
                 break
             self._now = nxt
-            for t in self._heap.due_before(nxt):
-                t.fn()
+            _, error = _fire_batch(self._heap.due_before(nxt))
+            first_error = first_error or error
             await self._settle()
         self._now = target
         await self._settle()
+        if first_error is not None:
+            raise first_error
 
     async def _settle(self) -> None:
         """Let every attached interpreter process what the timers queued.
@@ -490,12 +724,16 @@ class SimulatedClock:
 
 
 class _MustAwait:
-    """Awaitable that raises if garbage-collected without being awaited.
+    """Awaitable that WARNS if garbage-collected without being awaited.
 
-    Mirrors the intent of asyncio's "coroutine was never awaited" warning
-    but as a hard error at the call site's next GC, because a silently
-    un-awaited `increment()` inside a loop is exactly the race the async
-    form exists to prevent.
+    Mirrors asyncio's "coroutine was never awaited" warning, because a
+    silently un-awaited `increment()` inside a loop is exactly the race the
+    async form exists to prevent.
+
+    ⚠️ It is a ``RuntimeWarning``, not an exception: ``__del__`` cannot
+    raise (errors there go to ``sys.unraisablehook``), the warning is
+    attributed to the finaliser's frame rather than the caller, and
+    ``-W error`` cannot promote it into the awaiting code path.
     """
 
     __slots__ = ("_coro", "_awaited")

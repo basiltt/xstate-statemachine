@@ -178,3 +178,26 @@ _STDLIB_MODULE_NAMES = frozenset(
         ),
     )
 )
+
+
+_FILE_STEM_UNSAFE = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
+
+
+def safe_file_stem(name: str) -> str:
+    """Turn an untrusted machine id into one safe path component.
+
+    🛡️ SECURITY (CLI-003): ``docs`` and ``diagram`` name their output file
+    after the machine id, which comes from the (possibly third-party) JSON.
+    An id such as ``../escaped`` must not choose where the file lands, and a
+    Windows-reserved character must not turn into a traceback.
+
+    Args:
+        name: The raw machine id.
+
+    Returns:
+        A name with no path separators, drive colons or control characters,
+        and no leading/trailing dots or spaces; ``"machine"`` if nothing
+        is left.
+    """
+    cleaned = _FILE_STEM_UNSAFE.sub("_", str(name)).strip(". ")
+    return cleaned or "machine"

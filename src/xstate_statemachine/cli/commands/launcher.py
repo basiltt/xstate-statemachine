@@ -453,9 +453,12 @@ def run_launcher(
                     from .new import run_new
 
                     run_new(target)
-        except SystemExit:
+        except SystemExit as exc:
             # A command signalled failure (exit 1); the launcher keeps going.
-            pass
+            # 🔥 CLI-015: `SystemExit("message")` only prints when it reaches
+            #    the interpreter, so say it here or the wizard just reappears.
+            if isinstance(exc.code, str):
+                c.error(exc.code)
         c.blank()
         if once:
             return

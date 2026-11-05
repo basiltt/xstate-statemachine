@@ -13,10 +13,11 @@
 
 from __future__ import annotations
 
+import inspect
 from typing import Any, Dict, Iterable, Optional, Tuple, Type
 
 from ..clock import Clock
-from ..exceptions import StoreError
+from ..exceptions import SnapshotDriftError, StoreError
 from ..models import MachineNode
 from ..interpreter import Interpreter
 from ..sync_interpreter import SyncInterpreter
@@ -38,6 +39,14 @@ class KeyNotFoundError(StoreError, KeyError):
         super().__init__(f"No snapshot stored under '{key}'.")
 
 
+def _check_restore_kwargs(kwargs: Dict[str, Any]) -> None:
+    """Raise `TypeError` for a name `from_snapshot` does not accept."""
+    accepted = set(inspect.signature(Interpreter.from_snapshot).parameters)
+    unknown = sorted(set(kwargs) - accepted)
+    if unknown:
+        raise TypeError(f"unexpected restore option(s): {', '.join(unknown)}")
+
+
 def _build(
     store: StateStore,
     key: str,
@@ -49,10 +58,21 @@ def _build(
     verify_machine_hash: bool,
     from_snapshot_kwargs: Dict[str, Any],
 ) -> Tuple[Any, int]:
+    # 🛡️ P-16: a typo'd option is rejected on EVERY path, not only when a
+    #    record exists (it used to be silently ignored for a new key).
+    _check_restore_kwargs(from_snapshot_kwargs)
     record = store.load(key)
     if record is None:
         if not create_if_missing:
             raise KeyNotFoundError(key)
+        # 📝 P-16: of the restore options only `expected_machine_hash` has
+        #    meaning for a brand-new machine; honour it rather than drop it.
+        expected = from_snapshot_kwargs.get("expected_machine_hash")
+        if expected is not None and expected != machine.structure_hash:
+            raise SnapshotDriftError(
+                f"caller's expected_machine_hash {expected!r} does not "
+                f"match machine '{machine.id}' ({machine.structure_hash})."
+            )
         interp = interpreter_cls(machine, clock=clock)
         for p in plugins:
             interp.use(p)

@@ -141,9 +141,9 @@ class Usage:
     def to_dict(self) -> Dict[str, Any]:
         """Return the usage as a dict of ints and a float."""
         return {
-            "input_tokens": int(self.input_tokens),
-            "output_tokens": int(self.output_tokens),
-            "cost_usd": float(self.cost_usd),
+            "input_tokens": _carry(self.input_tokens, int),
+            "output_tokens": _carry(self.output_tokens, int),
+            "cost_usd": _carry(self.cost_usd, float),
         }
 
     @classmethod
@@ -161,6 +161,19 @@ class Usage:
             output_tokens=_num(d.get("output_tokens"), _int),
             cost_usd=_num(d.get("cost_usd"), float),
         )
+
+
+def _carry(value: Any, kind: Any) -> Any:
+    """``kind(value)``, or the raw value when it is NaN / inf / garbage.
+
+    🔥 review CM-05: ``int(nan)`` raised out of ``callModel`` and the turn
+    was retried (re-billed). A bad number is carried through so the budget
+    sanitiser (`budgets._spent`) fails closed on it.
+    """
+    try:
+        return kind(value)
+    except (TypeError, ValueError, OverflowError):
+        return value
 
 
 def _int(value: Any) -> int:

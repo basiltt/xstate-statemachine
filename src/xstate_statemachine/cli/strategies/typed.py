@@ -20,6 +20,7 @@ import json
 from typing import Any, Dict, List
 
 from ...validation import walk
+from ..naming import docstring_safe
 from ..extractor import extract_logic_names
 from ..utils import camel_to_snake
 from ._shared import (
@@ -145,7 +146,7 @@ class TypedStrategy(BaseStrategy):
                 "    event: AnyEvent,",
                 "    action: ActionDefinition,",
                 ") -> None:",
-                f'    """Action `{a}`."""',
+                f'    """Action `{docstring_safe(a)}`."""',
                 "    raise NotImplementedError",
                 "",
                 "",
@@ -154,7 +155,7 @@ class TypedStrategy(BaseStrategy):
             fn = camel_to_snake(safe_identifier(g))
             p += [
                 f"def {fn}(context: {cls}Context, event: AnyEvent) -> bool:",
-                f'    """Guard `{g}`."""',
+                f'    """Guard `{docstring_safe(g)}`."""',
                 "    raise NotImplementedError",
                 "",
                 "",
@@ -168,7 +169,7 @@ class TypedStrategy(BaseStrategy):
                 f"    context: {cls}Context,",
                 "    event: AnyEvent,",
                 ") -> Any:",
-                f'    """Service `{s}`."""',
+                f'    """Service `{docstring_safe(s)}`."""',
                 "    raise NotImplementedError",
                 "",
                 "",

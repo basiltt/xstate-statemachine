@@ -53,15 +53,13 @@ Example:
     >>> async def main():
     ...     machine = create_machine(light_switch_config, logic=light_switch_logic)
     ...
-    ...     # FIX: Renamed 'interpreter' to 'service' to resolve the IDE warning
-    ...     # about "shadowing name from outer scope". This is a common linter
-    ...     # best practice to avoid name collisions.
     ...     service = await Interpreter(machine).start()
     ...
-    ...     # FIX: Calling methods on the 'service' object resolves the
-    ...     # "Cannot find reference" warnings in the IDE.
-    ...     await service.send("TOGGLE")
-    ...     await service.send("TOGGLE")
+    ...     # 📝 `send()` only QUEUES the event; `wait=True` returns once it
+    ...     # has been processed. (A bare `send()` followed by `stop()` would
+    ...     # discard the queued events: `stop()` does not drain by default.)
+    ...     await service.send("TOGGLE", wait=True)
+    ...     await service.send("TOGGLE", wait=True)
     ...     await service.stop()
     ...
     >>> asyncio.run(main())
@@ -144,6 +142,7 @@ from .plugins import (
 # -----------------------------------------------------------------------------
 from .exceptions import (
     ActorSpawningError,
+    UnresolvedTargetError,
     ImplementationMissingError,
     InterpreterStoppedError,
     InvalidConfigError,
@@ -175,6 +174,7 @@ from .exceptions import (
     LockTimeoutError,
     SnapshotTooLargeError,
     InvalidKeyError,
+    ExplorationLimitError,
 )
 from .persistence.migration import (
     MachineVersionMismatchError,
@@ -360,6 +360,7 @@ __all__ = [
     "StateNotFoundError",
     "ImplementationMissingError",
     "ActorSpawningError",
+    "UnresolvedTargetError",
     "NotSupportedError",
     "InvalidEventError",
     "RootTargetError",
@@ -378,6 +379,7 @@ __all__ = [
     "LockTimeoutError",
     "SnapshotTooLargeError",
     "InvalidKeyError",
+    "ExplorationLimitError",
     "MachineVersionMismatchError",
     "NoMigrationPathError",
     "SnapshotDriftError",
@@ -488,5 +490,11 @@ def __getattr__(name: str) -> Any:
 
 
 def __dir__() -> List[str]:
-    """List every public name, including the not-yet-resolved lazy ones."""
-    return sorted({*globals(), *_LAZY_ATTRS})
+    """List every public name, including the not-yet-resolved lazy ones.
+
+    📝 RU-40: limited to ``__all__`` plus module dunders, so the ``typing``
+    helpers and submodules that merely happened to be imported do not show
+    up in ``dir()`` / tab completion as if they were API.
+    """
+    dunders = {n for n in globals() if n.startswith("__")}
+    return sorted({*__all__, *_LAZY_ATTRS, *dunders})

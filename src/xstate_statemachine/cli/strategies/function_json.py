@@ -5,6 +5,7 @@ import keyword
 from typing import Dict, List, Set
 
 from ..extractor import extract_events
+from ..naming import docstring_safe
 from ..simulation import demo_events
 from .base import BaseStrategy, GenerationContext
 from ._shared import (
@@ -365,7 +366,8 @@ class FunctionJsonStrategy(BaseStrategy):
         for a_name in actor_names:
             lines.append(
                 f"    machine_{a_name} = create_machine("
-                f"actor_cfgs['{a_name}'])"
+                f"actor_cfgs['{a_name}'], "
+                f"logic_modules=[{logic_module}])"
             )
             lines.append(f"    ai_{a_name} = actor_ctor(machine_{a_name})")
             if ctx.log:
@@ -387,7 +389,9 @@ class FunctionJsonStrategy(BaseStrategy):
         )
         if parent_events:
             for ev in parent_events:
-                lines.append(f"    # {ev.replace('_', ' ').title()}")
+                lines.append(
+                    f"    # {docstring_safe(ev.replace('_', ' ').title())}"
+                )
                 if ctx.log:
                     lines.append(
                         f"    logger.info("
@@ -418,14 +422,18 @@ class FunctionJsonStrategy(BaseStrategy):
                 "    # -------------------------------------------"
                 "------------------------"
             )
-            lines.append(f"    # 🚀 Simulating Actor «{a_name}»")
+            lines.append(
+                f"    # 🚀 Simulating Actor «{docstring_safe(a_name)}»"
+            )
             lines.append(
                 "    # -------------------------------------------"
                 "------------------------"
             )
             if actor_events:
                 for ev in actor_events:
-                    lines.append(f"    # {ev.replace('_', ' ').title()}")
+                    lines.append(
+                        f"    # {docstring_safe(ev.replace('_', ' ').title())}"
+                    )
                     if ctx.log:
                         lines.append(
                             f"    logger.info("

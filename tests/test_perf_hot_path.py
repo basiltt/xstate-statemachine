@@ -90,7 +90,20 @@ class TestSingleBuild(_Quiet):
 class TestAcceptsKwargMemo(_Quiet):
     def test_signature_inspected_once_per_function(self) -> None:
         bi._ACCEPTS_KWARG_CACHE.clear()
-        clock = RealClock()
+        # ⚡ 0.12.0: the library's own clocks are known to take `sync=`,
+        #    so building on a `RealClock` never inspects a signature.
+        with mock.patch.object(
+            bi.inspect, "signature", wraps=bi.inspect.signature
+        ) as sig:
+            for _ in range(5):
+                SyncInterpreter(create_machine(TOGGLE), clock=RealClock())
+        self.assertEqual(0, sig.call_count)
+
+        # A custom clock is inspected ONCE; the memo serves the rest.
+        class MyClock(RealClock):
+            pass
+
+        clock = MyClock()
         with mock.patch.object(
             bi.inspect, "signature", wraps=bi.inspect.signature
         ) as sig:

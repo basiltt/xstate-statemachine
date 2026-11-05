@@ -572,15 +572,21 @@ def interactive(
             if not timers:
                 c.warn("no timer armed in the active configuration")
                 continue
-            delay = max(d for _, d in timers if isinstance(d, (int, float)))
-            render_step(session.advance(float(delay) + 1))
+            numeric = [d for _, d in timers if isinstance(d, (int, float))]
+            if not numeric:
+                # 🔥 CLI-014: named delays are resolved by the machine's
+                #    own logic, so there is no number to jump past.
+                c.warn("only named delays are armed; use c to advance")
+                continue
+            render_step(session.advance(float(max(numeric)) + 1))
         elif key == "c":
             raw = c.text("Advance clock by ms:", default="1000", source=src)
             if raw:
                 try:
-                    render_step(session.advance(float(raw)))
-                except ValueError:
-                    c.error("not a number")
+                    # 🔥 CLI-014: same gate as `--events`: no nan/inf/negative.
+                    render_step(session.advance(_advance_ms(raw, raw)))
+                except ValueError as exc:
+                    c.error(str(exc))
         elif key == "g":
             if not session.guard_names:
                 c.warn("this machine has no guards")
@@ -647,6 +653,9 @@ def run_simulate(
     *record* writes the session as Stately Inspector protocol messages to
     a JSON Lines file (0600) that `xsm replay` streams (#274)."""
     c = get_console()
+    # 🔥 CLI-015: restore what was there, not NOTSET -- a host (the
+    #    launcher, a test) may have disabled logging itself.
+    previous_disable = logging.root.manager.disable
     logging.disable(logging.CRITICAL)
     recorder = None
     if record:
@@ -658,7 +667,7 @@ def run_simulate(
             )
         except OSError as exc:
             c.error(f"--record {record}: {exc}")
-            logging.disable(logging.NOTSET)
+            logging.disable(previous_disable)
             raise SystemExit(2 if isinstance(exc, FileExistsError) else 1)
     try:
         config = json.loads(Path(path).read_text(encoding="utf-8"))
@@ -672,6 +681,7 @@ def run_simulate(
         if recorder is not None:
             recorder[0].uninstall()
             recorder[1].close()
+        logging.disable(previous_disable)
         c.error(f"{path}: {type(exc).__name__}: {exc}")
         raise SystemExit(1)
 
@@ -691,7 +701,7 @@ def run_simulate(
         if recorder is not None:
             recorder[0].uninstall()
             recorder[1].close()
-        logging.disable(logging.NOTSET)
+        logging.disable(previous_disable)
         c.error(str(exc))
         raise SystemExit(2)
     scripted = bool(commands) or as_json or not (c.interactive or source)

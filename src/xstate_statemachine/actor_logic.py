@@ -36,18 +36,26 @@ import asyncio
 import inspect
 import threading
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncIterator,
     Awaitable,
     Callable,
+    Dict,
     Iterator,
     List,
     Optional,
+    Protocol,
     TypeVar,
+    cast,
 )
 
 from .events import StreamEvent
 from .logger import logger
+
+if TYPE_CHECKING:  # pragma: no cover - typing only
+    from .base_interpreter import BaseInterpreter
+    from .models import MachineNode
 
 __all__ = [
     "DEFAULT_CLEANUP_TIMEOUT",
@@ -63,9 +71,58 @@ __all__ = [
 ]
 
 T = TypeVar("T")
+_F = TypeVar("_F", bound=Callable[..., Any])
 SendBack = Callable[..., None]
-Receive = Callable[[Callable[[Any], None]], None]
 Cleanup = Callable[[], Any]
+
+
+class SendBackFn(Protocol):
+    """``send_back(event_or_type, **payload)`` as `from_callback` hands it."""
+
+    def __call__(self, event_or_type: Any, /, **payload: Any) -> None:
+        """Deliver one event to the parent; safe from any thread."""
+
+
+class ReceiveFn(Protocol):
+    """``receive(handler)``: subscribe to events ``sendTo``'d to the actor."""
+
+    def __call__(self, handler: Callable[[Any], None], /) -> None:
+        """Register *handler* for events addressed to this actor."""
+
+
+class CallbackSetup(Protocol):
+    """The 4-argument setup contract of `from_callback` (RU-34).
+
+    Parameters are positional-only, so a setup may name them anything:
+    ``def setup(sb, rcv, ctx, ev)`` conforms.
+    """
+
+    def __call__(
+        self,
+        send_back: SendBackFn,
+        receive: ReceiveFn,
+        ctx: Dict[str, Any],
+        event: Any,
+        /,
+    ) -> Optional[Cleanup]:
+        """Run the setup; return a cleanup callable or ``None``."""
+
+
+def _mark(fn: _F, kind: str) -> _F:
+    """Tag a service callable with the actor-logic *kind* that built it.
+
+    📝 Written through ``__dict__`` so no ``# type: ignore`` is needed to
+    declare an attribute a plain function does not have.
+
+    Args:
+        fn: The service callable.
+        kind: ``callback`` / ``async_iterator`` / ``iterator``.
+
+    Returns:
+        *fn* itself.
+    """
+    fn.__dict__["__xsm_actor_logic__"] = kind
+    return fn
 
 
 # -----------------------------------------------------------------------------
@@ -111,6 +168,15 @@ class RunningLogic:
 
     # -- parent -> logic ----------------------------------------------------------
     def subscribe(self, handler: Callable[[Any], None]) -> None:
+        """Register *handler* for events the parent ``sendTo``s this actor.
+
+        This is the ``receive`` function a `from_callback` setup is given.
+        Handlers run on the thread that calls `receive()`; one that raises
+        is logged and skipped.
+
+        Args:
+            handler: Called with each delivered event.
+        """
         with self._lock:
             self._receivers.append(handler)
 
@@ -132,6 +198,7 @@ class RunningLogic:
     # -- lifecycle ------------------------------------------------------------------
     @property
     def finished(self) -> bool:
+        """``True`` once `cleanup()` has run (the logic is no longer live)."""
         return self._done
 
     def cleanup(self) -> None:
@@ -261,9 +328,10 @@ def _send_back_for(
         #    the machine -- its events landed in whatever state came next
         #    (SCXML 6.4.2: events from a cancelled invocation are ignored).
         if handle is not None and handle.finished:
-            logger.debug("🎭 send_back after cleanup dropped")
+            _report_dropped(interp, event_or_type, payload, "after cleanup")
             return
         if interp.status != "running":
+            _report_dropped(interp, event_or_type, payload, "not running")
             return
         try:
             interp.send_threadsafe(event_or_type, **payload)
@@ -275,12 +343,47 @@ def _send_back_for(
             closed = loop is not None and loop.is_closed()
             if interp.status == "running" and not closed:
                 raise
-            logger.warning(
-                "🎭 send_back to '%s' dropped: interpreter is gone.",
-                getattr(interp, "id", "?"),
-            )
+            _report_dropped(interp, event_or_type, payload, "gone")
 
     return send_back
+
+
+def _report_dropped(
+    interp: Any, event_or_type: Any, payload: Any, why: str
+) -> None:
+    """One policy for every ``send_back`` that cannot be delivered (RU-33).
+
+    A producer's event is never silently lost: it is logged at DEBUG and
+    offered to ``on_event_dropped(..., "stopped")`` on every plugin. The
+    three drop sites used to disagree (DEBUG log / nothing / WARNING).
+
+    ⚠️ ``send_back`` may be called from ANY thread, so the hook can run on
+    the producer's thread here rather than the engine's.
+
+    Args:
+        interp: The interpreter the event was addressed to.
+        event_or_type: What the producer passed to ``send_back``.
+        payload: Its keyword payload.
+        why: Short human reason for the log line.
+    """
+    logger.debug(
+        "🎭 send_back to '%s' dropped (%s).", getattr(interp, "id", "?"), why
+    )
+    plugins = getattr(interp, "_plugins", None)
+    if not plugins:
+        return
+    try:
+        spec: Any = event_or_type
+        if isinstance(spec, str):
+            spec = {"type": spec, **payload}
+        event = interp._coerce_event(spec)
+    except Exception:  # noqa: BLE001 -- a malformed event: nothing to report
+        return
+    for plugin in list(plugins):
+        try:
+            plugin.on_event_dropped(interp, event, "stopped")
+        except Exception:  # noqa: BLE001 -- observability must not raise
+            logger.debug("🎭 on_event_dropped raised", exc_info=True)
 
 
 # -----------------------------------------------------------------------------
@@ -310,7 +413,7 @@ def from_callable(fn: Callable[..., T]) -> Callable[..., T]:
 # 📞 from_callback
 # -----------------------------------------------------------------------------
 def from_callback(
-    setup: Callable[..., Optional[Cleanup]],
+    setup: CallbackSetup,
 ) -> Callable[..., RunningLogic]:
     """Callback-style actor logic (XState ``fromCallback``).
 
@@ -348,8 +451,7 @@ def from_callback(
         return handle
 
     _service.__name__ = f"callback_{getattr(setup, '__name__', 'logic')}"
-    _service.__xsm_actor_logic__ = "callback"  # type: ignore[attr-defined]
-    return _service
+    return _mark(_service, "callback")
 
 
 # -----------------------------------------------------------------------------
@@ -397,8 +499,7 @@ def from_async_iterator(
                     logger.debug("🌊 aclose() raised; ignoring", exc_info=True)
 
     _service.__name__ = f"stream_{getattr(factory, '__name__', 'logic')}"
-    _service.__xsm_actor_logic__ = "async_iterator"  # type: ignore[attr-defined]
-    return _service
+    return _mark(_service, "async_iterator")
 
 
 #: How long `from_iterator`'s cleanup waits for its worker to notice stop.
@@ -435,17 +536,31 @@ def from_iterator(
             iterator raises. Stops early once the state has exited.
             """
             last: Any = None
+            failure: Optional[Exception] = None
             try:
-                for item in gen:
-                    if stop.is_set():
-                        return
-                    last = item
-                    send_back(StreamEvent(event_type, {"data": item}))
+                try:
+                    for item in gen:
+                        if stop.is_set():
+                            break
+                        last = item
+                        send_back(StreamEvent(event_type, {"data": item}))
+                except Exception as exc:  # noqa: BLE001 -- user iterator
+                    failure = exc
+                # 🐛 RU-32: ONLY the user's iterator is inside the `try`
+                #    above. An error from the engine's own completion call
+                #    used to be caught as "the iterator failed" and fed back
+                #    through `_fail_logic`.
                 if not stop.is_set():
-                    interp._complete_logic(invocation, last)
-            except Exception as exc:  # noqa: BLE001 -- user iterator
-                if not stop.is_set():
-                    interp._fail_logic(invocation, exc)
+                    try:
+                        if failure is not None:
+                            interp._fail_logic(invocation, failure)
+                        else:
+                            interp._complete_logic(invocation, last)
+                    except Exception:  # noqa: BLE001 -- engine completion
+                        logger.exception(
+                            "🌊 completing stream '%s' raised.",
+                            getattr(invocation, "id", "?"),
+                        )
             finally:
                 if callable(close):
                     try:
@@ -473,11 +588,16 @@ def from_iterator(
             #    parallel state with N blocked iterators would stall it for
             #    N x grace. Off-loop (the sync owner) the wait is the
             #    caller's own thread.
+            joined = False
             try:
                 asyncio.get_running_loop()
             except RuntimeError:
                 thread.join(_ITERATOR_STOP_GRACE_S)
-            if thread.is_alive():
+                joined = True
+            # 🐛 RU-32: only claim "blocked" when we actually waited. On a
+            #    loop thread the join is skipped on purpose, so a healthy
+            #    stream mid-item at state exit is NOT a blocked iterator.
+            if joined and thread.is_alive():
                 logger.warning(
                     "🌊 from_iterator '%s' is blocked inside next(); its "
                     "thread lingers until the iterator returns.",
@@ -489,14 +609,13 @@ def from_iterator(
         return handle
 
     _service.__name__ = f"stream_{getattr(factory, '__name__', 'logic')}"
-    _service.__xsm_actor_logic__ = "iterator"  # type: ignore[attr-defined]
-    return _service
+    return _mark(_service, "iterator")
 
 
 # -----------------------------------------------------------------------------
 # 🎭 from_interpreter
 # -----------------------------------------------------------------------------
-def from_interpreter(child: Any) -> Any:
+def from_interpreter(child: "BaseInterpreter[Any]") -> "MachineNode[Any]":
     """Use an EXISTING interpreter's machine as a child actor (XState
     ``fromActor`` parity). A `MachineNode` is already a valid ``invoke``
     ``src``; this helper reads it off an interpreter so an application
@@ -507,11 +626,16 @@ def from_interpreter(child: Any) -> Any:
     machine = getattr(child, "machine", None)
     if machine is None:
         raise TypeError("from_interpreter() needs an interpreter instance")
-    return machine
+    return cast("MachineNode[Any]", machine)
 
 
 def _invocation_of(interp: Any, event: Any) -> Any:
     """The `InvokeDefinition` the engine is running (`invoke.<id>` event)."""
+    # 🏛️ Engine contract: the engine runs a service with the synthetic
+    #    event ``invoke.<id>`` and tracks the invocation on its active
+    #    states (or `_states_to_invoke` while entering). Pinned by
+    #    `tests/test_actor_logic.py`; a rename of either engine detail
+    #    lands in the WARNING fallback below, never silently.
     inv_id = str(getattr(event, "type", ""))[len("invoke.") :]
     for state in list(interp._active_state_nodes):
         for inv in getattr(state, "invoke", ()):
@@ -521,6 +645,12 @@ def _invocation_of(interp: Any, event: Any) -> Any:
         for inv in getattr(state, "invoke", ()):
             if inv.id == inv_id:
                 return inv
+
+    logger.warning(
+        "🎭 no invocation '%s' found on the active states; using an "
+        "anonymous stand-in (did the engine's invoke event naming change?).",
+        inv_id,
+    )
 
     class _Anon:  # pragma: no cover - defensive
         id = inv_id

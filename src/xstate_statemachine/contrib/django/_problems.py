@@ -58,7 +58,7 @@ _TABLE: Tuple[Tuple[type, int, str], ...] = (
 def problem_body(
     status: int, title: str, detail: Optional[str] = None, **ext: Any
 ) -> Dict[str, Any]:
-    """Build an RFC 7807 problem dict.
+    """Build an RFC 9457 problem dict.
 
     Args:
         status: The HTTP status code.

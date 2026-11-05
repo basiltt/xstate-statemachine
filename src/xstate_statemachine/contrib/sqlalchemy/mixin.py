@@ -34,9 +34,11 @@ from typing import (
     Callable,
     ClassVar,
     Dict,
+    FrozenSet,
     Iterable,
     Iterator,
     List,
+    Mapping,
     Optional,
     Sequence,
     Tuple,
@@ -61,6 +63,7 @@ from sqlalchemy.orm.exc import StaleDataError
 
 from ...events import Receipt
 from ...exceptions import ConflictError, LockTimeoutError
+from ...machine_logic import MachineLogic
 from ...models import MachineNode
 from ...patterns.retry import RetryPolicy
 from ...persistence.deadline import Deadline
@@ -69,7 +72,13 @@ from . import _ops
 from ._schema import build_tables
 from .store import _is_locked
 
-__all__ = ["StatechartMixin", "send_with_retry", "state_string"]
+__all__ = [
+    "RESERVED_PAYLOAD_KEYS",
+    "StatechartMixin",
+    "reserved_keys",
+    "send_with_retry",
+    "state_string",
+]
 
 #: Separator of leaf ids in `statechart_state`. State ids never contain it
 #: in practice; `in_state()` matches whole ids between separators.
@@ -170,6 +179,24 @@ def _check_same_database(store: Any, conn: Any) -> None:
         )
 
 
+#: Keys a CLIENT body may never carry: `send()`'s own options.
+RESERVED_PAYLOAD_KEYS: FrozenSet[str] = frozenset(
+    {"session", "lock", "plugins", "payload"}
+)
+
+
+def reserved_keys(data: Mapping[str, Any]) -> List[str]:
+    """The reserved keys present in a client *data* mapping (sorted).
+
+    Args:
+        data: The untrusted event body.
+
+    Returns:
+        Sorted keys that collide with `send()` options.
+    """
+    return sorted(k for k in data if k in RESERVED_PAYLOAD_KEYS)
+
+
 def _identity(row: Any) -> Any:
     state: Any = sa_inspect(row)
     return state.identity
@@ -247,13 +274,23 @@ class StatechartMixin:
             )
         if not isinstance(m, MachineNode):
             m = m(self)
+        if not isinstance(m, MachineNode):
+            raise TypeError(
+                f"__xsm_machine__ must be (or return) a MachineNode; "
+                f"got {type(m).__name__}"
+            )
         logic = type(self).__xsm_logic__
         if logic is not None:
             if callable(logic) and not hasattr(logic, "actions"):
                 logic = logic(self)
+            if not isinstance(logic, MachineLogic):
+                raise TypeError(
+                    f"__xsm_logic__ must be (or return) a MachineLogic; "
+                    f"got {type(logic).__name__}"
+                )
             m = copy.copy(m)
             m.logic = logic
-        return cast("MachineNode[Any]", m)
+        return m
 
     def _xsm_key(self) -> str:
         ident = _identity(self)
@@ -264,7 +301,8 @@ class StatechartMixin:
         return str(ident[0])
 
     def _xsm_log_id(self) -> str:
-        return f"{self.__table__.name}:{self._xsm_key()}"  # type: ignore
+        table_name = self.__table__.name  # type: ignore[attr-defined]  # set by the declarative mapper
+        return f"{table_name}:{self._xsm_key()}"
 
     @property
     def machine(self) -> Any:
@@ -287,9 +325,16 @@ class StatechartMixin:
         session: Any = None,
         lock: str = "optimistic",
         plugins: Iterable[Any] = (),
-        **payload: Any,
+        payload: Optional[Mapping[str, Any]] = None,
+        **extra: Any,
     ) -> Receipt:
         """Apply *event_type* to this row's statechart and FLUSH.
+
+        Event data goes in ``payload=`` (an explicit mapping, like the
+        Django mixin: a web client's body can then never set ``lock`` /
+        ``session`` / ``plugins``; see `reserved_keys`). Extra keyword
+        arguments are still accepted as event data for compatibility and
+        are merged over *payload*.
 
         The caller commits. ``lock="pessimistic"`` re-selects the row
         ``FOR UPDATE`` first (Postgres / MySQL; SQLite serialises writers
@@ -299,6 +344,7 @@ class StatechartMixin:
         """
         if lock not in _LOCKS:
             raise ValueError(f"lock must be one of {_LOCKS}")
+        payload = {**(payload or {}), **extra}
         session = session if session is not None else object_session(self)
         if session is None:
             raise ValueError(

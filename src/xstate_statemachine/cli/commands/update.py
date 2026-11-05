@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -40,7 +41,7 @@ import urllib.request
 from dataclasses import asdict, dataclass
 from importlib import metadata
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from ... import __version__
 from . import get_console
@@ -53,23 +54,36 @@ TIMEOUT_S = 10.0
 # =============================================================================
 # Version arithmetic (stdlib only -- no `packaging`)
 # =============================================================================
+_VERSION_RE = re.compile(
+    r"^(?P<nums>\d+(?:\.\d+)*)"
+    r"(?:(?P<tag>rc|a|b)(?P<pre>\d*))?"
+    r"(?:\.?post(?P<post>\d*))?"
+    r"(?:\.?dev(?P<dev>\d*))?$"
+)
+
+
 def parse_version(text: str) -> Tuple[Tuple[int, ...], int, int]:
     """PEP 440 subset sufficient for this project's tags: ``N(.N)*`` with an
     optional ``aN`` / ``bN`` / ``rcN`` / ``.devN`` suffix. Returns a sortable
     key; a final release sorts above any pre-release of the same number."""
     s = text.strip().lower().lstrip("v")
+    # 🔥 CLI-016: the old partition-on-tag parser raised ValueError for
+    #    `1.0rc1.dev2` and dropped `.postN`, so 1.2.0.post1 == 1.2.0.
+    #    Anchored regex: each optional suffix is matched in order.
+    m = _VERSION_RE.match(s)
+    if m is None:
+        nums = tuple(int(p) for p in s.split(".") if p.isdigit())
+        return (nums or (0,), 3, 0)
+    nums = tuple(int(p) for p in m.group("nums").split("."))
     pre_rank, pre_num = 3, 0  # final
-    for tag, rank in (("rc", 2), ("b", 1), ("a", 0)):
-        if tag in s:
-            head, _, num = s.partition(tag)
-            s, pre_rank, pre_num = head, rank, int(num or 0)
-            break
-    dev = 0
-    if ".dev" in s:
-        s, _, d = s.partition(".dev")
-        dev = -(int(d or 0) + 1)
-    nums = tuple(int(p) for p in s.split(".") if p.isdigit())
-    return (nums or (0,), pre_rank, pre_num + dev)
+    if m.group("tag"):
+        pre_rank = {"rc": 2, "b": 1, "a": 0}[m.group("tag")]
+        pre_num = int(m.group("pre") or 0)
+    elif m.group("post") is not None:
+        # 📝 A post-release sorts above the final release it follows.
+        pre_rank, pre_num = 4, int(m.group("post") or 0)
+    dev = -(int(m.group("dev") or 0) + 1) if m.group("dev") is not None else 0
+    return (nums, pre_rank, pre_num + dev)
 
 
 def is_newer(candidate: str, current: str) -> bool:
@@ -279,18 +293,23 @@ def run_update(
         raise SystemExit(1)
     newer = is_newer(latest, __version__)
 
+    # 🔥 CLI-016: `--json` is ONE document. The report used to be printed
+    #    first and the post-upgrade result as a second document, which no
+    #    JSON parser accepts. `report` is emitted exactly once, on
+    #    whichever path leaves the function.
+    report: Dict[str, Any] = {
+        "current": __version__,
+        "latest": latest,
+        "update_available": newer,
+        "install": asdict(info),
+    }
+
+    def emit_report() -> None:
+        c.print(json.dumps(report, indent=2))
+
     if as_json:
-        c.print(
-            json.dumps(
-                {
-                    "current": __version__,
-                    "latest": latest,
-                    "update_available": newer,
-                    "install": asdict(info),
-                },
-                indent=2,
-            )
-        )
+        if check or not newer or not info.upgradable:
+            emit_report()
         if check:
             raise SystemExit(1 if newer else 0)
     elif not os.environ.get("XSM_UPDATE_CHILD"):  # the parent printed it
@@ -363,6 +382,9 @@ def run_update(
 
     code = _run(info.command)
     if code != 0:
+        if as_json:
+            report["error"] = f"pip exited with {code}"
+            emit_report()
         if not as_json:
             c.error(f"`{' '.join(info.command)}` exited with {code}")
         raise SystemExit(code)
@@ -374,7 +396,8 @@ def run_update(
 
     now = _installed_version(info.python)
     if as_json:
-        c.print(json.dumps({"updated_to": now, "expected": latest}))
+        report.update({"updated_to": now, "expected": latest})
+        emit_report()
         return
     if now == latest:
         c.ok(f"updated {DIST} {__version__} -> {now}")

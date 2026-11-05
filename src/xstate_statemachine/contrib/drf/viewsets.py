@@ -25,9 +25,21 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 import time
-from typing import Any, Callable, Dict, Iterator, List, Optional, Type, cast
+from types import MappingProxyType
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterator,
+    List,
+    Mapping,
+    Optional,
+    Type,
+    cast,
+)
 
 from django.core.exceptions import ImproperlyConfigured
 from django.http import StreamingHttpResponse
@@ -48,6 +60,8 @@ from ..django.mixin import reserved_keys
 from ..django.permissions import has_event_permission, permitted_events
 from .fields import state_body
 from .permissions import StatechartHistoryPermission
+
+logger = logging.getLogger(__name__)
 
 __all__ = ["StatechartViewSetMixin", "event_slug", "problem_response"]
 
@@ -96,7 +110,7 @@ class ReceiptSerializer(StateSerializer):
 
 
 class ProblemSerializer(serializers.Serializer):  # type: ignore[misc]  # Serializer is untyped (Any base)
-    """Response schema for an RFC 7807 problem body."""
+    """Response schema for an RFC 9457 problem body."""
 
     type = serializers.CharField()
     title = serializers.CharField()
@@ -118,6 +132,21 @@ class SendSerializer(serializers.Serializer):  # type: ignore[misc]  # Serialize
     type = serializers.CharField()
 
 
+class _ActorIdField(serializers.CharField):  # type: ignore[misc]  # CharField is untyped (Any base)
+    """The audit actor's primary key, whatever its type.
+
+    🏛️ ``TransitionLog.actor`` is a FK to ``AUTH_USER_MODEL``, whose pk may
+    be a UUID or a string. Integer pks keep their JSON number form (the
+    pre-0.12 contract); everything else is rendered as its string.
+    """
+
+    def to_representation(self, value: Any) -> Any:
+        """Return an int pk unchanged, any other pk as ``str``."""
+        if isinstance(value, int) and not isinstance(value, bool):
+            return value
+        return str(value)
+
+
 class HistorySerializer(serializers.Serializer):  # type: ignore[misc]  # Serializer is untyped (Any base)
     """Response schema for one audit-history entry."""
 
@@ -127,7 +156,7 @@ class HistorySerializer(serializers.Serializer):  # type: ignore[misc]  # Serial
     from_states = serializers.ListField(child=serializers.CharField())
     to_states = serializers.ListField(child=serializers.CharField())
     actions = serializers.ListField(child=serializers.CharField())
-    actor = serializers.IntegerField(source="actor_id", allow_null=True)
+    actor = _ActorIdField(source="actor_id", allow_null=True)
     reason = serializers.CharField(allow_blank=True)
     created = serializers.DateTimeField()
 
@@ -217,7 +246,7 @@ class StatechartViewSetMixin:
         xsm_stream_poll_s / xsm_stream_max_s / xsm_heartbeat_s: SSE.
     """
 
-    xsm_event_serializers: Dict[str, Any] = {}
+    xsm_event_serializers: Mapping[str, Any] = MappingProxyType({})
     xsm_context_serializer: Optional[Callable[[Any], Any]] = None
     xsm_inbox: Any = "default"
     xsm_history_permission_classes: Any = (StatechartHistoryPermission,)
@@ -407,6 +436,12 @@ class StatechartViewSetMixin:
             )
         except Exception as exc:  # noqa: BLE001 -- mapped, never leaked
             status, body = problem_for_exception(exc)
+            if status >= 500:
+                # 🔥 The client gets the class name only; the detail
+                #    (traceback, object) is logged server-side.
+                logger.exception(
+                    "send %s on %r failed", event, obj, exc_info=exc
+                )
             resp = Response(body, status=status)
             resp.content_type = PROBLEM_MEDIA_TYPE
             return resp

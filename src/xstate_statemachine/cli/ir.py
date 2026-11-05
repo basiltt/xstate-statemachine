@@ -329,6 +329,37 @@ def parse_actions(raw: Any) -> Tuple[ActionIR, ...]:
     return tuple(out)
 
 
+def _list_target_reports(key: str, config: Dict[str, Any]) -> List[str]:
+    """Name every transition whose ``target`` is a list (multi-target).
+
+    🔥 CLI-012: ``TransitionIR`` models one target string, so a list used to
+    be coerced to ``None`` silently and surfaced only as a meaningless
+    "on differs" after generation. Reporting it here lets
+    ``check_representable`` name the offending transition up front.
+
+    Args:
+        key: The state key, for the message.
+        config: The state's raw config.
+
+    Returns:
+        One ``"<key>.<section>.<event>: list-valued target"`` per offender.
+    """
+    found: List[str] = []
+    for section in ("on", "after"):
+        mapping = config.get(section)
+        if not isinstance(mapping, dict):
+            continue
+        for event, raw in mapping.items():
+            for item in _as_list(raw):
+                if isinstance(item, dict) and isinstance(
+                    item.get("target"), list
+                ):
+                    found.append(
+                        f"{key}.{section}.{event}: list-valued target"
+                    )
+    return found
+
+
 def parse_transitions(
     event: str,
     raw: Any,
@@ -459,9 +490,12 @@ def parse_state(
 
     unsupported = tuple(
         sorted(
-            k
-            for k in config
-            if k not in _KNOWN_STATE_KEYS and k not in _IGNORED_STATE_KEYS
+            [
+                k
+                for k in config
+                if k not in _KNOWN_STATE_KEYS and k not in _IGNORED_STATE_KEYS
+            ]
+            + _list_target_reports(key or "(root)", config)
         )
     )
 

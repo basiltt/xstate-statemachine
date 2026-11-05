@@ -52,6 +52,7 @@ import contextlib
 import hashlib
 import json
 import logging
+import re
 import sqlite3
 import threading
 import time
@@ -75,6 +76,7 @@ from ..events import Receipt
 from ..exceptions import StoreError
 from ..plugins import PluginBase
 from ..receipts import receipt_from_json, receipt_to_json
+from .sqlite_store import sqlite_errors_typed_via_store
 
 logger = logging.getLogger(__name__)
 
@@ -210,15 +212,48 @@ def _default_instance_key(interpreter: Any) -> str:
     return str(getattr(interpreter, "store_key", None) or interpreter.id)
 
 
+def _callable_failed(what: str, exc: BaseException) -> ValueError:
+    """The refusal for a user-supplied *what* callable that raised."""
+    return ValueError(
+        f"idempotency {what} callable raised {type(exc).__name__}: {exc}; "
+        f"the event is refused rather than processed without deduplication"
+    )
+
+
 def default_key(event: Any) -> Optional[str]:
     """``payload["idempotency_key"]`` or ``payload["id"]``; ``None`` means
     "not deduplicated"."""
     payload = getattr(event, "payload", None) or {}
+    # 🛡️ P-22: a non-dict payload (a list, a bare string) has no key.
+    if not isinstance(payload, dict):
+        return None
     for name in ("idempotency_key", "id"):
         val = payload.get(name)
         if val is not None:
             return str(val)
     return None
+
+
+#: ``<Foo object at 0x7f...>`` -- a default repr embeds a memory address.
+_ADDRESS_REPR = re.compile(r" at 0x[0-9a-fA-F]+>")
+
+
+def _canonical_default(value: Any) -> str:
+    """`json.dumps` ``default`` for `fingerprint`.
+
+    📝 P-22: ``default=str`` was stable for Decimal / datetime / UUID but
+    fingerprinted an object with a default repr by its ADDRESS, so a retry
+    of the same logical event differed and was answered 422 Mismatch. Such
+    a value is refused (``TypeError``, which `_admit` turns into a typed
+    ``ValueError`` naming the problem) instead.
+    """
+    text = str(value)
+    if _ADDRESS_REPR.search(text):
+        raise TypeError(
+            f"{type(value).__name__} has no stable text form "
+            f"(its repr embeds a memory address)"
+        )
+    return text
 
 
 def fingerprint(
@@ -233,7 +268,7 @@ def fingerprint(
         {"type": getattr(event, "type", None), "payload": payload},
         sort_keys=True,
         separators=(",", ":"),
-        default=str,
+        default=_canonical_default,
     )
     return hashlib.sha256(canon.encode("utf-8")).hexdigest()
 
@@ -438,6 +473,7 @@ class SQLiteInbox:
         assert self._store is not None
         return self._store._conn()
 
+    @sqlite_errors_typed_via_store
     def get(self, scope: str, key: str) -> Optional[InboxEntry]:
         """`Inbox.get` on SQLite: the unexpired row for ``(scope, key)``, or
         None.
@@ -453,6 +489,7 @@ class SQLiteInbox:
         )
         return InboxEntry(row[0], row[1], row[2]) if row else None
 
+    @sqlite_errors_typed_via_store
     def claim(
         self, scope: str, key: str, fp: str, *, ttl_s: Optional[float]
     ) -> bool:
@@ -475,6 +512,7 @@ class SQLiteInbox:
             )
             return True
 
+    @sqlite_errors_typed_via_store
     def mark(
         self,
         scope: str,
@@ -492,6 +530,7 @@ class SQLiteInbox:
                 (receipt_json, _expiry(ttl_s, time.time()), scope, key),
             )
 
+    @sqlite_errors_typed_via_store
     def release(self, scope: str, key: str) -> None:
         """`Inbox.release` on SQLite: DELETE the row only while it has no
         receipt.
@@ -504,6 +543,7 @@ class SQLiteInbox:
                 (scope, key),
             )
 
+    @sqlite_errors_typed_via_store
     def purge_expired(self, *, now: Optional[float] = None) -> int:
         """`Inbox.purge_expired` on SQLite: DELETE rows expired at *now*."""
         now = time.time() if now is None else now
@@ -515,6 +555,7 @@ class SQLiteInbox:
                 (now,),
             ).rowcount
 
+    @sqlite_errors_typed_via_store
     def forget(self, scope: str) -> int:
         """`Inbox.forget` on SQLite: DELETE every row of *scope*."""
         conn = self._conn()
@@ -760,7 +801,14 @@ class IdempotencyPlugin(PluginBase[Any]):
             ``None`` to admit the event (also when it has no key); otherwise a
             `Receipt` that refuses or answers it instead.
         """
-        key = self.key_fn(event)
+        # 🔐 P-03: the key, principal and instance-key callables are USER
+        #    code. A raise (KeyError on `payload["user"]`, ...) used to
+        #    escape to `_SafePlugin`, which ADMITS the event with no claim --
+        #    the fail-open this hook exists to prevent. Any failure refuses.
+        try:
+            key = self.key_fn(event)
+        except Exception as exc:  # noqa: BLE001 - user callable
+            return self._refuse(interpreter, _callable_failed("key", exc))
         if key is None:
             return None
         scope = None
@@ -769,6 +817,10 @@ class IdempotencyPlugin(PluginBase[Any]):
             scope = self.scope_for(interpreter, event)
         except ValueError as exc:
             return self._refuse(interpreter, exc)
+        except Exception as exc:  # noqa: BLE001 - user callable
+            return self._refuse(
+                interpreter, _callable_failed("principal / instance key", exc)
+            )
         # 🐛 Battle #261: everything below used to be able to RAISE -- a
         #    payload json cannot canonicalise (``{1: .., "a": ..}``), a
         #    hand-edited / truncated cached receipt, an inbox that cannot
@@ -1007,8 +1059,18 @@ class IdempotencyPlugin(PluginBase[Any]):
         inbox shares the store's backend."""
         with self._lock:
             batch = self._buffered.pop(_session_token(), [])
+        # 🛡️ P-23: attempt EVERY mark; one failing inbox write must not
+        #    leave the rest of the batch unwritten and their claims in
+        #    flight (409 for the whole TTL). The first error is re-raised.
+        first: Optional[BaseException] = None
         for scope, key, fp, payload in batch:
-            self._mark(scope, key, fp, payload)
+            try:
+                self._mark(scope, key, fp, payload)
+            except Exception as exc:  # noqa: BLE001 - re-raised below
+                if first is None:
+                    first = exc
+        if first is not None:
+            raise first
         return len(batch)
 
     def discard_marks(self) -> int:

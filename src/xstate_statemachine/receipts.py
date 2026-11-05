@@ -21,7 +21,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping, Optional
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 from .events import Receipt
 
@@ -32,6 +32,7 @@ __all__ = [
     "receipt_from_json",
     "STATUS_OK",
     "STATUS_ACCEPTED",
+    "STATUS_NO_OP",
     "STATUS_NOT_MODIFIED_OK",
     "STATUS_CONFLICT",
     "STATUS_ERROR",
@@ -42,7 +43,9 @@ __all__ = [
 #: HTTP statuses `receipt_to_status` returns. Named so adapters and tests
 #: cite the rule, not the number.
 STATUS_OK = 200  # transition taken
-STATUS_NOT_MODIFIED_OK = 200  # no handler in this state: a clean no-op
+STATUS_NO_OP = 200  # no handler in this state: a clean no-op
+#: Historical spelling of `STATUS_NO_OP`: it is a 200, NOT an HTTP 304.
+STATUS_NOT_MODIFIED_OK = STATUS_NO_OP
 STATUS_ACCEPTED = 202  # deferred by `onUnhandled: "defer"` -- held, not run
 STATUS_CONFLICT = 409  # a guard refused it: the request conflicts with state
 STATUS_ERROR = 500  # an action / target / chain error while processing
@@ -78,6 +81,10 @@ class ReceiptError(Exception):
         self.type = type
         self.message = message
 
+    def __reduce__(self) -> Tuple[Any, ...]:
+        """Rebuild from ``(type, message)`` so it survives pickling (RU-11)."""
+        return (ReceiptError, (self.type, self.message))
+
     def __repr__(self) -> str:  # pragma: no cover - diagnostic
         return f"ReceiptError(type={self.type!r}, message={self.message!r})"
 
@@ -105,34 +112,87 @@ def receipt_to_status(receipt: Receipt) -> int:
     describes the ORIGINAL outcome, and a retry must get the same answer.
     """
     if receipt.error is not None:
-        err = receipt.error
-        name = getattr(err, "type", None) or type(err).__name__
-        return _CLIENT_ERROR_STATUS.get(str(name), STATUS_ERROR)
+        return _error_status(receipt.error)
     if receipt.deferred:
         return STATUS_ACCEPTED
     if receipt.denied:
         return STATUS_CONFLICT
-    return STATUS_OK if receipt.changed else STATUS_NOT_MODIFIED_OK
+    return STATUS_OK if receipt.changed else STATUS_NO_OP
 
 
-def _error_to_json(err: Optional[BaseException]) -> Optional[Dict[str, str]]:
+def _error_status(err: BaseException) -> int:
+    """HTTP status for a receipt's *err*, matching by class name.
+
+    🏛️ A rebuilt `ReceiptError` only has the original NAME, so names are
+    the common currency. For a live exception the whole MRO is walked, so a
+    subclass of ``IdempotencyMismatchError`` keeps the parent's 422 instead
+    of degrading to 500.
+
+    Args:
+        err: The receipt's error (live or rebuilt).
+
+    Returns:
+        The mapped status, `STATUS_ERROR` when no name matches.
+    """
+    if isinstance(err, ReceiptError):
+        names: Tuple[str, ...] = (err.type,)
+    else:
+        names = tuple(c.__name__ for c in type(err).__mro__)
+    for name in names:
+        status = _CLIENT_ERROR_STATUS.get(str(name))
+        if status is not None:
+            return status
+    return STATUS_ERROR
+
+
+def _error_to_json(
+    err: Optional[BaseException], include_message: bool = True
+) -> Optional[Dict[str, str]]:
+    """Serialise a receipt error as ``{"type", "message"}``.
+
+    Args:
+        err: The error, or ``None``.
+        include_message: ``False`` blanks the message (type only).
+
+    Returns:
+        The JSON-ready dict, or ``None`` when there is no error.
+    """
     if err is None:
         return None
     if isinstance(err, ReceiptError):
-        return {"type": err.type, "message": err.message}
-    return {"type": type(err).__name__, "message": str(err)}
+        name, message = err.type, err.message
+    else:
+        name, message = type(err).__name__, str(err)
+    return {"type": name, "message": message if include_message else ""}
 
 
-def receipt_to_json(receipt: Receipt) -> Dict[str, Any]:
+def receipt_to_json(
+    receipt: Receipt, *, include_messages: bool = True
+) -> Dict[str, Any]:
     """The stable JSON form of a receipt (a plain dict; ``json.dumps`` it).
 
     ``state_ids`` is a SORTED list so two receipts for the same outcome
     serialise identically -- a cache key or an ETag can be built from it.
+
+    ⚠️ The error MESSAGE is ``str(exception)`` and may echo request data
+    (a gateway error carrying a card number). The default keeps it because
+    the idempotency cache must replay the original answer faithfully; a
+    caller that puts the JSON in front of an untrusted client (an HTTP
+    response body) should pass ``include_messages=False`` and send only the
+    error ``type``.
+
+    Args:
+        receipt: The receipt to serialise.
+        include_messages: Keep each error's message (default). ``False``
+            writes an empty message.
+
+    Returns:
+        A JSON-serialisable dict.
     """
     return {
         "state_ids": sorted(receipt.state_ids),
         "changed": bool(receipt.changed),
-        "error": _error_to_json(receipt.error),
+        "error": _error_to_json(receipt.error, include_messages),
         "deferred": bool(receipt.deferred),
         "denied": bool(receipt.denied),
         "duplicate": bool(receipt.duplicate),

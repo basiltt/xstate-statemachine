@@ -51,7 +51,7 @@ from .machine_logic import (
     resolve_aliases,
 )
 from ._typing import TContext
-from .models import MachineNode
+from .models import MachineNode, _config_bool
 from .validation import validate_machine, validate_top_level_keys
 
 # -----------------------------------------------------------------------------
@@ -153,8 +153,22 @@ def create_machine(
             these modules for functions to satisfy the machine's logic
             requirements.
         logic_providers: An optional list of class instances. The factory
-            will search the public methods of these objects to find the
-            required logic implementations.
+            will search the public methods (including ``@staticmethod``s)
+            of these objects to find the required logic implementations.
+        context_type: A ``TypedDict`` / ``Mapping`` subtype naming the
+            context's static type; no runtime effect (see above).
+        strict_targets: ``True`` (default) refuses a transition target
+            that does not resolve; ``False`` downgrades that to a
+            ``DeprecationWarning`` (the 0.7.x escape hatch, removed in
+            1.0).
+        event_schemas: ``{event_type: validator}``; each validator is a
+            callable ``(payload) -> None`` or an object with a callable
+            ``validate(payload)`` that RAISES for an invalid payload
+            (#51). Validated here; a wrong value is `InvalidConfigError`.
+        strict_config: Unknown-key policy (see above); ``None`` reads the
+            config's ``"strictConfig"`` key.
+        context_validator: ``(context) -> None`` run after every context
+            change (see above).
 
     Returns:
         A fully constructed and validated `MachineNode` instance, ready to be
@@ -162,10 +176,18 @@ def create_machine(
 
     Raises:
         InvalidConfigError: If the `config` dictionary is missing the 'id'
-            or 'states' keys, or if 'id' is not a string.
+            or 'states' keys, if 'id' is not a string, if a transition
+            target does not resolve (``strict_targets``), if an unknown key
+            is present under ``strict_config``, or if ``event_schemas`` /
+            ``context_validator`` hold something that is not a validator.
         ImplementationMissingError: If auto-discovery is used and a
             required action, guard, or service cannot be found in the
             provided modules or providers.
+
+    Warns:
+        UserWarning: ``logic`` was passed together with ``logic_modules``
+            / ``logic_providers`` (the explicit ``logic`` is used; the
+            modules and providers are not scanned).
 
     Example:
         >>> # The following examples assume a config like this:
@@ -185,14 +207,12 @@ def create_machine(
         >>>
         >>> # 2. With auto-discovery from a provider class
         >>> class LogicProvider:
-        ...     # FIX: Mark method as static to resolve IDE warning, as it
-        ...     # does not use the 'self' instance.
-        ...     @staticmethod
-        ...     def my_action(i, c, e, a):
+        ...     # 📝 Discovery binds BOUND methods of the instance, so the
+        ...     #    implementation is an ordinary method taking `self`.
+        ...     def my_action(self, i, c, e, a):
         ...         print("Action from provider!")
         ...
         >>> provider = LogicProvider()
-        >>> # FIX: Renamed variable to avoid "Redeclared 'machine'..." warning.
         >>> machine_from_provider = create_machine(my_config, logic_providers=[provider])
     """
     # -------------------------------------------------------------------------
@@ -202,8 +222,22 @@ def create_machine(
     #    machines/s; emit them only when INFO is actually enabled.
     _info = logger.isEnabledFor(logging.INFO)
     final_logic: Optional[MachineLogic[Any]] = None
-    if logic:
+    if logic is not None:
         # ✅ Path 1: Use the explicitly provided logic instance.
+        # 🛡️ RU-20: identity, not truthiness -- a duck-typed logic object
+        #    may define `__len__` / `__bool__`. And an explicit `logic`
+        #    silently WON over `logic_modules` / `logic_providers` passed
+        #    alongside it, although the caller clearly expected those to
+        #    be scanned; say so.
+        if logic_modules or logic_providers:
+            warnings.warn(
+                "create_machine(): `logic` was given together with "
+                "`logic_modules` / `logic_providers`. The explicit `logic` "
+                "is used and the modules/providers are NOT scanned; pass "
+                "one or the other.",
+                UserWarning,
+                stacklevel=2,
+            )
         if _info:
             logger.info("🧠 Using explicitly provided MachineLogic instance.")
         final_logic = logic
@@ -302,7 +336,7 @@ def create_machine(
     #    or being callable works -- pydantic models, TypedDict adapters,
     #    hand-written functions -- so the library takes no dependency.
     if event_schemas:
-        machine.event_schemas = dict(event_schemas)
+        machine.event_schemas = _checked_event_schemas(event_schemas)
     if context_validator is not None:
         if not callable(context_validator):
             raise InvalidConfigError(
@@ -331,15 +365,67 @@ def create_machine(
     validate_machine(machine, strict_targets=strict_targets)
     # 🗝️ #216: after the tree is built (so the id in the message is the
     #    validated one) and before the machine is handed out.
+    # 🛡️ `strictConfig` goes through `_config_bool` like every other flag:
+    #    ``bool("false")`` is True, so a string value did the opposite.
+    user_actions = getattr(machine.logic, "actions", None)
     validate_top_level_keys(
         config,
         strict_config=(
-            bool(config.get("strictConfig", False))
+            _config_bool(
+                config.get("strictConfig"),
+                "strictConfig",
+                f"Machine '{machine_id}'",
+                False,
+            )
             if strict_config is None
             else strict_config
         ),
+        user_actions=user_actions if isinstance(user_actions, dict) else None,
     )
     return machine
+
+
+def _checked_event_schemas(schemas: Any) -> Dict[str, Any]:
+    """#51 / review RU-21: validate the ``event_schemas`` mapping at build.
+
+    A validator is anything callable, or anything exposing a callable
+    ``validate`` (a pydantic model class, a TypedDict adapter, a plain
+    function); the engine calls ``validator.validate(payload)`` when that
+    exists, else ``validator(payload)``. A wrong value used to be stored
+    as-is and surfaced as a bare `TypeError` on the FIRST matching
+    `send()` -- in production, not at build time.
+
+    Args:
+        schemas: The caller's ``event_schemas`` argument.
+
+    Returns:
+        Dict[str, Any]: A copy owned by the machine.
+
+    Raises:
+        InvalidConfigError: Not a dict, a key that is not a non-empty
+            string, or a value that is neither callable nor has a callable
+            ``validate``.
+    """
+    if not isinstance(schemas, dict):
+        raise InvalidConfigError(
+            "event_schemas must be a dict mapping an event type to a "
+            f"validator, got {type(schemas).__name__}."
+        )
+    for event_type, validator in schemas.items():
+        if not isinstance(event_type, str) or not event_type:
+            raise InvalidConfigError(
+                "event_schemas keys must be non-empty event type strings, "
+                f"got {event_type!r}."
+            )
+        if not callable(validator) and not callable(
+            getattr(validator, "validate", None)
+        ):
+            raise InvalidConfigError(
+                f"event_schemas[{event_type!r}] must be callable or expose "
+                f"a callable `validate(payload)`, got "
+                f"{type(validator).__name__}."
+            )
+    return dict(schemas)
 
 
 def _build_node(
@@ -382,9 +468,10 @@ def _alias_logic_names(machine: MachineNode[Any]) -> None:
         #    dict.
         if isinstance(registry, dict):
             owned = dict(registry)
-            resolve_aliases(owned, required)
+            if required:  # ⚡ nothing to alias or warn about otherwise
+                resolve_aliases(owned, required)
+                _warn_collapsed_config_names(attr, required, owned)
             setattr(logic, attr, owned)
-            _warn_collapsed_config_names(attr, required, owned)
 
 
 def _warn_collapsed_config_names(
@@ -410,7 +497,7 @@ def _warn_collapsed_config_names(
                 f"separators and resolve to the same implementation. If "
                 f"they are meant to be one {kind[:-1]}, spell it one way.",
                 UserWarning,
-                stacklevel=3,
+                stacklevel=4,  # RU-22: the create_machine() caller
             )
 
 

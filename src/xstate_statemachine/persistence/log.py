@@ -63,6 +63,7 @@ from typing import Protocol, runtime_checkable
 from ..events import AfterEvent, DoneEvent, ErrorEvent, event_kind
 from ..exceptions import StoreError, XStateMachineError
 from ..plugins import DEFAULT_REDACT_KEYS, PluginBase, redact
+from .sqlite_store import sqlite_errors_typed_via_store
 
 __all__ = [
     "AuditPlugin",
@@ -401,6 +402,7 @@ class JSONLinesLog:
         line = json.dumps(rec.to_dict(), sort_keys=True, default=str) + "\n"
         with self._lock:
             try:
+                before = self._sig()
                 with open(self.path, "a", encoding="utf-8") as fh:
                     fh.write(line)
                     fh.flush()
@@ -410,9 +412,14 @@ class JSONLinesLog:
                 sig = self._sig()
             except OSError as exc:
                 raise StoreError(f"JSONLinesLog({self.path}): {exc}") from exc
-            cached = self._last_seq.get(rec.machine_id, 0)
-            self._last_seq[rec.machine_id] = max(cached, rec.seq)
-            self._cache_sig = sig
+            # 🛡️ P-17: bless the cache only if it was VALID for the file
+            #    as it stood before our write. If another process had
+            #    appended meanwhile, the cache is stale; re-stamping it
+            #    would hide that row and let `next_seq` reuse its seq.
+            if self._cache_sig == before:
+                cached = self._last_seq.get(rec.machine_id, 0)
+                self._last_seq[rec.machine_id] = max(cached, rec.seq)
+                self._cache_sig = sig
 
     def append_next(
         self, rec: TransitionRecord, *, connection: Any = None
@@ -588,6 +595,7 @@ class SQLiteLog:
     def _conn(self) -> sqlite3.Connection:
         return self._store._conn()
 
+    @sqlite_errors_typed_via_store
     def append(self, rec: TransitionRecord, *, connection: Any = None) -> None:
         """`Log.append` on SQLite: INSERT into ``transitions`` in an IMMEDIATE
         tx.
@@ -609,6 +617,7 @@ class SQLiteLog:
                 ),
             )
 
+    @sqlite_errors_typed_via_store
     def append_next(
         self, rec: TransitionRecord, *, connection: Any = None
     ) -> TransitionRecord:
@@ -644,6 +653,7 @@ class SQLiteLog:
             )
         return out
 
+    @sqlite_errors_typed_via_store
     def next_seq(self, machine_id: str) -> int:
         """`Log.next_seq` on SQLite: ``MAX(seq) + 1`` for the machine (1 if
         none).
@@ -709,6 +719,7 @@ class SQLiteLog:
             out.append(rec)
         return out
 
+    @sqlite_errors_typed_via_store
     def purge_older_than(self, cutoff_ts: float) -> int:
         """`Log.purge_older_than` on SQLite: DELETE rows with ``ts <
         cutoff_ts``.
@@ -720,6 +731,7 @@ class SQLiteLog:
                 "DELETE FROM transitions WHERE ts < ?", (cutoff_ts,)
             ).rowcount
 
+    @sqlite_errors_typed_via_store
     def forget(self, machine_id: str) -> int:
         """`Log.forget` on SQLite: DELETE the machine's rows, return the count."""
         conn = self._conn()
@@ -962,6 +974,22 @@ class TransitionLogPlugin(PluginBase[Any]):
     ) -> None:
         with self._lock:
             self._external.get(id(interpreter), {}).pop(id(event), None)
+
+    def on_event_dropped(
+        self, interpreter: Any, event: Any, reason: str
+    ) -> None:
+        """Forget an external event the engine dropped without processing.
+
+        🛡️ P-19: a send to a stopped / finished machine is remembered by
+        `on_before_send` but never reaches `on_event_processed`, so the
+        entry (and a reference to the event) stayed forever.
+        """
+        with self._lock:
+            ext = self._external.get(id(interpreter))
+            if ext is not None:
+                ext.pop(id(event), None)
+                if not ext:
+                    del self._external[id(interpreter)]
 
     def on_event_received(self, interpreter: Any, event: Any) -> None:
         with self._lock:

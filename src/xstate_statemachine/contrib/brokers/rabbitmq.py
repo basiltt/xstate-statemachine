@@ -152,13 +152,21 @@ class RabbitMQTransport:
 
     async def ack(self, native: Any) -> None:
         """Settle a delivery for good."""
-        await native.ack()
-        self.unacked = max(0, self.unacked - 1)
+        try:
+            await native.ack()
+        finally:
+            # 🔥 review CM-02: decrement even when the ack raises (a stale
+            #    delivery tag after a reconnect); the broker requeues the
+            #    message and the next fetch counts the new copy. Otherwise
+            #    `unacked` climbs to `prefetch` and fetch() starves forever.
+            self.unacked = max(0, self.unacked - 1)
 
     async def drop(self, native: Any) -> None:
         """Settle without redelivery."""
-        await native.reject(requeue=False)
-        self.unacked = max(0, self.unacked - 1)
+        try:
+            await native.reject(requeue=False)
+        finally:
+            self.unacked = max(0, self.unacked - 1)  # 🔥 review CM-02
 
     def rebind(self) -> None:
         """Forget a connection opened on a previous event loop."""

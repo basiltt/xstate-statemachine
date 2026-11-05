@@ -32,7 +32,9 @@ from typing import Any, Dict, List, Set
 # 📥 Project-Specific Imports
 # -----------------------------------------------------------------------------
 from .extractor import extract_events
+from .naming import docstring_safe
 from .strategies import GenerationContext, get_strategy
+from .strategies._shared import escape_for_string
 
 # -----------------------------------------------------------------------------
 # 🪵 Module Logger
@@ -201,8 +203,12 @@ def _generate_simulation_code(
         human_name = ev.replace("_", " ").title()
         lines.append(f"{indent}# ▶️ {human_name}")
         if log:
-            lines.append(f"{indent}logger.info('→ Sending event: %s', '{ev}')")
-        lines.append(f"{indent}{await_prefix}interpreter.send('{ev}')")
+            lines.append(
+                f"{indent}logger.info('→ Sending event: %s', '{escape_for_string(ev)}')"
+            )
+        lines.append(
+            f"{indent}{await_prefix}interpreter.send('{escape_for_string(ev)}')"
+        )
         if sleep:
             lines.append(f"{indent}{sleep_cmd}({sleep_time})")
         lines.append("")
@@ -437,14 +443,14 @@ def generate_runner_code(
             for ev in parent_events:
                 code_lines.extend(
                     [
-                        f"    # {ev.replace('_', ' ').title()}",
+                        f"    # {docstring_safe(ev.replace('_', ' ').title())}",
                         (
-                            f"    logger.info('Parent → sending %s', '{ev}')"
+                            f"    logger.info('Parent → sending %s', '{escape_for_string(ev)}')"
                             if log
                             else ""
                         ),
                         # FIX: Use the correct `parent` variable
-                        f"    {await_prefix}parent.send('{ev}')",
+                        f"    {await_prefix}parent.send('{escape_for_string(ev)}')",
                         f"    {sleep_cmd}({sleep_time})" if sleep else "",
                         "",
                     ]
@@ -472,13 +478,13 @@ def generate_runner_code(
                 for ev in actor_events:
                     code_lines.extend(
                         [
-                            f"    # {ev.replace('_', ' ').title()}",
+                            f"    # {docstring_safe(ev.replace('_', ' ').title())}",
                             (
-                                f"    logger.info('{a_name} → sending %s', '{ev}')"
+                                f"    logger.info('{a_name} → sending %s', '{escape_for_string(ev)}')"
                                 if log
                                 else ""
                             ),
-                            f"    {await_prefix}actors['{a_name}'].send('{ev}')",
+                            f"    {await_prefix}actors['{a_name}'].send('{escape_for_string(ev)}')",
                             f"    {sleep_cmd}({sleep_time})" if sleep else "",
                             "",
                         ]
@@ -590,7 +596,7 @@ def _generate_config_path_code(
         [
             f"{indent}# 📂 1. Configuration Loading",
             f"{indent}# ---------------------------------------------------------------------------",
-            f'{indent}config_path = Path(r"{json_filename}")',
+            f"{indent}config_path = Path({json_filename!r})",
             f"{indent}if not config_path.is_absolute() and config_path.parent == Path('.'):",
             f"{indent}    here = Path(__file__).resolve().parent",
             f"{indent}    candidate = here / config_path.name",

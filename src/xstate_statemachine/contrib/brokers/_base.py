@@ -331,6 +331,17 @@ class _Core:
             return False, None, 0.0
         return True, entry[1], entry[2]
 
+    def _unclaim(self, delivery: Delivery, native: Any, at: float) -> None:
+        """Put a claimed delivery back after its transport call failed.
+
+        🔥 review CM-09: the claim pops ``_inflight`` BEFORE the transport
+        call, so a raising ack/drop (network blip) made the caller's retry
+        a silent no-op -- the broker still held the message. Restoring the
+        entry keeps "settle once" while making a failed settle retriable.
+        """
+        with self._lock:
+            self._inflight[id(delivery)] = (delivery, native, at)
+
     def _requeue(self, delivery: Delivery, native: Any, at: float) -> None:
         env = delivery.envelope
         env = env.with_attempt(env.attempt + 1)
@@ -425,7 +436,11 @@ class SyncBroker(_Core):
         """Settle a delivery for good."""
         claimed, native, at = self._claim(delivery)
         if claimed:
-            self._call(self.transport.ack, native)
+            try:
+                self._call(self.transport.ack, native)
+            except BaseException:
+                self._unclaim(delivery, native, at)
+                raise
 
     def nack(self, delivery: Delivery, *, requeue: bool) -> None:
         """Requeue locally (``requeue=True``) or settle without redelivery."""
@@ -435,7 +450,11 @@ class SyncBroker(_Core):
         if requeue:
             self._requeue(delivery, native, at)
         else:
-            self._call(self.transport.drop, native)
+            try:
+                self._call(self.transport.drop, native)
+            except BaseException:
+                self._unclaim(delivery, native, at)
+                raise
 
     def close(self) -> None:
         """Release the client connections this object opened."""
@@ -526,7 +545,11 @@ class AsyncBroker(_Core):
         self._check_loop()
         claimed, native, at = self._claim(delivery)
         if claimed:
-            await self._call(self.transport.ack, native)
+            try:
+                await self._call(self.transport.ack, native)
+            except BaseException:
+                self._unclaim(delivery, native, at)
+                raise
 
     async def nack(self, delivery: Delivery, *, requeue: bool) -> None:
         """Requeue locally (``requeue=True``) or settle without redelivery."""
@@ -537,7 +560,11 @@ class AsyncBroker(_Core):
         if requeue:
             self._requeue(delivery, native, at)
         else:
-            await self._call(self.transport.drop, native)
+            try:
+                await self._call(self.transport.drop, native)
+            except BaseException:
+                self._unclaim(delivery, native, at)
+                raise
 
     async def close(self) -> None:
         """Release the client connections this object opened."""

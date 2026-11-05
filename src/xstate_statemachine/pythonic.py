@@ -22,24 +22,33 @@ decorators, compilers), ``_pythonic_builder`` (MachineBuilder) and
 # 📥 Project-Specific Imports
 # -------------------------------------------------------------------------
 from ._pythonic_builder import MachineBuilder
-from ._pythonic_class import StateMachine, _validate_logic
+from ._pythonic_class import StateMachine
+from ._pythonic_class import _validate_logic as _validate_logic
 from ._pythonic_core import (
     BoundState,
     State,
     Transition,
     TransitionGroup,
-    _attr_to_event,
-    _compile_config,
-    _compile_logic_from_functions,
-    _compile_logic_from_instance,
-    _compile_state,
-    _snake_to_camel,
     action,
     build_machine,
     guard,
     service,
     transition,
 )
+
+# 📝 `import X as X` is the explicit re-export form (mypy strict
+#    `no_implicit_reexport`); these stay importable without being in
+#    `__all__`.
+from ._pythonic_core import _attr_to_event as _attr_to_event
+from ._pythonic_core import _compile_config as _compile_config
+from ._pythonic_core import (
+    _compile_logic_from_functions as _compile_logic_from_functions,
+)
+from ._pythonic_core import (
+    _compile_logic_from_instance as _compile_logic_from_instance,
+)
+from ._pythonic_core import _compile_state as _compile_state
+from ._pythonic_core import _snake_to_camel as _snake_to_camel
 
 __all__ = [
     "BoundState",
@@ -53,11 +62,9 @@ __all__ = [
     "guard",
     "service",
     "transition",
-    "_attr_to_event",
-    "_compile_config",
-    "_compile_logic_from_functions",
-    "_compile_logic_from_instance",
-    "_compile_state",
-    "_snake_to_camel",
-    "_validate_logic",
 ]
+
+# 📝 The underscore helpers imported above (`_compile_config`,
+#    `_snake_to_camel`, ...) stay importable from this module for the CLI
+#    and existing callers, but are not public API and are deliberately
+#    kept out of `__all__` so `from ... import *` does not leak them.

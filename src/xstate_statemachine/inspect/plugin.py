@@ -148,6 +148,7 @@ class InspectorPlugin(PluginBase[Any]):
         return self
 
     def uninstall(self) -> None:
+        """Remove this plugin from the global plugin registry."""
         _plugins.unregister_global(self)
 
     # -- shaping ----------------------------------------------------------
@@ -170,9 +171,18 @@ class InspectorPlugin(PluginBase[Any]):
         return out
 
     def _context(self, interp: Any) -> Dict[str, Any]:
+        """The allow-listed, redacted slice of the interpreter's context.
+
+        Returns:
+            ``{}`` when nothing is allow-listed or the context is not a
+            mapping (a dataclass / model context is never walked: only a
+            dict has keys to allow-list).
+        """
         if not self.context_allowlist:
             return {}
-        ctx = getattr(interp, "context", None) or {}
+        ctx = getattr(interp, "context", None)
+        if not isinstance(ctx, dict):
+            return {}
         picked = {k: v for k, v in ctx.items() if k in self.context_allowlist}
         # 📝 `redact` returns a scrubbed copy of the same mapping shape.
         return cast(Dict[str, Any], redact(picked, self.redact_keys))
@@ -249,6 +259,7 @@ class InspectorPlugin(PluginBase[Any]):
     def on_event_sent(
         self, interpreter: Any, target_id: str, event: Any
     ) -> None:
+        """Remember who sent *event* to *target_id* (links the arrow)."""
         with self._lock:
             key = str(target_id)
             q = self._sent.get(key)
@@ -268,6 +279,12 @@ class InspectorPlugin(PluginBase[Any]):
             )
 
     def _source_for(self, target: str, event: Any) -> Optional[str]:
+        """Pop the session id that sent *event* to *target*, if known.
+
+        📝 Matches by object identity first (exact), then by event type
+        (a copy made in transit). ``id()`` can be reused once an event is
+        collected, so the match is best-effort attribution, not proof.
+        """
         with self._lock:
             q = self._sent.get(target)
             if not q:

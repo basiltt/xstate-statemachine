@@ -76,9 +76,8 @@ def test_r1_inf_usage_never_disables_the_budget() -> None:
     bad = _report(0)
     bad.payload["usage"]["input_tokens"] = float("inf")
     p.send(bad)
-    assert p.context["total_usage"]["input_tokens"] == 0  # ignored, not inf
-    for i in range(1, 12):
-        p.send(_report(i))
+    # review CM-06: inf is not ignored (that let a faulty child evade the
+    #    global budget) -- it exhausts it, and never raises OverflowError
     assert p.context["budget_exceeded"] is True
     assert "p.b" in p.current_state_ids  # BUDGET_EXCEEDED delivered
     p.stop()

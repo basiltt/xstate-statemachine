@@ -1,4 +1,4 @@
-# src/xstate_statemachine/contrib/sqlalchemy/aux.py
+# src/xstate_statemachine/contrib/sqlalchemy/inbox_log.py
 # -----------------------------------------------------------------------------
 # 📥 SQLAlchemyInbox / 📜 SQLAlchemyLog -- share the store's transaction
 # -----------------------------------------------------------------------------

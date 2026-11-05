@@ -63,6 +63,6 @@ def run_coverage(
         if not reports:
             c.info("no machines in the report")
     for failure in failures:
-        c.error(f"coverage below --fail-under: {failure}")
+        c.error(f"coverage below --fail-under: {failure}", to_stderr=as_json)
     if failures:
         raise SystemExit(1)

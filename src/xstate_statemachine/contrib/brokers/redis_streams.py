@@ -235,8 +235,12 @@ class RedisStreamsTransport:
     def ack(self, native: Any) -> None:
         """Settle a delivery for good."""
         stream, entry_id = native
-        self.client.xack(stream, self.group, entry_id)
-        self._held.discard(native)
+        try:
+            self.client.xack(stream, self.group, entry_id)
+        finally:
+            # 🔥 review CM-13: a failed XACK must not hide the entry from
+            #    this consumer's own reclaim for the process lifetime.
+            self._held.discard(native)
 
     drop = ack
 

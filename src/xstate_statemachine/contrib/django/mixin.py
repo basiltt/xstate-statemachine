@@ -64,7 +64,7 @@ from ...models import MachineNode
 from ...patterns.retry import RetryPolicy
 from . import _deadlines
 from ._events import declared_events
-from ._machine import resolve_machine
+from ._machine import is_static_spec, resolve_machine
 from .fields import SEP, StatechartField, sibling_values
 
 __all__ = [
@@ -206,6 +206,13 @@ class StatechartModelMixin(models.Model):  # type: ignore[misc]  # Model is unty
         statechart_clock: Clock for the per-send interpreter.
         statechart_initialize: Build the initial snapshot on insert
             (entry actions run once, at creation). Default ``True``.
+            ⚠️ The initial snapshot is built BEFORE the INSERT: entry
+            actions run with ``pk is None`` and their side effects happen
+            even if the INSERT then fails -- keep them pure.
+        statechart_audit: ``True`` / ``False`` / ``None`` (auto) -- write
+            `TransitionLog` rows in ``send()``'s transaction.
+        statechart_plugins: Extra plugins per send (a list or
+            ``(row) -> list``).
     """
 
     statechart_machine: ClassVar[Any] = None
@@ -247,9 +254,7 @@ class StatechartModelMixin(models.Model):  # type: ignore[misc]  # Model is unty
     @classmethod
     def _xsm_resolve(cls, row: Any) -> MachineNode[Any]:
         spec, logic = cls.statechart_machine, cls.statechart_logic
-        static = not callable(spec) or isinstance(spec, MachineNode)
-        static = static and (logic is None or not callable(logic))
-        if static:
+        if is_static_spec(spec, logic):
             cache = cls.__dict__.get("_xsm_machine_cache")
             if cache is None:
                 cache = resolve_machine(spec, logic=logic, owner=cls, row=row)
@@ -578,8 +583,10 @@ class StatechartModelMixin(models.Model):  # type: ignore[misc]  # Model is unty
             )
         interp.store_key = self._xsm_key()
         setattr(interp, "_xsm_django_row", self)
-        interp.start()
+        # 🔥 `start()` runs entry actions and may raise: it belongs inside
+        #    the try so `stop()` still reaps timers / threads it created.
         try:
+            interp.start()
             receipt = interp.send(event_type, wait=True, **payload)
             new_snap = json.loads(interp.get_snapshot())
             deadlines = tuple(interp._persist_deadlines())

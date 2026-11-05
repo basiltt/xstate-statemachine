@@ -26,6 +26,7 @@ within the statechart tree.
 from __future__ import annotations
 
 import logging
+import threading
 import warnings
 from typing import TYPE_CHECKING, Any, List, Optional, Set, Tuple
 
@@ -69,9 +70,11 @@ def _validate_segments(
         StateNotFoundError: If any segment is an empty string.
     """
     # 🛡️ Reject targets with consecutive or trailing dots (e.g., 'a..b', 'a.').
+    # 📝 DEBUG, not ERROR: callers probe several reference points and
+    #    decide themselves whether a miss is an error (RES-02).
     if any(seg == "" for seg in segments):
-        logger.error(
-            "❌ Invalid target path '%s' contains empty segments.", target
+        logger.debug(
+            "Invalid target path '%s' contains empty segments.", target
         )
         raise StateNotFoundError(target, reference_id)
 
@@ -91,17 +94,29 @@ _SIBLING_FALLBACKS_WARNED: Set[Tuple[str, str]] = set()
 #: builds a machine per job accumulated one entry per distinct pair
 #: forever; past the cap the set is cleared, which at worst re-warns once.
 _SIBLING_FALLBACKS_WARNED_MAX = 1024
+#: Guards the throttle set: resolution also runs on `SyncInterpreter`
+#: worker threads, and check-then-add must not race.
+_SIBLING_FALLBACKS_LOCK = threading.Lock()
 
 
 def _warn_sibling_fallback(
     target: str, source: "StateNode[Any]", resolved: "StateNode[Any]"
 ) -> None:
+    """Emit the #31 DeprecationWarning for a `.x` target that resolved only
+    through the pre-0.8.0 SIBLING fallback, once per (source, target).
+
+    Args:
+        target: The target string as written.
+        source: The state declaring the transition.
+        resolved: The sibling the fallback found.
+    """
     key = (source.id, target)
-    if key in _SIBLING_FALLBACKS_WARNED:
-        return
-    if len(_SIBLING_FALLBACKS_WARNED) >= _SIBLING_FALLBACKS_WARNED_MAX:
-        _SIBLING_FALLBACKS_WARNED.clear()
-    _SIBLING_FALLBACKS_WARNED.add(key)
+    with _SIBLING_FALLBACKS_LOCK:
+        if key in _SIBLING_FALLBACKS_WARNED:
+            return
+        if len(_SIBLING_FALLBACKS_WARNED) >= _SIBLING_FALLBACKS_WARNED_MAX:
+            _SIBLING_FALLBACKS_WARNED.clear()
+        _SIBLING_FALLBACKS_WARNED.add(key)
     root = _machine_of(source)
     machine_id = root.id if root is not None else "?"
     warnings.warn(
@@ -170,12 +185,19 @@ def resolve_target_state(
             resolved to a valid state in the machine.
 
     Resolution Order:
-        1.  **Absolute Path**: If `target` starts with '#', it's resolved from
-            the machine's root (e.g., `"#machine.state.child"`).
+        1.  **Absolute Path**: If `target` starts with '#', the path after
+            it is matched first against the MACHINE key (which may itself
+            contain dots: the longest prefix wins), then against the custom
+            state ids declared with ``id`` (again the longest dotted
+            prefix: ``#my.id.child`` finds the state whose id is
+            ``"my.id"``), and the remainder is walked down from there.
         2.  **Parent State**: If `target` is exactly '.', it resolves to the
-            parent of the `reference_state`.
-        3.  **Relative Path**: If `target` starts with '.', it's resolved
-            relative to the parent of the `reference_state`.
+            parent of the `reference_state` (the root resolves to itself).
+        3.  **Relative Path**: If `target` starts with '.', it names a
+            descendant of the `reference_state` (XState v5). When that
+            fails, the pre-0.8.0 SIBLING reading (relative to the parent)
+            is tried with a one-time DeprecationWarning -- unless the
+            machine sets ``strictTargets: true``.
         4.  **Plain Identifier**: Otherwise, it's treated as a plain ID and
             the function searches for a matching state by "bubbling up"
             the hierarchy from the `reference_state`.
@@ -206,8 +228,13 @@ def resolve_target_state(
     if target.startswith("#"):
         if _dbg:
             logger.debug("  -> Attempting absolute path resolution...")
-        segments = target[1:].split(".")
-        _validate_segments(segments, target, reference_state.id)
+        raw = target[1:]
+        segments = raw.split(".")
+        # ⚡ `"" in segments` is the empty-segment check without the
+        #    generator `_validate_segments` builds; this path runs for every
+        #    `#id` target of every build (#307 benchmark).
+        if "" in segments:
+            _validate_segments(segments, target, reference_state.id)
 
         # 🏛️ Resolution order matters. The MACHINE key is checked first: a
         #    nested state is free to declare `id: "m"` while the machine is
@@ -220,12 +247,15 @@ def resolve_target_state(
         #    of the raw path against the key rather than `segments[0]` alone,
         #    otherwise every `#my.machine.x` target is unresolvable (#30/#31
         #    review) -- and `pythonic` emits exactly that form.
-        raw = target[1:]
-        if raw == machine.key or raw.startswith(machine.key + "."):
-            rest = raw[len(machine.key) :]
+        machine_key = machine.key
+        if raw == machine_key:
+            return machine
+        if raw.startswith(machine_key + "."):
             try:
+                # ⚡ The key's segment count is the prefix to skip; no
+                #    second split of the remainder.
                 return _find_descendant(
-                    machine, rest[1:].split(".") if rest else []
+                    machine, segments[machine_key.count(".") + 1 :]
                 )
             except StateNotFoundError:
                 # ⤵️ Fall through: a custom id may still match, which keeps
@@ -247,6 +277,13 @@ def resolve_target_state(
                     if len(segments) == 1
                     else _find_descendant(anchor, segments[1:])
                 )
+            # 🔑 A custom id may itself contain dots (`id: "my.id"`), which
+            #    the parser accepts; match the longest dotted prefix, as
+            #    for the machine key above (RES-01).
+            for end in range(len(segments), 1, -1):
+                anchor = custom_ids.get(".".join(segments[:end]))
+                if anchor is not None:
+                    return _find_descendant(anchor, segments[end:])
 
         raise StateNotFoundError(target, reference_state.id)
 
@@ -318,9 +355,13 @@ def resolve_target_state(
         current = current.parent
 
     # ❌ If we've bubbled up to the top and found nothing, the target is invalid.
-    logger.error(
-        "❌ Failed to resolve target '%s' from reference '%s'",
-        target,
-        reference_state.id,
-    )
+    # 📝 DEBUG, not ERROR (RES-02): validation and the runtime probe up to
+    #    four reference points per target, so one bad target logged four
+    #    ERROR lines before the single `InvalidConfigError` that matters.
+    if _dbg:
+        logger.debug(
+            "Failed to resolve target '%s' from reference '%s'",
+            target,
+            reference_state.id,
+        )
     raise StateNotFoundError(target, reference_state.id)

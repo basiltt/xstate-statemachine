@@ -26,6 +26,8 @@ from typing import Any, Dict, Optional
 __all__ = ["Deadline", "check_deadline_record"]
 
 _INT64_LIMIT = 2**63
+# 📝 P-04: upper clamp for `Deadline.remaining_ms` (~31 000 years).
+_MAX_REMAINING_MS = 10**15
 
 
 @dataclass(frozen=True)
@@ -68,7 +70,14 @@ class Deadline:
 
     def remaining_ms(self, now_wall: float) -> int:
         """Milliseconds until due, clamped at 0 (already overdue)."""
-        return max(0, int(round((self.due_at_wall - now_wall) * 1000)))
+        remaining = (self.due_at_wall - now_wall) * 1000
+        # 🛡️ P-04: a huge-yet-finite wall time overflows to ``inf`` in the
+        #    multiplication; clamp instead of leaking OverflowError.
+        if remaining <= 0:
+            return 0
+        if remaining >= _MAX_REMAINING_MS:
+            return _MAX_REMAINING_MS
+        return int(round(remaining))
 
 
 def check_deadline_record(rec: Any) -> Optional[str]:

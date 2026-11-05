@@ -54,7 +54,7 @@ from typing import (
 
 from ..persistence.locking import after_commit, current_session
 from ..plugins import DEFAULT_REDACT_KEYS, PluginBase, redact
-from .broker import settle_awaitable
+from .broker import gather_all, settle_awaitable
 from .envelope import Envelope
 
 logger = logging.getLogger(__name__)
@@ -203,6 +203,11 @@ _OUTBOX_UPGRADES = {
 }
 
 
+#: Lease owner that parks an undecodable row so no relay claims it again.
+POISON_OWNER = "xsm:poison"
+_POISON_UNTIL = 1e18
+
+
 class SQLiteOutboxStore:
     """Zero-dependency transactional outbox in the ``xsm_outbox`` table.
 
@@ -269,10 +274,41 @@ class SQLiteOutboxStore:
                     f"WHERE seq IN ({marks})",
                     (owner, now + float(lease_s), *[int(r[0]) for r in rows]),
                 )
-        return [
-            OutboxRecord(int(r[0]), r[1], Envelope.from_json(r[2]))
-            for r in rows
-        ]
+        return self._decode(rows, quarantine=True)
+
+    def _decode(self, rows: List[Any], *, quarantine: bool) -> List[Any]:
+        """Decode rows one by one; a corrupt row is skipped, never fatal.
+
+        🔥 One undecodable row (edited by hand, written by a future
+        spec) must not stall every later row head-of-line: it is logged
+        and, for a claim, parked under the `POISON_OWNER` lease so no
+        relay selects it again. It stays in the table (unsent) for an
+        operator to inspect.
+        """
+        from .envelope import EnvelopeCorruptError, EnvelopeTooLargeError
+
+        out: List[OutboxRecord] = []
+        bad: List[int] = []
+        for r in rows:
+            try:
+                out.append(
+                    OutboxRecord(int(r[0]), r[1], Envelope.from_json(r[2]))
+                )
+            except (EnvelopeCorruptError, EnvelopeTooLargeError) as exc:
+                logger.error(
+                    "📤 outbox row %s is undecodable (%s); skipped", r[0], exc
+                )
+                bad.append(int(r[0]))
+        if bad and quarantine:
+            conn = self._conn()
+            marks = ",".join("?" * len(bad))
+            with self._store._tx(conn, immediate=True):
+                conn.execute(
+                    "UPDATE xsm_outbox SET claimed_by = ?, claimed_until = ? "
+                    f"WHERE seq IN ({marks})",
+                    (POISON_OWNER, _POISON_UNTIL, *bad),
+                )
+        return out
 
     def add(self, topic: str, envelope: Envelope) -> None:
         """`Outbox.add` on SQLite: INSERT the envelope with the current time."""
@@ -302,10 +338,7 @@ class SQLiteOutboxStore:
             )
             .fetchall()
         )
-        return [
-            OutboxRecord(int(r[0]), r[1], Envelope.from_json(r[2]))
-            for r in rows
-        ]
+        return self._decode(rows, quarantine=False)
 
     def release(self, seqs: List[int], *, owner: str) -> int:
         """Give *owner*'s leases on *seqs* back (see `MemoryOutboxStore`)."""
@@ -512,6 +545,17 @@ class OutboxPlugin(PluginBase[Any]):
         self._lock = threading.Lock()
 
     # -- collection -----------------------------------------------------------
+    def on_interpreter_start(self, interpreter: Any) -> None:
+        """Validate every ``meta.publish`` declaration up front.
+
+        Raises:
+            ValueError: A ``meta.publish`` is malformed. The engine contains
+                plugin-hook errors, so this surfaces as one logged error at
+                start instead of a publish silently lost on the first
+                matching transition.
+        """
+        publish_specs(interpreter.machine)
+
     def on_transition(
         self,
         interpreter: Any,
@@ -533,9 +577,19 @@ class OutboxPlugin(PluginBase[Any]):
                 if isinstance(interpreter.context, dict)
                 else {}
             )
-            data = (
-                {f: ctx.get(f) for f in fields} if fields is not None else None
-            )
+            data = None
+            if fields is not None:
+                missing = [f for f in fields if f not in ctx]
+                if missing:
+                    # 🔥 silent acceptance is a bug: a misspelled field
+                    #    would publish ``null`` and nobody would know.
+                    logger.warning(
+                        "📤 meta.publish %r: context has no field(s) %s; "
+                        "published as null",
+                        etype,
+                        missing,
+                    )
+                data = _jsonable({f: ctx.get(f) for f in fields})
             out.append(
                 Envelope.from_transition(
                     interpreter, type=etype, data=data, cause=cause
@@ -586,7 +640,7 @@ class OutboxPlugin(PluginBase[Any]):
             self._step.pop(interpreter, None)
 
     def _buffer(self) -> List[Envelope]:
-        """This session's pending envelopes (created on demand)."""
+        """This session's pending envelopes (created on demand; tests)."""
         with self._lock:
             return self._buffers.setdefault(current_session.get(), [])
 
@@ -630,9 +684,9 @@ class OutboxPlugin(PluginBase[Any]):
 
     async def drain(self) -> None:
         """Await publishes scheduled on the running loop."""
-        tasks, self._tasks = self._tasks, []
-        for t in tasks:
-            await t
+        with self._lock:
+            tasks, self._tasks = self._tasks, []
+        await gather_all(tasks)
 
 
 def _jsonable(value: Any) -> Any:
@@ -674,6 +728,10 @@ class OutboxRelay:
     ) -> None:
         if lease_s <= 0:
             raise ValueError("lease_s must be > 0")
+        if int(batch) < 1:
+            # 🔥 a non-positive batch would claim nothing (or, as a SQL
+            #    LIMIT -1, EVERYTHING): fail loudly at construction.
+            raise ValueError("batch must be >= 1")
         self.store = store
         self.broker = broker
         self.batch = int(batch)
@@ -737,7 +795,9 @@ class OutboxRelay:
             taken = self._take()
             for rec in taken:
                 result = self.broker.publish(rec.topic, rec.envelope)
-                if asyncio.iscoroutine(result):
+                if inspect.isawaitable(result):
+                    # 📝 a Future / Task / custom awaitable too: skipping
+                    #    it would mark the row SENT for a lost publish.
                     await result
                 sent.append(rec.seq)
         except BaseException:

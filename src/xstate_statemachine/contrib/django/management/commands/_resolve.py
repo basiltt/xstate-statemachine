@@ -121,15 +121,23 @@ def console(options: Any, stdout: Any = None) -> None:
 
 
 def run_cli(fn: Any, *a: Any, **kw: Any) -> None:
-    """Run a CLI function; its ``SystemExit(n)`` becomes `CommandError`."""
-    from .....cli.commands import reset_console
+    """Run a CLI function; its ``SystemExit(n)`` becomes `CommandError`.
+
+    The CLI reports its reason through the console (`Console.error`) and
+    then exits 1; the `CommandError` repeats that reason, so an operator
+    reading Django's stderr sees "cannot write ...: FileNotFoundError ..."
+    rather than only "exit status 1".
+    """
+    from .....cli.commands import get_console, reset_console
 
     try:
         fn(*a, **kw)
     except SystemExit as exc:
         code = exc.code if isinstance(exc.code, int) else 1
         if code:
-            raise CommandError(f"exit status {code}", returncode=code)
+            reason = getattr(get_console(), "last_error", None)
+            detail = f": {reason}" if reason else ""
+            raise CommandError(f"exit status {code}{detail}", returncode=code)
     except OSError as exc:
         # 🔥 #282 battle: ``xsm_docs -o /read-only`` / ``xsm_diagram -o``
         #    into a missing or unwritable place was a raw traceback.

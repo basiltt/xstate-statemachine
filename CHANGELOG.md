@@ -503,6 +503,128 @@ class, a plugin or a `subscribe()` listener may notice.
   and the private compiler helpers the test suite imports, is re-exported
   unchanged; the incidental imports listed in the entry above are not.
 
+**Pre-release review pass (behaviour changes).** A line-by-line
+review of the whole library ahead of 0.12.0 -- engine, config
+parsing, runtime utilities, Pythonic DSL, persistence, EDA and
+inspector, CLI and every contrib adapter -- changed the following
+behaviours. Each item is pinned by a regression test under
+`tests/test_review_fixes_*.py` (and the contrib / CLI / EDA /
+persistence equivalents).
+
+- **Engine:** exit actions now run before the state's invoked services and
+  child actors are stopped, as in XState v5 `exitStates`, so an exit action
+  can still `sendTo` its own invoke (both engines).
+- **Engine:** on `SyncInterpreter`, a non-blocking child's completion
+  (`onDone`/`onError`) and its `sendParent` ran the parent's step on the
+  child's pump thread, racing the owner thread. They are now delivered on the
+  owner's thread at its next `send()` or `tick()`. A parent-to-child `sendTo`
+  stays synchronous, serialised with the child's pump step.
+- **Config parsing:** a state `type` outside
+  `atomic`/`compound`/`parallel`/`final`/`history` (`"Final"`, `"paralel"`)
+  and a `compound`/`parallel` state with no child states now raise
+  `InvalidConfigError` naming the state and value. A mis-cased `final` used
+  to build an atomic state whose `onDone` never fired, and a misspelled
+  `parallel` built a compound state. An atomic, final or history state that
+  declares children is still built as compound, now with an accurate warning.
+- **Config parsing:** an invalid `history` value (`"dep"`) raises
+  `InvalidConfigError` instead of silently falling back to shallow history,
+  and a history state's default `target` must be a non-empty string.
+- **Config parsing:** the boolean flags `strict`, `strictTargets`,
+  `strictConfig` and the transition-level `reenter` and `internal` accept
+  only `true`/`false` (or null for 'not set'). They were read with `bool()`,
+  so `"strict": "false"` enabled strict mode and `"reenter": "false"` forced
+  a re-entry.
+- **Config parsing:** config errors from action, guard and transition parsing
+  name the state and key (`State 'm.a' entry: ...`, `Transition 'GO' on state
+  'm.a': invalid 'guard': ...`, `State 'm.a' on 'GO': invalid transition item
+  ...`) instead of the bare 'Guard must be a string or a dictionary'.
+- **Config parsing:** an action object without a `type` raises
+  `InvalidConfigError` (it used to become an action named "UnknownAction"),
+  and non-object `params` (`5`, a list) is `InvalidConfigError` rather than a
+  bare `TypeError`. Under `strictConfig`, unknown keys of action objects,
+  guard objects and a built-in's `params` (`"delya"`) are reported like other
+  unknown keys (a warning otherwise).
+- **Config parsing:** `maxIterations` must be a whole number >= 1 (0,
+  negatives, `2.9` and `true` were accepted or truncated) and
+  `spawnBlockingTimeout` must be a finite number >= 0 (`"nan"`, `"inf"` and
+  negatives were accepted).
+- **Config parsing:** an `initial` that names no child state now raises
+  `InvalidConfigError` at `create_machine()`, with a 'did you mean' hint,
+  matching XState's `createMachine`. It used to fail only at `start()`.
+- **Config parsing:** `after` keys must be whole, non-negative milliseconds
+  or a delay name. `1.5` was truncated to 1, `-5` and `true` were accepted,
+  and two keys that normalise to the same delay (`"100"` and `" 100"`)
+  silently overwrote each other. Numeric strings such as `"1e3"` are
+  normalised and the generated `after.<ms>.<state>` event uses the normalised
+  value.
+- **Config parsing:** invoke `id` and `systemId` must be non-empty strings,
+  `description` must be a string, child state keys must be non-empty strings,
+  an empty-string `target` is refused (it was a silent targetless
+  transition), and `entry`/`exit`/`actions` of `0`, `false` or `""` are
+  refused instead of meaning 'no actions'.
+- **Runtime utilities:** `register_global` raises `TypeError` for a class or
+  an object without any `on_*` hook instead of silently accepting it.
+  `ExplorationLimitError` is now defined in `exceptions` and exported from
+  the package root. `receipt_to_json` gained `include_messages=` and the
+  status lookup follows the error's MRO; `STATUS_NO_OP` is the new name of
+  `STATUS_NOT_MODIFIED_OK`. `SimulatedClock` gained typed `advance()` /
+  `advance_sync()`.
+- **Runtime utilities:** every `PluginBase` hook docstring now states its
+  engine, thread and what a plugin may do; `on_event_dropped` documents all
+  seven reasons (`EVENT_DROP_REASONS`). The package-level docstring example
+  now actually prints.
+- **Pythonic DSL:** `after_<event>` and `after_transition` hooks run once per
+  event, after its whole macrostep has settled. Before, they ran once per
+  microstep, so an eventless `always` follow-up ran them twice. A raising
+  hook is still contained and cannot veto the transition (now documented).
+- **Pythonic DSL:** `xstate_statemachine.pythonic.__all__` lists only public
+  names. The underscore helpers (`_compile_config`, `_snake_to_camel`, ...)
+  remain importable but no longer leak through `import *`.
+- **Persistence:** `fingerprint()` refuses payload values whose text form
+  embeds a memory address (previously a false `IdempotencyMismatchError` on
+  retry); `adopt.from_state_ids` raises `InvalidConfigError` for a non-JSON
+  context instead of stringifying it; `list_versions(limit=-1)` raises
+  `ValueError`; `persisted()`/`apersisted()` are typed to yield the
+  interpreter instead of `Any`.
+- **CLI:** `xsm coverage --json` writes `--fail-under` failure lines to
+  stderr, so redirected stdout stays one JSON document.
+- **Web adapters:** the operationId stability note now states exactly when
+  ids can change (a look-alike event name added later may renumber an
+  existing one).
+- **Django & SQLAlchemy:** `PermissionGuard(object_level=False,
+  fallback_global=False)` now raises ValueError instead of silently denying
+  every row; Django `signals` no longer imports Django's private `_make_id`.
+- **Engine:** `last_error` / `receipt.error` for a `sendTo`, `forwardTo`,
+  `sendParent` or `escalate` that reached no live actor now carry
+  `UnresolvedTargetError`, a new subclass of `ActorSpawningError` (which is
+  what the step reported before, although nothing was being spawned); `except
+  ActorSpawningError` handlers keep working.
+- **Runtime utilities:** `RealClock` and `SimulatedClock` gained
+  `pump_filtered(owner_filter)`, a pump restricted to one owner's deadlines;
+  `Clock.pump()` is unchanged.
+- **Factory:** `create_machine()` warns (`UserWarning`) when `logic` is
+  passed together with `logic_modules` / `logic_providers` -- the explicit
+  `logic` is used and the modules are not scanned, which used to happen
+  silently; `event_schemas` values must be callable or expose a callable
+  `validate()`, checked at build time instead of failing on the first
+  matching `send()`; the alias warnings (`storeUser` / `store_user`) now name
+  the caller's line, not a line inside the library.
+- **Performance.** Building a machine is about 25 % cheaper and starting an
+  interpreter about 20 % cheaper than in 0.11.0, with unchanged semantics:
+  the parser reads each node's and transition's keys in one pass, the
+  build-time validator consumes the parser's list of targeted transitions
+  instead of re-walking the finished tree, logic discovery skips its matching
+  indexes for a chart that names no logic, the async-shape and
+  parameter-count checks on user callables are memoised, `validation.walk()`
+  is iterative, and an idle `SyncInterpreter` is ~1.4 KB smaller (its mailbox
+  and finished-children queues are lists). A flat `send()` on the sync engine
+  pumps the clock once instead of twice, skips the reserved-keyword scan for
+  a plain string event and probes the `on_event_processed` hook once per
+  drain, and the microstep epilogue calls its subscriber, completion and
+  soft-error helpers only when there is something for them to do (both
+  engines). The cross-library numbers in `benchmarks/competitors/README.md`
+  and on the home page were re-measured on this release.
+
 ### Fixed
 
 - Transitions declared inside a nested `class paid(State): ...` body were
@@ -541,6 +663,551 @@ class, a plugin or a `subscribe()` listener may notice.
   `event.data` on an error event; it now reads `event.error`. The
   hierarchical guide's `FormWizard` referenced a service and an action it
   never implemented.
+
+**Pre-release review pass.** The same review fixed the following
+defects; each has a regression test.
+
+- **Engine:** every alternative of a state-level `onDone` list is now a
+  transition candidate on both engines, so a failing guard falls through to
+  the next entry (the config-parsing fix above kept them all; the engines
+  used to read only the first).
+- **Engine:** on `SyncInterpreter`, a non-blocking child that shares its
+  parent's `SimulatedClock` fired the PARENT's due deadlines from its own
+  pump thread. Such a child now pumps only the deadlines it owns; the
+  parent's fire on the parent's next `send()` / `tick()`.
+- **Engine:** an initial `context` holding an uncopyable handle (a
+  `threading.Lock`, a DB session) made every interpreter construction raise
+  `TypeError` from `copy.deepcopy`, through `create_machine` and the class
+  façade alike. The copy now falls back to a shallow one, sharing the handle,
+  and logs a warning; a `context` factory gives each interpreter its own.
+- **Runtime utilities:** auto-discovery skipped `@staticmethod`s on a logic
+  provider, never bound a user function named like a built-in action (`log`,
+  `cancel`, `stop`, ...) even though user actions win over built-ins in an
+  explicit `MachineLogic`, and demanded an ACTION implementation for a
+  `spawn_<key>` inside an invoke's `onDone` / `onError`. Static methods are
+  discovered; a built-in-named function DEFINED in a scanned module (not
+  merely imported there) or implemented by a provider is bound and wins;
+  spawn actions route to `services[<key>]` everywhere.
+- **Django & SQLAlchemy:** a management command that the CLI refused
+  (`xsm_diagram -o` / `xsm_docs -o` into an unwritable path, a chart that
+  does not load) raised `CommandError("exit status 1")` and left the reason
+  in the command's stdout. The error now repeats the CLI's own message
+  (`exit status 1: cannot write ...: FileNotFoundError: ...`), and the
+  write-failure messages name the exception class.
+- **Engine:** an action that failed inside `choose`, `pure` or
+  `enqueueActions` ignored `actionErrorPolicy`. Under `rollback`/`fail` the
+  transition committed with partial context and `last_transition_ok` stayed
+  True. Nested failures now roll back or stop the machine exactly like
+  top-level ones (both engines).
+- **Engine:** an entry action that failed on a top-level final state under
+  `actionErrorPolicy: rollback`/`fail` left the machine reporting `status ==
+  "done"` with the configuration rolled back and its children already torn
+  down. Completion is now applied only when the microstep commits: a rollback
+  keeps the machine running, and `fail` stops it (both engines).
+- **Engine:** on `SyncInterpreter`, a `raise` inside an initial-state
+  `always` transition was processed in the middle of the start-up microstep
+  and lost, so `start()` ended in a different state than the async engine.
+  The settle now runs behind the re-entrancy guard, so the raised event runs
+  after the microstep, as on the async engine and as when the same `always`
+  is reached by an event.
+- **Engine:** `subscribe()` listeners were never notified for targetless
+  (actions-only) transitions, so a counter's `assign` never reached a UI
+  bound through `subscribe()`. They are now notified once per such microstep
+  (both engines).
+- **Engine:** `has_dormant_timers` reported False as soon as any restored
+  timer was re-armed, even when another parallel region's restored timer was
+  still dormant. It now checks each state, and a timer that fired but whose
+  guard refused the transition is not reported as dormant.
+- **Engine:** restoring a snapshot did not pass `minimum_version`,
+  `expected_machine_hash` or `plugins` to child actors, so a nested child
+  record could declare `version: 0` to skip the drift check, and child
+  restore refusals never reached `on_invalid_event`.
+- **Engine:** `restart_timers="resume"`/`"fire_due"` raised
+  `StateNotFoundError` for an orphaned deadline only after it had armed some
+  timers and discarded every parked deadline. It now refuses before arming
+  anything, so the records survive for a retry or a re-persist.
+- **Engine:** `send("")` was accepted and treated as the engine's internal
+  eventless sentinel. It now raises `InvalidEventError`, as the dict form
+  already did.
+- **Engine:** keyword payload passed with an `Event` object
+  (`send(Event("X"), source="retry")`), or with an `__xstate_event__` adapter
+  that returns an Event, was silently dropped. It is now merged into the
+  event's payload; for an engine event, which cannot be annotated,
+  `InvalidEventError` is raised.
+- **Engine:** an `assign` function returning something other than a mapping
+  (a list, a model object) was silently ignored. It is now an action error
+  handled by `actionErrorPolicy`. Returning `None` remains an explicit no-op,
+  and any Mapping is merged.
+- **Engine:** `sendParent` and `escalate` on a machine without a parent
+  dropped the event with only a log line. Like an unresolved `sendTo`, they
+  now fire `on_event_dropped("unresolved_target")` and mark the step failed
+  (both engines).
+- **Engine:** an inline delay callable that raised escaped out of state
+  entry, whereas a named one was contained. Both are now contained. A delay
+  of `True`, NaN, infinity or a non-number is now rejected with an error log
+  on every path (`after`, delayed `raise`, delayed `sendTo`), not just
+  `after`.
+- **Engine:** a snapshot's `taken_at` used `time.time()` instead of the
+  clock's `wall_now()`, so with `SimulatedClock(wall_start=...)` it did not
+  line up with the snapshot's persisted deadlines.
+- **Engine:** on `SyncInterpreter`, events still queued after the machine
+  reached a final state or was stopped by an action kept being processed,
+  running user actions on a finished machine. The drain now stops at the
+  terminal status, and stranded events are reported via `on_event_dropped`.
+- **Engine:** `SyncInterpreter.stop(drain=True)` called from inside an action
+  did nothing. It now finishes the events queued in the current drain and
+  then stops the machine.
+- **Engine:** events in the internal queue at `stop()`, and inbox or
+  priority-lane events left behind when the async machine completed or
+  failed, were discarded without `on_event_dropped`. Every stranded event is
+  now reported, on both engines.
+- **Engine:** on `SyncInterpreter`, a `send_threadsafe()` event that raised
+  while being drained aborted the owner's unrelated `send()`, losing the rest
+  of the mailbox batch and the owner's own event. The error is now logged and
+  recorded on `last_error`, and draining continues.
+- **Engine:** on `SyncInterpreter` with a `RealClock`, a non-blocking child's
+  pump thread fired the parent's `after` timers and delayed sends off the
+  parent's thread. Each such child now has its own deadline heap.
+- **Engine:** on `SyncInterpreter`, a blocking spawn (`spawn_blocking_*`) of
+  a child driven by `after` timers always waited the full
+  `spawnBlockingTimeout` and returned with the child unfinished. The waiting
+  thread now drives the child's timers and returns as soon as the child
+  finishes.
+- **Engine:** on the async `Interpreter`, an action registered as an object
+  with `async def __call__`, or a plain function returning a coroutine, never
+  ran and the step reported success. Such actions are now awaited. On
+  `SyncInterpreter`, a returned coroutine raises `NotSupportedError` like any
+  async action.
+- **Engine:** the async `send_events()` ignored `OverflowPolicy.BLOCK`
+  (raising `QueueOverflowError` instead of waiting), the owning-thread check
+  and the self-send routing. It now applies everything `send()` does to each
+  event.
+- **Engine:** a non-`Exception` `BaseException` escaping the async run loop
+  set `status = "stopped"` directly. That skipped teardown (leaking services
+  and child actors) and left `send(wait=True)` awaiters hanging. The machine
+  now enters `status == "error"`, fails pending receipts, fires `on_error`
+  and tears down.
+- **Engine:** a failed `start()` left the async machine "stopped" without
+  releasing what the partial entry had armed, and left the sync machine
+  "running" on a half-entered configuration. Both engines now end "stopped"
+  and tear down.
+- **Engine:** `SyncInterpreter` fired no
+  `on_service_start`/`on_service_done`/`on_service_error` hooks for invoked
+  child machines. On both engines, an unhandled failure while bringing up an
+  invoked child (for example, a raising `input` resolver) left the parent
+  running instead of failing it.
+- **Engine:** `SyncInterpreter.send_events()` ran `send_threadsafe()` events
+  and already-due timers after the batch instead of before it, as `send()`
+  does. `drain_pending()` now also returns events still waiting in the
+  mailbox.
+- **Engine:** re-starting a restored async interpreter in `done` or `error`
+  status fired `on_interpreter_start` every time; it now fires once.
+- **Engine:** a delayed `sendTo` to another actor on the async engine
+  reported a failed delivery only as "Task exception was never retrieved". It
+  is now tracked and logged.
+- **Engine:** after an `actionErrorPolicy` rollback, the remembered `history`
+  from the undone transition was kept (and could be persisted), and timers
+  and invokes were re-armed in an unpredictable order. History is now
+  restored, and re-arming follows document order.
+- **Engine:** `sendTo("kid")` from inside an actor named `kid` matched that
+  actor's own grandchildren, and a child keyed `parent` could shadow the real
+  parent.
+- **Config parsing:** building a machine with an `invoke` no longer
+  configures the host application's ROOT logger. `InvokeDefinition` used the
+  module-level `logging.debug` and `logging.warning` helpers, which call
+  `logging.basicConfig()` and so attached a stderr handler and made the
+  application's own later `basicConfig(level=...)` a no-op. It now logs
+  through the library's `xstate_statemachine.models` logger, on both engines.
+- **Config parsing:** a state-level `onDone` given as a LIST of guarded
+  transitions kept only the first entry. Every alternative is now parsed
+  (`StateNode.on_done_transitions`), validated and auto-discovered, so a
+  failing guard falls through to the next alternative as in XState v5.
+  `StateNode.on_done` remains the first one.
+- **Config parsing:** a user action named like a built-in (`cancel`, `stop`,
+  `log`, `emit`, ...) and given its own `params` was rejected at
+  `create_machine()` with the built-in's 'missing required param' error,
+  although user actions resolve before built-ins. The built-in params check,
+  and the `strictConfig` params check, now skip names the machine's logic
+  implements (both engines).
+- **Config parsing:** restoring a snapshot that holds a pending engine
+  completion (`done`/`error`/`after`) emitted a `DeprecationWarning` about
+  `events.engine_*`, or raised under `-W error`. The restore path now uses
+  the private minters.
+- **Config parsing:** `MachineNode.get_state_by_id()` found nothing when the
+  machine id or a state key contained a dot (`"my.machine"`, `"v1.0"`), and a
+  miss now logs at DEBUG instead of WARNING.
+- **Config parsing:** a state with a dotted custom `id` (`"my.id"`) could not
+  be targeted as `#my.id` or `#my.id.child`. The resolver now matches the
+  longest dotted prefix, as it already did for the machine id. Failed
+  resolution probes also no longer log at ERROR, so one bad target no longer
+  produces four ERROR lines before its `InvalidConfigError`.
+- **Config parsing:** `restore_event` accepted an unknown `kind` as user
+  traffic and a non-object `payload` as-is, and raised a bare
+  `TypeError`/`ValueError` for a system payload holding an `event_type` key
+  or a non-numeric timer timestamp. All of these are now
+  `SnapshotCorruptError` or restore correctly.
+- **Runtime utilities:** `Clock.pump()` / `SimulatedClock.increment()`
+  dropped every other due timer when one callback raised, and fired a timer
+  that an earlier callback in the same batch had just cleared. Each timer is
+  now re-checked before it runs, an error no longer loses the rest of the
+  batch (the first error is re-raised afterwards), and
+  `increment`/`set`/`fire_until`/`set_timeout` reject NaN and infinity. Both
+  engines.
+- **Runtime utilities:** the pure transition API (`get_next_snapshot`,
+  `transition`, ...) kept every machine alive forever through its probe
+  cache; machines are now garbage collected. `transition()` also no longer
+  revives a done/error snapshot: it is returned unchanged with no actions.
+- **Runtime utilities:** `wait_for_sync` spun until timeout (or forever with
+  `timeout=None`) on a stopped or finished machine; both waiters now raise
+  `WaitTerminatedError` (a `TimeoutError` subclass with `.status`), and
+  `wait_for` no longer evaluates the predicate twice per poll. `to_promise`
+  raises `XStateMachineError` for an error status with no recorded error.
+- **Runtime utilities:** most library exceptions with structured constructor
+  arguments (`UnhandledEventError`, `SnapshotVersionError`, `ConflictError`,
+  `ReceiptError`, ...) could not be pickled, which broke `multiprocessing`,
+  `concurrent.futures` and Celery; they now round-trip.
+- **Runtime utilities:** `redact()` / `LoggingInspector` crashed on
+  namedtuples and self-referencing contexts, and over-redacted ordinary keys
+  such as `shipping`, `company`, `author`, `spinner` (short entries like
+  `pin`, `pan`, `otp`, `card`, `auth` now match whole words of the key).
+  Exception reprs and `done` output in the inspector now pass through the
+  redactor; free-text messages and tracebacks remain unredacted (documented).
+- **Runtime utilities:** `TaskManager.cancel_by_owner` could orphan a task
+  added during its await and never pruned empty owner entries; the async
+  engine is affected.
+- **Runtime utilities:** `from_iterator` logged a false 'blocked inside
+  next()' warning for healthy streams on the async engine, and `send_back` to
+  a stopped interpreter was lost silently on some paths; it now logs at DEBUG
+  and fires `on_event_dropped(..., "stopped")`.
+- **Runtime utilities:** `logic_names(config)` and `logic_names(machine)`
+  disagreed for composite guards, and `spawn_<key>` was reported as an
+  action; both forms now agree and report spawn keys as services.
+- **Pythonic DSL:** a plain (undecorated) `async def` method bound by name as
+  a guard is now refused with `NotSupportedError` when the machine is built.
+  Before, the un-awaited coroutine was truthy, so the guard let every
+  transition through, with only a RuntimeWarning (class-based `StateMachine`,
+  both engines).
+- **Pythonic DSL:** `engine="auto"` now selects the asyncio engine when a
+  plain `async def` action or service is bound by name (`actions=["do_it"]`).
+  Before, only decorated callbacks were counted, the sync engine was chosen,
+  and the action never ran.
+- **Pythonic DSL:** a decorated callback named like a facade member (`@action
+  def send`, `can`, `context`, ...) or like a lifecycle method (`start`,
+  `stop`) now raises `InvalidConfigError` when the class is defined. Before,
+  it silently replaced the facade method, so `sm.send("GO")` ran the user's
+  action.
+- **Pythonic DSL:** a state named `start` or `stop` no longer breaks
+  `sm.start()` / `sm.stop()`. The state stays in the chart, the lifecycle
+  methods keep their meaning, and a warning is logged, as for transitions of
+  those names. Before, `sm.stop()` raised `TypeError: 'BoundState' object is
+  not callable`.
+- **Pythonic DSL:** event names inferred from transition attributes keep
+  SCREAMING_SNAKE names and acronyms intact: `START_NOW = a.to(b)` is
+  `START_NOW` (was `S_T_A_R_T__N_O_W`), and `HTTPError` is `HTTP_ERROR`.
+- **Pythonic DSL:** `internal=True` combined with a target now raises
+  `InvalidConfigError` in
+  `State.to`/`transition()`/`MachineBuilder.transition`. Before, the target
+  was dropped silently. `transition()` now accepts `target=None` for internal
+  transitions.
+- **Pythonic DSL:** `before_<event>` / `after_<event>` hooks now run for
+  events declared only in `State(on={...})` dicts. Before, they were reported
+  as 'will never run' and indeed never ran. An `on_<event>` hook for such an
+  event now warns that it cannot attach.
+- **Pythonic DSL:** a nested state class that inherits states or transitions
+  from another nested state class now raises `InvalidConfigError`. Before, it
+  silently compiled to an empty atomic state.
+- **Pythonic DSL:** the functional API (`build_machine`) now raises
+  `InvalidConfigError` for a callable decorated as one kind but passed as
+  another (a `@guard` in `actions=[...]`), for two callables registered under
+  the same name (also on `StateMachine` classes), and for a nameless callable
+  such as a `functools.partial`. A `partial` with an explicit `_xsm_name` is
+  now accepted instead of raising `AttributeError`. Before, these cases were
+  silently mis-filed or overwritten.
+- **Pythonic DSL:** `@action` / `@guard` / `@service` reject non-string or
+  empty names, and refuse to re-mark a function as a different kind.
+  `@action()` with no name now uses the function name instead of registering
+  `None`.
+- **Pythonic DSL:** a transition source or target `State` that is not part of
+  the tree but shares its name with several states in it now raises
+  `InvalidConfigError` listing the candidates. Before, it bound to whichever
+  state was registered last.
+- **Pythonic DSL:** `MachineBuilder.state(always=...)` no longer adds a `""`
+  key to the caller's `on` dict. `history=` combined with `final`/`parallel`,
+  or a history value other than `shallow`/`deep`, now raises.
+  `child_states(initial=..., parallel=True)` raises instead of dropping
+  `initial`, a second `child_states` call merges its children instead of
+  replacing them, and `root()` refuses `id`/`states`/`initial`.
+- **Pythonic DSL:** `StateMachine(state="b")` no longer logs the misleading
+  "Lookup will fail" warning for a relative path.
+- **Persistence:** `SQLiteStore.load()` read a record and its durable
+  deadlines in two separate statements, so a concurrent save could return a
+  snapshot with another version's deadlines (timers firing twice or lost).
+  Both now come from one statement. Both engines.
+- **Persistence:** `apersisted()` silently skipped the `acquire()` of any
+  custom lock strategy (only the fence ran). It now raises
+  `NotSupportedError` for strategies other than `OptimisticLock`,
+  `PessimisticLock` and `NoLock`.
+- **Persistence:** `IdempotencyPlugin` admitted an event with no
+  deduplication when the key function, principal callable or `instance_key`
+  raised; it now refuses the event.
+- **Persistence:** `IdempotencyPlugin.flush_marks()` stopped at the first
+  failing inbox write and left later claims in flight; it now attempts every
+  mark and re-raises the first error.
+- **Persistence:** a snapshot whose `pending_events`/`deferred` lane was not
+  a list raised a bare `TypeError` from `from_snapshot`; it now raises
+  `SnapshotCorruptError`. A fractional snapshot `version` (1.9) is rejected
+  instead of truncated.
+- **Persistence:** `Deadline.remaining_ms()` raised `OverflowError` for a
+  huge finite `due_at_wall`; it now clamps.
+- **Persistence:** `FileStore` leaked bare `OSError` from temp-file creation,
+  delete, listing, lock-file open and directory creation (now store errors
+  that remain `OSError` subclasses where they were before);
+  `delete()`/`forget()` take the key lock so a concurrent save cannot
+  resurrect a deleted record; `list_keys()` no longer advertises files
+  `load()` would reject; saves fsync the directory on POSIX.
+- **Persistence:** `MemoryStore.forget()` discarded a lock that was still
+  held, letting a second holder in.
+- **Persistence:** `SQLiteStore` accepted any `journal_mode` (now WAL or
+  DELETE) and any `busy_timeout` (now finite and >= 0); file-creation errors
+  are store errors; `close()` closes every thread's connection.
+- **Persistence:** `SQLiteInbox` and `SQLiteLog` leaked raw `sqlite3` errors;
+  they are now `StoreError`.
+- **Persistence:** `persisted()`/`apersisted()` exhausted a generator passed
+  as `plugins` (marks never flushed) and did not clean up when `start()`
+  raised.
+- **Persistence:** `load_interpreter` ignored restore options on a new key;
+  unknown options now raise `TypeError` and `expected_machine_hash` is
+  checked against the machine. `check_identity` no longer ignores
+  `expected_machine_hash` when `verify_machine_hash=False`.
+- **Persistence:** `DueTimerScanner.last_result` raised `AttributeError`
+  before the first scan, and an invalid `lock=` (e.g. the class) was only
+  reported on every tick; both now fail or initialise at construction.
+  `run_forever(0)` is rejected.
+- **Persistence:** `TransitionLogPlugin` kept references to events the engine
+  dropped; `JSONLinesLog.append` no longer re-validates a stale sequence
+  cache.
+- **EDA & inspector:** `replay_dead_letter` no longer replays a dead letter
+  whose stored data was redacted at capture (it would have sent `"***"` to
+  the machine and marked the record resolved); it raises `ReplayRefusedError`
+  unless `force=True`. Both engines.
+- **EDA & inspector:** `SseSink.close()` no longer hangs on a stalled client
+  with a full queue, and `SseSink.send()` encodes a message before recording
+  it, so an unencodable message leaves no half-recorded history entry.
+- **EDA & inspector:** `SseSink('::1')` now binds an IPv6 loopback address
+  instead of failing with a name-resolution error.
+- **EDA & inspector:** one corrupt row in the SQLite outbox no longer stalls
+  every later row; it is logged and parked, and the relay carries on.
+- **EDA & inspector:** `OutboxRelay.relay_once` and the broker helpers now
+  await any awaitable (Future, Task) returned by `publish`, instead of
+  marking the row sent for a lost publish.
+- **EDA & inspector:** a state-store outage raised inside a machine run is
+  requeued without counting an attempt, rather than dead-lettered as poison
+  after `max_attempts`; a down dead-letter store no longer double-counts the
+  attempt.
+- **EDA & inspector:** `Envelope.to_json` refuses NaN/Infinity
+  (`EnvelopeCorruptError`) instead of writing JSON that every consumer
+  rejects.
+- **EDA & inspector:** `OutboxPlugin` validates `meta.publish` when the
+  interpreter starts and logs a warning when a requested `data` field is
+  missing from the context; `drain()` and `BrokerDeadLetterSink.flush()`
+  await every pending publish and log each failure.
+- **EDA & inspector:** `InspectorPlugin` no longer fails on a non-dict
+  context; `read_jsonl` reports an absurdly deep recording line as
+  `ValueError` instead of crashing with `RecursionError`; `OutboxRelay`
+  rejects `batch < 1`.
+- **CLI:** `xsm generate-template` (typed, pytest, class-json, function-json
+  and every pythonic template) no longer writes machine-supplied event,
+  action, guard, service or actor names into docstrings and comments
+  unescaped. A hostile machine JSON could inject top-level code into the
+  generated module. These strings now go through the same sanitiser as
+  machine ids.
+- **CLI:** the generated runner is now syntax-checked before anything is
+  written, and `escape_for_string` escapes newlines, carriage returns and
+  Unicode line separators. An event name containing a line break used to
+  produce a runner that raised SyntaxError while the CLI exited 0; it is now
+  refused with exit 1.
+- **CLI:** `xsm docs -o DIR` and `xsm diagram -o DIR` no longer build the
+  output file name from the raw machine id. An id such as `../escaped` could
+  write outside DIR. Names are sanitised, and a failed write is reported
+  instead of a traceback.
+- **CLI:** function-json and class-json logic stubs no longer shadow names
+  the generated module itself binds. A service named `time`, `logging` or
+  `logger`, or an action named `Event`, used to replace the import and break
+  at run time. Such names now get a numeric suffix.
+- **CLI:** `--json-child` without a parent machine is now rejected, and
+  `--json-parent` given twice (including `--json-parent=a --json-parent=b`)
+  is a usage error. `--sleep-time` rejects negative values.
+- **CLI:** when the output files already exist and stdin is closed (CI), `xsm
+  generate-template` now exits with 'pass --force' instead of an EOFError
+  traceback. A closed stdin is never treated as consent to overwrite.
+- **CLI:** the generated class-json and function-json hierarchy runners
+  (`-jp`/`-jc`) now bind the same logic to the child machines. Children with
+  actions, guards or services previously raised ImplementationMissingError.
+  The pythonic hierarchy runners are not yet fixed.
+- **CLI:** post-processing no longer strips `from __future__ import
+  annotations` from generated modules.
+- **CLI:** transitions with a list-valued `target` (multi-target) are now
+  reported by name as unsupported by the code generator, instead of surfacing
+  as an unexplained 'on differs' refusal.
+- **CLI:** `xsm validate` and the other commands built on the shared analyser
+  report an unreadable or non-UTF-8 file, and an unexpected machine shape, as
+  findings instead of a Python traceback.
+- **CLI:** in the interactive simulator, the `t` key no longer crashes on
+  machines whose timers use named delays, and `c` rejects nan, inf and
+  negative values.
+- **CLI:** the interactive launcher now shows the message of a failed
+  command, and `simulate`/pytest-scaffold generation restore the previous
+  logging state instead of re-enabling all logging.
+- **CLI:** `xsm update --json` prints a single JSON document, and version
+  parsing handles `rc` + `.dev` and `.post` releases.
+- **CLI:** `xsm gt --check/--diff --from-django-fsm` no longer writes the
+  extracted chart into the output directory.
+- **Web adapters:** a StatechartRegistry resident whose chart reached a final
+  state was never saved when it was evicted, released or shut down; the
+  completing transition was lost. It is now persisted (async engine).
+- **Web adapters:** with create_if_missing=False, the FastAPI router and
+  Litestar controller answered 404 for a missing key and 403 for an existing
+  one to an unauthorised caller, which let anyone enumerate instance keys.
+  Authorization now runs first, so both answer 403 (Starlette registry
+  send_event).
+- **Web adapters:** Flask and Quart accepted a malformed or over-long
+  Idempotency-Key header and silently ignored the key when no inbox was
+  configured. They now answer 400 and 501, as the Starlette stack does.
+- **Web adapters:** a client-supplied idempotency_key in the JSON body (HTTP
+  and WebSocket, all adapters) bypassed the header validation. It is now
+  refused with 422; the key comes only from the Idempotency-Key header.
+- **Web adapters:** a GET on an unknown key through Flask or Quart started a
+  real interpreter and ran the initial state's entry actions. It now reports
+  the initial state without running anything.
+- **Web adapters:** Quart GET /history returned raw event payloads and
+  ignored after/limit. It now omits payloads and validates the bounds like
+  Flask (negative values are 400 on both).
+- **Web adapters:** Litestar get_interpreter hung a sibling dependency for
+  the same key when an anonymous caller's principal check failed. The request
+  now answers 401 (Litestar).
+- **Web adapters:** a deeply nested JSON body or WebSocket frame raised
+  RecursionError and produced a 500 (or tore down the WebSocket). It is now a
+  422 or an error frame (Starlette, FastAPI, Litestar, Flask, Quart).
+- **Web adapters:** Quart 5xx problem responses were not logged, so operators
+  had no traceback. They are logged like the Flask ones.
+- **Web adapters:** Quart SSE parked one default-executor thread per
+  connected client for each heartbeat interval; it now waits on an asyncio
+  event.
+- **Web adapters:** Quart body reads were unbounded for chunked requests and
+  had no timeout. Over-limit is now 413 and a stalled body is 408; Litestar
+  routes now also honour body_timeout_s (408).
+- **Web adapters:** the Flask SSE fan-out kept sequence counters for every
+  key ever used and silently dropped events for a slow client. It now keeps
+  state only while someone listens and cuts a lagging client off so it
+  reconnects to a fresh snapshot.
+- **Web adapters:** SSE and WebSocket streams read the snapshot before
+  subscribing, so a transition committed in between was lost. They now
+  subscribe first (a transition may appear in both the snapshot and the
+  stream, never in neither).
+- **Web adapters:** Flask GET /<id>/history with a negative after or limit
+  answered 500; it is now 400.
+- **Web adapters:** an event sent to a finished instance through Flask or
+  Quart answered 500 (now 409), and an oversized snapshot through the
+  Starlette stack answered 500 (now 413).
+- **Web adapters:** numeric registry options (scanner_interval_s,
+  drain_timeout_s, resident_idle_ttl_s, settle_timeout, max_body_bytes; Flask
+  heartbeat_s and max_body_bytes) are validated at construction instead of
+  busy-spinning or refusing every request.
+- **Web adapters:** Flask and Quart act() called from your own view gave a
+  500 for an anonymous caller; it is now 401.
+- **Web adapters:** the Origin check compared host names case-sensitively and
+  had two diverging copies; there is one shared rule now.
+- **Web adapters:** the flask xsm CLI turned sys.exit() into exit code 1 and
+  dropped sys.exit('message'); it now follows Python's convention.
+- **Web adapters:** events whose names are unsafe in a URL path (a slash,
+  braces, `?`, `#`, `%`, a tab or a line break; a plain space is fine and is
+  served percent-encoded) now fail the FastAPI router and Litestar controller
+  build with a clear ValueError instead of producing an unreachable route.
+- **Web adapters:** instrument_app deduplicates by registry identity and
+  mounts the health and ready probes ahead of any catch-all mount; unexpected
+  5xx in the generated routes are now logged with a traceback.
+- **Django & SQLAlchemy:** a Django model whose `statechart_machine` /
+  `statechart_logic` was a dotted string naming a callable that takes the row
+  was resolved once with `row=None` and cached for the life of the process;
+  it is now resolved per row (zero-argument factories stay cached). Django.
+- **Django & SQLAlchemy:** `StatechartModelMixin` with a prebuilt
+  `MachineNode` plus module/provider `statechart_logic` silently dropped the
+  logic; it is now rebound by rebuilding from the node's source config. The
+  SQLAlchemy mixin now raises TypeError when `__xsm_machine__` /
+  `__xsm_logic__` do not yield a MachineNode / MachineLogic.
+- **Django & SQLAlchemy:** the DRF `history/` route returned HTTP 500 for
+  non-integer user primary keys (UUID/str); the actor is now rendered as a
+  string (integers unchanged).
+- **Django & SQLAlchemy:** unexpected exceptions in the DRF send route and
+  the Channels consumer returned a class-name-only 500 but were never logged;
+  the full traceback is now logged server-side.
+- **Django & SQLAlchemy:** `DjangoStore` classified any message containing
+  'locked' or 'busy' as lock contention (a missing table named
+  `locked_orders` looked retryable); it now uses the anchored classifier
+  already used by `send()`.
+- **Django & SQLAlchemy:** `AsyncSQLAlchemyStore.save/load/delete/forget`
+  leaked raw driver errors on lock contention and, with
+  `create_tables=False`, never verified the schema; both now match
+  `SQLAlchemyStore` (LockTimeoutError; missing/newer schema refused).
+- **Django & SQLAlchemy:** `FSMDualWriteMixin` wrote the legacy FSM column
+  from the receipt, which missed engine steps of the same send (done.state,
+  eventless chains); it now uses the written snapshot.
+- **Django & SQLAlchemy:** a wide parallel chart overflowing the
+  `<name>_state` column now raises a clear ValidationError naming
+  `state_max_length` on every backend (no migration change).
+- **Django & SQLAlchemy:** the Django admin `render_change_form` read `obj`
+  from the wrong positional index; a bulk action no longer aborts the batch
+  on one row's unexpected error (the row counts as failed, is logged, and
+  error receipts are no longer counted as denied).
+- **Django & SQLAlchemy:** `SQLAlchemyMixin.send` now accepts `payload=` like
+  the Django mixin, and exports `RESERVED_PAYLOAD_KEYS` / `reserved_keys` for
+  web adapters.
+- **Django & SQLAlchemy:** concurrent first saves in `DjangoStore` and the
+  SQLAlchemy store could raise a raw IntegrityError; the loser now retries as
+  an UPDATE.
+- **Django & SQLAlchemy:** `xsm_deadlines --forever` never refreshed stale DB
+  connections and exited on the first transient DatabaseError; it now
+  recycles connections and retries after logging.
+- **Django & SQLAlchemy:** SQLAlchemy `ModelStore.forget()` left the snapshot
+  (and any personal data in context) in the business row; it now nulls the
+  snapshot and sibling columns and bumps the version, as the Django model
+  store does. Malformed keys in both model stores now mean 'not found'
+  instead of ValueError / ValidationError.
+- **Django & SQLAlchemy:** the Channels consumer survived a deleted row (404
+  problem / close 1008) instead of dropping the socket, refuses inbound
+  frames over `max_frame_bytes` (64 KiB), and no longer swallows a
+  cancellation of `disconnect` itself.
+- **Messaging & agents:** `RedisStore.list_keys` (sync and async) advertised
+  keys whose snapshot had expired through `ttl_s`, and the key index grew
+  without bound; expired members are now pruned and no longer listed.
+- **Messaging & agents:** the RabbitMQ broker stopped consuming for good
+  after a failed ack (for example a stale delivery tag after a reconnect),
+  because its un-acked counter never recovered; the counter is now released
+  even when the ack raises.
+- **Messaging & agents:** a broker `ack()` or `nack(requeue=False)` that
+  failed in the transport left the delivery un-retriable; it can now be
+  retried. Redis Streams also no longer hides an entry from its own consumer
+  after a failed XACK. Sync and async brokers.
+- **Messaging & agents:** `PydanticCodec` rejected contexts carrying
+  library-private `_xsm_*` keys when the model used `extra="forbid"`,
+  skipping typed normalisation on every save.
+- **Messaging & agents:** the pydantic config gate accepted lax values such
+  as "false" for a transition's `internal` / `reenter`, which the engine
+  reads with `bool()` as the opposite; these flags are now strict booleans.
+- **Agents:** a NaN/inf/garbage usage block made `ModelResponse.to_dict`
+  raise and the turn was retried; it now fails closed on the budget. The
+  global `BudgetPlugin` likewise counted invalid child usage as zero and now
+  treats it as exhausting the budget.
+- **Agents:** tools taking `datetime`, `Decimal`, `UUID` or enum parameters
+  could never be called from JSON arguments because validation was strict
+  python-mode; arguments are now validated as JSON. Synchronous tools under
+  the async engine now run on a daemon thread so a hung tool cannot block
+  shutdown.
+- **Messaging & agents:** `RedisStore` errors no longer include `str(exc)`
+  for connection-class failures (host:port, possible credentials), only the
+  exception class name; a server reply (`ResponseError`) keeps its text,
+  minus any URL and any echoed command arguments, so the cause stays
+  readable; a `prefix` made only of colons is rejected.
 
 ## [0.11.0] - 2026-10-13
 

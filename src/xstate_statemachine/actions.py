@@ -114,6 +114,11 @@ BUILTIN_ACTION_ALIASES: Dict[str, str] = {
     # stopChild
     "stopChild": STOP_CHILD,
     "stop_child": STOP_CHILD,
+    # 📝 `stop` is the XState v4 spelling of `stopChild`, kept so migrating
+    #    charts run unmodified. Generic verbs here (`stop`, `cancel`, `log`,
+    #    `emit`, ...) never shadow a user action of the same name: user
+    #    actions resolve FIRST, and the built-in's params check is skipped
+    #    for a name the machine's logic implements (MOD-06).
     "stop": STOP_CHILD,
     "xstate.stopChild": STOP_CHILD,
     # spawnChild
@@ -467,6 +472,8 @@ class ActionEnqueuer:
             event (Any): The event that triggered it.
         """
         self.items: List[Any] = []
+        # 📝 Not read by the helpers below; kept so a custom enqueue
+        #    callback (or a debugger) can see what it runs against.
         self._interpreter = interpreter
         self._event = event
 

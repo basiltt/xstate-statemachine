@@ -379,9 +379,10 @@ class TestBackendFailures(_Base):
         it.stop()  # must not raise
 
     def test_buffered_flush_failure_partial_marks(self) -> None:
-        """Flush raises for entry 2 of 3: marks 1 is written, 3 is NOT
-        (flush aborts at the first failure); 2 and 3 stay in flight -- the
-        conservative-duplicate window (ring repairs on replay)."""
+        """Flush raises for entry 2 of 3: marks 1 AND 3 are written (P-23:
+        every mark is attempted, the first error is re-raised); 2 stays in
+        flight -- the conservative-duplicate window (ring repairs on
+        replay)."""
         base = MemoryInbox()
         fb = FaultyInbox(base)
         pl = _plugin(fb)
@@ -407,8 +408,8 @@ class TestBackendFailures(_Base):
                 pl.flush_marks()
         self.assertIsNotNone(base.get(scope, "a").receipt_json)
         self.assertIsNone(base.get(scope, "b").receipt_json)
-        self.assertIsNone(base.get(scope, "c").receipt_json)
-        # replay of the unmarked ones: ring says processed -> duplicate
+        self.assertIsNotNone(base.get(scope, "c").receipt_json)
+        # replay of the unmarked one: ring says processed -> duplicate
         for k in ("b", "c"):
             r = it.send("CREDIT", wait=True, idempotency_key=k, amount=1)
             self.assertTrue(r.duplicate)

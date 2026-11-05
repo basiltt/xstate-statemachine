@@ -274,6 +274,15 @@ def _engine_value(
 
 
 def _payload_of(event: Any, kind: str) -> Dict[str, Any]:
+    """The event payload as injectable names (a fresh dict).
+
+    Args:
+        event: The current event.
+        kind: The callback kind; services also see ``input`` fields.
+
+    Returns:
+        Name to value for every payload field.
+    """
     payload = getattr(event, "payload", None)
     payload = dict(payload) if isinstance(payload, dict) else {}
     # 📝 `input` on an invoke event is the natural injection source for a
@@ -340,6 +349,15 @@ def resolve_arguments(
     kwargs: Dict[str, Any] = {}
     consumed = set()
     var_kw = False
+    # ⚡ Loop-invariant: built once per call, not once per parameter.
+    engine_kwargs = dict(
+        kind=kind,
+        interpreter=interpreter,
+        context=context,
+        event=event,
+        action_def=action_def,
+        params=params,
+    )
     for p in sig.parameters.values():
         if p.kind is inspect.Parameter.VAR_KEYWORD:
             var_kw = True
@@ -347,14 +365,6 @@ def resolve_arguments(
         if p.kind is inspect.Parameter.VAR_POSITIONAL:
             continue
         name = p.name
-        engine_kwargs = dict(
-            kind=kind,
-            interpreter=interpreter,
-            context=context,
-            event=event,
-            action_def=action_def,
-            params=params,
-        )
         if name in chart:
             value = chart[name]
         elif name in _HARD_NAMES:
@@ -437,8 +447,8 @@ def adapt_callable(
     another slot than its own (``params`` as an action's fourth parameter)
     always means by-name resolution, and a chart ``params`` key or *extra*
     counts as a supplied field like a payload key. The ambiguity that
-    remains: a legacy callback whose non-engine parameters without a default are all named like
-    fields the event carries (``(ctx, e)`` with ``send("GO", e=1)``) is
+    remains: a legacy callback whose non-engine parameters without a
+    default are all named like fields the event carries (``(ctx, e)`` with ``send("GO", e=1)``) is
     resolved by name, and a default on its event parameter (``(ctx,
     e=None)``) asks for injection, so ``e`` is ``None`` when the event
     carries no such field.
@@ -450,6 +460,9 @@ def adapt_callable(
             results, so the façade can hand them back from ``send()``.
         extra: Fixed injectables (for example ``state`` for a generic
             ``on_enter_state`` hook).
+
+    Returns:
+        *fn* itself, or a wrapper with the engine's positional shape.
     """
     shape = _Shape(fn, kind)
     inner = getattr(fn, "func", fn)
@@ -579,12 +592,26 @@ class ConventionHooksPlugin(PluginBase[Any]):
     `adapt_callable`; ``async def`` hooks are rejected at class creation
     because plugin callbacks are not awaited.
 
+    Semantics worth knowing:
+
+    * **Once per event.** ``after_<event>`` / ``after_transition`` run
+      once, after the event's whole macrostep (eventless ``always``
+      follow-ups included) has settled -- not once per microstep. Before
+      0.12.0 a chain ``a -> b -> (always) c`` ran them twice.
+    * **Guards run twice when a before-hook exists.** Whether the event
+      WILL transition is decided with ``interpreter.can(event)`` before
+      the real dispatch evaluates the guards again, so keep guards pure.
+    * **No veto.** A raising hook is contained by the plugin layer
+      (reported through ``on_plugin_error`` and the log); the transition
+      still happens. Model a refusal with a guard instead.
+
     Args:
         before: Mapping of event type → callables to run before the event
             is processed (only when the event WILL cause a transition).
             The key ``"*"`` runs for every such event.
-        after: Mapping of event type → callables to run after the
-            transition completed. ``"*"`` runs for every transition.
+        after: Mapping of event type → callables to run once the event's
+            macrostep completed, if it took a transition. ``"*"`` runs
+            for every such event.
     """
 
     def __init__(
@@ -594,9 +621,22 @@ class ConventionHooksPlugin(PluginBase[Any]):
     ) -> None:
         self._before = {k: list(v) for k, v in before.items()}
         self._after = {k: list(v) for k, v in after.items()}
+        # 🏛️ One slot is enough: each engine processes one event at a time
+        #    (the sync drain loop, the async run loop) and fires
+        #    `on_event_received` right before processing it.
         self._current_event: Any = None
+        #: id(event) -> event that took at least one transition and is
+        #: waiting for `on_event_processed`. Holding the event keeps its
+        #: id from being reused before it is popped.
+        self._transitioned: Dict[int, Any] = {}
 
     def on_event_received(self, interpreter: Any, event: Any) -> None:
+        """Run ``before_*`` hooks for an event that will transition.
+
+        Args:
+            interpreter: The interpreter about to process *event*.
+            event: The event.
+        """
         self._current_event = event
         hooks = self._before.get("*", []) + self._before.get(
             getattr(event, "type", ""), []
@@ -613,12 +653,36 @@ class ConventionHooksPlugin(PluginBase[Any]):
         to_states: Any,
         transition: Any,
     ) -> None:
+        """Note that the current event took a transition.
+
+        Args:
+            interpreter: The interpreter.
+            from_states: Unused.
+            to_states: Unused.
+            transition: Unused.
+        """
         event = self._current_event
         if event is None:
             # 🚀 The initial entry at start() is not a user transition.
             return
+        self._transitioned[id(event)] = event
+
+    def on_event_processed(
+        self, interpreter: Any, event: Any, receipt: Any
+    ) -> None:
+        """Run ``after_*`` hooks once the event's macrostep settled.
+
+        Args:
+            interpreter: The interpreter that processed *event*.
+            event: The event.
+            receipt: Its outcome (unused: the transition flag recorded in
+                `on_transition` is what decides).
+        """
+        handled = self._transitioned.pop(id(event), None)
+        if handled is None:
+            return
         hooks = self._after.get("*", []) + self._after.get(
-            getattr(event, "type", ""), []
+            getattr(handled, "type", ""), []
         )
         for hook in hooks:
-            hook(interpreter, interpreter.context, event, None)
+            hook(interpreter, interpreter.context, handled, None)

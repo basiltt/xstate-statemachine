@@ -9,6 +9,10 @@
 #        `postMessage` every protocol message (deferred ones first).
 #      * "Local" -- our own minimal fallback: actor list, current value,
 #        event log. Works offline and when the hosted UI changes.
+#    ⚠️ The Stately view sends everything the stream carries to a THIRD
+#    PARTY origin (stately.ai) -- the data is already redacted and
+#    allow-listed, but it leaves the machine. Untick "Stately UI" to keep
+#    the data local; making that the default is a follow-up decision.
 #    The script is served from `/app.js` so the CSP can forbid inline JS.
 # -----------------------------------------------------------------------------
 """Static assets for the SSE inspector page."""
@@ -35,7 +39,7 @@ INDEX_HTML = b"""<!doctype html>
 <body>
 <div id="side">
  <h3>xsm inspector <span id="status" class="muted">connecting</span></h3>
- <label><input type="checkbox" id="useStately" checked> Stately UI</label>
+ <label title="Posts the inspected data (states, events, allow-listed context) to https://stately.ai"><input type="checkbox" id="useStately" checked> Stately UI</label>
  <div id="actors"></div><h4>Events</h4><div id="log"></div>
 </div>
 <div id="main"><iframe id="stately" title="Stately Inspector"

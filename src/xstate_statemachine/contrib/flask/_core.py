@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import inspect
 import itertools
 import json
@@ -31,6 +32,7 @@ from ...factory import create_machine
 from ...models import MachineNode
 from ...persistence.idempotency import IdempotencyPlugin, validate_principal
 from ...persistence.store import DEFAULT_MAX_SNAPSHOT_BYTES, validate_key
+from .._compat import origin_is_allowed, positive_finite
 from ._http import ForbiddenError
 
 logger = logging.getLogger(__name__)
@@ -153,38 +155,107 @@ def make_registration(
 # -----------------------------------------------------------------------------
 # 📡 In-process fan-out for SSE (thread-safe; one per app)
 # -----------------------------------------------------------------------------
+#: Queue item telling a subscriber its stream is over (cut off or closed).
+CLOSED = object()
+
+
+class SubscriberQueue(queue.Queue[Any]):
+    """A bounded queue that can WAKE an event loop when an item lands.
+
+    🔥 Review CW-10: the Quart stream bridged this queue to asyncio with
+    ``run_in_executor(q.get)``, parking one default-executor thread per
+    connected client for each heartbeat interval -- a few dozen streams
+    starved every other executor user. ``wake`` is a thread-safe callback
+    (``loop.call_soon_threadsafe(event.set)``) the async side sets
+    instead; Flask's threaded streams leave it ``None``.
+    """
+
+    wake: Optional[Callable[[], None]] = None
+
+    def put_nowait(self, item: Any) -> None:
+        """Enqueue *item* without blocking, then wake the async consumer."""
+        super().put_nowait(item)
+        wake = self.wake
+        if wake is not None:
+            try:
+                wake()
+            except RuntimeError:  # the consumer's loop is closed
+                pass
+
+
+#: Per-subscriber backlog before a slow client is cut off.
+MAX_BACKLOG = 256
+
+
 class Fanout:
-    """Committed transitions → subscriber queues, per (name, key)."""
+    """Committed transitions → subscriber queues, per (name, key).
+
+    📝 Review CW-14: sequence state exists only while somebody listens
+    (one counter per instance key ever acted on used to leak), and a
+    subscriber whose queue is full is CUT OFF with the `CLOSED` sentinel
+    -- the client reconnects to a fresh snapshot -- instead of silently
+    missing transitions.
+    """
 
     def __init__(self, max_connections_per_key: int) -> None:
         self.max_connections_per_key = int(max_connections_per_key)
         self._lock = threading.Lock()
-        self._subs: Dict[Tuple[str, str], List["queue.Queue[Any]"]] = {}
+        self._subs: Dict[Tuple[str, str], List[SubscriberQueue]] = {}
         self._seq: Dict[Tuple[str, str], "itertools.count[int]"] = {}
         self._last: Dict[Tuple[str, str], int] = {}
 
-    def subscribe(self, name: str, key: str) -> Optional["queue.Queue[Any]"]:
+    def subscribe(
+        self,
+        name: str,
+        key: str,
+        wake: Optional[Callable[[], None]] = None,
+    ) -> Optional[SubscriberQueue]:
+        """Register a subscriber queue for one instance.
+
+        Args:
+            name: Machine name.
+            key: Instance key.
+            wake: Optional thread-safe callback run after every enqueue
+                (the Quart stream's bridge to its event loop).
+
+        Returns:
+            The new bounded queue, or ``None`` when the per-key
+            connection limit is reached.
+        """
         with self._lock:
             subs = self._subs.setdefault((name, key), [])
             if len(subs) >= self.max_connections_per_key:
+                if not subs:
+                    del self._subs[(name, key)]
                 return None
-            q: "queue.Queue[Any]" = queue.Queue(maxsize=256)
+            q = SubscriberQueue(maxsize=MAX_BACKLOG)
+            q.wake = wake
             subs.append(q)
             return q
 
-    def unsubscribe(self, name: str, key: str, q: "queue.Queue[Any]") -> None:
+    def unsubscribe(self, name: str, key: str, q: SubscriberQueue) -> None:
+        """Remove *q*; the topic's sequence state goes with the last one."""
         with self._lock:
-            subs = self._subs.get((name, key), [])
-            if q in subs:
-                subs.remove(q)
-            if not subs:
-                self._subs.pop((name, key), None)
+            self._remove_locked((name, key), q)
+
+    def _remove_locked(
+        self, topic: Tuple[str, str], q: SubscriberQueue
+    ) -> None:
+        subs = self._subs.get(topic, [])
+        if q in subs:
+            subs.remove(q)
+        if not subs:
+            self._subs.pop(topic, None)
+            self._seq.pop(topic, None)
+            self._last.pop(topic, None)
 
     def connections(self, name: str, key: str) -> int:
+        """Return the number of open subscribers for an instance."""
         with self._lock:
             return len(self._subs.get((name, key), []))
 
     def seq(self, name: str, key: str) -> int:
+        """Return the last sequence number published for an instance."""
         with self._lock:
             return self._last.get((name, key), 0)
 
@@ -198,23 +269,35 @@ class Fanout:
             key: Instance key.
             bodies: Transition bodies to deliver, in order.
         """
+        topic = (name, key)
         with self._lock:
+            subs = list(self._subs.get(topic, []))
+            if not subs:
+                return  # nobody listening: no sequence to advance
             counter = self._seq.setdefault(
-                (name, key),
-                itertools.count(self._last.get((name, key), 0) + 1),
+                topic, itertools.count(self._last.get(topic, 0) + 1)
             )
-            subs = list(self._subs.get((name, key), []))
             items = []
             for b in bodies:
                 n = next(counter)
-                self._last[(name, key)] = n
+                self._last[topic] = n
                 items.append((n, b))
         for q in subs:
-            for item in items:
-                try:
+            try:
+                for item in items:
                     q.put_nowait(item)
-                except queue.Full:  # a stalled client drops, never blocks
-                    logger.warning("SSE subscriber queue full; dropping")
+            except queue.Full:
+                self._cut_off(topic, q)
+
+    def _cut_off(self, topic: Tuple[str, str], q: SubscriberQueue) -> None:
+        """Drop a stalled subscriber and tell it to reconnect."""
+        logger.warning("SSE subscriber queue full; cutting the client off")
+        with self._lock:
+            self._remove_locked(topic, q)
+        with contextlib.suppress(queue.Empty):
+            q.get_nowait()  # make room for the sentinel
+        with contextlib.suppress(queue.Full):
+            q.put_nowait(CLOSED)
 
 
 # -----------------------------------------------------------------------------
@@ -256,12 +339,19 @@ class AppRegistry:
         self.log = log
         self.clock = clock
         self.migrator = migrator
+        # 🔥 Review CW-18: `heartbeat_s <= 0` made `q.get(timeout=...)`
+        #    spin or raise inside the SSE generator; `max_body_bytes <= 0`
+        #    refused every body. Fail at construction, as Starlette does.
         self.max_body_bytes = (
             DEFAULT_MAX_SNAPSHOT_BYTES
             if max_body_bytes is None
-            else int(max_body_bytes)
+            else int(
+                positive_finite(
+                    "max_body_bytes", max_body_bytes, allow_zero=True
+                )
+            )
         )
-        self.heartbeat_s = float(heartbeat_s)
+        self.heartbeat_s = positive_finite("heartbeat_s", heartbeat_s)
         self.allowed_origins = frozenset(allowed_origins)
         self.regs: Dict[str, Registration] = {}
         #: Declarations shared by every app of one extension (read-only
@@ -291,9 +381,22 @@ class AppRegistry:
         return found
 
     def names(self) -> List[str]:
+        """Return every registered machine name, sorted."""
         return sorted(set(self.regs) | set(self.shared))
 
     def store_key(self, name: str, key: Any) -> str:
+        """Return the store key ``"<name>.<key>"`` for an instance.
+
+        Args:
+            name: Registered machine name.
+            key: Instance key.
+
+        Returns:
+            The validated store key.
+
+        Raises:
+            KeyError: If *name* is not registered.
+        """
         self.reg(name)
         return validate_key(f"{name}{KEY_SEP}{key}")
 
@@ -399,9 +502,4 @@ class AppRegistry:
 
     def origin_allowed(self, origin: Optional[str], host: str) -> bool:
         """Same-origin (Origin's host == Host) or allow-listed (X0.7)."""
-        if not origin:
-            return True
-        if origin in self.allowed_origins:
-            return True
-        netloc = origin.split("://", 1)[-1].rstrip("/")
-        return netloc == host
+        return origin_is_allowed(origin or None, host, self.allowed_origins)

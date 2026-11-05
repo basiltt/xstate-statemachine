@@ -73,7 +73,16 @@ def _run(fn: Any, *a: Any, **kw: Any) -> None:
     try:
         fn(*a, **kw)
     except SystemExit as exc:
-        code = exc.code if isinstance(exc.code, int) else 1
+        # 🔥 Review CW-27: `sys.exit()` / `SystemExit(None)` is SUCCESS (it
+        #    used to become exit code 1) and `sys.exit("message")` printed
+        #    nothing. Python's own convention: None -> 0, int -> itself,
+        #    anything else -> message on stderr, exit 1.
+        code = exc.code
+        if code is None:
+            return
+        if not isinstance(code, int):
+            click.echo(str(code), err=True)
+            code = 1
         if code:
             raise click.exceptions.Exit(code)
 

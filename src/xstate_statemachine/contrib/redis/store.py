@@ -35,6 +35,7 @@ from ._layout import (
     _DELETE,
     _FORGET,
     _PRUNE,
+    _PRUNE_KEYS,
     _SAVE,
     _SCHEMA,
     _UNLOCK,
@@ -44,6 +45,7 @@ from ._layout import (
     _check_save_call,
     _client_from_url,
     _due_rows,
+    _gone_set,
     _forget_counts,
     _Layout,
     _parse_deadlines,
@@ -119,6 +121,7 @@ class RedisStore(BaseStore):
         self._forget = self.r.register_script(_FORGET)
         self._unlock = self.r.register_script(_UNLOCK)
         self._prune = self.r.register_script(_PRUNE)
+        self._prune_keys = self.r.register_script(_PRUNE_KEYS)
         self._schema = self.r.register_script(_SCHEMA)
         self._ensure_schema()
 
@@ -176,6 +179,16 @@ class RedisStore(BaseStore):
         members = list(
             self.r.sscan_iter(self.k.keys, match=pattern, count=500)
         )
+        if members:
+            # 🔥 review CM-01: drop (and SREM) members whose snapshot
+            #    expired via `ttl_s`.
+            gone = _gone_set(
+                self._prune_keys(
+                    keys=[self.k.keys],
+                    args=self._layout.prune_key_args(members),
+                )
+            )
+            members = [m for m in members if _s(m) not in gone]
         return _sorted_members(members, limit)
 
     def _lock_raw(self, key: str, timeout: float) -> ContextManager[None]:
@@ -304,6 +317,7 @@ class AsyncRedisStore:
         self._forget = self.r.register_script(_FORGET)
         self._unlock = self.r.register_script(_UNLOCK)
         self._prune = self.r.register_script(_PRUNE)
+        self._prune_keys = self.r.register_script(_PRUNE_KEYS)
         self._schema = self.r.register_script(_SCHEMA)
 
     async def _ensure_schema(self) -> None:
@@ -414,6 +428,15 @@ class AsyncRedisStore:
                 self.k.keys, match=pattern, count=500
             )
         ]
+        if members:
+            # 🔥 review CM-01: drop (and SREM) ttl-expired members.
+            gone = _gone_set(
+                await self._prune_keys(
+                    keys=[self.k.keys],
+                    args=self._layout.prune_key_args(members),
+                )
+            )
+            members = [m for m in members if _s(m) not in gone]
         out: List[str] = []
         for k in _sorted_members(members, len(members)):
             try:

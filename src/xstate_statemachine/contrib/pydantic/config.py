@@ -82,8 +82,10 @@ class TransitionConfig(_Loose):
     actions: Optional[Actions] = None
     guard: Optional[GuardSpec] = None
     cond: Optional[GuardSpec] = None  # XState v4 alias
-    internal: Optional[bool] = None
-    reenter: Optional[bool] = None
+    # 🔥 review CM-04: strict -- the parser reads these with `bool()`, so a
+    #    lax "false" here would be approved by the gate yet mean True.
+    internal: Optional[bool] = Field(default=None, strict=True)
+    reenter: Optional[bool] = Field(default=None, strict=True)
     meta: Optional[Dict[str, Any]] = None
     description: Optional[str] = None
     tags: Optional[Union[str, List[str]]] = None

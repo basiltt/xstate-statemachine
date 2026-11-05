@@ -36,7 +36,6 @@ Example:
     >>> # In another file, e.g., interpreter.py
     >>> import logging
     >>>
-    >>> # ✅ FIX: Renamed variable to `module_logger` to avoid shadowing.
     >>> # This logger inherits from the base logger configured here.
     >>> logger = logging.getLogger(__name__) # noqa
     >>>

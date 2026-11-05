@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ...models import MachineNode
+from ..utils import safe_file_stem
 from . import get_console
 from .analysis import analyse, event_table
 from .inspect import state_tree
@@ -98,8 +99,13 @@ def run_diagram(
             ext = {"mermaid": ".mmd", "plantuml": ".puml", "ascii": ".txt"}[
                 fmt
             ]
-            out = out / f"{facts.machine_id}{ext}"
-        out.write_text(text + "\n", encoding="utf-8")
+            # 🛡️ CLI-003: the id is untrusted; never let it pick the path.
+            out = out / f"{safe_file_stem(facts.machine_id)}{ext}"
+        try:
+            out.write_text(text + "\n", encoding="utf-8")
+        except OSError as exc:
+            c.error(f"cannot write {out}: {type(exc).__name__}: {exc}")
+            raise SystemExit(1)
         c.ok(f"Wrote {fmt} diagram: {c.style(str(out), 'path')}")
         return
     if fmt == "ascii":

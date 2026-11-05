@@ -40,7 +40,18 @@ IDLE_CHILD: Dict[str, Any] = {
 
 
 def _parent_with_children(n: int) -> Dict[str, Any]:
-    """A parallel parent that invokes *n* idle children at once."""
+    """A parallel parent that invokes *n* idle children at once.
+
+    📝 ``n == 0`` is the no-children BASELINE: a plain idle machine. (A
+    ``parallel`` state with no regions is refused at build since 0.12.0.)
+    """
+    if n == 0:
+        return {
+            "id": "p",
+            "initial": "idle",
+            "context": {"done": 0},
+            "states": {"idle": {}},
+        }
     return {
         "id": "p",
         "type": "parallel",

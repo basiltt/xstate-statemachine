@@ -21,6 +21,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import queue
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional
 
 from .._compat import require_extra
@@ -40,6 +41,7 @@ from ...persistence.locking import (  # noqa: E402
 from ...persistence.log import AuditPlugin, TransitionLogPlugin  # noqa: E402
 from ...receipts import receipt_to_status  # noqa: E402
 from ._core import (  # noqa: E402
+    CLOSED,
     EXTENSION_KEY,
     REQUIRED,
     AppRegistry,
@@ -47,12 +49,19 @@ from ._core import (  # noqa: E402
     make_registration,
 )
 from ._http import (  # noqa: E402
+    DEFAULT_BODY_TIMEOUT_S,
     IDEMPOTENCY_HEADER,
     PROBLEM_MEDIA_TYPE,
     BadRequestError,
     MethodNotAllowedError,
+    PayloadTooLargeError,
+    RequestTimeoutError,
     declared_events,
+    history_args,
+    history_items,
+    idempotency_key_from_header,
     is_idempotency_refusal,
+    log_problem,
     register_problem_handlers,
     parse_json_body,
     principal_or_401,
@@ -83,8 +92,21 @@ def _json(body: Any, status: int, mimetype: str = "application/json") -> Any:
     )
 
 
+def _where() -> str:
+    """``"<METHOD> <path>"`` of the current request, for log lines."""
+    from quart import has_request_context
+
+    if has_request_context():
+        return f"{quart_request.method} {quart_request.path}"
+    return "-"
+
+
 def problem_response(exc: BaseException) -> Any:
-    """Build an RFC 7807 problem response for *exc*.
+    """Build an RFC 9457 problem response for *exc*.
+
+    A 5xx leaves a server-side trace (review CW-09: Quart used to answer
+    a bare 500 and log nothing), through the same `log_problem` rule as
+    the Flask extension.
 
     Args:
         exc: The exception to map to a status and problem body.
@@ -93,6 +115,7 @@ def problem_response(exc: BaseException) -> Any:
         A Quart `Response` with the problem media type.
     """
     status, body = problem_for_exception(exc)
+    log_problem(exc, _where())
     return _json(body, status, PROBLEM_MEDIA_TYPE)
 
 
@@ -270,7 +293,9 @@ class QuartXState:
         skey = r.store_key(name, k)
         if principal is None and r.inbox is not None and has_request_context():
             # 📝 #285 battle (A): parity with Flask's `act()`.
-            principal = r.principal(quart_request)  # type: ignore[misc]
+            # 🔐 Review CW-20: anonymous is a 401, not a ValueError (500).
+            if r.principal is not None:
+                principal = principal_or_401(r.principal(quart_request))
         plugins = r.plugins_for(principal)
         recorder = _Recorder()
         plugins.append(recorder)
@@ -287,7 +312,8 @@ class QuartXState:
             ) as interp:
                 if reg.strict is not None:
                     interp.strict = reg.strict
-                interp._xsm_context_serializer = reg.context_serializer
+                tagged: Any = interp  # 📝 per-request tag, see Flask `act`
+                tagged._xsm_context_serializer = reg.context_serializer
                 yield interp
                 # ⏳ #263 battle: settle a plain-`def` invoke chain before
                 #    the bodies are built (and `apersisted` saves).
@@ -309,8 +335,9 @@ class QuartXState:
     async def peek(self, name: str, key: Any) -> Dict[str, Any]:
         """Read the state of an instance without persisting anything.
 
-        A missing instance is reported from a fresh, immediately stopped
-        interpreter; a stored one is restored (migrating if needed).
+        A missing instance reports the machine's initial state from a
+        pure-transition probe (nothing runs); a stored one is restored
+        (migrating if needed).
 
         Args:
             name: Registered machine name.
@@ -323,12 +350,14 @@ class QuartXState:
         reg = r.reg(name)
         rec = r.store.load(r.store_key(name, key))
         if rec is None:
-            interp = Interpreter(reg.machine)
-            await interp.start()
-            try:
-                return state_body(interp, reg.context_serializer)
-            finally:
-                await interp.stop()
+            # 🔥 Review CW-05: a started `Interpreter` ran the initial
+            #    state's entry actions on a safe GET. The pure-transition
+            #    probe records them without running anything.
+            from ...helpers import _build_probe
+
+            probe, _ = _build_probe(reg.machine, None)
+            probe.start()
+            return state_body(probe, reg.context_serializer)
         # 🧬 #263 battle: a read of a stale instance migrates like a write
         #    does (read-only; the next `act()` re-saves at the new label).
         restored: Any = Interpreter.from_snapshot(
@@ -339,9 +368,41 @@ class QuartXState:
         return state_body(restored, reg.context_serializer)
 
 
+async def _read_body(limit: int, timeout_s: float) -> bytes:
+    """Read the request body, at most *limit* bytes, within *timeout_s*.
+
+    🔥 Review CW-11: ``get_data()`` buffered the WHOLE body before any size
+    check (a chunked request with no Content-Length was bounded only by
+    Quart's own config) and nothing timed a stalled client out. The
+    stream is cut once it passes the cap, and a body that does not
+    arrive in time is a 408.
+
+    Raises:
+        PayloadTooLargeError: The body exceeds *limit* (413).
+        RequestTimeoutError: The body did not arrive in time (408).
+    """
+
+    async def _read() -> bytes:
+        chunks: List[bytes] = []
+        size = 0
+        async for chunk in quart_request.body:
+            size += len(chunk)
+            if size > limit:
+                raise PayloadTooLargeError()
+            chunks.append(chunk)
+        return b"".join(chunks)
+
+    try:
+        return await asyncio.wait_for(_read(), timeout_s)
+    except asyncio.TimeoutError:
+        raise RequestTimeoutError() from None
+
+
 async def _json_body(limit: int) -> Dict[str, Any]:
-    raw = await quart_request.get_data(as_text=False)
-    data: bytes = raw if isinstance(raw, bytes) else raw.encode()
+    declared = quart_request.content_length
+    if declared is not None and declared > limit:
+        raise PayloadTooLargeError()  # refuse before reading anything
+    data = await _read_body(limit, DEFAULT_BODY_TIMEOUT_S)
     return parse_json_body(
         quart_request.content_type,
         quart_request.content_length,
@@ -353,7 +414,23 @@ async def _json_body(limit: int) -> Dict[str, Any]:
 def create_quart_statechart_blueprint(  # noqa: C901 -- one route table
     xsm: QuartXState, name: str, url_prefix: str
 ) -> Blueprint:
-    """The same route table as `create_statechart_blueprint`, on Quart."""
+    """The route table of `create_statechart_blueprint`, reduced, on Quart.
+
+    📝 Review CW-26: NOT a full twin. Missing versus Flask: the
+    ``per_event_routes`` / ``blueprint_name`` / ``create_if_missing``
+    options (an unknown key always starts a fresh instance on first
+    write), the ``context_serializer=`` kwarg of ``receipt_response``, the
+    ``Cache-Control`` / ``X-Accel-Buffering`` headers on the SSE response
+    (set them in a proxy) and the ``seq`` on the snapshot frame.
+
+    Args:
+        xsm: The `QuartXState` extension; *name* must be registered on it.
+        name: Registered machine name.
+        url_prefix: Where to mount (``"/orders"``).
+
+    Returns:
+        The blueprint.
+    """
     bp = Blueprint(f"xsm_{name}", __name__, url_prefix=url_prefix)
 
     async def guard(key: Optional[str], event: Optional[str]) -> None:
@@ -392,8 +469,12 @@ def create_quart_statechart_blueprint(  # noqa: C901 -- one route table
         payload = dict(payload)
         payload.pop("type", None)
         refuse_reserved_send_keys(payload)
-        idem = quart_request.headers.get(IDEMPOTENCY_HEADER)
-        if idem:
+        # 🔑 Review CW-03: validated like the Starlette stack (400 / 501).
+        idem = idempotency_key_from_header(
+            quart_request.headers.get(IDEMPOTENCY_HEADER),
+            has_inbox=xsm.registry().inbox is not None,
+        )
+        if idem is not None:
             payload["idempotency_key"] = idem
         out: Dict[str, Any] = {}
         ser = xsm.registry().reg(name).context_serializer
@@ -487,8 +568,16 @@ def create_quart_statechart_blueprint(  # noqa: C901 -- one route table
                 404,
                 PROBLEM_MEDIA_TYPE,
             )
-        rows = r.log.read(r.store_key(name, key))
-        return _json({"items": [x.to_dict() for x in rows]}, 200)
+        # 🔐 Review CW-06: same bounds and the same payload-free rows as
+        #    Flask (the raw `event_payload` used to be disclosed here).
+        after, limit = history_args(quart_request.args)
+        skey = r.store_key(name, key)
+        # ⚡ The log store is synchronous: keep it off the event loop.
+        log = r.log
+        rows = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: log.read(skey, after_seq=after, limit=limit)
+        )
+        return _json({"items": history_items(rows)}, 200)
 
     @bp.get("/<key>/stream")
     @mapped
@@ -505,22 +594,34 @@ def create_quart_statechart_blueprint(  # noqa: C901 -- one route table
                 PROBLEM_MEDIA_TYPE,
             )
         await guard(key, None)
-        snapshot = await xsm.peek(name, key)
-        q = r.fanout.subscribe(name, str(key))
+        loop = asyncio.get_running_loop()
+        wake = asyncio.Event()
+        # 🔥 Review CW-16: subscribe BEFORE reading the snapshot, so a
+        #    transition committed in between is queued, not lost.
+
+        def poke() -> None:
+            loop.call_soon_threadsafe(wake.set)
+
+        q = r.fanout.subscribe(name, str(key), poke)
         if q is None:
             return _json(problem_body(429, "Too many connections"), 429)
+        try:
+            snapshot = await xsm.peek(name, key)
+        except BaseException:
+            r.fanout.unsubscribe(name, str(key), q)
+            raise
         once = quart_request.args.get("once") == "1"
 
         async def body() -> AsyncIterator[bytes]:
             try:
                 yield sse("snapshot", snapshot).encode()
                 while not once:
-                    item = await asyncio.get_running_loop().run_in_executor(
-                        None, _get, q, r.heartbeat_s
-                    )
+                    item = await _next_item(q, wake, r.heartbeat_s)
                     if item is None:
                         yield b": heartbeat\n\n"
                         continue
+                    if item is CLOSED:
+                        return  # cut off for lagging: reconnect
                     yield sse("transition", item[1], item[0]).encode()
             finally:
                 r.fanout.unsubscribe(name, str(key), q)
@@ -539,10 +640,30 @@ def create_quart_statechart_blueprint(  # noqa: C901 -- one route table
     return bp
 
 
-def _get(q: Any, timeout: float) -> Any:
-    import queue
+async def _next_item(q: Any, wake: "asyncio.Event", timeout: float) -> Any:
+    """The next queued item, or ``None`` after *timeout* seconds.
 
-    try:
-        return q.get(timeout=timeout)
-    except queue.Empty:
-        return None
+    📝 Review CW-10: waits on an `asyncio.Event` the fan-out sets through
+    ``call_soon_threadsafe``; no thread is parked per connected client.
+    The queue is re-read after clearing the event so a put that lands
+    between the two is never missed.
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while True:
+        try:
+            return q.get_nowait()
+        except queue.Empty:
+            pass
+        wake.clear()
+        try:
+            return q.get_nowait()
+        except queue.Empty:
+            pass
+        remaining = deadline - loop.time()
+        if remaining <= 0:
+            return None
+        try:
+            await asyncio.wait_for(wake.wait(), remaining)
+        except asyncio.TimeoutError:
+            return None

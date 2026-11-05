@@ -27,6 +27,7 @@ synchronous, blocking operations.
 import asyncio
 import functools
 import copy
+import dataclasses
 import inspect
 import json
 import logging
@@ -34,6 +35,7 @@ import math
 import threading
 import time
 import warnings
+import weakref
 from typing import (
     cast,
     AbstractSet,
@@ -46,6 +48,7 @@ from typing import (
     Dict,
     Generic,
     List,
+    Mapping,
     Optional,
     Sequence,
     FrozenSet,
@@ -84,6 +87,7 @@ from .exceptions import (
     InvalidEventPayloadError,
     UnknownEventError,
     ActorSpawningError,
+    UnresolvedTargetError,
     ImplementationMissingError,
     InvalidConfigError,
     RestoredChainError,
@@ -125,7 +129,7 @@ from .models import (
 from .plugins import PluginBase, global_plugins
 from .resolver import resolve_target_state
 from . import persistence
-from .clock import Clock, RealClock
+from .clock import Clock, RealClock, SimulatedClock
 
 # This TypeVar allows methods to return the specific subclass instance (self).
 TInterpreter = TypeVar("TInterpreter", bound="BaseInterpreter[Any]")
@@ -223,14 +227,17 @@ class _LogicTarget:
     __slots__ = ("_handle",)
 
     def __init__(self, handle: Any) -> None:
+        """Wrap a running actor-logic handle (`RunningLogic`)."""
         self._handle = handle
 
     @property
     def id(self) -> str:
+        """The invocation id the logic runs under."""
         return str(getattr(self._handle._invocation, "id", "logic"))
 
     @property
     def status(self) -> str:
+        """`"running"` until the logic finished, then `"stopped"`."""
         return "stopped" if self._handle.finished else "running"
 
     def send(self, event: Any, **payload: Any) -> None:
@@ -264,6 +271,7 @@ class _LogicTarget:
         handle.receive(event)
 
     def send_threadsafe(self, event: Any, **payload: Any) -> None:
+        """Same as `send`: the handle's `receive` is thread-safe."""
         self.send(event, **payload)
 
 
@@ -500,6 +508,167 @@ def _accepts_kwarg(fn: Callable[..., Any], name: str) -> bool:
     return result
 
 
+class _CallableMemo:
+    """Memoise a pure predicate over callables, keyed weakly (#307 perf).
+
+    ⚡ The engines asked `inspect` the same questions about the same
+    callables on EVERY call -- "is this action a coroutine function?",
+    "does this guard take a third ``params`` argument?" -- and on a guarded
+    counter that introspection was 27 % of an event's cost. The answer
+    depends only on the callable object, which `MachineLogic` holds for the
+    life of the machine, so it is computed once per object.
+
+    🧷 Keys are weak references: an adapted DSL callback dies with its
+    façade instead of being pinned by the memo. A callable that is not
+    hashable or not weak-referenceable is recomputed on every call, which
+    is exactly the previous behaviour.
+
+    Args:
+        compute: The predicate; must depend only on the callable itself.
+    """
+
+    __slots__ = ("_compute", "_cache")
+
+    def __init__(self, compute: Callable[[Any], bool]) -> None:
+        self._compute = compute
+        self._cache: "weakref.WeakKeyDictionary[Any, bool]" = (
+            weakref.WeakKeyDictionary()
+        )
+
+    def __call__(self, fn: Any) -> bool:
+        try:
+            return self._cache[fn]
+        except KeyError:
+            pass
+        except TypeError:  # unhashable or not weak-referenceable
+            return self._compute(fn)
+        verdict = self._compute(fn)
+        try:
+            self._cache[fn] = verdict
+        except TypeError:  # no `__weakref__` slot
+            pass
+        return verdict
+
+
+def _async_shape(callable_obj: Any) -> bool:
+    """``True`` for every callable shape that would return an awaitable.
+
+    🏛️ #60 / LC-58: a bare ``__code__.co_flags`` check saw only a plain
+    ``async def``. ``functools.partial(async_fn)``, an object with an
+    ``async def __call__`` and an async generator all slipped through and
+    were CALLED by the sync engine -- the coroutine object was silently
+    discarded, so the action never ran and nobody was told. Partials and
+    decorators are unwrapped, then every async shape is checked.
+    """
+    fn: Any = callable_obj
+    while isinstance(fn, functools.partial):
+        fn = fn.func
+    fn = inspect.unwrap(fn)
+    if inspect.iscoroutinefunction(fn) or inspect.isasyncgenfunction(fn):
+        return True
+    call = getattr(type(fn), "__call__", None)
+    if call is not None and not inspect.isfunction(fn):
+        call = inspect.unwrap(call)
+        if inspect.iscoroutinefunction(call) or inspect.isasyncgenfunction(
+            call
+        ):
+            return True
+    return False
+
+
+def _guard_takes_params(fn: Any) -> bool:
+    """``True`` if a guard accepts the third ``params`` positional argument.
+
+    Two-argument guards ``(context, event)`` predate parameterised guards
+    and keep working unchanged; a guard declaring a third positional
+    parameter (or ``*args``) receives the resolved params as well.
+    Un-introspectable callables are treated as two-argument guards.
+    """
+    try:
+        parameters = inspect.signature(fn).parameters.values()
+    except (TypeError, ValueError):  # pragma: no cover - builtins
+        return False
+    positional = 0
+    for p in parameters:
+        if p.kind is inspect.Parameter.VAR_POSITIONAL:
+            return True
+        if p.kind in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        ):
+            positional += 1
+    return positional >= 3
+
+
+#: Memoised callable-shape predicates shared by both engines.
+_is_async_shape = _CallableMemo(_async_shape)
+_is_coroutine_function = _CallableMemo(inspect.iscoroutinefunction)
+_guard_accepts_params = _CallableMemo(_guard_takes_params)
+
+
+def _copy_initial_context(value: Any) -> Any:
+    """Deep-copy a machine's declared context for a new interpreter.
+
+    🛡️ Review PD-11: a context holding an uncopyable handle (a
+    `threading.Lock`, a DB session, an open socket) made `copy.deepcopy`
+    raise `TypeError` at interpreter construction, so such a machine
+    could not be started at all -- through `create_machine` and through
+    the class façade alike. As for `_context_before_image`, the copy
+    falls back to a SHALLOW one: the interpreter then shares those
+    handles with the machine definition (and with every other interpreter
+    built from it), which is the only thing a handle in a static
+    ``context`` can mean. The fallback is logged so an unintended share
+    stays visible; a ``context`` factory gives each interpreter its own.
+
+    Args:
+        value: The declared (or factory-produced) initial context.
+
+    Returns:
+        Any: A deep copy, or a shallow copy when deep-copying fails.
+    """
+    try:
+        return copy.deepcopy(value)
+    except Exception as exc:  # TypeError / pickling errors from a handle
+        logger.warning(
+            "⚠️ Initial context could not be deep-copied (%s: %s); the "
+            "interpreter shares the uncopyable values with the machine "
+            "definition. Build them in a `context` factory to give each "
+            "interpreter its own.",
+            type(exc).__name__,
+            exc,
+        )
+        return dict(value) if isinstance(value, Mapping) else value
+
+
+def _delay_takes_mapping(fn: Any) -> bool:
+    """``True`` if a named-delay callable takes ONE ``{context, event}``
+    mapping; ``False`` for the legacy ``(context, event)`` form.
+
+    Un-introspectable callables use the legacy form.
+    """
+    try:
+        params = inspect.signature(fn).parameters.values()
+    except (TypeError, ValueError):  # pragma: no cover - builtins
+        return False
+    positional = [
+        p
+        for p in params
+        if p.kind
+        in (
+            inspect.Parameter.POSITIONAL_ONLY,
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+        )
+    ]
+    takes_varargs = any(
+        p.kind is inspect.Parameter.VAR_POSITIONAL for p in params
+    )
+    return not takes_varargs and len(positional) == 1
+
+
+#: Memoised form of `_delay_takes_mapping` (BI-26, see `_CallableMemo`).
+_delay_accepts_mapping = _CallableMemo(_delay_takes_mapping)
+
+
 _ACCEPTS_KWARG_KEEPALIVE: List[Any] = []
 
 #: ⚡ Shared empty actor-id set for `_execute_microstep` (never mutated).
@@ -558,9 +727,30 @@ class _RollbackRequested(Exception):
     def __init__(
         self, action_def: ActionDefinition, original: BaseException
     ) -> None:
+        """Record the failing action and the exception it raised."""
         super().__init__(action_def.type)
         self.action_def = action_def
         self.original = original
+
+
+class _NestedActionsFailed(Exception):
+    """Internal signal: an action inside `choose` / `pure` /
+    `enqueueActions` failed.
+
+    🏛️ The nested list runs through the SAME `_execute_actions`, which
+    already reported each failure (log + `on_action_error`) and returns
+    them. Carrying the list out of `_execute_builtin_action` lets the
+    OUTER `_execute_actions` hand it to `actionErrorPolicy` exactly as if
+    the failing action had been written at the top level -- before this,
+    the returned failures were discarded and `rollback` / `fail` silently
+    committed a half-run transition. Never escapes `_execute_actions`.
+    """
+
+    def __init__(
+        self, failures: List[Tuple[ActionDefinition, BaseException]]
+    ) -> None:
+        super().__init__(failures[0][0].type)
+        self.failures = failures
 
 
 class BaseInterpreter(Generic[TContext]):
@@ -626,6 +816,7 @@ class BaseInterpreter(Generic[TContext]):
         "_invoked_as",
         "_last_action_error",
         "_lifecycle_failures",
+        "_pending_completion",
         "_pending_actor_snapshots",
         "_pending_guard_error",
         "_plugins",
@@ -638,6 +829,7 @@ class BaseInterpreter(Generic[TContext]):
         "_armed_after",  # #264
         "_entry_seq",  # #264
         "_restored_deadlines",  # #264
+        "_dormant_timer_states",
         "_restart_timers_mode",  # #264
         "_running_logic",  # #267
         "_scheduled_sends",
@@ -727,9 +919,14 @@ class BaseInterpreter(Generic[TContext]):
         #: is a single call. The previous try/except-TypeError fallback
         #: invoked a clock TWICE when its body raised TypeError for an
         #: unrelated reason, and surfaced that error with the lane lost.
-        self._clock_accepts_sync: bool = _accepts_kwarg(
-            self.clock.set_timeout, "sync"
-        )
+        #: ⚡ The library's own clocks take `sync=`; probing their signature
+        #: on every construction (a bound method is a fresh object each
+        #: time, so the memo never hit) was ~3 % of a `SyncInterpreter`
+        #: build in the 1,000-instance benchmark.
+        self._clock_accepts_sync: bool = type(self.clock) in (
+            RealClock,
+            SimulatedClock,
+        ) or _accepts_kwarg(self.clock.set_timeout, "sync")
         #: 🛡️ #51: effective strictness -- the ctor flag wins over config.
         self.strict: bool = machine.strict if strict is None else bool(strict)
         self.parent: Optional["BaseInterpreter[Any]"] = None
@@ -820,6 +1017,11 @@ class BaseInterpreter(Generic[TContext]):
         #: ⏰ #264: deadlines parked by `from_snapshot` until `start()`
         #: decides how to re-arm them (`restart_timers` mode).
         self._restored_deadlines: List["persistence.Deadline"] = []
+        #: ⏰ Ids of restored states whose ``after`` timers have NOT been
+        #: armed since `from_snapshot` (`has_dormant_timers`). A state
+        #: leaves the set when its timers are armed; a timer that FIRED
+        #: (its handle released) is not dormant.
+        self._dormant_timer_states: Set[str] = set()
         #: ⏰ #264: how `start()` treats parked deadlines: ``"restart"``
         #: (from zero, the #128 behaviour), ``"resume"`` (remaining wall
         #: time) or ``"fire_due"`` (resume + fire the matured ones now).
@@ -840,6 +1042,10 @@ class BaseInterpreter(Generic[TContext]):
                 List[Tuple[ActionDefinition, BaseException]],
             ]
         ] = []
+        #: 🏁 A machine completion reached INSIDE an open action-error
+        #: transaction, as ``(output,)``; applied by `_execute_microstep`
+        #: only once the transaction commits. ``None`` = nothing pending.
+        self._pending_completion: Optional[Tuple[Any]] = None
         #: Events held back under ``onUnhandled: "defer"``, replayed after
         #: the next successful transition. Empty under other policies.
         self._deferred_events: List[AnyEvent] = []
@@ -961,13 +1167,19 @@ class BaseInterpreter(Generic[TContext]):
         raw = machine.initial_context
         if callable(raw):
             produced = raw({"input": input})
-            return copy.deepcopy(produced) if produced is not None else {}
+            return (
+                _copy_initial_context(produced) if produced is not None else {}
+            )
         # ⚡ A flat dict of immutable scalars (the overwhelmingly common
         #    initial context, decided once at build: `context_is_flat`) is
         #    copied with `dict()` -- 11x cheaper than `deepcopy` and
         #    observationally identical, since there is nothing nested to
         #    alias. Anything else keeps the deep copy.
-        context = dict(raw) if machine.context_is_flat else copy.deepcopy(raw)
+        context = (
+            dict(raw)
+            if machine.context_is_flat
+            else _copy_initial_context(raw)
+        )
         # 📥 Expose input to the machine even without a context factory.
         #    Deliberately ONLY under `context["input"]` (0.7.x contract):
         #    letting input overwrite declared keys would make
@@ -1180,7 +1392,11 @@ class BaseInterpreter(Generic[TContext]):
         """Reports whether an event would cause a transition right now.
 
         Guards are evaluated, so this is an accurate prediction rather than a
-        purely structural check. It has no side effects on the configuration.
+        purely structural check. It does not change the configuration or
+        `context`, but because guards really RUN, their own side effects
+        happen and the guard plugin hooks (`on_guard_evaluated` /
+        `on_guard_error`) fire for the hypothetical evaluation (BI-30) --
+        a metrics plugin counts them like real ones.
 
         Args:
             event (Union[str, Event, Dict[str, Any]]): The event to test.
@@ -1215,19 +1431,14 @@ class BaseInterpreter(Generic[TContext]):
         """
         if isinstance(event, (Event, AfterEvent, DoneEvent, ErrorEvent)):
             return event
-        if isinstance(event, str):
-            return Event(type=event)
-        if isinstance(event, dict):
-            event_type = event.get("type")
-            if not isinstance(event_type, str):
-                raise TypeError(
-                    "❌ Event dict must contain a string 'type' key."
-                )
-            payload = {k: v for k, v in event.items() if k != "type"}
-            return Event(type=event_type, payload=payload)
-        # 🔌 #305: an object implementing `__xstate_event__` is accepted
-        #    here too, so `sendTo` specs and helpers share the adapter.
-        if callable(getattr(event, "__xstate_event__", None)):
+        # 🏛️ BI-34: ONE normaliser. `can()`, `emit`, `raise` and `sendTo`
+        #    specs follow the same rules as `send()` (non-empty str type,
+        #    str payload keys, the #305 `__xstate_event__` adapter) and
+        #    raise the same `InvalidEventError` -- a `TypeError` subclass,
+        #    so callers catching TypeError are unaffected.
+        if isinstance(event, (str, dict)) or callable(
+            getattr(event, "__xstate_event__", None)
+        ):
             return BaseInterpreter._prepare_event(event)
         raise TypeError(f"❌ Unsupported event type: {type(event).__name__}")
 
@@ -1452,7 +1663,7 @@ class BaseInterpreter(Generic[TContext]):
             #    send's timer) has no step to charge; `_step_soft_error`
             #    would otherwise attach to the NEXT event's receipt.
             return
-        self._step_soft_error = ActorSpawningError(
+        self._step_soft_error = UnresolvedTargetError(
             f"{action} target {to!r} did not resolve to a live actor; "
             f"'{getattr(undelivered, 'type', undelivered)}' was not delivered."
         )
@@ -1613,6 +1824,7 @@ class BaseInterpreter(Generic[TContext]):
     def _persist_event_reporting(
         self, event: Any, *, lane: Optional[str] = None
     ) -> Dict[str, Any]:
+        """Serialise one pending event for a snapshot; report a refusal (#159)."""
         # 🔔 #159: `persist_event` raises `SnapshotSerializationError` (#131)
         #    for a pending event with non-JSON data; this is the one place it
         #    enters the snapshot, so report it via `on_snapshot_error` before
@@ -1914,7 +2126,7 @@ class BaseInterpreter(Generic[TContext]):
             #    "which revision wrote it?" -- what a human and the #263
             #    migrator need. `None` when the chart declares none.
             "machine_version": self.machine.version,
-            "taken_at": time.time(),
+            "taken_at": self.wall_now(),  # 🕰️ leaves the process
             "status": self.status,
             # 🧊 Deep-copy so the snapshot is a true point-in-time capture.
             #    Returning the live dict made later execution retroactively
@@ -1962,10 +2174,9 @@ class BaseInterpreter(Generic[TContext]):
             #    REMAINING at snapshot time, so a restore re-arms them and a
             #    state whose only exit is a delayed self-raise is not wedged.
             "scheduled_sends": self._persist_scheduled_sends(),
-            # ⏰ #305 (layout v4): durable `after` deadlines anchored to the
-            #    wall clock (`persistence.Deadline`). Reserved for #264;
-            #    every engine writes `[]` today so the layout is fixed
-            #    before the feature lands and needs no second bump.
+            # ⏰ #305 (layout v4) / #264: durable `after` deadlines -- every
+            #    armed timer plus every parked restored one, anchored to
+            #    `wall_now()` (`persistence.Deadline`); see `_persist_deadlines`.
             "deadlines": [d.to_dict() for d in self._persist_deadlines()],
             # 🕰️ Remembered history, so a restored machine can still honour a
             #    later transition to a history state.
@@ -2498,10 +2709,9 @@ class BaseInterpreter(Generic[TContext]):
         #    `restart_services` note in the docstring.
         interpreter.status = snapshot["status"]
         interpreter._restored_from_snapshot = True  # #240
-        # ⏱️ #128: `after` timers are not persisted (a deadline is relative
-        #    to a clock that no longer exists). Opt in to re-arming them from
-        #    zero on `start()`; defaults to the `restart_services` choice so
-        #    the common "bring it all back" call is one flag.
+        # ⏱️ #128: timers are parked by a restore and re-armed by `start()`
+        #    only when opted in; the default follows the `restart_services`
+        #    choice so the common "bring it all back" call is one flag.
         # ⏰ #264: `restart_timers` widened -- `True` == "restart" (from
         #    zero, #128), "resume" re-arms the REMAINING wall time from the
         #    persisted deadlines, "fire_due" resumes and fires the matured
@@ -2571,6 +2781,9 @@ class BaseInterpreter(Generic[TContext]):
                 "The 'configuration' list has lost its leaf entries."
             )
 
+        interpreter._dormant_timer_states = {
+            node.id for node in interpreter._active_state_nodes if node.after
+        }
         interpreter.output = snapshot.get("output")
         recorded_error = snapshot.get("error")
         interpreter._deferred_events = [
@@ -2617,12 +2830,26 @@ class BaseInterpreter(Generic[TContext]):
 
         # 🕰️ Restore remembered history so a later transition to a history
         #    state still resolves after a restart.
+        # 🔥 An id the machine does not have (a state renamed since the
+        #    blob was written) cannot be remembered; say so instead of
+        #    silently truncating history -- `configuration` raises for the
+        #    same mismatch, history at least logs it.
         for parent_id, node_ids in (snapshot.get("history") or {}).items():
             nodes = [
                 node
                 for node in (machine.get_state_by_id(nid) for nid in node_ids)
                 if node is not None
             ]
+            owner_known = machine.get_state_by_id(parent_id) is not None
+            if len(nodes) != len(node_ids) or not owner_known:
+                logger.warning(
+                    "⚠️ Snapshot history for '%s' names state(s) machine "
+                    "'%s' does not have; the unknown ids are dropped.",
+                    parent_id,
+                    machine.id,
+                )
+                if not owner_known:
+                    continue
             if nodes:
                 interpreter._history[parent_id] = nodes
 
@@ -2653,6 +2880,18 @@ class BaseInterpreter(Generic[TContext]):
                 #    injected one -- the same split #117 fixed for roots.
                 restart_timers=restart_timers,
                 clock=clock,
+                # 🔐 #205: the payload must not choose its own checking
+                #    level for a CHILD either -- a nested record declaring
+                #    `version: 0` skipped the drift check the caller asked
+                #    for. A pinned root hash pins each child to its own
+                #    machine's fingerprint; plugins see child refusals.
+                minimum_version=minimum_version,
+                expected_machine_hash=(
+                    child_machine.structure_hash
+                    if expected_machine_hash is not None
+                    else None
+                ),
+                plugins=plugins,
                 on_version_mismatch=on_version_mismatch,
                 migrator=migrator,  # #263: children follow the same policy
             )
@@ -2667,6 +2906,13 @@ class BaseInterpreter(Generic[TContext]):
             restored_actor = interpreter._actors.get(actor_id)
             if restored_actor is not None:
                 interpreter._system[system_id] = restored_actor
+            else:
+                logger.warning(
+                    "⚠️ systemId '%s' names actor '%s', which was not "
+                    "restored; the registration is dropped.",
+                    system_id,
+                    actor_id,
+                )
 
         interpreter._restart_services_on_start = restart_services
         logger.info(
@@ -2867,6 +3113,7 @@ class BaseInterpreter(Generic[TContext]):
                 handle.cleanup()
 
     def _cleanup_all_running_logic(self) -> None:
+        """Run the cleanup of every live actor-logic handle (#267)."""
         handles, self._running_logic = self._running_logic, {}
         for handle in handles.values():
             handle.cleanup()
@@ -2883,6 +3130,7 @@ class BaseInterpreter(Generic[TContext]):
         self._send_threadsafe_any(done)  # engine-minted: drives onDone
 
     def _fail_logic(self, invocation: Any, exc: BaseException) -> None:
+        """Fail one actor-logic invocation: drop its handle, deliver `error.platform`."""
         handle = self._running_logic.pop(invocation.id, None)
         if handle is not None:
             handle.cleanup()
@@ -2894,9 +3142,32 @@ class BaseInterpreter(Generic[TContext]):
         self._send_threadsafe_any(err)
 
     def _send_threadsafe_any(self, event: Any) -> None:
-        """Both engines define `send_threadsafe`; the base does not know
-        which (async returns a future, sync None) -- call it dynamically."""
-        getattr(self, "send_threadsafe")(event)
+        """Deliver *event* through the engine's `send_threadsafe` (the
+        async engine returns a future, the sync one ``None``; ignored)."""
+        self.send_threadsafe(event)
+
+    def send_threadsafe(self, *args: Any, **kwargs: Any) -> Any:
+        """Queue an event from ANY thread (engine-specific, #305).
+
+        Declared here (BI-24) so the base calls it through the type
+        checker instead of a `getattr` that hid a missing implementation
+        until a worker thread hit it at runtime.
+
+        The signature is deliberately open (`*args, **kwargs`): each engine
+        declares its own (the async one takes `internal=`).
+
+        Args:
+            *args: The event (any shape `send()` accepts).
+            **kwargs: Keyword payload, plus engine-specific options.
+
+        Returns:
+            Any: Engine-specific (a future on the async engine, ``None``
+            on the sync one).
+
+        Raises:
+            NotImplementedError: Always, on the abstract base.
+        """
+        raise NotImplementedError  # pragma: no cover
 
     @property
     def has_dormant_timers(self) -> bool:
@@ -2910,10 +3181,16 @@ class BaseInterpreter(Generic[TContext]):
         health check that a deadline the configuration relies on is not
         armed; `pending_deadlines()` lists what would be.
         """
-        if not any(state.after for state in self._active_state_nodes):
+        # 📝 Per STATE, not "no timed state is armed": a parallel machine
+        #    whose one region re-armed its timer after the restore still
+        #    has the other region's deadline dormant. Handles alone cannot
+        #    say this -- a fired timer releases its handle while its state
+        #    (guard refused) stays active -- hence the restore-time set.
+        dormant = self._dormant_timer_states
+        if not dormant:
             return False
-        return not any(
-            self._timer_handles.get(state.id)
+        return any(
+            state.id in dormant
             for state in self._active_state_nodes
             if state.after
         )
@@ -2940,15 +3217,48 @@ class BaseInterpreter(Generic[TContext]):
 
     def _rearm_dormant_timers(self) -> int:
         """Arm every ``after`` timer of the active configuration that has
-        no live handle (#128). Returns how many were armed.
+        no live handle (#128, #264).
 
-        Deadlines restart from zero: a snapshot records that a timer was
-        pending, not how far along it was. That is the SCXML `<send delay>`
-        contract -- scheduled relative to when the actor (re)starts -- and
-        is strictly better than a timer that never fires.
+        The `restart_timers` mode decides the delay each timer gets:
+
+        - ``"restart"``: the declared delay, from zero (the #128 contract:
+          scheduled relative to when the actor restarts).
+        - ``"resume"``: the REMAINING wall time of the persisted deadline
+          (`persistence.Deadline`), clamped to ``[0, delay it was armed
+          with]`` so a stepped-back clock or a redeployed shorter delay
+          never fires early or waits longer than armed.
+        - ``"fire_due"``: as ``"resume"``; matured deadlines arm at 0 ms
+          and the caller pumps them before `start()` returns.
+
+        Duplicate records for one ``(state, event)`` resolve to the newest
+        ``entry_seq`` (an older one is a stale visit), then the earliest
+        due time. Timers are armed most-overdue first.
+
+        Returns:
+            int: How many states had their timers armed.
+
+        Raises:
+            StateNotFoundError: (``"resume"`` / ``"fire_due"``) a parked
+                deadline names a state outside the active configuration.
+                Raised before anything is armed or consumed.
         """
         armed = 0
         mode = self._restart_timers_mode
+        # 🛡️ #264 / #263: a parked deadline whose state is not in the
+        #    active configuration any more (a migration renamed it) cannot
+        #    be re-armed. Fail LOUDLY -- a silently dropped SLA is the
+        #    exact failure durable timers exist to prevent -- and fail
+        #    BEFORE anything is armed or the parked records are consumed,
+        #    so a refused `start()` leaves them intact for a retry or a
+        #    re-persist. ("restart" re-arms from the declared delays and
+        #    ignores the records, so it has nothing to orphan.)
+        if mode in ("resume", "fire_due") and self._restored_deadlines:
+            active = {s.id for s in self._active_state_nodes}
+            orphans = sorted(
+                {d.state_id for d in self._restored_deadlines} - active
+            )
+            if orphans:
+                raise StateNotFoundError(target=orphans[0])
         parked, self._restored_deadlines = self._restored_deadlines, []
         by_state: Dict[str, Dict[str, float]] = {}
         if mode in ("resume", "fire_due"):
@@ -3002,15 +3312,6 @@ class BaseInterpreter(Generic[TContext]):
                 continue
             self._schedule_state_timers_with(state, by_state.get(state.id))
             armed += 1
-        # 🛡️ #264 / #263: a parked deadline whose state is not in the active
-        #    configuration any more (a migration renamed it) cannot be
-        #    re-armed. Fail LOUDLY -- a silently dropped SLA is the exact
-        #    failure durable timers exist to prevent.
-        if mode in ("resume", "fire_due"):
-            active = {s.id for s in self._active_state_nodes}
-            orphans = sorted({d.state_id for d in parked} - active)
-            if orphans:
-                raise StateNotFoundError(target=orphans[0])
         return armed
 
     def _restart_dormant_invocations(self) -> None:
@@ -3274,6 +3575,9 @@ class BaseInterpreter(Generic[TContext]):
             The first non-``None`` `Receipt` a plugin returned, else
             ``None`` (proceed).
         """
+        # ⚡ No plugins, no interceptors: the common case on the send path.
+        if not self._plugins:
+            return None
         seen: List[Any] = []
         for plugin in self._plugins:
             receipt = plugin.on_before_send(self, event)
@@ -3362,13 +3666,11 @@ class BaseInterpreter(Generic[TContext]):
             InvalidEventPayloadError: a schema is registered for the type
                 and rejected the payload (applies regardless of `strict`).
         """
-        # 🏛️ #79: engine-minted events are never "unknown"; a USER event
-        #    is checked whatever it is called -- `Event("done.typo")` from
-        #    application code is a typo like any other.
         # 🏛️ #79/#98: engine-minted events are never "unknown"; a USER
-        #    event is checked whatever it is called. `is_known_event` no
-        #    longer grants a by-name exemption, so a forged
-        #    `done.invoke.NEVER` or `___xstate_x` is rejected like `TYPO`.
+        #    event is checked whatever it is called -- `Event("done.typo")`
+        #    from application code is a typo like any other, and a forged
+        #    `done.invoke.NEVER` or `___xstate_x` is rejected like `TYPO`
+        #    (`is_known_event` grants no by-name exemption).
         # ⚡ Nothing to check for the common configuration: not strict and
         #    no schemas. Decided before the (comparatively costly)
         #    provenance test so the hot path is one attribute read.
@@ -3380,22 +3682,14 @@ class BaseInterpreter(Generic[TContext]):
         #    is USER traffic (engine-minted ones are recognised above by
         #    provenance). It is name-checked like any other user event; it
         #    is not a plain `Event`, so it has no payload for a schema.
-        if not isinstance(event, Event):
-            if self.strict and not self.machine.is_known_event(
-                event.type, user_sent=True
-            ):
-                raise UnknownEventError(
-                    event.type,
-                    self.machine.id,
-                    sorted(self.machine.known_events),
-                )
-            return
         if self.strict and not self.machine.is_known_event(
             event.type, user_sent=True
         ):
             raise UnknownEventError(
                 event.type, self.machine.id, sorted(self.machine.known_events)
             )
+        if not isinstance(event, Event):
+            return
         schema = self.machine.event_schemas.get(event.type)
         if schema is not None:
             validate = getattr(schema, "validate", None)
@@ -3411,6 +3705,7 @@ class BaseInterpreter(Generic[TContext]):
     _RESERVED_SEND_KWARGS: Tuple[str, ...] = ("wait", "priority")
 
     def _warn_reserved_payload_keys(self, event: Any) -> None:
+        """Warn when a dict-form payload uses a reserved `send()` keyword (#39)."""
         payload = getattr(event, "payload", None)
         # ⚡ `if payload` -- an empty dict (the overwhelmingly common
         #    `send("TYPE")` case) cannot clash; skip the comprehension.
@@ -3463,6 +3758,14 @@ class BaseInterpreter(Generic[TContext]):
         """
         # 1️⃣ Input is a simple string: create a new Event.
         if isinstance(event_or_type, str):
+            if not event_or_type:
+                # 🛡️ BI-11: "" is the engine's EVENTLESS sentinel
+                #    (`_select_transitions` routes it to the `always`
+                #    selection); a user event of that type would get
+                #    eventless handling. The dict form already refused it.
+                raise InvalidEventError(
+                    "Event type must be a non-empty str, got ''."
+                )
             return Event(type=event_or_type, payload=payload)
 
         # 🔌 #305: the `__xstate_event__` adapter protocol. A domain object
@@ -3493,8 +3796,10 @@ class BaseInterpreter(Generic[TContext]):
             if payload and isinstance(produced, dict):
                 # Keyword payload merges OVER the adapter's dict, so a call
                 # site can annotate (`send(order, source="retry")`).
-                produced = {**produced, **payload}
-            return BaseInterpreter._prepare_event(produced)
+                return BaseInterpreter._prepare_event({**produced, **payload})
+            # 📝 BI-12: an adapter returning an `Event` gets the same
+            #    call-site annotation (merged below, never dropped).
+            return BaseInterpreter._prepare_event(produced, **payload)
 
         # 2️⃣ Input is a dictionary: convert to an Event.
         if isinstance(event_or_type, dict):
@@ -3527,12 +3832,33 @@ class BaseInterpreter(Generic[TContext]):
         if isinstance(
             event_or_type, (Event, DoneEvent, AfterEvent, ErrorEvent)
         ):
-            return event_or_type
+            if not payload:
+                return event_or_type
+            # 🛡️ BI-12: keyword payload used to be DISCARDED silently here
+            #    (`send(Event("X"), foo=1)` delivered `{}`). A user `Event`
+            #    takes it merged over its own payload, like the adapter's
+            #    dict form; an engine event's payload is engine data and
+            #    cannot be annotated, so that is refused loudly.
+            if type(event_or_type) is Event:
+                return dataclasses.replace(
+                    event_or_type,
+                    payload={**(event_or_type.payload or {}), **payload},
+                )
+            raise InvalidEventError(
+                f"Keyword payload {sorted(payload)!r} cannot be added to a "
+                f"{type(event_or_type).__name__}; pass a str or dict event."
+            )
 
         # 4️⃣ Duck-typing: handle "foreign" Event objects (for testing robustness).
         if hasattr(event_or_type, "type") and hasattr(
             event_or_type, "payload"
         ):
+            if payload:
+                raise InvalidEventError(
+                    f"Keyword payload {sorted(payload)!r} cannot be added "
+                    f"to a {type(event_or_type).__name__}; pass a str or "
+                    f"dict event."
+                )
             # Trust and forward as-is to preserve any subclass information.
             # 📝 foreign duck-typed event, forwarded as-is on purpose.
             return cast(AnyEvent, event_or_type)
@@ -3721,10 +4047,6 @@ class BaseInterpreter(Generic[TContext]):
         else:
             await self._execute_microstep(transitions, event)
 
-        # -------------------------------------------------------------------------
-        # 🎬 Built-in Action Support
-        # -------------------------------------------------------------------------
-
         if guard_error is None:
             return
         # 🛡️ #152: a guard raised under "raise" during this pass. The
@@ -3835,10 +4157,26 @@ class BaseInterpreter(Generic[TContext]):
         #    a bare service key must match the MIDDLE segment too. Matching
         #    only the suffix silently missed every auto-id actor (the uuid is
         #    the last segment), so `send_to("worker", ...)` dropped the event.
+        # 👪 BI-29: the reserved `parent` name is resolved before the fuzzy
+        #    scan, so an auto-id child whose key happens to be "parent"
+        #    cannot shadow the real parent.
+        if spec in ("parent", "#parent") and self.parent is not None:
+            return self.parent
+        # 🏷️ BI-29: match on the segments AFTER this actor's own id. A
+        #    child `root:kid` names its children `root:kid:worker:<uuid>`;
+        #    `split(":")[1:]` included `kid` -- its OWN name -- so
+        #    `sendTo("kid")` matched every grandchild.
+        own = len(self.id) + 1
+        prefix = f"{self.id}:"
         matches = [
             actor
             for actor_id, actor in self._actors.items()
-            if spec in actor_id.split(":")[1:]
+            if spec
+            in (
+                actor_id[own:].split(":")
+                if actor_id.startswith(prefix)
+                else actor_id.split(":")[1:]
+            )
         ]
         if len(matches) == 1:
             return matches[0]
@@ -3856,14 +4194,17 @@ class BaseInterpreter(Generic[TContext]):
         for actor_id, source_key in self._actor_sources.items():
             if source_key == spec and actor_id in self._actors:
                 return self._actors[actor_id]
-        if spec in ("parent", "#parent") and self.parent is not None:
-            return self.parent
         # 🎭 #267: an invocation id of running actor LOGIC (from_callback /
         #    from_iterator). Not an interpreter -- wrapped so `_deliver`
         #    can `.send()` it uniformly.
         handle = self._running_logic.get(spec)
         if handle is not None:
-            return _LogicTarget(handle)  # type: ignore[return-value]
+            # ⚠️ `_LogicTarget` is NOT an interpreter: it carries only the
+            #    `id` / `status` / `send` / `send_threadsafe` surface the
+            #    delivery leaves use. The annotation stays the interpreter
+            #    type so the two engines' `_deliver` signatures need no
+            #    Protocol yet (follow-up: an `_ActorRef` Protocol).
+            return _LogicTarget(handle)  # type: ignore[return-value]  # duck-typed ActorRef
         return None
 
     def _system_registry(self) -> Dict[str, "BaseInterpreter[Any]"]:
@@ -3939,9 +4280,17 @@ class BaseInterpreter(Generic[TContext]):
         if spec is None:
             return None
         if callable(spec):
-            spec = spec({"context": self.context, "event": event})
-        if isinstance(spec, (int, float)):
-            return float(spec)
+            # 🔥 BI-16: an inline delay callable is user code exactly like
+            #    a named one, and is contained the same way (it used to
+            #    propagate out of state entry while a named one was
+            #    logged and ignored).
+            try:
+                spec = spec({"context": self.context, "event": event})
+            except Exception:  # noqa: BLE001 -- user code
+                logger.exception(
+                    "🔥 Inline delay callable raised; ignoring this timer."
+                )
+                return None
         if isinstance(spec, str):
             named = self.machine.logic.delays.get(spec)
             if named is None:
@@ -3958,22 +4307,45 @@ class BaseInterpreter(Generic[TContext]):
                 #    delay written that way must not be a hard TypeError at
                 #    startup. The legacy `(context, event)` form still works.
                 named = self._call_delay_callable(named, event)
-            # 🛡️ A misconfigured delay must not crash the machine at start.
-            #    `float()` on a string or dict raises, and this runs inside
-            #    `_schedule_state_tasks` during entry, so an unusable value
-            #    took the whole interpreter down instead of disabling one
-            #    timer.
+            return self._delay_ms(named, spec)
+        return self._delay_ms(spec, spec)
+
+    @staticmethod
+    def _delay_ms(value: Any, declared: Any) -> Optional[float]:
+        """Coerce a resolved delay to finite milliseconds, or ``None``.
+
+        🛡️ BI-16: ONE place decides what a usable delay is, for `after`,
+        delayed `raise` and delayed `sendTo` alike. A misconfigured delay
+        must not crash the machine (this runs during state entry), so an
+        unusable value disables that one timer -- LOUDLY: before, an inline
+        callable returning a non-number fell through with no log at all,
+        ``True`` passed as 1 ms, and NaN / inf were filtered on the
+        `after` path only.
+
+        Args:
+            value: What the declaration resolved to.
+            declared: The declaration itself, for the log line.
+
+        Returns:
+            Optional[float]: Milliseconds, or ``None`` when unusable.
+        """
+        if value is None:
+            return None
+        ms: Optional[float] = None
+        if not isinstance(value, bool):
             try:
-                return float(named) if named is not None else None
+                ms = float(value)
             except (TypeError, ValueError):
-                logger.error(
-                    "🔥 Named delay '%s' resolved to %r, which is not a "
-                    "number of milliseconds. Ignoring this timer.",
-                    spec,
-                    named,
-                )
-                return None
-        return None
+                ms = None
+        if ms is None or not math.isfinite(ms):
+            logger.error(
+                "🔥 Delay %r resolved to %r, which is not a finite number "
+                "of milliseconds. Ignoring this timer.",
+                declared,
+                value,
+            )
+            return None
+        return ms
 
     def _call_delay_callable(self, fn: Callable[..., Any], event: Any) -> Any:
         """Invokes a named-delay callable under either calling convention.
@@ -3987,25 +4359,10 @@ class BaseInterpreter(Generic[TContext]):
         """
         args = {"context": self.context, "event": event}
         try:
-            signature = inspect.signature(fn)
-            positional = [
-                p
-                for p in signature.parameters.values()
-                if p.kind
-                in (
-                    inspect.Parameter.POSITIONAL_ONLY,
-                    inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                )
-            ]
-            takes_varargs = any(
-                p.kind is inspect.Parameter.VAR_POSITIONAL
-                for p in signature.parameters.values()
-            )
-        except (TypeError, ValueError):  # pragma: no cover - builtins
-            positional, takes_varargs = [], False
-
-        try:
-            if not takes_varargs and len(positional) == 1:
+            # ⚡ BI-26: the arity is memoised per callable (weak-keyed, like
+            #    the guard memo) -- `inspect.signature` on every timer
+            #    arm cost tens of microseconds.
+            if _delay_accepts_mapping(fn):
                 return fn(args)
             return fn(self.context, event)
         except Exception:
@@ -4057,6 +4414,9 @@ class BaseInterpreter(Generic[TContext]):
     def _apply_assign(self, params: Any, event: AnyEvent) -> None:
         """Applies an `assign` action to the machine context.
 
+        Pinned by ``tests/test_xstate_v5_ordering_parity.py``
+        (``TestAssignComputesAgainstThePriorContext``, ``TestJsonAssignWithoutAssignmentWrapper``).
+
         Args:
             params (Any): The action's params: ``{"assignment": ...}`` (what
                 `assign()` builds), or -- JSON form -- the property mapping
@@ -4081,8 +4441,20 @@ class BaseInterpreter(Generic[TContext]):
         ctx = cast(Dict[str, Any], self.context)
         if callable(assignment):
             produced = assignment(args)
-            if isinstance(produced, dict):
-                ctx.update(produced)
+            # 📝 BI-14: ``None`` is an explicit no-op (an assigner that
+            #    mutated `context` in place and returned nothing). Any
+            #    Mapping is merged. Anything else -- a pydantic model, a
+            #    list -- used to be IGNORED, so the step reported success
+            #    on stale context; it is now an action error, contained
+            #    by `actionErrorPolicy` like any action that raised.
+            if produced is None:
+                return
+            if not isinstance(produced, Mapping):
+                raise TypeError(
+                    f"assign() function must return a mapping of context "
+                    f"updates (or None); got {type(produced).__name__}."
+                )
+            ctx.update(produced)
             return
         if isinstance(assignment, dict):
             # 🧮 XState v5 `assign`: EVERY property is computed against the
@@ -4100,6 +4472,7 @@ class BaseInterpreter(Generic[TContext]):
         self,
         canonical: str,
         action_def: ActionDefinition,
+        params: Any,
         event: AnyEvent,
     ) -> List[Any]:
         """Handles a built-in action, returning any actions it produced.
@@ -4112,12 +4485,13 @@ class BaseInterpreter(Generic[TContext]):
         Args:
             canonical (str): The canonical built-in action name.
             action_def (ActionDefinition): The action being executed.
+            params (Any): The action's params, ALREADY resolved by the
+                caller -- a dynamic-params callable runs once per execution.
             event (AnyEvent): The triggering event.
 
         Returns:
             List[Any]: Nested action definitions to execute next.
         """
-        params = self._resolve_params(action_def.params, event) or {}
 
         # 🛟 Bound nested action expansion. `pure`, `choose` and
         #    `enqueueActions` all return further actions, so a callback that
@@ -4126,7 +4500,7 @@ class BaseInterpreter(Generic[TContext]):
         #    older versions and an Exception here, previously left the machine
         #    in an indeterminate state. A depth counter turns an authoring
         #    mistake into a clear, contained log message.
-        depth = getattr(self, "_action_depth", 0)
+        depth = self._action_depth
         if depth > self.MAX_ACTION_DEPTH:
             logger.error(
                 "🔁 Nested action expansion exceeded %d levels while handling "
@@ -4332,6 +4706,9 @@ class BaseInterpreter(Generic[TContext]):
         of the earlier one's source; otherwise it is preempted. A
         transition that exits nothing never conflicts.
 
+        Pinned by ``tests/test_xstate_v5_ordering_parity.py``
+        (``TestConflictingTransitionsShareOneMicrostep``).
+
         Args:
             plans: ``(transition, plan)`` pairs in selection order.
 
@@ -4469,6 +4846,9 @@ class BaseInterpreter(Generic[TContext]):
         regions' transitions interleaved their actions, and a transition
         whose source the first one had exited AND re-entered ran anyway.
 
+        Pinned by ``tests/test_xstate_v5_ordering_parity.py``
+        (``TestExitOrderIsReverseDocumentOrder``, ``TestConflictingTransitionsShareOneMicrostep``).
+
         Args:
             transitions: The selected transitions, in selection order.
             event (AnyEvent): The triggering event.
@@ -4483,12 +4863,26 @@ class BaseInterpreter(Generic[TContext]):
         if not steps:
             # 🎬 Nothing exits or enters: actions only, each transition its
             #    own context transaction (`_execute_internal_transition`).
-            watch = self._watch_eventless(
-                event, [t for t, _ in plans], _NO_STATES, (), True
+            # ⚡ `_watch_eventless` inlined for the named-event case: it
+            #    only marks the microstep as changing the snapshot.
+            self._microstep_changed = True
+            watch = (
+                self._watch_eventless(
+                    event, [t for t, _ in plans], _NO_STATES, (), True
+                )
+                if event.type == ""
+                else None
             )
             for transition, _ in plans:
                 await self._execute_internal_transition(transition, event)
-            self._settle_eventless_watch(watch)
+            if watch is not None:
+                self._settle_eventless_watch(watch)
+            # 🔔 An actions-only microstep is still a new snapshot (XState
+            #    v5 notifies observers for every one): a counter's `assign`
+            #    must reach `subscribe()` listeners. Before 0.12.0 only the
+            #    exit/enter path below notified. Once per microstep.
+            if self._subscribers:
+                self._notify_subscribers()
             return
         selected = [transition for transition, _ in plans]
         states_to_exit: Set[StateNode[Any]]
@@ -4528,8 +4922,14 @@ class BaseInterpreter(Generic[TContext]):
         #    until the parent itself eventually stopped.
         # ⚡ Most machines spawn nothing; share one empty set then.
         actor_ids_before = set(self._actors) if self._actors else _NO_IDS
-        watch = self._watch_eventless(
-            event, selected, states_to_exit, states_to_enter, keep_order
+        # ⚡ `_watch_eventless` inlined for the named-event case (see above).
+        self._microstep_changed = True
+        watch = (
+            self._watch_eventless(
+                event, selected, states_to_exit, states_to_enter, keep_order
+            )
+            if event.type == ""
+            else None
         )
 
         # 🧷 Context is snapshotted only when a rollback could need it: a
@@ -4551,6 +4951,13 @@ class BaseInterpreter(Generic[TContext]):
             else None
         )
         internal_depth_before = self._internal_queue_depth()
+        # 🕰️ BI-31: `_exit_states` records history for exited owners; a
+        #    rolled-back step must not leave history from a transition
+        #    that never happened (a later snapshot would persist it).
+        #    ⚡ Only machines that declare history pay for the copy.
+        history_before: Optional[Dict[str, List[StateNode[Any]]]] = (
+            dict(self._history) if self.machine.has_history_states else None
+        )
         # 🧾 The transition a failure is reported against: the one whose
         #    actions are running, else the first of the microstep.
         current = selected[0]
@@ -4662,9 +5069,18 @@ class BaseInterpreter(Generic[TContext]):
             #    a rolled-back state with `after: {250: "timeout"}` would never
             #    time out again. Re-scheduling makes the rollback a true
             #    restore rather than a cosmetic one.
-            for node in snapshot_before:
-                if node in states_to_exit:
-                    self._schedule_state_tasks(node)
+            #    🔢 BI-31: in DOCUMENT order, not set-iteration order, so
+            #    timers sharing a delay fire -- and invokes restart -- in
+            #    a deterministic order. 📝 A restored invoke is a NEW
+            #    invocation: its service runs again from the start.
+            for node in sorted(
+                (n for n in snapshot_before if n in states_to_exit),
+                key=_doc_order_key,
+            ):
+                self._schedule_state_tasks(node)
+            if history_before is not None:
+                self._history.clear()
+                self._history.update(history_before)
 
             # 👶 #60 review: stop and unregister any actor a `spawn_*`
             #    action in THIS microstep's action lists created before a
@@ -4685,6 +5101,9 @@ class BaseInterpreter(Generic[TContext]):
                     if actor is not None:
                         await self._stop_actor_leaf(actor)
 
+            # 🏁 A completion reached by the rolled-back step never
+            #    happened (status stays "running", or `fail` stops it).
+            self._pending_completion = None
             if self._finish_rollback(
                 rollback_cause,
                 current,
@@ -4695,21 +5114,29 @@ class BaseInterpreter(Generic[TContext]):
             raise
         finally:
             self._lifecycle_failures.pop()
-        self._settle_eventless_watch(watch)
+        if self._pending_completion is not None:
+            self._commit_completion()
+        if watch is not None:
+            self._settle_eventless_watch(watch)
 
         # Notify plugins and subscribers of the completed microstep.
         if not failed_actions:
             self.last_transition_ok = True
-        self._publish_soft_step_error()  # #133
-        for plug in self._plugins:
-            for transition in selected:
-                plug.on_transition(
-                    self,
-                    snapshot_before,
-                    self._active_state_nodes.copy(),
-                    transition,
-                )
-        self._notify_subscribers()
+        if self._step_soft_error is not None:
+            self._publish_soft_step_error()  # #133
+        if self._plugins:
+            # ⚡ One copy per microstep, not one per plugin per transition
+            #    (`snapshot_before` is already a private copy). Never the
+            #    live set, so no plugin can mutate the configuration.
+            from_states = snapshot_before
+            to_states = self._active_state_nodes.copy()
+            for plug in self._plugins:
+                for transition in selected:
+                    plug.on_transition(
+                        self, from_states, to_states, transition
+                    )
+        if self._subscribers:
+            self._notify_subscribers()
 
     async def _execute_internal_transition(
         self,
@@ -4748,14 +5175,17 @@ class BaseInterpreter(Generic[TContext]):
             return
         if not failed:
             self.last_transition_ok = True
-        self._publish_soft_step_error()  # #133
-        for plug in self._plugins:
-            plug.on_transition(
-                self,
-                self._active_state_nodes,
-                self._active_state_nodes,
-                transition,
-            )
+        if self._step_soft_error is not None:
+            self._publish_soft_step_error()  # #133
+        if self._plugins:
+            # 🧊 A copy, never the LIVE set: a plugin that stores
+            #    `to_states` must not see it change later, and one that
+            #    mutates it must not corrupt the configuration. (A `set`,
+            #    not a frozenset: the hook is typed `Set` and plugins in
+            #    the wild call set methods on it.)
+            config = set(self._active_state_nodes)
+            for plug in self._plugins:
+                plug.on_transition(self, config, config, transition)
 
     async def _execute_actions(
         self, actions: List[ActionDefinition], event: AnyEvent
@@ -4829,6 +5259,11 @@ class BaseInterpreter(Generic[TContext]):
                         )
                     except asyncio.CancelledError:
                         raise
+                    except _NestedActionsFailed as nested:
+                        # 📝 Already reported by the nested run; only the
+                        #    policy is left to apply (by our caller).
+                        failed.extend(nested.failures)
+                        return failed
                     except Exception as exc:  # noqa: BLE001 -- user params
                         self._report_action_failure(action_def, event, exc)
                         failed.append((action_def, exc))
@@ -4955,20 +5390,25 @@ class BaseInterpreter(Generic[TContext]):
             action_def (ActionDefinition): The action being executed.
             event (Event): The triggering event.
         """
+        # ⚡ Resolve params ONCE: a dynamic-params callable is user code and
+        #    may be expensive or have side effects; it used to run twice.
+        params = self._resolve_params(action_def.params, event) or {}
         # 🧮 Shared semantics first; may yield nested actions to run.
         followups = self._collect_builtin_followups(
-            canonical, action_def, event
+            canonical, action_def, params, event
         )
         if followups:
             self._action_depth += 1
             try:
-                await self._execute_actions(
+                nested_failures = await self._execute_actions(
                     [ActionDefinition(f) for f in followups], event
                 )
             finally:
                 self._action_depth -= 1
-
-        params = self._resolve_params(action_def.params, event) or {}
+            if nested_failures:
+                # 🔥 Propagate so `actionErrorPolicy` sees a failure in a
+                #    `choose` / `pure` / `enqueueActions` branch.
+                raise _NestedActionsFailed(nested_failures)
 
         if canonical == RAISE:
             target_event = self._resolve_event_spec(params.get("event"), event)
@@ -4989,10 +5429,15 @@ class BaseInterpreter(Generic[TContext]):
             await self._deliver(actor, target_event, delay, params.get("id"))
 
         elif canonical == SEND_PARENT:
-            if self.parent is None:
-                logger.warning("⚠️ sendParent called with no parent actor.")
-                return
             target_event = self._resolve_event_spec(params.get("event"), event)
+            if self.parent is None:
+                # 🔔 BI-15: the sibling of an unresolved `sendTo` -- an
+                #    addressed event with no destination is a reported DROP
+                #    and a soft step error, not just a log line (#133).
+                self._report_unresolved_target(
+                    "sendParent", "<no parent>", target_event
+                )
+                return
             delay = self._resolve_delay(params.get("delay"), event)
             self._notify_event_sent(self.parent, target_event)
             await self._deliver(
@@ -5043,8 +5488,9 @@ class BaseInterpreter(Generic[TContext]):
             if self.parent is not None:
                 await self._deliver(self.parent, escalate_event, None, None)
             else:
-                logger.error(
-                    "🔥 escalate() with no parent actor: %r", error_payload
+                # 🔔 BI-15: reported like an unresolved `sendTo` (#133).
+                self._report_unresolved_target(
+                    "escalate", "<no parent>", escalate_event
                 )
 
         elif canonical == STOP_CHILD:
@@ -5145,14 +5591,15 @@ class BaseInterpreter(Generic[TContext]):
     ) -> None:
         """Run a state's ``entry``/``exit`` list and record any failures.
 
-        🏛️ Architecture decision (#27 review): `_enter_states` and
-        `_exit_states` are recursive and are called from several places
-        (transitions, `start()`, history restore). Raising from inside them
-        would unwind that recursion at an arbitrary depth and leave the
-        configuration torn -- exactly what the rollback exists to prevent.
-        Instead, failures are appended to the innermost open transaction on
-        `_lifecycle_failures`; the transaction owner applies the policy once
-        the whole exit → actions → enter sequence has run. Outside any
+        🏛️ Architecture decision (#27 review): failures are DEFERRED so the
+        policy is applied once per microstep, after exit, transition
+        actions and entry have all run. Raising from inside the exit / entry
+        passes (called from transitions, `start()`, history restore) would
+        stop them half-way and leave the configuration torn -- exactly what
+        the rollback exists to prevent. Instead, failures are appended to
+        the innermost open transaction on `_lifecycle_failures`; the
+        transaction owner applies the policy once the whole exit → actions
+        → enter sequence has run. Outside any
         transaction (`start()`), failures are reported against a synthetic
         init transition so `start()` honours the policy too.
         """
@@ -5238,6 +5685,9 @@ class BaseInterpreter(Generic[TContext]):
         child next to the target. XState / SCXML compute the entry set
         first and enter it in document order; doing the same makes the
         order the chart's declaration order and removes the hints.
+
+        Pinned by ``tests/test_xstate_v5_ordering_parity.py``
+        (``TestParallelEntryIsDocumentOrder``, ``TestMultiTargetParallelEntry``).
         """
         trigger_event = event or _INIT_EVENT  # ⚡ shared immutable sentinel
         # ⚡ One level check per call, not one per state: `logger.debug`
@@ -5296,7 +5746,10 @@ class BaseInterpreter(Generic[TContext]):
         while stack:
             state = stack.pop()
             if state.type == "compound" and state.initial:
-                if any(child in to_enter for child in state.states.values()):
+                # ⚡ One C-level membership test per compound state instead
+                #    of a generator over its children (this runs on every
+                #    `start()` and every entry into a compound state).
+                if not to_enter.isdisjoint(state.states.values()):
                     continue
                 initial_child = state.states.get(state.initial)
                 if initial_child is None:
@@ -5344,6 +5797,9 @@ class BaseInterpreter(Generic[TContext]):
         inside the owner (which never leaves it) overwrote its history, and
         a later transition to the history node from inside the owner
         restored that instead of the history default.
+
+        Pinned by ``tests/test_xstate_v5_ordering_parity.py``
+        (``TestHistoryRecordsOnlyOnOwnerExit``).
 
         Args:
             states_to_exit (List[StateNode]): The states about to be exited.
@@ -5444,11 +5900,20 @@ class BaseInterpreter(Generic[TContext]):
     ) -> None:
         """Exits a list of states in order, canceling tasks and running actions.
 
-        This method follows the SCXML algorithm for state exit. For each state, it:
-        1.  Cancels any running tasks (`after` timers, `invoke` services)
-            owned by the state.
-        2.  Executes all 'exit' actions.
+        This follows XState v5 ``exitStates``, which resolves
+        ``[...state.exit, ...state.invoke.map(def => stopChild(def.id))]``
+        for each state. For each state, it:
+
+        1.  Executes all 'exit' actions -- while the state's invoked
+            actors are still running, so an exit action can still
+            ``sendTo`` one of them (a final ``FLUSH``).
+        2.  Cancels the tasks the state owns (`after` timers, `invoke`
+            services / child actors).
         3.  Removes the state from the active configuration.
+
+        Pinned by ``tests/test_review_fixes_engine.py``
+        (``TestExitActionsRunBeforeInvokesStop``) and the exit-order classes
+        of ``tests/test_xstate_v5_ordering_parity.py``.
 
         Args:
             states_to_exit (List[StateNode]): An ordered list of states to
@@ -5465,19 +5930,22 @@ class BaseInterpreter(Generic[TContext]):
         for state in states_to_exit:
             if debug:
                 logger.debug("⬅️  Exiting state: '%s'.", state.id)
-            # 🛑 Crucially, cancel tasks before running exit actions.
-            #    ⚡ A state that declares no `after` / `invoke` owns nothing
-            #    to cancel (delayed sends are owned by the root, which is
-            #    never exited by a transition).
-            if state.owns_tasks:
-                _pending = self._cancel_state_tasks(state)
-                if _pending is not None:
-                    await _pending
-            # ⚙️ Then, run the synchronous exit actions (⚡ only if any).
+            # ⚙️ Exit actions first (⚡ only if any). 🏛️ BI-09: up to 0.12
+            #    the state's invokes were cancelled BEFORE its exit actions,
+            #    so an exit action's `sendTo(<invoke id>)` found no target.
             if state.exit:
                 await self._execute_lifecycle_actions(
                     state.exit, trigger_event
                 )
+            # 🛑 Then stop what the state owns (XState's `stopChild` for
+            #    each invoke, appended after `exit`). ⚡ A state that
+            #    declares no `after` / `invoke` owns nothing to cancel
+            #    (delayed sends are owned by the root, which is never
+            #    exited by a transition).
+            if state.owns_tasks:
+                _pending = self._cancel_state_tasks(state)
+                if _pending is not None:
+                    await _pending
             # 🗑️ Finally, remove from the active set.
             self._active_state_nodes.discard(state)
             # 📞 #204: exited before its macrostep settled -> never invoked.
@@ -5562,6 +6030,9 @@ class BaseInterpreter(Generic[TContext]):
         parallel state's ``onDone`` was skipped when the finishing region
         had its own.
 
+        Pinned by ``tests/test_xstate_v5_ordering_parity.py``
+        (``TestDoneStatePropagation``, ``TestExitActionsRunOnCompletion``, ``TestDoneStateIsAnInternalEvent``).
+
         Args:
             final_state (StateNode): The final state that was just entered.
             event (Optional[Event]): The event of the step that entered it;
@@ -5626,7 +6097,23 @@ class BaseInterpreter(Generic[TContext]):
                     await self._execute_lifecycle_actions(
                         state.exit, trigger_event
                     )
+            if self._lifecycle_failures:
+                # 🧾 Inside a microstep transaction: a deferred entry/exit
+                #    failure may still roll this step back, and a machine
+                #    already reported "done" (hooks fired, teardown
+                #    scheduled) cannot be un-completed. The transaction
+                #    owner applies it on commit (`_commit_completion`).
+                if self._pending_completion is None:
+                    self._pending_completion = (output,)
+                return
             self._complete(output)
+
+    def _commit_completion(self) -> None:
+        """Apply a completion `_check_and_fire_on_done` deferred while a
+        microstep transaction was open (see `_pending_completion`)."""
+        pending, self._pending_completion = self._pending_completion, None
+        if pending is not None:
+            self._complete(pending[0])
 
     def _resolve_output_value(self, output: Any) -> Any:
         """Resolves an `output` declaration to a concrete value.
@@ -5817,6 +6304,7 @@ class BaseInterpreter(Generic[TContext]):
     def _notify_unhandled(
         self, event: AnyEvent, active: Set[str], disposition: str
     ) -> None:
+        """Fire `on_unhandled_event` for an event no transition took."""
         # #195: a caller-built `DoneEvent` / `AfterEvent` is user traffic
         # and reaches the policy like a plain `Event`; the hook's annotated
         # `Event` type is widened accordingly.
@@ -6012,7 +6500,8 @@ class BaseInterpreter(Generic[TContext]):
         #    is what makes `current_state_ids` stop lying about the leaf.
         self._active_state_nodes.clear()
         self.status = "stopped"
-        self._notify_subscribers()
+        if self._subscribers:
+            self._notify_subscribers()
         self._on_terminal("stopped")
         for plugin in self._plugins:
             plugin.on_interpreter_stop(self)
@@ -6041,7 +6530,8 @@ class BaseInterpreter(Generic[TContext]):
             hook = getattr(plugin, "on_error", None)
             if callable(hook):
                 hook(self, error)
-        self._notify_subscribers()
+        if self._subscribers:
+            self._notify_subscribers()
         self._on_terminal("error")
 
     def _complete(self, output: Any) -> None:
@@ -6093,6 +6583,25 @@ class BaseInterpreter(Generic[TContext]):
     def _schedule_teardown(self) -> None:
         """Engine-specific: run `_teardown()` now (sync) or as a task (async)."""
         raise NotImplementedError  # pragma: no cover
+
+    def _report_dropped(self, events: List[AnyEvent]) -> None:
+        """Fire `on_event_dropped` for events a teardown discards (#129).
+
+        Shared by both engines' `_teardown` so the two cannot disagree on
+        what a stranded event is: an accepted event that will never run is
+        a drop, whichever queue it sat in. The reason follows `status` --
+        ``"stopped"`` after `stop()`, ``"not_running"`` after the machine
+        reached ``"done"`` / ``"error"``.
+
+        Args:
+            events: The events being discarded, in queue order.
+        """
+        if not events:
+            return
+        reason = "stopped" if self.status == "stopped" else "not_running"
+        for ev in events:
+            for plugin in self._plugins:
+                plugin.on_event_dropped(self, ev, reason)
 
     def _unregister_from_system(self) -> None:
         """Remove every registry entry pointing at THIS interpreter (#57).
@@ -6186,9 +6695,14 @@ class BaseInterpreter(Generic[TContext]):
             ):
                 yield from on_map[key]
 
-        # 🏁 `onDone` transitions for compound/parallel states.
-        if node.on_done and node.on_done.event == event_type:
-            yield node.on_done
+        # 🏁 `onDone` transitions for compound/parallel states -- EVERY
+        #    declared alternative, in document order (MOD-02: a list such
+        #    as `[{guard, target}, {target}]` used to lose its fallback).
+        #    They all carry the same `done.state.<id>` event, so one check
+        #    covers the list; `_first_enabled` evaluates the guards.
+        on_done = node.on_done
+        if on_done is not None and on_done.event == event_type:
+            yield from node.on_done_transitions
         if not system:
             return
 
@@ -6328,6 +6842,9 @@ class BaseInterpreter(Generic[TContext]):
         on the same state), and let a parallel state's own handler be
         selected next to a region's transition for the same event.
 
+        Pinned by ``tests/test_xstate_v5_ordering_parity.py``
+        (``TestGuardEvaluationOrder``, ``TestWildcardMatchesEngineEvents``).
+
         Args:
             event (AnyEvent): The event being processed.
 
@@ -6377,6 +6894,9 @@ class BaseInterpreter(Generic[TContext]):
         OTHER region was evaluated first, and a conflict between two
         regions' ``always`` transitions could go the other way.
 
+        Pinned by ``tests/test_xstate_v5_ordering_parity.py``
+        (``TestAlwaysOrderFollowsEntryOrder``).
+
         Args:
             event (AnyEvent): The eventless pseudo-event (type ``""``).
 
@@ -6405,7 +6925,6 @@ class BaseInterpreter(Generic[TContext]):
     def _compute_states_to_exit(
         self,
         domain: Optional[StateNode[Any]],
-        target_state: Optional[StateNode[Any]] = None,
     ) -> Set[StateNode[Any]]:
         """XState's ``computeExitSet``: the active states a transition exits.
 
@@ -6421,16 +6940,16 @@ class BaseInterpreter(Generic[TContext]):
         SCXML semantics. Before 0.12.0 the exit set was scoped to the targeted
         region, so the source region silently stayed put.
 
+        Pinned by ``tests/test_xstate_v5_ordering_parity.py``
+        (``TestCrossRegionTargetHasParallelDomain``).
+
         Args:
             domain (Optional[StateNode]): The transition domain, or `None`
                 when it lies above the machine root.
-            target_state (Optional[StateNode]): Unused; kept so callers of
-                the earlier signature keep working.
 
         Returns:
             Set[StateNode]: The active states to exit.
         """
-        del target_state
         active = self._active_state_nodes
         if domain is None:
             return set(active)
@@ -6476,15 +6995,24 @@ class BaseInterpreter(Generic[TContext]):
         #    with `isinstance(x, StateNode)`: a process that imported the
         #    package twice (`src.xstate_statemachine` and
         #    `xstate_statemachine`) holds nodes of the other copy's class.
-        targets: Tuple[StateNode[Any], ...] = (
-            tuple(target_state)
-            if isinstance(target_state, (list, tuple))
-            else (cast(StateNode[Any], target_state),)
-        )
-        key: Any = (
-            id(targets[0]) if len(targets) == 1 else tuple(map(id, targets))
-        )
-        has_history = any(t.type == "history" for t in targets)
+        targets: Tuple[StateNode[Any], ...]
+        key: Any
+        if isinstance(target_state, (list, tuple)):
+            targets = tuple(target_state)
+            key = (
+                id(targets[0])
+                if len(targets) == 1
+                else tuple(map(id, targets))
+            )
+            has_history = any(t.type == "history" for t in targets)
+        else:
+            # ⚡ The single-target shape of nearly every transition: no
+            #    tuple or generator work, and no runtime `StateNode[Any]`
+            #    subscription (the generic was evaluated on every event).
+            single = cast("StateNode[Any]", target_state)
+            targets = (single,)
+            key = id(single)
+            has_history = single.type == "history"
         memo = transition._geometry
         if not has_history and memo is not None and memo[0] == key:
             return memo[1], list(memo[2])
@@ -6512,6 +7040,9 @@ class BaseInterpreter(Generic[TContext]):
         the domain is a parallel state, each of its regions that holds no
         target (re-entered through its initial state); then every default
         descendant those imply (`_complete_entry_set`).
+
+        Pinned by ``tests/test_xstate_v5_ordering_parity.py``
+        (``TestCompoundSelfTargetWithoutReenter``).
 
         Args:
             targets: The EFFECTIVE targets (a history node already replaced
@@ -6567,6 +7098,9 @@ class BaseInterpreter(Generic[TContext]):
           ancestor: the domain is ``None`` ("above the root") and the root
           itself exits and re-enters.
 
+        Pinned by ``tests/test_xstate_v5_ordering_parity.py``
+        (``TestReenterHasDomainAboveTheSource``).
+
         Args:
             transition (TransitionDefinition): The transition to analyse.
             target_state: Its effective target(s) (history already
@@ -6578,7 +7112,7 @@ class BaseInterpreter(Generic[TContext]):
         targets: Sequence[StateNode[Any]] = (
             target_state
             if isinstance(target_state, (list, tuple))
-            else (cast(StateNode[Any], target_state),)
+            else (cast("StateNode[Any]", target_state),)
         )
         source = transition.source
         if not transition.reenter and all(
@@ -6628,6 +7162,12 @@ class BaseInterpreter(Generic[TContext]):
         if not ancestor:
             return True
         # Check for self or if the ID indicates a child relationship.
+        # ⚠️ BI-28: an id-PREFIX test is only correct because the model
+        #    refuses sibling keys where one is a dotted extension of the
+        #    other (`v2` next to `v2.0` raises InvalidConfigError
+        #    "ambiguous" at build time). Relaxing that check would silently
+        #    break exit sets and history; use a parent walk
+        #    (`_is_proper_descendant`) if it ever changes.
         return node.id.startswith(f"{ancestor.id}.") or node == ancestor
 
     # -------------------------------------------------------------------------
@@ -6650,9 +7190,6 @@ class BaseInterpreter(Generic[TContext]):
             trigger: The event whose transition entered *state*, handed to
                 the state's invokes when they are armed. ``None`` for the
                 initial entry and for re-arming after a rollback.
-
-        Args:
-            state (StateNode): The state being entered.
         """
         self._schedule_state_timers(state)
         # 📞 #204: invokes are DEFERRED to the end of the macrostep (SCXML
@@ -6700,6 +7237,8 @@ class BaseInterpreter(Generic[TContext]):
     ) -> None:
         """Arm *state*'s timers; *remaining* (event type → ms left) overrides
         the declared delay for a `"resume"` / `"fire_due"` restore (#264)."""
+        if self._dormant_timer_states:
+            self._dormant_timer_states.discard(state.id)
         self._entry_seq += 1
         seq = self._entry_seq
         # 🕒 Schedule `after` timers.
@@ -6794,7 +7333,6 @@ class BaseInterpreter(Generic[TContext]):
             )
             # 💥 Fail-fast if the service implementation is missing.
             if service_callable is None:
-                # FIX: Reverted error message to match test suite expectations.
                 raise ImplementationMissingError(
                     f"Service '{invocation.src}' referenced by "
                     f"state '{state.id}' is not registered."
@@ -6878,7 +7416,6 @@ class BaseInterpreter(Generic[TContext]):
         # 🔍 Find the guard function in the machine's logic.
         guard_callable = self.machine.logic.guards.get(guard.type)
         if not guard_callable:
-            # FIX: Reverted error message to match test suite expectations.
             raise ImplementationMissingError(
                 f"Guard '{guard.type}' not implemented."
             )
@@ -7049,27 +7586,9 @@ class BaseInterpreter(Generic[TContext]):
         """
         if params is None:
             return fn(context, event)
-        try:
-            signature = inspect.signature(fn)
-            accepts = len(
-                [
-                    p
-                    for p in signature.parameters.values()
-                    if p.kind
-                    in (
-                        inspect.Parameter.POSITIONAL_ONLY,
-                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
-                    )
-                ]
-            )
-            has_varargs = any(
-                p.kind is inspect.Parameter.VAR_POSITIONAL
-                for p in signature.parameters.values()
-            )
-        except (TypeError, ValueError):  # pragma: no cover - builtins
-            return fn(context, event)
-
-        if has_varargs or accepts >= 3:
+        # ⚡ The arity is inspected once per guard callable, not per call
+        #    (`_guard_accepts_params` is a weak-keyed memo, #307 perf).
+        if _guard_accepts_params(fn):
             return fn(context, event, params)
         return fn(context, event)
 

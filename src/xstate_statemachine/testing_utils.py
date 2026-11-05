@@ -62,15 +62,25 @@ def logic_names(
     leaf guards inside composite guards, every invoke ``src`` -- so the
     result is exactly the set of names the engine will look up. Built-in
     actions (`assign`, `raise`, `sendTo`, …) are excluded; the engine
-    provides those.
-    """
-    if not isinstance(config_or_machine, MachineNode):
-        # 📝 The extractor under `cli/` is pure stdlib and works on the raw
-        #    config; imported lazily to keep this module's import cost nil.
-        from .cli.extractor import extract_logic_names
+    provides those. A ``spawn_<key>`` / ``spawn_blocking_<key>`` action is
+    reported as the SERVICE ``<key>`` (what `LogicLoader` requires and the
+    engine looks up), not as an action.
 
-        a, g, s = extract_logic_names(dict(config_or_machine))
-        return set(a), set(g), set(s)
+    Args:
+        config_or_machine: Raw JSON config or a built `MachineNode`.
+
+    Returns:
+        ``(actions, guards, services)`` name sets.
+
+    Raises:
+        InvalidConfigError: (and the other `create_machine` build errors)
+            for a raw config that is not a valid chart.
+    """
+    # 🏛️ RU-25: a raw config is BUILT first, so both input forms answer
+    #    from the same parsed model. The CLI extractor only understands
+    #    `params.guards` composites and returned `{"and"}` where the machine
+    #    path returned the leaf guards for the very same chart.
+    config_or_machine = _as_machine(config_or_machine)
 
     from .validation import transitions_of, walk
 
@@ -78,24 +88,66 @@ def logic_names(
     guards: Set[str] = set()
     services: Set[str] = set()
     for node in walk(config_or_machine):
-        _action_names(list(node.entry) + list(node.exit), actions, guards)
+        _action_names(
+            list(node.entry) + list(node.exit), actions, guards, services
+        )
         for inv in node.invoke:
             if inv.src:
                 services.add(inv.src)
         for _label, t in transitions_of(node):
-            _action_names(t.actions, actions, guards)
+            _action_names(t.actions, actions, guards, services)
             _guard_names(t.guard_def, guards)
     return actions, guards, services
 
 
+def _as_machine(
+    config_or_machine: Union[Mapping[str, Any], MachineNode[Any]],
+) -> MachineNode[Any]:
+    """Return a parsed `MachineNode` for a raw config or a machine.
+
+    Args:
+        config_or_machine: Raw JSON config or a `MachineNode`.
+
+    Returns:
+        The machine itself, or one built from the config. A config that is
+        valid but declares names with no implementation is built with an
+        empty `MachineLogic`; every other build error is the caller's,
+        verbatim (not a misleading ``TypeError`` from ``dict(...)``).
+    """
+    if isinstance(config_or_machine, MachineNode):
+        return config_or_machine
+    from .exceptions import ImplementationMissingError
+    from .factory import create_machine
+
+    # 📝 `create_machine` is typed on `Dict`; a non-mapping (int, list,
+    #    None) must still reach it so the caller gets ITS error, hence the
+    #    cast rather than a `dict(...)` that would raise first.
+    raw: Dict[str, Any] = cast(Dict[str, Any], config_or_machine)
+    try:
+        return create_machine(raw)
+    except ImplementationMissingError:
+        # 📝 Expected: the config is VALID but declares names we are about
+        #    to stub.
+        return MachineNode(dict(raw), MachineLogic())
+
+
 def _action_names(
-    action_defs: Any, actions: Set[str], guards: Set[str], depth: int = 0
+    action_defs: Any,
+    actions: Set[str],
+    guards: Set[str],
+    services: Optional[Set[str]] = None,
+    depth: int = 0,
 ) -> None:
     """Collect user action names, descending into static `choose` branches
     (their actions AND their guards) -- the engine looks those up by name
     when the branch runs."""
     from .actions import CHOOSE, choose_branches, is_builtin, resolve_builtin
-    from .models import ActionDefinition, GuardDefinition
+    from .models import (
+        ActionDefinition,
+        GuardDefinition,
+        is_spawn_action,
+        spawn_service_key,
+    )
 
     if depth > 32:  # a hand-built self-referencing choose; stop quietly
         return
@@ -110,6 +162,14 @@ def _action_names(
                 continue
         elif not isinstance(getattr(act, "type", None), str):
             continue
+        if is_spawn_action(act.type):
+            # 🎭 `spawn_<key>` is resolved from `logic.services`, never from
+            #    `logic.actions` (same routing as `LogicLoader`); stubbing it
+            #    as an ACTION would shadow the spawn (#155 checks actions
+            #    first).
+            if services is not None:
+                services.add(spawn_service_key(act.type))
+            continue
         if not is_builtin(act.type):
             actions.add(act.type)
             continue
@@ -121,6 +181,7 @@ def _action_names(
                 raw if isinstance(raw, list) else [raw],
                 actions,
                 guards,
+                services,
                 depth + 1,
             )
             guard_cfg = branch.get("guard", branch.get("cond"))
@@ -178,20 +239,7 @@ def stub_logic(
     #    Building also makes an invalid config raise exactly what
     #    `create_machine` raises, instead of a misleading `TypeError`/
     #    `ValueError` from `dict(...)` or a silent empty stub.
-    if not isinstance(config_or_machine, MachineNode):
-        from .exceptions import ImplementationMissingError
-        from .factory import create_machine
-
-        # 📝 `create_machine` is typed on `Dict`; a non-mapping (int, list,
-        #    None) must still reach it so the caller gets ITS error, hence
-        #    the cast rather than a `dict(...)` that would raise first.
-        raw: Dict[str, Any] = cast(Dict[str, Any], config_or_machine)
-        try:
-            config_or_machine = create_machine(raw)
-        except ImplementationMissingError:
-            # 📝 Expected: the config is VALID but declares names we are
-            #    about to stub. Every other error is the caller's, verbatim.
-            config_or_machine = MachineNode(dict(raw), MachineLogic())
+    config_or_machine = _as_machine(config_or_machine)
     action_names, guard_names, service_names = logic_names(config_or_machine)
     record: List[str] = ran if ran is not None else []
     # 📝 Keep the caller's mapping BY REFERENCE (no copy) so flipping a

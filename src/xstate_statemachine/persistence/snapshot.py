@@ -30,7 +30,15 @@
 from __future__ import annotations
 
 import json
-from typing import TYPE_CHECKING, Any, Dict, Optional, Tuple
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    NoReturn,
+    Optional,
+    Tuple,
+)
 
 from ..exceptions import SnapshotDriftError, SnapshotVersionError
 
@@ -50,8 +58,8 @@ if TYPE_CHECKING:  # pragma: no cover
 #:        ``chain_trips`` / ``last_chain_error`` (#226).
 #:   4 -- 0.11.0 (#305): ``machine_version`` (the chart's root ``version``
 #:        label, or ``None``) and ``deadlines`` (a list of ``Deadline``
-#:        records for durable `after` timers, #264; always ``[]`` until an
-#:        engine writes them). Additive: a v3 blob upcasts with
+#:        records for durable `after` timers, #264; ``[]`` when none are
+#:        armed -- introduced empty in 0.11.0). Additive: a v3 blob upcasts with
 #:        ``machine_version=None, deadlines=[]``.
 #:
 #: 🏛️ Rolling deploys: `upcast` only goes FORWARD. During a rollout the
@@ -65,6 +73,11 @@ SNAPSHOT_VERSION: int = 4
 # -----------------------------------------------------------------------------
 # 🔏 Structural hash
 # -----------------------------------------------------------------------------
+#: 📝 P-27: the failure callback of the `check_shape` helpers never returns,
+#:    so mypy can narrow after a guarded ``fail(...)``.
+_Fail = Callable[[str], NoReturn]
+
+
 def _guard_shape(g: Any) -> Any:
     """Recursive shape of a guard: name, composite children, `stateIn` target.
 
@@ -166,6 +179,11 @@ def check_version(snapshot: Dict[str, Any]) -> int:
             f"Snapshot is malformed: 'version' is {type(raw).__name__}, "
             f"expected an integer."
         )
+    # 🛡️ P-42: `int(1.9)` -> 1 silently picked another upcast path.
+    if isinstance(raw, float) and not raw.is_integer():
+        raise SnapshotCorruptError(
+            f"Snapshot is malformed: 'version' {raw!r} is not an integer."
+        )
     try:
         version = int(raw)
     # 🛡️ #305: `json.loads` accepts the bare token `Infinity`, and
@@ -210,7 +228,7 @@ def check_shape(snapshot: Dict[str, Any], *, version: int = 0) -> None:
     """
     from ..exceptions import SnapshotCorruptError
 
-    def fail(msg: str) -> None:
+    def fail(msg: str) -> NoReturn:
         raise SnapshotCorruptError(f"Snapshot is malformed: {msg}.")
 
     if not isinstance(snapshot, dict):
@@ -362,7 +380,7 @@ def check_shape(snapshot: Dict[str, Any], *, version: int = 0) -> None:
     _check_v4_fields(snapshot, fail)
 
 
-def _check_event_records(snapshot: Dict[str, Any], fail: Any) -> None:
+def _check_event_records(snapshot: Dict[str, Any], fail: _Fail) -> None:
     """The three persisted event lanes: a list of records whose `type` is
     a non-empty string (#158) and whose optional `stream` flag (#267) is a
     bool -- `restore_event` tests `is True`, so a corrupt ``"yes"`` would
@@ -390,7 +408,7 @@ def _check_event_records(snapshot: Dict[str, Any], fail: Any) -> None:
                 )
 
 
-def _check_v4_fields(snapshot: Dict[str, Any], fail: Any) -> None:
+def _check_v4_fields(snapshot: Dict[str, Any], fail: _Fail) -> None:
     """Layout-v4 keys: `machine_version` is the chart's label or null;
     `deadlines` is a list of `Deadline` records (see `deadline.py`).
     Validated here, like the #241 fields, so a malformed blob is a
@@ -461,9 +479,9 @@ def check_identity(
             f"snapshot was taken from machine '{snap_id}' but is being "
             f"restored into '{machine.id}'"
         )
-    if not verify_hash:
-        return
     snap_hash = snapshot.get("machine_hash")
+    if not verify_hash and expected_hash is None:
+        return
     # 🔐 #205: when the CALLER supplies the fingerprint the payload must
     #    match, it is compared against THAT -- a value the caller holds --
     #    rather than letting an attacker-controlled field validate itself.
@@ -532,7 +550,13 @@ def upcast(snapshot: Dict[str, Any], version: int) -> Dict[str, Any]:
         # `after`). Only a v3 record can carry a deliberately unflagged
         # (hand-written) completion.
         for key in ("pending_events", "deferred"):
-            for rec in snapshot.get(key) or []:
+            lane = snapshot.get(key)
+            # 🛡️ P-05: upcast runs BEFORE check_shape; a non-list lane is
+            #    skipped here so check_shape reports it as corrupt instead
+            #    of a bare TypeError escaping from this loop.
+            if not isinstance(lane, list):
+                continue
+            for rec in lane:
                 if isinstance(rec, dict) and rec.get("kind") in (
                     "done",
                     "error",

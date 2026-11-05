@@ -372,7 +372,9 @@ class PythonicFunctionalStrategy(BaseStrategy):
                 "    # -------------------------------------------"
                 "------------------------"
             )
-            lines.append(f"    # 🚀 Simulating Actor «{a_name}»")
+            lines.append(
+                f"    # 🚀 Simulating Actor «{docstring_safe(a_name)}»"
+            )
             lines.append(
                 "    # -------------------------------------------"
                 "------------------------"

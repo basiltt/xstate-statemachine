@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 import threading
 import time
 import uuid
@@ -68,6 +69,8 @@ from ._schema import (
 )
 
 __all__ = ["AsyncSQLAlchemyStore", "SQLAlchemyStore"]
+
+logger = logging.getLogger(__name__)
 
 #: Poll interval while waiting for a lease held by someone else.
 _LOCK_POLL_S = 0.01
@@ -288,11 +291,26 @@ class SQLAlchemyStore(BaseStore):
                 yield
         finally:
             held.discard(key)
-            with contextlib.suppress(SQLAlchemyError):
+            try:
                 with self._fresh() as conn:
                     _ops.unlock(conn, self.tables, source, key, owner)
+            except SQLAlchemyError:
+                # ⚠️ The lease then lingers until `lock_ttl_s`; leases
+                #    have no heartbeat, so a section longer than the TTL
+                #    loses exclusion (the version fence still prevents a
+                #    lost update).
+                logger.warning(
+                    "failed to release lease on %r", key, exc_info=True
+                )
 
     def health(self) -> Dict[str, Any]:
+        """Probe the snapshot table.
+
+        Returns:
+            ``{"ok": True, "backend", "keys", "schema_version"}`` or
+            ``{"ok": False, "backend", "error": <class name>}``; never
+            raises.
+        """
         try:
             with self._fresh() as conn:
                 n = conn.execute(
@@ -397,22 +415,40 @@ class AsyncSQLAlchemyStore:
 
     async def create_all(self) -> None:
         """Create missing tables / check the schema version (idempotent)."""
+        await self._prepare(ensure_schema)
+
+    async def _prepare(self, step: Any) -> None:
         if self._init_lock is None:
             self._init_lock = asyncio.Lock()
         async with self._init_lock:
             if self._ready:
                 return
             await self._call(
-                lambda conn: ensure_schema(conn, self.tables), ensure=False
+                lambda conn: step(conn, self.tables), ensure=False
             )
             self._ready = True
 
     async def _call(self, fn: Any, *, ensure: bool = True) -> Any:
-        if ensure and not self._ready and self.create_tables:
-            await self.create_all()
+        if ensure and not self._ready:
+            # 🔥 X0.10 on BOTH drivers: with ``create_tables=False`` the
+            #    sync store still verifies the schema (newer refused,
+            #    missing tables explained); so does this one, once, lazily.
+            await self._prepare(
+                ensure_schema if self.create_tables else check_schema
+            )
         async with self.session_factory() as session:
             async with session.begin():
                 return await session.run_sync(lambda s: fn(s.connection()))
+
+    async def _keyed(self, key: str, fn: Any) -> Any:
+        """`_call` mapping lock contention to `LockTimeoutError` (the sync
+        store's contract: ``send_with_retry`` / ``persisted`` retry it)."""
+        try:
+            return await self._call(fn)
+        except OperationalError as exc:
+            if _is_locked(exc):
+                raise LockTimeoutError(key, 0.0) from exc
+            raise
 
     def _check_size(self, key: str, data: str) -> None:
         size = len(data.encode("utf-8"))
@@ -424,7 +460,9 @@ class AsyncSQLAlchemyStore:
         decode.
         """
         validate_key(key)
-        raw = await self._call(lambda c: _ops.load_raw(c, self.tables, key))
+        raw = await self._keyed(
+            key, lambda c: _ops.load_raw(c, self.tables, key)
+        )
         if raw is None:
             return None
         data, version, mv, updated_at, deadlines = raw
@@ -465,7 +503,8 @@ class AsyncSQLAlchemyStore:
         self._check_size(key, data)
         dl = tuple(deadlines)
         return int(
-            await self._call(
+            await self._keyed(
+                key,
                 lambda c: _ops.save_raw(
                     c,
                     self.tables,
@@ -474,20 +513,40 @@ class AsyncSQLAlchemyStore:
                     expected_version,
                     machine_version or "",
                     dl,
-                )
+                ),
             )
         )
 
     async def delete(self, key: str) -> bool:
+        """`StateStore.delete` (async twin of `SQLAlchemyStore.delete`).
+
+        Returns:
+            ``True`` if a snapshot existed.
+
+        Raises:
+            LockTimeoutError: The database was busy (retryable).
+        """
         validate_key(key)
         return bool(
-            await self._call(lambda c: _ops.delete_raw(c, self.tables, key))
+            await self._keyed(
+                key, lambda c: _ops.delete_raw(c, self.tables, key)
+            )
         )
 
     async def forget(self, key: str) -> Dict[str, int]:
+        """Erase the record (X0.5), like `SQLAlchemyStore.forget`.
+
+        Returns:
+            Rows removed per table (see `_ops.forget_raw`).
+
+        Raises:
+            LockTimeoutError: The database was busy (retryable).
+        """
         validate_key(key)
         return dict(
-            await self._call(lambda c: _ops.forget_raw(c, self.tables, key))
+            await self._keyed(
+                key, lambda c: _ops.forget_raw(c, self.tables, key)
+            )
         )
 
     async def list_keys(
@@ -556,12 +615,27 @@ class AsyncSQLAlchemyStore:
         try:
             yield
         finally:
-            with contextlib.suppress(SQLAlchemyError):
+            try:
                 await self._call(
                     lambda c: _ops.unlock(c, self.tables, src, key, owner)
                 )
+            except SQLAlchemyError:
+                # ⚠️ The lease then lingers until `lock_ttl_s` (no
+                #    heartbeat: a section longer than the TTL loses
+                #    exclusion, only the version fence stops a lost update).
+                logger.warning(
+                    "failed to release lease on %r", key, exc_info=True
+                )
 
     async def health(self) -> Dict[str, Any]:
+        """Probe the snapshot table (async twin of
+        `SQLAlchemyStore.health`).
+
+        Returns:
+            ``{"ok": True, "backend", "keys", "schema_version"}`` or
+            ``{"ok": False, "backend", "error": <class name>}``; never
+            raises.
+        """
         try:
             n = await self._call(
                 lambda c: c.execute(

@@ -162,18 +162,24 @@ class TestX01Principal(unittest.TestCase):
         i1.stop()
         i2.stop()
 
-    def test_raising_principal_fails_open_by_documented_contract(
+    def test_raising_principal_fails_closed_by_the_plugins_contract(
         self,
     ) -> None:
-        # 📝 `_SafePlugin` admits on a crashing interceptor (documented on
-        #    `_intercept_before_send`): pinned so a change is deliberate.
+        # 📝 0.12.0 (review P-03): the plugin's own callables are held to
+        #    its fail-CLOSED rule. A raising `principal` used to escape to
+        #    `_SafePlugin`, which admits on a crashing interceptor, so the
+        #    event ran with no deduplication; now it is refused, like an
+        #    un-fingerprintable payload or a dead inbox. Pinned so a change
+        #    is deliberate (`docs/_guide/persistence.md`, "stated plainly").
         def boom(e: Any) -> str:
             raise RuntimeError("auth down")
 
         p = IdempotencyPlugin(MemoryInbox(), principal=boom)
         i = SyncInterpreter(wallet()).use(p).start()
-        i.send("CREDIT", wait=True, idempotency_key="z", amount=1)
-        self.assertEqual(i.context["credits"], 1)
+        r = i.send("CREDIT", wait=True, idempotency_key="z", amount=1)
+        self.assertEqual(i.context["credits"], 0)
+        self.assertIsNotNone(r.error)
+        self.assertIn("principal", str(r.error))
         i.stop()
 
 

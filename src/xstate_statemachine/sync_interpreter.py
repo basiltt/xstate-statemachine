@@ -44,6 +44,7 @@ from typing import (
     Deque,
     Dict,
     FrozenSet,
+    Generator,
     Generic,
     List,
     Optional,
@@ -61,6 +62,7 @@ from .base_interpreter import (
     AnyEvent,
     BaseInterpreter,
     _RollbackRequested,
+    _is_async_shape,
     _new_actor_suffix,
 )
 from .exceptions import (
@@ -68,7 +70,7 @@ from .exceptions import (
     ReentrantWaitError,
     RunawayChainError,
 )
-from .clock import Clock, SimulatedClock
+from .clock import Clock, RealClock, SimulatedClock
 from .actor_logic import RunningLogic
 from .events import (
     AfterEvent,
@@ -137,7 +139,8 @@ class _Done(Generic[_T]):
     def __init__(self, value: _T) -> None:
         self.value = value
 
-    def __await__(self):  # type: ignore[no-untyped-def]
+    def __await__(self) -> Generator[Any, None, _T]:
+        """Finish at once with `value`: the generator never yields."""
         if False:  # pragma: no cover - makes this a generator
             yield
         return self.value
@@ -154,6 +157,10 @@ class _Done(Generic[_T]):
 
 #: Statuses with no owner left to drain the #305 mailbox.
 _TERMINAL_STATUSES = ("stopped", "done", "error")
+
+#: ⏱️ How often a blocking spawn re-pumps its child while it waits
+#: (`_wait_for_child_terminal`). Completion itself wakes the wait at once.
+_BLOCKING_SPAWN_POLL_SEC = 0.005
 
 
 class SyncInterpreter(BaseInterpreter[TContext]):
@@ -213,6 +220,9 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         "_settle_tripped",
         "_mailbox",  # #305
         "_mailbox_lock",  # #305
+        "_stop_after_drain",
+        "_finished_children",
+        "_shares_parent_clock",  # ENG-06
     )
 
     def __init__(
@@ -273,6 +283,9 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #: ⏱️ Live clock handles per owning state id, so exiting a state
         #: cancels its timers on any Clock (#49/#50).
         self._timer_handles: Dict[str, List[Any]] = {}
+        #: 🧵 ENG-06: set on a spawned child that shares its parent's clock
+        #: (a `SimulatedClock`), so its pump fires only its OWN deadlines.
+        self._shares_parent_clock: bool = False
         _info = logger.isEnabledFor(logging.INFO)  # ⚡ per construction
         if _info:
             logger.info("⛓️ Initializing Synchronous Interpreter... 🚀")
@@ -304,7 +317,9 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #: 🚧 Step gate: held by the pump thread for each step it runs and
         #: by a parent for "check settled + copy" (see `_step_gate_lock`).
         #: Only ever contended across threads; a non-actor never takes it.
-        self._step_gate = threading.Lock()
+        #: Re-entrant: an inline `sendTo` chain on the owner thread may
+        #: reach the same child twice (`_send_to_actor_sync`).
+        self._step_gate = threading.RLock()
         #: 📨 #125: deferred events whose replay was EARNED by the drain in
         #: progress (a configuration change) but must not run inside it --
         #: the caller's `Receipt` is built from the drain's result, and a
@@ -323,8 +338,23 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #: the top of `send()` / `tick()`, before its own event, in FIFO
         #: order. The only legal way for another thread to reach a sync
         #: machine -- `send()` itself is not thread-safe and never was.
-        self._mailbox: Deque[AnyEvent] = deque()
+        #: ⚡ A plain list, not a deque: it is only appended, copied and
+        #: cleared, and an empty deque costs 760 B per interpreter (its
+        #: first 64-slot block) against 56 B -- 1,000 idle instances
+        #: carried 700 KB of empty mailboxes.
+        self._mailbox: List[AnyEvent] = []
         self._mailbox_lock = threading.Lock()
+        #: 🛑 `stop(drain=True)` called from INSIDE a step: the drain in
+        #: progress finishes the queue, then stops (see `stop`).
+        self._stop_after_drain: bool = False
+        #: 🧵 Non-blocking children that FINISHED on their pump thread,
+        #: as ``(child, invoke_id)``, guarded by `_mailbox_lock`. The pump
+        #: thread only posts here; the OWNER reports `done.invoke` /
+        #: `error.platform` on its next `send()` / `tick()` (`_drain_mailbox`)
+        #: -- running the parent's step on the pump thread raced the owner.
+        self._finished_children: List[Tuple["SyncInterpreter[Any]", str]] = (
+            []  # ⚡ list, not deque: append / copy / clear only (see above)
+        )
         # 🏛️ #50: `_after_threads` / `_after_events` / `_pending_send_cancels`
         #    are gone. Timers no longer own threads; see `_after_timer`.
 
@@ -363,13 +393,22 @@ class SyncInterpreter(BaseInterpreter[TContext]):
     def start(self) -> "SyncInterpreter[TContext]":
         """Starts the interpreter and transitions it to its initial state.
 
-        This method is idempotent; calling `start` on an already running or
-        stopped interpreter has no effect. Unlike asynchronous interpreters,
-        this does not start a background event loop but simply sets the machine
-        to its entry state and processes any immediate "always" transitions.
+        Calling `start` on an already running interpreter has no effect (a
+        snapshot-restored one is resumed instead). Unlike asynchronous
+        interpreters, this does not start a background event loop but
+        simply sets the machine to its entry state and processes any
+        immediate "always" transitions.
 
         Returns:
             The interpreter instance itself, allowing for method chaining.
+
+        Raises:
+            InvalidConfigError: The interpreter was stopped; interpreters
+                are not restartable (build a new one, or restore one from
+                a snapshot).
+            Exception: Whatever the initial entry raised (a configuration
+                error such as `ImplementationMissingError`). The machine is
+                then ``"stopped"`` and torn down.
 
         Example:
             >>> machine = create_machine(...) # noqa
@@ -420,7 +459,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                     #    is due-ordered.
                     self._pump_timers()
             self._process_event_queue()
-            self._process_transient_transitions()
+            self._settle_guarded()
             self._resume_restored_children()
             return self
         if self.status == "running" and (
@@ -438,7 +477,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             self._attach_clock()  # #154: see above
             self._rearm_restored_self_sends()  # #213
             self._process_event_queue()
-            self._process_transient_transitions()
+            self._settle_guarded()
             self._resume_restored_children()
             return self
         if self.status != "uninitialized":
@@ -513,15 +552,40 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         # transitioning away from a half-built configuration and leaving two
         # active leaves. Guarding defers such events until entry has settled,
         # after which the queue is drained normally.
-        self._is_processing = True
         try:
-            self._drive(self._enter_states([self.machine]))
-        finally:
-            self._is_processing = False
-        # 📬 Drain anything an entry action raised during that descent.
-        self._process_event_queue()
-        # 🔄 Process any immediate "always" transitions upon startup.
-        self._process_transient_transitions()
+            self._is_processing = True
+            try:
+                self._drive(self._enter_states([self.machine]))
+            finally:
+                self._is_processing = False
+            # 📬 Drain anything an entry action raised during that descent.
+            # ⚡ Nothing queued by the initial entry (the common case): skip
+            #    the drain's set-up. A `stop(drain=True)` issued by an entry
+            #    action still needs the drain's epilogue to apply it.
+            if (
+                self._event_queue
+                or self._internal_queue
+                or self._stop_after_drain
+            ):
+                self._process_event_queue()
+            # 🔄 Process any immediate "always" transitions upon startup --
+            #    behind the guard too (`_settle_guarded`).
+            self._settle_guarded()
+        except Exception:
+            # 💥 ENG-12 (parity with the async engine): a failed start
+            #    leaves the machine "stopped", not "running" over a
+            #    half-entered configuration, and releases what the partial
+            #    descent armed (children, timers, the clock attachment).
+            logger.error(
+                "💥 Sync interpreter '%s' failed to start.",
+                self.id,
+                exc_info=True,
+            )
+            with self._mailbox_lock:
+                self.status = "stopped"
+            self._purge_mailbox("stopped")
+            self._teardown()
+            raise
 
         # Capture the post-transition state set after initialization
         post_states = set(self._active_state_nodes)
@@ -552,7 +616,10 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             drain: Process any events still queued before tearing down
                 (#47). The sync engine processes inline, so the queue is
                 only ever non-empty when `stop()` is called from INSIDE an
-                action; `drain=True` finishes that macrostep first.
+                action; `drain=True` then DEFERS the stop: the drain in
+                progress processes every queued event and stops the
+                machine when it ends, so `status` still reads
+                ``"running"`` when this call returns to the action.
         """
         # 🚦 Idempotency check.
         if self.status in ("uninitialized", "stopped"):
@@ -563,7 +630,13 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             self._teardown()
             return
 
-        if drain and self.status == "running" and not self._is_processing:
+        if drain and self.status == "running":
+            if self._is_processing:
+                # 🛑 Mid-step: the drain that is running us cannot be
+                #    re-entered. Ask it to stop once the queue is empty
+                #    (`_process_event_queue`'s `finally`).
+                self._stop_after_drain = True
+                return
             self._process_event_queue()
         if self._event_queue:
             logger.warning(
@@ -737,7 +810,11 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             return None
 
         event_obj = self._prepare_event_reporting(event_or_type, **payload)
-        self._warn_reserved_payload_keys(event_obj)
+        if type(event_or_type) is not str:
+            # ⚡ A `str` send cannot carry a reserved key: `wait` and
+            #    `priority` are consumed by the signature. Only the dict
+            #    and Event forms can clash (#39).
+            self._warn_reserved_payload_keys(event_obj)
         self._check_strict(event_obj)  # #51
         # ⛔ #304: an interceptor (idempotency inbox, rate limit) may answer
         #    the caller without the machine ever seeing the event.
@@ -786,7 +863,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         self._event_queue.append(event_obj)
         self._caller_event, self._caller_receipt = event_obj, None
         try:
-            self._process_event_queue()
+            self._process_event_queue(pumped=True)
         except Exception as exc:
             # 🏛️ #31 (runtime parity): whatever the caller sees, the
             #    interpreter's own record must agree with the async engine's
@@ -884,7 +961,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         identically whichever thread produced the event. Runs on the
         owner's thread only.
         """
-        if not self._mailbox:  # ⚡ no lock for the empty case
+        if not self._mailbox and not self._finished_children:  # ⚡ no lock
             return 0
         if self._is_processing:
             # 🔒 A re-entrant `send()` from inside an action must not run
@@ -894,6 +971,14 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         with self._mailbox_lock:
             batch = list(self._mailbox)
             self._mailbox.clear()
+            finished = list(self._finished_children)
+            self._finished_children.clear()
+        # 🧵 Completions of non-blocking children first: they finished
+        #    before the owner got here, on their own threads.
+        for child, invoke_id in finished:
+            if self.status != "running":
+                break
+            self._queue_actor_done(child, invoke_id)
         for event_obj in batch:
             if self.status != "running":
                 # 🔔 Battle #305: a producer's event for a machine that is
@@ -931,9 +1016,48 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 )
                 continue
             self._event_queue.append(event_obj)
-            self._process_event_queue()
-            self._run_held_replays()
-        return len(batch)
+            try:
+                self._process_event_queue()
+                self._run_held_replays()
+            except Exception as exc:  # noqa: BLE001 -- see below
+                # 🔥 An error that escapes a step (a configuration error
+                #    such as `NotSupportedError`) belongs to the PRODUCER,
+                #    whose thread is gone. Raising it out of the owner's
+                #    unrelated `send()` / `tick()` lost the rest of the
+                #    batch (already taken off the mailbox) AND the owner's
+                #    own event. Record it where the owner can read it,
+                #    log it loudly, and keep draining (#305: a producer's
+                #    event is never silently lost).
+                self.last_transition_ok = False
+                self._last_action_error = exc
+                logger.error(
+                    "🔥 send_threadsafe() event '%s' raised while being "
+                    "processed on '%s'; recorded on `last_error`.",
+                    getattr(event_obj, "type", event_obj),
+                    self.id,
+                    exc_info=True,
+                )
+        return len(batch) + len(finished)
+
+    def _post_child_finished(
+        self, child: "SyncInterpreter[Any]", invoke_id: str
+    ) -> None:
+        """Hand a non-blocking child's completion to the owner thread.
+
+        Called on the child's PUMP thread. 🏛️ `send()` is not thread-safe
+        (AGENTS.md: cross-thread access is `send_threadsafe()` only), so
+        the pump thread no longer runs the parent's `onDone` / `onError`
+        step itself: it posts the finished child under the mailbox lock
+        and the owner reports it on its next `send()` / `tick()`. A parent
+        that is no longer running has no owner to report to.
+
+        Args:
+            child: The finished (or stopped) child interpreter.
+            invoke_id: The `invoke` id to report completion under.
+        """
+        with self._mailbox_lock:
+            if self.status not in _TERMINAL_STATUSES:
+                self._finished_children.append((child, invoke_id))
 
     def _run_held_replays(self) -> None:
         """Run deferred events earned by the last drain, as their own
@@ -994,6 +1118,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
     # 🏁 Reaping (#57)
     # -------------------------------------------------------------------------
     def _schedule_teardown(self) -> None:
+        """Leaf: tear down NOW -- the sync engine has no loop to defer to (#57)."""
         # 🧵 Sync engine: no loop to defer to, and `_complete()` runs at the
         #    end of a macrostep, so tearing down inline is safe.
         # 🔔 Battle #305 (review M1): `status` is already "done"/"error"
@@ -1017,6 +1142,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         with self._mailbox_lock:
             orphaned = list(self._mailbox)
             self._mailbox.clear()
+            self._finished_children.clear()  # no owner left to report to
         for ev in orphaned:
             for plugin in self._plugins:
                 plugin.on_event_dropped(self, ev, reason)
@@ -1050,7 +1176,12 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         self._armed_after.clear()  # #264
         self._cleanup_all_running_logic()  # #267
         self._scheduled_sends.clear()
-        self._internal_queue.clear()  # mid-macrostep state; never persisted
+        # 🔔 Mid-macrostep state, never persisted -- but an accepted event
+        #    that will never run is a drop (#129), whichever queue it sat
+        #    in. `self.raise(A); stop()` used to lose A without a trace.
+        stranded = list(self._internal_queue)
+        self._internal_queue.clear()
+        self._report_dropped(stranded)
 
         # 4️⃣ Drop our own registry entry so the root does not pin us.
         self._unregister_from_system()
@@ -1061,6 +1192,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
     def _snapshot_pending_events(
         self,
     ) -> List[AnyEvent]:
+        """Leaf: the accepted-but-unprocessed inbox, in order (#47)."""
         return list(self._event_queue)
 
     def _enqueue_restored(
@@ -1088,9 +1220,17 @@ class SyncInterpreter(BaseInterpreter[TContext]):
 
         The events are NOT processed. Sync mirror of
         `Interpreter.drain_pending` (a plain method: nothing to await).
+        Includes events accepted by `send_threadsafe()` that the owner
+        has not drained yet (ENG-25), after the queued ones.
+
+        Returns:
+            List[AnyEvent]: The removed events, in acceptance order.
         """
         drained = list(self._event_queue)
         self._event_queue.clear()
+        with self._mailbox_lock:
+            drained.extend(self._mailbox)
+            self._mailbox.clear()
         return drained
 
     def send_events(
@@ -1106,6 +1246,11 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             self._drop_batch_not_running(events)
             return
 
+        # 🧵 ENG-25 (parity with `send()`): cross-thread events (#305) and
+        #    deadlines that elapsed BEFORE this batch (#50) run first, in
+        #    order -- they used to run after the whole batch.
+        self._drain_mailbox()
+        self._pump_timers()
         for event_or_type in events:
             event_obj = self._prepare_event_reporting(event_or_type)
             # 🧷 #304 (parity with `send`): admission checks and the
@@ -1120,8 +1265,13 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         self._process_event_queue()
         self._run_held_replays()  # #125
 
-    def _process_event_queue(self) -> None:
+    def _process_event_queue(self, pumped: bool = False) -> None:
         """Processes all events in the queue until it is empty.
+
+        Args:
+            pumped: ``True`` when the caller (`send()`) pumped the clock
+                immediately before queuing, so the first iteration
+                need not pump again (⚡ one pump per send, not two).
 
         If event processing is already underway, this method returns immediately
         to prevent re-entrant execution.
@@ -1176,14 +1326,31 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         dropped_total = 0
         limit = getattr(self.machine, "max_iterations", 1000)
         debug = logger.isEnabledFor(logging.DEBUG)  # ⚡ once per macrostep
+        # ⚡ Once per drain, not per event: whether any attached plugin
+        #    overrides `on_event_processed` (a plugin attached by an
+        #    action mid-drain is observed from the next drain on).
+        observe = self._wants_event_processed
         try:
             while self._event_queue or self._internal_queue:
+                if self.status != "running":
+                    # 🛑 The machine finished (`done` / `error`) or was
+                    #    stopped by an action in THIS drain. Nothing left
+                    #    in the queues may run: a user action on a finished
+                    #    machine is a side effect after the end. Parity
+                    #    with the async run loop (`while status ==
+                    #    "running"`). `stop()` already reported the inbox
+                    #    and the teardown reported the internal queue.
+                    self._drop_inbox_after_terminal()
+                    break
                 # ⏰ #50: a deadline that elapsed while THIS macrostep was
                 #    busy is delivered in-loop, in due order, rather than
                 #    waiting for the next external send(). Due timers land
                 #    at the tail; the acceptance criterion is "not dropped
                 #    and drained in the same loop", which this satisfies.
-                self._pump_timers()
+                if pumped:  # ⚡ `send()` pumped just before appending
+                    pumped = False
+                else:
+                    self._pump_timers()
                 # 🔁 #36: internal (self-raised) events first, in order.
                 is_generated = True
                 if self._internal_queue:
@@ -1324,7 +1491,6 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 #    so take a per-event before-image and reset the per-step
                 #    flags per event (a `send()` may drain several events --
                 #    the user's plus due timers and completions).
-                observe = self._wants_event_processed
                 if observe:
                     ep_config_before = frozenset(self._active_state_nodes)
                     ep_context_before = (
@@ -1372,14 +1538,11 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 #    independent one-deep raises in one `send_events()` batch
                 #    were truncated to 1,000 on this engine only -- no loop
                 #    anywhere -- while `send()` one at a time processed all of
-                #    them. `tripped` is deliberately NOT cleared: once a drain
-                #    has overflowed it stays in drop-on-arrival mode until the
-                #    caller returns, so a machine that keeps regenerating
-                #    cannot earn a fresh 1,000 per user event.
-                # 🔗 A step that produced nothing ends the current chain
-                #    (parity with the async `_raise_depth` reset). `tripped`
-                #    is cleared here too: the runaway is over once it stops
-                #    regenerating.
+                #    them. `tripped` is cleared here too (#88): the runaway
+                #    is over once it stops regenerating, and a user event
+                #    queued behind it must not be starved. Pinned by
+                #    `tests/test_sync_interpreter.py` and the #88 / #144
+                #    chain-budget tests.
                 #
                 # 🛡️ #144: "produced nothing" is not enough on its own. A
                 #    conservative cycle -- a step that dequeues one event and
@@ -1420,10 +1583,57 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 logger.debug(
                     "🎉 Event processing cycle completed. Queue empty."
                 )
+            if self._stop_after_drain:
+                self._stop_after_drain = False
+                self.stop()
+
+    def _drop_inbox_after_terminal(self) -> None:
+        """Report the inbox a terminal status stranded mid-drain.
+
+        A ``"stopped"`` machine's inbox was already reported by `stop()`
+        and is KEPT (``pending_events`` / a snapshot may persist it). A
+        machine that reached ``"done"`` / ``"error"`` inside the drain
+        will never process it: each event is reported as dropped
+        (``"not_running"``) and discarded, as the async engine's terminal
+        teardown discards its inbox.
+        """
+        if self.status == "stopped":
+            return
+        orphaned = list(self._event_queue)
+        self._event_queue.clear()
+        for ev in orphaned:
+            for plugin in self._plugins:
+                plugin.on_event_dropped(self, ev, "not_running")
 
     # -------------------------------------------------------------------------
     # ⚙️ Core State Transition Logic (Private)
     # -------------------------------------------------------------------------
+
+    def _settle_guarded(self) -> None:
+        """Settle `always` transitions OUTSIDE a drain, then drain.
+
+        🏛️ The settle runs behind the re-entrancy guard, like the initial
+        descent in `start()`: an `always` transition that `raise`s must
+        queue the event as INTERNAL and have it processed after the
+        microstep, exactly as when the same `always` is reached from an
+        event inside `_process_event_queue`. Unguarded (before 0.12.0),
+        `_deliver_sync` saw `_is_processing` False and processed the
+        raised event re-entrantly, mid-microstep, against an empty
+        configuration -- it was lost, and the sync engine diverged from
+        the async one (`start()` ended in the `always` target instead of
+        where the raised event leads).
+        """
+        if self._is_processing:  # pragma: no cover - callers are idle
+            self._process_transient_transitions()
+            return
+        self._is_processing = True
+        try:
+            self._process_transient_transitions()
+        finally:
+            self._is_processing = False
+        # 📬 Whatever the settle raised is processed now, in order.
+        if self._event_queue or self._internal_queue:
+            self._process_event_queue()
 
     def _process_transient_transitions(self) -> None:
         """Continuously processes event-less ("always") transitions until stable.
@@ -1517,7 +1727,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
     # ⚡ Action & Service Execution (Private Overrides)
     # -------------------------------------------------------------------------
 
-    def _run_user_action(  # type: ignore[override]
+    def _run_user_action(  # type: ignore[override]  # leaf returns a finished _Done, not a coroutine (#60)
         self,
         impl: Callable[..., Any],
         action_def: ActionDefinition,
@@ -1529,7 +1739,17 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 f"Async action '{action_def.type}' not supported by "
                 f"SyncInterpreter."
             )
-        impl(self, self.context, event, action_def)
+        result = impl(self, self.context, event, action_def)
+        if inspect.iscoroutine(result):
+            # 🔥 ENG-08: a plain def that RETURNS a coroutine is an async
+            #    action in disguise. Its body never ran; refuse it loudly
+            #    like any async action (and close it: no "never awaited"
+            #    warning at GC time).
+            result.close()
+            raise NotSupportedError(
+                f"Action '{action_def.type}' returned a coroutine; async "
+                f"actions are not supported by SyncInterpreter."
+            )
         return _Done(None)
 
     def _deliver_completion(self, event: AnyEvent) -> None:
@@ -1550,9 +1770,10 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         else:
             self.send(event)
 
-    def _dispatch_internal(  # type: ignore[override]
+    def _dispatch_internal(  # type: ignore[override]  # leaf returns a finished _Done, not a coroutine (#60)
         self, event: Any
     ) -> "_Done[None]":
+        """Leaf: queue an engine-raised internal event (`done.state.*`); finished awaitable."""
         # 🔁 A `done.state.*` is raised from INSIDE `_enter_states`. It is
         #    an INTERNAL event (XState v5 `internalQueue`): the macrostep
         #    loop already running processes it before any external event
@@ -1565,19 +1786,21 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             self._event_queue.append(event)
         return _Done(None)
 
-    def _stop_actor_leaf(  # type: ignore[override]
+    def _stop_actor_leaf(  # type: ignore[override]  # leaf returns a finished _Done, not a coroutine (#60)
         self, actor: Any
     ) -> "_Done[None]":
+        """Leaf: stop a child actor inline; finished awaitable (#60)."""
         actor.stop()
         return _Done(None)
 
-    def _deliver(  # type: ignore[override]
+    def _deliver(  # type: ignore[override]  # leaf returns a finished _Done, not a coroutine (#60)
         self,
         actor: Any,
         target_event: AnyEvent,
         delay: Optional[float],
         send_id: Optional[str],
     ) -> "_Done[None]":
+        """Leaf: deliver an event to an actor (optionally delayed); finished awaitable (#60)."""
         self._deliver_sync(actor, target_event, delay, send_id)
         return _Done(None)
 
@@ -1608,7 +1831,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 #    FIFO among themselves -- see `_process_event_queue`.
                 self._internal_queue.append(target_event)
                 return
-            actor.send(target_event)
+            self._send_to_actor_sync(actor, target_event)
             return
 
         key = str(send_id) if send_id else None
@@ -1634,7 +1857,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 self._event_queue.append(target_event)
             else:
                 try:
-                    actor.send(target_event)
+                    self._send_to_actor_sync(actor, target_event)
                 except Exception:  # pragma: no cover - defensive
                     logger.exception(
                         "🔥 Delayed send of '%s' failed.", target_event.type
@@ -1659,7 +1882,45 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 previous()
             self._scheduled_sends[key] = _cancel
 
-    def _spawn_actor(  # type: ignore[override]
+    def _send_to_actor_sync(self, actor: Any, event: AnyEvent) -> None:
+        """Deliver *event* to another actor, crossing threads safely.
+
+        🧵 A non-blocking child steps on its own pump thread. When either
+        side of the delivery is such a child -- the child's `sendParent`
+        running on its pump thread, or the owner `sendTo`-ing a pumped
+        child -- `send()` would run the recipient's step on the WRONG
+        thread, racing its owner (AGENTS.md: cross-thread access is
+        `send_threadsafe()` only). From a pump thread the event goes to
+        the recipient's mailbox; its owner runs it on its next `send()` /
+        `tick()`. From the owner side to a pumped child, the step runs
+        inline under the child's step gate. Same-thread deliveries keep
+        the plain inline `send()`.
+
+        Args:
+            actor: The recipient interpreter (or actor-logic handle).
+            event: The event to deliver.
+        """
+        if isinstance(actor, SyncInterpreter):
+            me = threading.get_ident()
+            if self._pump_thread_ident == me != actor._pump_thread_ident:
+                # 🧵 We are stepping on OUR pump thread; the recipient (our
+                #    parent, a sibling) is owned by another thread. Its
+                #    owner runs the event on its next `send()` / `tick()`.
+                actor.send_threadsafe(event)
+                return
+            pump = actor._pump_thread_ident
+            if pump is not None and pump != me:
+                # 🚧 The recipient is a pumped child and we are its owner
+                #    side: run the step inline (a `sendTo` round trip stays
+                #    synchronous) but under the child's step gate, so it
+                #    never overlaps a pump step. The gate is re-entrant: an
+                #    inline chain may come back to the same child.
+                with actor._step_gate:
+                    actor.send(event)
+                return
+        actor.send(event)
+
+    def _spawn_actor(  # type: ignore[override]  # leaf returns a finished _Done, not a coroutine (#60)
         self,
         action_def: ActionDefinition,
         event: Event,
@@ -1729,14 +1990,26 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #    real wall-clock seconds) and its strict-mode setting (an
         #    undeclared event sent to the child must raise, not silently
         #    fall back to `machine.strict`).
+        # 🧵 A non-blocking child pumps its clock on its OWN thread, and a
+        #    pump fires every due deadline on the clock -- the parent's
+        #    included, off the parent's owner thread. A `RealClock` has no
+        #    shared timeline to preserve, so such a child gets its own
+        #    (same monotonic/wall source, separate deadline heap). A
+        #    `SimulatedClock` IS the shared timeline and stays shared.
+        child_clock: Clock = (
+            RealClock()
+            if not blocking and type(self.clock) is RealClock
+            else self.clock
+        )
         child = SyncInterpreter(
             actor_machine,
             input=spawn_params.get("input"),
-            clock=self.clock,
+            clock=child_clock,
             strict=self.strict,
         )
         child.parent = self
         child.id = actor_id
+        child._shares_parent_clock = child_clock is self.clock  # ENG-06
         # 🎯 #156: an `invoke`d child (spawned with `on_complete`) is known
         #    to the parent by its invoke id; record it for `escalate`.
         child._invoked_as = on_complete
@@ -1767,9 +2040,11 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             # ⏸️ #41: "blocking" means the child runs to COMPLETION before the
             #    parent's next action -- on both engines. `start()` alone only
             #    covers a child whose work is synchronous entry actions; one
-            #    driven by `after` timers (background threads here) is still
-            #    running when `start()` returns. Wait on its terminal signal,
-            #    bounded by `spawnBlockingTimeout` (ms) like the async engine.
+            #    driven by `after` timers is still running when `start()`
+            #    returns, and with no timer threads (#50) nothing advances it
+            #    but a pump. `_wait_for_child_terminal` pumps it on THIS
+            #    thread until it ends, bounded by `spawnBlockingTimeout` (ms)
+            #    like the async engine.
             self._wait_for_child_terminal(child)
             if on_complete is not None:
                 self._queue_actor_done(child, on_complete)
@@ -1787,6 +2062,18 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #    bounded work (entry actions; `after` timers arm, they do not
         #    block), so the parent's own step is not held up.
         child.start()
+        if child.status != "running":
+            # 🏁 Finished (or failed) DURING `start()` -- an initial final
+            #    state, a failing entry. There is nothing to pump: report
+            #    it here, on the owner thread, inside the current step,
+            #    exactly as a blocking spawn does. (Handing it to a pump
+            #    thread made the report depend on thread scheduling.)
+            if on_complete is not None:
+                self._queue_actor_done(child, on_complete)
+            child.stop()
+            if self._actors.get(actor_id) is child:
+                self._actors.pop(actor_id, None)
+            return
 
         def _runner() -> None:
             """Pumps the already-started child until it ends or is stopped."""
@@ -1813,8 +2100,10 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                     time.sleep(0.01)  # 🤏 Yield to prevent busy-waiting.
             finally:
                 # 🧹 Ensure cleanup happens whether the child finishes or is stopped.
+                # 🧵 The completion is reported by the OWNER thread
+                #    (`_post_child_finished`), never from this pump thread.
                 if on_complete is not None:
-                    self._queue_actor_done(child, on_complete)
+                    self._post_child_finished(child, on_complete)
                 child.stop()
                 # 🧹 #196: unregister THIS child only. With an explicit
                 #    invoke id the address is stable across re-entries, so
@@ -1836,33 +2125,46 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         ).start()
 
     def _wait_for_child_terminal(self, child: "SyncInterpreter[Any]") -> None:
-        """Block until *child* is done/error, or `spawnBlockingTimeout` lapses.
+        """Pump *child* until it is done/error, or `spawnBlockingTimeout`
+        lapses.
 
-        Uses the shared terminal-listener hook (#43) rather than polling
-        `status`, so completion is observed the instant it happens.
+        🧵 A blocking child has no pump thread and, since #50, no timer
+        threads: its `after` deadlines fire only when somebody calls its
+        `tick()`. Blocking on an Event alone therefore always waited the
+        full timeout for a timer-driven child, which was still in its
+        first state afterwards. The waiting thread is the child's pump:
+        it ticks the child, then sleeps until completion (observed through
+        the terminal-listener hook, #43) or the next poll.
         """
-        if child.status in ("done", "error", "stopped"):
-            return
-        # 🧭 A child with nothing in flight -- no `after` timers and no
-        #    actors of its own -- has already done everything `start()`
-        #    can make it do; it is idle, not "still working". Waiting on it
-        #    would block forever, and 0.7.x machines relied on this case
-        #    returning immediately. Only wait when the child can still
-        #    progress on its own.
-        if not child._timer_handles and not child._actors:
+        if child.status in _TERMINAL_STATUSES:
             return
         finished = threading.Event()
         child._terminal_listeners.append(lambda _status: finished.set())
         timeout_ms = self.machine.spawn_blocking_timeout_ms
         if timeout_ms is None:
             timeout_ms = DEFAULT_SPAWN_BLOCKING_TIMEOUT_MS  # review F2
-        if not finished.wait(timeout_ms / 1000.0):
-            logger.warning(
-                "⏱️ Blocking spawn of '%s' did not finish within %s ms; "
-                "continuing without it.",
-                child.id,
-                timeout_ms,
-            )
+        deadline = time.monotonic() + timeout_ms / 1000.0
+        while not finished.is_set():
+            # 🧭 A child with nothing in flight -- no `after` timers and no
+            #    actors of its own -- has already done everything it can;
+            #    it is idle, not "still working". Waiting on it would block
+            #    forever, and 0.7.x machines relied on this case returning
+            #    immediately. Only wait while it can still progress.
+            if child.status in _TERMINAL_STATUSES or (
+                not child._timer_handles and not child._actors
+            ):
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                logger.warning(
+                    "⏱️ Blocking spawn of '%s' did not finish within %s ms; "
+                    "continuing without it.",
+                    child.id,
+                    timeout_ms,
+                )
+                return
+            finished.wait(min(remaining, _BLOCKING_SPAWN_POLL_SEC))
+            child.tick()
 
     def _queue_actor_done(
         self, child: "SyncInterpreter[Any]", invoke_id: str
@@ -1899,7 +2201,21 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 src=invoke_id,
             )
             handled = self._has_error_handler_for_id(invoke_id)
-            self.send(error_event)
+            # 📬 #116 / ENG-15: a completion is an INTERNAL consequence of
+            #    work that finished -- the internal queue inside a drain,
+            #    `send()` outside one -- like a callable service's.
+            # 📝 Looked up BEFORE delivery: outside a drain the completion
+            #    is processed at once and may exit the invoking state.
+            invocation = self._live_invocation(invoke_id)
+            self._deliver_completion(error_event)
+            if invocation is not None:
+                hook_error = (
+                    failure
+                    if isinstance(failure, Exception)
+                    else RuntimeError(repr(failure))
+                )
+                for plugin in self._plugins:
+                    plugin.on_service_error(self, invocation, hook_error)
             if not handled:
                 self._fail(failure)
             return
@@ -1922,7 +2238,31 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             src=invoke_id,
         )
         logger.info("🏁 Child actor '%s' completed; firing onDone.", child.id)
-        self.send(done_event)
+        invocation = self._live_invocation(invoke_id)  # before delivery
+        self._deliver_completion(done_event)
+        if invocation is not None:
+            for plugin in self._plugins:
+                plugin.on_service_done(self, invocation, done_event.data)
+
+    def _live_invocation(self, invoke_id: str) -> Optional[InvokeDefinition]:
+        """The `invoke` declared by an ACTIVE state under *invoke_id*.
+
+        For the service hooks of an invoked child MACHINE, which the sync
+        engine tracks by invoke id only (parity with the async engine's
+        `_deliver_invoked_completion`, ENG-14).
+
+        Args:
+            invoke_id: The invoke id a completion is reported under.
+
+        Returns:
+            The matching `InvokeDefinition`, or ``None`` when no active
+            state declares it any more.
+        """
+        for state in self._active_state_nodes:
+            for inv in state.invoke:
+                if inv.id == invoke_id:
+                    return inv
+        return None
 
     def _cancel_state_tasks(self, state: StateNode[Any]) -> "_Done[None]":
         """Leaf: cancel a state's timers; finished awaitable (#60)."""
@@ -2006,6 +2346,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
     def _invocation_is_live(
         self, state: StateNode[Any], invocation: InvokeDefinition
     ) -> bool:
+        """Leaf: is *invocation* of *state* still outstanding (#195)?"""
         # Sync services complete inline, so the only long-lived invoke is a
         # child ACTOR; a callable service is never "live" between sends.
         if f"{self.id}:{invocation.id}" in self._actors:
@@ -2040,15 +2381,42 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #    and so a `persisted()` block does not snapshot it as inbox.
         if started and self.status == "running":
             self._process_event_queue()
-            self._process_transient_transitions()
+            self._settle_guarded()
 
     def _pump_timers(self) -> int:
         """Fire every due clock deadline onto the queue (the timer pump).
 
         Called at the top of `send()` and by `tick()`. Returns how many
         fired. Does NOT process the queue; the caller does.
+
+        🧵 Review ENG-06: a child that shares its parent's `SimulatedClock`
+        pumps on its own runner thread, and an unfiltered pump there fired
+        the PARENT's due deadlines off the parent's owner thread. Such a
+        child fires only the deadlines it owns; the parent's wait for the
+        parent's own `send()` / `tick()`. A custom `Clock` without
+        `pump_filtered` keeps the unfiltered behaviour.
         """
+        if self._shares_parent_clock:
+            filtered = getattr(self.clock, "pump_filtered", None)
+            if filtered is not None:
+                return int(filtered(self._owns_deadline))
         return self.clock.pump()
+
+    def _owns_deadline(self, owner: Any) -> bool:
+        """Does a clock deadline tagged *owner* belong to THIS machine?
+
+        Owners are this interpreter's id (delayed self-sends) or one of
+        its state ids (`after` deadlines), which start with the machine
+        key. 📝 A child built from the SAME machine config as its parent
+        shares that key, so its filter also admits the parent's deadlines
+        -- the pre-fix behaviour, never a lost timer.
+        """
+        if owner == self.id:
+            return True
+        if not isinstance(owner, str):
+            return False
+        key = self.machine.id
+        return owner == key or owner.startswith(key + ".")
 
     def _arm_restored_self_send(
         self, event: Any, delay_ms: float, send_id: Optional[str]
@@ -2114,7 +2482,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             if self._event_queue:
                 self._process_event_queue()
                 self._run_held_replays()  # #125
-                self._process_transient_transitions()
+                self._settle_guarded()
                 continue  # the step may have armed an already-due timer
             if not fired:
                 break
@@ -2165,16 +2533,26 @@ class SyncInterpreter(BaseInterpreter[TContext]):
             #    the child machine is parameterised exactly as in XState. A
             #    raising resolver is a child FAILURE -> `error.platform`,
             #    exactly as on the async engine (review F10).
+            for plugin in self._plugins:
+                plugin.on_service_start(self, invocation)  # ENG-14
             try:
                 child_input = invocation.resolve_input(self.context, trigger)
             except Exception as exc:  # noqa: BLE001 -- user code
-                self.send(
+                # 🔥 Same reporting as any failing service: internal-lane
+                #    `error.platform`, the hook, and the parent FAILS when
+                #    nothing handles it (it used to stay "running").
+                handled = self._has_error_handler(invocation)
+                self._deliver_completion(
                     _engine_error(
                         type=f"error.platform.{invocation.id}",
                         error=exc,
                         src=invocation.id,
                     )
                 )
+                for plugin in self._plugins:
+                    plugin.on_service_error(self, invocation, exc)
+                if not handled:
+                    self._fail(exc)
                 return
             if child_input is not None:
                 params["input"] = child_input
@@ -2277,18 +2655,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #    an object with `async def __call__`, and an async generator all
         #    slipped through and were CALLED -- the coroutine object was then
         #    silently discarded, so the action never ran and nobody was told.
-        #    Unwrap partials and decorators, then check every async shape.
-        fn: Any = callable_obj
-        while isinstance(fn, functools.partial):
-            fn = fn.func
-        fn = inspect.unwrap(fn)
-        if inspect.iscoroutinefunction(fn) or inspect.isasyncgenfunction(fn):
-            return True
-        call = getattr(type(fn), "__call__", None)
-        if call is not None and not inspect.isfunction(fn):
-            call = inspect.unwrap(call)
-            if inspect.iscoroutinefunction(call) or inspect.isasyncgenfunction(
-                call
-            ):
-                return True
-        return False
+        #    The shape test lives in `base_interpreter._async_shape`; this
+        #    memo answers once per callable instead of running four
+        #    `inspect` probes on every action (#307 perf).
+        return _is_async_shape(callable_obj)

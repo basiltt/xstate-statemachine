@@ -406,6 +406,9 @@ class Envelope:
                 self.to_dict(),
                 separators=(",", ":"),
                 default=str,
+                # 🔥 NaN / Infinity are not JSON: a producer must not write
+                #    what `from_json` (and every other consumer) refuses.
+                allow_nan=False,
             )
         except (RecursionError, ValueError) as exc:
             # 🔥 #293-a battle: a self-referencing (ValueError) or absurdly

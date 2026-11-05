@@ -26,6 +26,8 @@ from __future__ import (
     annotations,
 )  # Enables postponed evaluation of type annotations
 
+import functools
+import re
 import threading
 from typing import (
     TYPE_CHECKING,
@@ -38,6 +40,8 @@ from typing import (
     Tuple,
     TypeVar,
     Union,
+    cast,
+    FrozenSet,
 )
 
 # -----------------------------------------------------------------------------
@@ -46,11 +50,11 @@ from typing import (
 from .logger import logger  # Centralized logger instance
 
 # -----------------------------------------------------------------------------
-# ⚙️ Type Hinting for Forward References
+# ⚙️ Runtime vs. type-checking-only imports
 # -----------------------------------------------------------------------------
-# This `if TYPE_CHECKING:` block prevents circular import errors at runtime
-# by only importing types for static analysis. This is a standard Python
-# practice for creating type-safe, decoupled modules.
+# 📝 `Event` and `ErrorEvent` are imported for REAL: `LoggingInspector` does
+#    `isinstance` checks on them. Only the names under `TYPE_CHECKING` below
+#    are annotation-only (they would be circular at import time).
 from .events import ErrorEvent, Event  # noqa: E402
 
 if TYPE_CHECKING:
@@ -82,13 +86,16 @@ AnyEvent = Union["Event", "AfterEvent", "DoneEvent", "ErrorEvent"]
 # or `SyncInterpreter`), enabling precise autocompletion and static analysis
 # in the developer's IDE.
 TInterpreter = TypeVar("TInterpreter", bound="BaseInterpreter[Any]")
+_T = TypeVar("_T")
 
 
 # -----------------------------------------------------------------------------
 # 🏛️ Base Plugin Class (The "Observer" Interface)
 # -----------------------------------------------------------------------------
 class PluginBase(Generic[TInterpreter]):
-    """Abstract base class for creating an interpreter plugin.
+    """Base class for creating an interpreter plugin (not an ABC: every hook
+    has a no-op default, and duck-typed objects exposing any subset of the
+    ``on_*`` hooks are accepted too).
 
     Plugins hook into the interpreter's lifecycle to add features like logging,
     debugging, or persistence. This class implements the "Observer" design
@@ -98,6 +105,29 @@ class PluginBase(Generic[TInterpreter]):
     Subclasses should override the methods they are interested in. This class
     is generic, enabling plugins to be type-safe with the specific interpreter
     they are designed to work with.
+
+    Hook contract (applies to every ``on_*`` method below):
+
+    * **Synchronous.** Hooks are plain callbacks. An ``async def`` override
+      is closed unawaited and reported as a ``TypeError`` through
+      ``on_plugin_error``; schedule your own task inside a plain ``def`` if
+      you need async work.
+    * **Inline.** A hook runs on the engine's own thread: the event-loop
+      thread for `Interpreter`, the thread driving ``send()`` / ``tick()``
+      for `SyncInterpreter` (events from ``send_threadsafe()`` are delivered
+      by that owner thread too). Blocking in a hook blocks the machine.
+    * **Contained.** Any exception -- ``asyncio.CancelledError`` included --
+      is logged, recorded on ``interpreter.last_plugin_error`` and offered
+      to the OTHER plugins' ``on_plugin_error``; it never reaches the
+      machine. Return values are ignored, except ``on_before_send``.
+    * **Ordering.** Plugins are called in registration order, global
+      plugins (``register_global``) first-registered first.
+    * **Re-entrancy.** Reading ``interpreter.context`` / ``current_state_ids``
+      is always fine. Do not call ``send()`` or ``get_snapshot()`` from a
+      hook that fires mid-step (``get_snapshot()`` raises
+      `SnapshotMidStepError` there); queue the work and do it afterwards.
+    * Every hook docstring below carries an ``Engines:`` / ``May:`` /
+      ``Must not:`` line; ``tests/test_review_fixes_runtime.py`` pins it.
 
     Example:
         A simple plugin that prints events and only works with the async `Interpreter`.
@@ -117,6 +147,10 @@ class PluginBase(Generic[TInterpreter]):
         This hook is useful for setup tasks, such as connecting to a
         database, initializing a metrics counter, or logging the start time.
 
+        Engines: both. Thread: the engine's own (see the class docstring).
+        May: read the interpreter and the arguments; record telemetry.
+        Must not: block, ``await``, or re-enter the interpreter (``send()``, ``get_snapshot()`` mid-step).
+
         Args:
             interpreter: The interpreter instance that has been started.
         """
@@ -128,6 +162,10 @@ class PluginBase(Generic[TInterpreter]):
         This hook is useful for teardown tasks, like flushing log buffers,
         closing network connections, or calculating total run time.
 
+        Engines: both. Thread: the engine's own (see the class docstring).
+        May: read the interpreter and the arguments; record telemetry.
+        Must not: block, ``await``, or re-enter the interpreter (``send()``, ``get_snapshot()`` mid-step).
+
         Args:
             interpreter: The interpreter instance that is being stopped.
         """
@@ -136,14 +174,22 @@ class PluginBase(Generic[TInterpreter]):
     def on_event_received(
         self, interpreter: TInterpreter, event: "AnyEvent"
     ) -> None:
-        """Called immediately after an event is passed to the interpreter.
+        """Called when an event is taken off the inbox, before it is processed.
+
+        Ordering: after ``on_before_send`` admitted it, before any guard,
+        action or ``on_transition`` for it.
 
         This hook allows for inspecting raw events before they are processed,
         which can be useful for debugging event sources or data payloads.
 
+        Engines: both. Thread: the engine's own (see the class docstring).
+        May: read the interpreter and the arguments; record telemetry.
+        Must not: block, ``await``, or re-enter the interpreter (``send()``, ``get_snapshot()`` mid-step).
+
         Args:
             interpreter: The interpreter instance receiving the event.
-            event: The `Event` object that was received.
+            event: The event that was received (an `Event`, `AfterEvent`,
+                `DoneEvent` or `ErrorEvent`).
         """
         pass  # pragma: no cover
 
@@ -173,6 +219,10 @@ class PluginBase(Generic[TInterpreter]):
         (``after``, ``done.invoke``, ``error.platform``) do not pass
         through this hook -- they are never "sent" by a caller.
 
+        Engines: both (``send`` / ``send_events`` / ``send_threadsafe``). Thread: the engine's own (see the class docstring).
+        May: return a `Receipt` to short-circuit the event, or ``None``.
+        Must not: raise to block (fail-open) or ``send()`` the same event again.
+
         Args:
             interpreter: The interpreter about to queue the event.
             event: The admitted event.
@@ -199,6 +249,10 @@ class PluginBase(Generic[TInterpreter]):
         Not fired for events short-circuited by ``on_before_send`` (they
         never entered the machine).
 
+        Engines: both. Thread: the engine's own (see the class docstring).
+        May: read the interpreter and the arguments; record telemetry.
+        Must not: block, ``await``, or re-enter the interpreter (``send()``, ``get_snapshot()`` mid-step).
+
         Args:
             interpreter: The interpreter that processed the event.
             event: The event that was processed.
@@ -219,6 +273,10 @@ class PluginBase(Generic[TInterpreter]):
         event would run. The idempotency inbox releases its claim here;
         without it a rate limiter saying "not now" left the key in flight
         (409) for the whole TTL.
+
+        Engines: both. Thread: the engine's own (see the class docstring).
+        May: read the interpreter and the arguments; record telemetry.
+        Must not: block, ``await``, or re-enter the interpreter (``send()``, ``get_snapshot()`` mid-step).
 
         Args:
             interpreter: The interpreter the event was sent to.
@@ -242,6 +300,10 @@ class PluginBase(Generic[TInterpreter]):
         (self-sends) or for unresolved targets (``on_resolve_error`` /
         the unresolved-target warning covers those).
 
+        Engines: both. Thread: the engine's own (see the class docstring).
+        May: read the interpreter and the arguments; record telemetry.
+        Must not: block, ``await``, or re-enter the interpreter (``send()``, ``get_snapshot()`` mid-step).
+
         Args:
             interpreter: The sending interpreter.
             target_id: The receiving actor's id.
@@ -262,6 +324,10 @@ class PluginBase(Generic[TInterpreter]):
         new states entered. It provides a complete snapshot of the change,
         which is ideal for state-based analytics or detailed logging.
 
+        Engines: both. Thread: the engine's own (see the class docstring).
+        May: read the interpreter and the arguments; record telemetry.
+        Must not: block, ``await``, or re-enter the interpreter (``send()``, ``get_snapshot()`` mid-step).
+
         Args:
             interpreter: The interpreter instance.
             from_states: A set of `StateNode` objects that were active before
@@ -279,6 +345,10 @@ class PluginBase(Generic[TInterpreter]):
 
         This allows for inspection or logging of which specific actions are
         being run as part of a transition or state entry/exit event.
+
+        Engines: both. Thread: the engine's own (see the class docstring).
+        May: read the interpreter and the arguments; record telemetry.
+        Must not: block, ``await``, or re-enter the interpreter (``send()``, ``get_snapshot()`` mid-step).
 
         Args:
             interpreter: The interpreter instance.
@@ -308,6 +378,10 @@ class PluginBase(Generic[TInterpreter]):
         This hook fires under every policy, before the policy is applied, so
         it is the right place to route failures to Sentry, a metrics counter
         or a dead-letter queue regardless of how the machine recovers.
+
+        Engines: both. Thread: the engine's own (see the class docstring).
+        May: read the interpreter and the arguments; record telemetry.
+        Must not: block, ``await``, or re-enter the interpreter (``send()``, ``get_snapshot()`` mid-step).
 
         Args:
             interpreter: The interpreter instance.
@@ -341,6 +415,10 @@ class PluginBase(Generic[TInterpreter]):
         followed by :meth:`on_transition` (the transition did commit); under
         ``"rollback"`` and ``"fail"`` it is not (nothing committed).
 
+        Engines: both. Thread: the engine's own (see the class docstring).
+        May: read the interpreter and the arguments; record telemetry.
+        Must not: block, ``await``, or re-enter the interpreter (``send()``, ``get_snapshot()`` mid-step).
+
         Args:
             interpreter: The interpreter instance.
             transition: The transition whose actions failed.
@@ -364,6 +442,10 @@ class PluginBase(Generic[TInterpreter]):
         the same failure is also on ``interpreter.last_error`` and the
         event's `Receipt`.
 
+        Engines: both. Thread: the engine's own (see the class docstring).
+        May: read the interpreter and the arguments; record telemetry.
+        Must not: block, ``await``, or re-enter the interpreter (``send()``, ``get_snapshot()`` mid-step).
+
         Args:
             interpreter: The interpreter instance.
             error: The `StateNotFoundError` describing the target.
@@ -383,6 +465,10 @@ class PluginBase(Generic[TInterpreter]):
         caller -- the hook is observability, not containment; the caller
         still gets the exception. Without it, a plugin bound to every hook
         saw only routine traffic while `send(42)` was raising.
+
+        Engines: both. Thread: the engine's own (see the class docstring).
+        May: read the interpreter and the arguments; record telemetry.
+        Must not: block, ``await``, or re-enter the interpreter (``send()``, ``get_snapshot()`` mid-step).
 
         Args:
             interpreter: The interpreter instance.
@@ -404,6 +490,10 @@ class PluginBase(Generic[TInterpreter]):
         with :meth:`on_invalid_event`, the exception still reaches the
         caller; this is the audit surface.
 
+        Engines: both. Thread: the engine's own (see the class docstring).
+        May: read the interpreter and the arguments; record telemetry.
+        Must not: block, ``await``, or re-enter the interpreter (``send()``, ``get_snapshot()`` mid-step).
+
         Args:
             interpreter: The interpreter instance.
             error: The snapshot error about to be raised.
@@ -424,6 +514,10 @@ class PluginBase(Generic[TInterpreter]):
         count or alert on failures in its peers. It is never invoked for the
         plugin that failed (no recursion). The same triple is on
         ``interpreter.last_plugin_error``.
+
+        Engines: both. Thread: the engine's own (see the class docstring).
+        May: count or alert on a peer plugin's failure.
+        Must not: assume it fires for your own failures (no recursion) or block.
 
         Args:
             interpreter: The interpreter instance.
@@ -449,6 +543,10 @@ class PluginBase(Generic[TInterpreter]):
         every ``guard_error_policy``, immediately before
         :meth:`on_guard_evaluated` reports the substituted result.
 
+        Engines: both. Thread: the engine's own (see the class docstring).
+        May: read the interpreter and the arguments; record telemetry.
+        Must not: block, ``await``, or re-enter the interpreter (``send()``, ``get_snapshot()`` mid-step).
+
         Args:
             interpreter: The interpreter instance.
             guard_name: The guard that raised.
@@ -473,6 +571,10 @@ class PluginBase(Generic[TInterpreter]):
         hook makes every such event observable, whatever the machine's
         ``onUnhandled`` policy did with it. Fires exactly once per event,
         in both engines.
+
+        Engines: both. Thread: the engine's own (see the class docstring).
+        May: read the interpreter and the arguments; record telemetry.
+        Must not: block, ``await``, or re-enter the interpreter (``send()``, ``get_snapshot()`` mid-step).
 
         Args:
             interpreter: The interpreter instance.
@@ -503,6 +605,10 @@ class PluginBase(Generic[TInterpreter]):
         `has_dormant_invocations` / `pending_invocations()` answer the same
         question on demand; this is the push notification.
 
+        Engines: both. Thread: the engine's own (see the class docstring).
+        May: read the interpreter and the arguments; record telemetry.
+        Must not: block, ``await``, or re-enter the interpreter (``send()``, ``get_snapshot()`` mid-step).
+
         Args:
             interpreter: The interpreter instance.
             state_id: The active state whose invocation was stranded.
@@ -529,6 +635,10 @@ class PluginBase(Generic[TInterpreter]):
         ONCE per trip however many events that trip drops
         (`on_event_dropped(..., "chain_budget")` still fires per event).
 
+        Engines: both. Thread: the engine's own (see the class docstring).
+        May: read the interpreter and the arguments; record telemetry.
+        Must not: block, ``await``, or re-enter the interpreter (``send()``, ``get_snapshot()`` mid-step).
+
         Args:
             interpreter: The interpreter instance.
             error: The `RunawayChainError` (``.limit``, ``.dropped``,
@@ -553,6 +663,10 @@ class PluginBase(Generic[TInterpreter]):
         deterministic signal: fail a test or a health check on either.
         Async engine only (the sync engine refuses the call instead).
 
+        Engines: async only. Thread: the engine's own (see the class docstring).
+        May: fail a test or health check; read ``interpreter.dropped_receipts``.
+        Must not: block, ``await``, or re-enter the interpreter (``send()``, ``get_snapshot()`` mid-step).
+
         Args:
             interpreter: The interpreter instance.
             event_type: The type of the event whose receipt was dropped.
@@ -564,16 +678,33 @@ class PluginBase(Generic[TInterpreter]):
     ) -> None:
         """Called when an accepted-looking event is discarded unprocessed.
 
-        Fires under ``OverflowPolicy.DROP_NEWEST`` when the bounded inbox is
-        full (``reason == "queue_full"``), and when a send reaches a
-        machine that is stopped/done/errored (``reason == "not_running"``).
-        The drop is also logged at WARNING. This is the observability hook
-        for load shedding (#38).
+        The observability hook for load shedding (#38) and lost events. The
+        ``reason`` is one of :data:`EVENT_DROP_REASONS`:
+
+        * ``"queue_full"`` -- ``OverflowPolicy.DROP_NEWEST`` and the
+          bounded inbox is full.
+        * ``"not_running"`` / ``"stopped"`` -- a send (or a mailbox event
+          from ``send_threadsafe``) reached a machine that is not running /
+          was stopped before delivery.
+        * ``"chain_budget"`` -- ``maxIterations`` cut a self-generated
+          chain; fires once per discarded event.
+        * ``"unresolved_target"`` -- a ``sendTo`` whose target does not
+          exist.
+        * ``"invalid"`` -- the sync mailbox could not coerce the event.
+        * ``"stale_invocation"`` -- a Celery completion for an invocation
+          that is no longer current (``contrib.celery``).
+
+        The drop is also logged. Treat an unknown reason as "dropped" rather
+        than switching exhaustively: new reasons may be added.
+
+        Engines: both. Thread: the engine's own (see the class docstring).
+        May: read the interpreter and the arguments; record telemetry.
+        Must not: block, ``await``, or re-enter the interpreter (``send()``, ``get_snapshot()`` mid-step).
 
         Args:
             interpreter: The interpreter instance.
             event: The event that was not queued.
-            reason: Why -- ``"queue_full"`` or ``"not_running"``.
+            reason: Why, one of :data:`EVENT_DROP_REASONS`.
         """
         pass  # pragma: no cover
 
@@ -586,6 +717,10 @@ class PluginBase(Generic[TInterpreter]):
         will process no further events. ``interpreter.error`` holds the same
         exception.
 
+        Engines: both. Thread: the engine's own (see the class docstring).
+        May: read the interpreter and the arguments; record telemetry.
+        Must not: block, ``await``, or re-enter the interpreter (``send()``, ``get_snapshot()`` mid-step).
+
         Args:
             interpreter: The interpreter instance.
             error: The exception that stopped the machine.
@@ -594,6 +729,10 @@ class PluginBase(Generic[TInterpreter]):
 
     def on_done(self, interpreter: TInterpreter, output: Any) -> None:
         """Called when the machine reaches a top-level final state.
+
+        Engines: both. Thread: the engine's own (see the class docstring).
+        May: read the interpreter and the arguments; record telemetry.
+        Must not: block, ``await``, or re-enter the interpreter (``send()``, ``get_snapshot()`` mid-step).
 
         Args:
             interpreter: The interpreter instance.
@@ -613,6 +752,10 @@ class PluginBase(Generic[TInterpreter]):
         This is useful for debugging why certain transitions are (or are not)
         being taken based on the current context and event.
 
+        Engines: both. Thread: the engine's own (see the class docstring).
+        May: read the interpreter and the arguments; record telemetry.
+        Must not: block, ``await``, or re-enter the interpreter (``send()``, ``get_snapshot()`` mid-step).
+
         Args:
             interpreter: The interpreter instance.
             guard_name: The name of the guard function that was evaluated.
@@ -625,6 +768,10 @@ class PluginBase(Generic[TInterpreter]):
         self, interpreter: TInterpreter, invocation: "InvokeDefinition"
     ) -> None:
         """Called when an invoked service is about to start.
+
+        Engines: both. Thread: the engine's own (see the class docstring).
+        May: read the interpreter and the arguments; record telemetry.
+        Must not: block, ``await``, or re-enter the interpreter (``send()``, ``get_snapshot()`` mid-step).
 
         Args:
             interpreter: The interpreter instance.
@@ -639,6 +786,10 @@ class PluginBase(Generic[TInterpreter]):
         result: Any,
     ) -> None:
         """Called when an invoked service completes successfully.
+
+        Engines: both. Thread: the engine's own (see the class docstring).
+        May: read the interpreter and the arguments; record telemetry.
+        Must not: block, ``await``, or re-enter the interpreter (``send()``, ``get_snapshot()`` mid-step).
 
         Args:
             interpreter: The interpreter instance.
@@ -655,6 +806,10 @@ class PluginBase(Generic[TInterpreter]):
     ) -> None:
         """Called when an invoked service fails with an error.
 
+        Engines: both. Thread: the engine's own (see the class docstring).
+        May: read the interpreter and the arguments; record telemetry.
+        Must not: block, ``await``, or re-enter the interpreter (``send()``, ``get_snapshot()`` mid-step).
+
         Args:
             interpreter: The interpreter instance.
             invocation: The `InvokeDefinition` of the service that failed.
@@ -662,6 +817,19 @@ class PluginBase(Generic[TInterpreter]):
         """
         pass  # pragma: no cover
 
+
+#: Every ``reason`` string the engines and contrib adapters pass to
+#: :meth:`PluginBase.on_event_dropped` (RU-16). A test greps the emit sites
+#: against this set, so a new reason cannot ship undocumented.
+EVENT_DROP_REASONS: Tuple[str, ...] = (
+    "queue_full",
+    "not_running",
+    "stopped",
+    "chain_budget",
+    "unresolved_target",
+    "invalid",
+    "stale_invocation",
+)
 
 # -----------------------------------------------------------------------------
 # 🕵️ Built-in Logging Plugin
@@ -680,6 +848,7 @@ DEFAULT_REDACT_KEYS: Tuple[str, ...] = (
     "apikey",
     "authorization",
     "auth",
+    "oauth",
     "bearer",
     "credential",
     "private_key",
@@ -690,6 +859,8 @@ DEFAULT_REDACT_KEYS: Tuple[str, ...] = (
     "pin",
     # payment / banking (#160)
     "card",
+    "creditcard",
+    "cardnumber",
     "cvv",
     "cvc",
     "pan",
@@ -711,37 +882,124 @@ DEFAULT_REDACT_KEYS: Tuple[str, ...] = (
     "passport",
 )
 
+#: Entries of at most this many characters match only a WHOLE word of the
+#: key (RU-13); longer entries match as substrings.
+_SHORT_KEY_MAX = 4
 
-def redact(value: Any, keys: Tuple[str, ...] = DEFAULT_REDACT_KEYS) -> Any:
+_CAMEL_BOUNDARY = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+
+
+@functools.lru_cache(maxsize=1024)
+def _key_tokens(key: str) -> Tuple[str, FrozenSet[str]]:
+    """Normalise a mapping key: ``(snake_lower, {words})``.
+
+    ``cardNumber`` / ``card-number`` / ``CARD_NUMBER`` all become
+    ``card_number`` with words ``{card, number}``.
+
+    Args:
+        key: ``str(k)`` of a mapping key.
+
+    Returns:
+        The normalised key and its set of words.
+    """
+    norm = _CAMEL_BOUNDARY.sub("_", key).lower().replace("-", "_")
+    return norm, frozenset(norm.split("_"))
+
+
+def _is_sensitive_key(
+    key: str, short: FrozenSet[str], long: Tuple[str, ...]
+) -> bool:
+    """Decide whether a mapping key must be redacted.
+
+    Args:
+        key: ``str(k)`` of the mapping key.
+        short: Denylist entries matched as whole words.
+        long: Denylist entries matched as substrings.
+
+    Returns:
+        ``True`` when the key matches the denylist.
+    """
+    norm, words = _key_tokens(key)
+    if not short.isdisjoint(words):
+        return True
+    return any(entry in norm for entry in long)
+
+
+def redact(value: _T, keys: Tuple[str, ...] = DEFAULT_REDACT_KEYS) -> _T:
     """Return *value* with sensitive mapping keys replaced by ``"***"``.
 
-    Recurses into nested dicts and lists; leaves everything else untouched.
-    Keys are matched by case-insensitive substring with ``-`` treated as
-    ``_`` on BOTH sides, so ``apiKey``, ``API_KEY``, ``x-api-key`` all
-    redact and a user denylist entry spelled ``X-Custom-Token`` still
-    matches. Pure; never mutates input.
+    Recurses into nested dicts, lists and tuples (namedtuples keep their
+    type); leaves everything else untouched and replaces a reference cycle
+    with ``"<cycle>"``. Pure; never mutates input.
+
+    Matching rule (RU-13): keys are normalised to ``snake_case`` (camelCase
+    split, ``-`` treated as ``_``, case-insensitive) on BOTH sides, so
+    ``apiKey``, ``API_KEY``, ``x-api-key`` all redact and a user entry
+    spelled ``X-Custom-Token`` still matches. A denylist entry of at most
+    four characters (``pin``, ``pan``, ``otp``, ``card``, ``auth``,
+    ``seed``, ...) matches only a whole word of the key, so ``user_pin`` and
+    ``cardNumber`` redact but ``shipping``, ``company``, ``author`` and
+    ``spinner`` do not; longer entries match as substrings
+    (``session`` redacts ``sessionId``).
+
+    Args:
+        value: Any structure.
+        keys: Denylist (see above). Defaults to :data:`DEFAULT_REDACT_KEYS`.
+
+    Returns:
+        A redacted copy of the same shape.
     """
     # 🔐 #303 battle: header spellings (`x-api-key`, `Api-Key`) use '-'
     #    where the denylist uses '_'; the docstring promised them and they
     #    leaked. Review M1: normalising only the data side then broke a
     #    user denylist spelled with '-'. Normalise both, once, up front.
-    return _redact(value, tuple(s.lower().replace("-", "_") for s in keys))
+    norm = [_key_tokens(k)[0] for k in keys]
+    short = frozenset(k for k in norm if len(k) <= _SHORT_KEY_MAX)
+    long = tuple(k for k in norm if len(k) > _SHORT_KEY_MAX)
+    return cast(_T, _redact(value, short, long, set()))
 
 
-def _redact(value: Any, norm_keys: Tuple[str, ...]) -> Any:
-    if isinstance(value, dict):
-        out: Dict[Any, Any] = {}
-        for k, v in value.items():
-            ks = str(k).lower().replace("-", "_")
-            out[k] = (
-                "***"
-                if any(s in ks for s in norm_keys)
-                else _redact(v, norm_keys)
-            )
-        return out
-    if isinstance(value, (list, tuple)):
-        return type(value)(_redact(v, norm_keys) for v in value)
-    return value
+def _redact(
+    value: Any,
+    short: FrozenSet[str],
+    long: Tuple[str, ...],
+    path: Set[int],
+) -> Any:
+    """Recursive worker for :func:`redact`.
+
+    Args:
+        value: The node being copied.
+        short: Whole-word denylist entries.
+        long: Substring denylist entries.
+        path: ``id()`` of every container on the way down (cycle guard).
+
+    Returns:
+        The redacted copy of *value*.
+    """
+    if not isinstance(value, (dict, list, tuple)):
+        return value
+    if id(value) in path:
+        return "<cycle>"  # 🔁 RU-12: a self-referencing context
+    path.add(id(value))
+    try:
+        if isinstance(value, dict):
+            out: Dict[Any, Any] = {}
+            for k, v in value.items():
+                out[k] = (
+                    "***"
+                    if _is_sensitive_key(str(k), short, long)
+                    else _redact(v, short, long, path)
+                )
+            return out
+        items = [_redact(v, short, long, path) for v in value]
+        if isinstance(value, tuple) and hasattr(value, "_fields"):
+            return type(value)(*items)  # 📝 namedtuple takes positionals
+        try:
+            return type(value)(items)
+        except TypeError:  # an exotic subclass: fall back to the base type
+            return tuple(items) if isinstance(value, tuple) else items
+    finally:
+        path.discard(id(value))
 
 
 # -----------------------------------------------------------------------------
@@ -766,14 +1024,44 @@ _GLOBAL_PLUGINS: List[Any] = []
 _GLOBAL_LOCK = threading.Lock()
 
 
-def register_global(plugin: Any) -> None:
+def _looks_like_plugin(plugin: Any) -> bool:
+    """True for an INSTANCE exposing at least one callable ``on_*`` hook."""
+    if isinstance(plugin, type):
+        return False
+    return any(
+        name.startswith("on_") and callable(getattr(plugin, name, None))
+        for name in dir(plugin)
+    )
+
+
+def register_global(plugin: "PluginBase[Any]") -> None:
     """Attach *plugin* to every interpreter constructed from now on.
 
     Applies to `Interpreter(...)`, `SyncInterpreter(...)`, `from_snapshot`
     and engine-spawned children. Registering the same object twice is a
     no-op (identity check), so a fixture that re-registers is harmless.
     Interpreters that already exist are NOT touched.
+
+    Args:
+        plugin: A plugin INSTANCE: a `PluginBase` subclass instance or any
+            duck-typed object with at least one callable ``on_*`` hook.
+
+    Raises:
+        TypeError: If *plugin* is a class (instead of an instance) or has
+            no ``on_*`` hook at all -- such an object would be accepted by
+            the hook wrapper and then silently do nothing ("silent
+            acceptance is a bug").
     """
+    if not _looks_like_plugin(plugin):
+        raise TypeError(
+            "register_global() needs a plugin instance with at least one "
+            f"callable on_* hook, got {plugin!r}"
+            + (
+                " (a class: did you forget to instantiate it?)"
+                if isinstance(plugin, type)
+                else ""
+            )
+        )
     with _GLOBAL_LOCK:
         if not any(p is plugin for p in _GLOBAL_PLUGINS):
             _GLOBAL_PLUGINS.append(plugin)
@@ -805,6 +1093,24 @@ def clear_global_plugins() -> None:
         _GLOBAL_PLUGINS.clear()
 
 
+def _receipt_outcome(receipt: "Receipt") -> str:
+    """One-word outcome of a `Receipt`, most severe first.
+
+    Args:
+        receipt: The receipt of a processed event.
+
+    Returns:
+        ``error`` / ``deferred`` / ``denied`` / ``changed`` / ``no change``.
+    """
+    if receipt.error is not None:
+        return "error"
+    if receipt.deferred:
+        return "deferred"
+    if receipt.denied:
+        return "denied"
+    return "changed" if receipt.changed else "no change"
+
+
 class LoggingInspector(PluginBase[Any]):
     """A built-in plugin for detailed, real-time inspection of a machine.
 
@@ -814,13 +1120,21 @@ class LoggingInspector(PluginBase[Any]):
     `PluginBase` subclass. It uses `Generic[Any]` to work with both the
     sync and async interpreters.
 
-    🔒 #126: context and event payloads are **redacted** before logging.
+    🔒 #126: context and event payloads are **redacted** before logging
+    (by mapping KEY -- see :func:`redact` for the matching rule).
     Any key matching :data:`DEFAULT_REDACT_KEYS` (``password``, ``token``,
     ``secret``, ``api_key``, …) is written as ``"***"``. Pass
     ``redact_keys=(...)`` to extend or replace the list, or
     ``redact_keys=()`` to log everything verbatim -- an explicit opt-in,
     because a debugging plugin attached "just for a minute" is exactly how
     credentials end up in a log aggregator.
+
+    ⚠️ Limits (RU-14): redaction is by KEY. A secret embedded in a free-text
+    string -- an exception MESSAGE such as ``ValueError('card=4111...')`` --
+    is not recognisable and is logged as written, and the traceback printed
+    for a failed service carries that message verbatim. Structured exception
+    args (dicts) and every other logged value (service results, ``done``
+    output, ``%r`` of errors) do pass through the redactor.
 
     Args:
         redact_keys: Substrings (case-insensitive) of keys to redact.
@@ -848,6 +1162,21 @@ class LoggingInspector(PluginBase[Any]):
 
     def _safe(self, value: Any) -> Any:
         return redact(value, self._redact_keys) if self._redact_keys else value
+
+    def _safe_exc(self, error: BaseException) -> str:
+        """``Type(args...)`` with structured args redacted (RU-14).
+
+        Replaces ``%r`` of an exception, whose repr echoes every argument
+        verbatim, including a dict carrying credentials.
+
+        Args:
+            error: The exception to describe.
+
+        Returns:
+            A repr-like string safe to log under the redaction policy.
+        """
+        args = ", ".join(repr(self._safe(a)) for a in error.args)
+        return f"{type(error).__name__}({args})"
 
     def on_event_received(
         self, interpreter: "BaseInterpreter[Any]", event: "AnyEvent"
@@ -898,20 +1227,14 @@ class LoggingInspector(PluginBase[Any]):
         receipt: "Receipt",
     ) -> None:
         """Logs each event's outcome -- the same fields a receipt carries
-        (#304). DEBUG level: one line per event is chatty in production."""
-        outcome = (
-            "error"
-            if receipt.error is not None
-            else (
-                "deferred"
-                if receipt.deferred
-                else (
-                    "denied"
-                    if receipt.denied
-                    else "changed" if receipt.changed else "no change"
-                )
-            )
-        )
+        (#304). DEBUG level: one line per event is chatty in production.
+
+        Args:
+            interpreter: The interpreter that processed the event.
+            event: The processed event.
+            receipt: Its outcome.
+        """
+        outcome = _receipt_outcome(receipt)
         logger.debug(
             "🧾 [INSPECT] Event Processed: %s -> %s | %s",
             event.type,
@@ -941,7 +1264,7 @@ class LoggingInspector(PluginBase[Any]):
         from_ids = {s.id for s in from_states if s.is_atomic or s.is_final}
         to_ids = {s.id for s in to_states if s.is_atomic or s.is_final}
 
-        #  зовнішній (External) transition: A state change occurred.
+        # External transition: a state change occurred.
         if from_ids != to_ids:
             logger.info(
                 "🕵️ [INSPECT] Transition: %s -> %s on Event '%s'",
@@ -950,7 +1273,7 @@ class LoggingInspector(PluginBase[Any]):
                 transition.event,
             )
             self._log_ctx(interpreter)
-        # внутрішній (Internal) transition: No state change, but actions ran.
+        # Internal transition: no state change, but actions ran.
         elif transition.actions:
             logger.info(
                 "🕵️ [INSPECT] Internal transition on Event '%s'",
@@ -1067,14 +1390,22 @@ class LoggingInspector(PluginBase[Any]):
         transition: "TransitionDefinition",
         failed_actions: List[Tuple["ActionDefinition", BaseException]],
     ) -> None:
-        """Logs a transition whose action list did not run to completion."""
+        """Logs a transition whose action list did not run to completion.
+
+        Args:
+            interpreter: The interpreter instance.
+            transition: The transition whose actions failed.
+            failed_actions: ``(action, exception)`` pairs.
+        """
         logger.error(
             "💥 [INSPECT] Transition from '%s' on '%s' had %d failing "
             "action(s): %s (policy=%s)",
             transition.source.id,
             transition.event or "always",
             len(failed_actions),
-            ", ".join(f"{a.type}: {e!r}" for a, e in failed_actions),
+            ", ".join(
+                f"{a.type}: {self._safe_exc(e)}" for a, e in failed_actions
+            ),
             interpreter.machine.action_error_policy,
         )
 
@@ -1085,13 +1416,20 @@ class LoggingInspector(PluginBase[Any]):
         event: "AnyEvent",
         error: BaseException,
     ) -> None:
-        """Logs a guard that raised instead of returning."""
+        """Logs a guard that raised instead of returning.
+
+        Args:
+            interpreter: The interpreter instance.
+            guard_name: The guard that raised.
+            event: The event being evaluated.
+            error: The exception the guard raised.
+        """
         logger.error(
-            "🔥 [INSPECT] Guard '%s' RAISED on event '%s' (policy=%s): %r",
+            "🔥 [INSPECT] Guard '%s' RAISED on event '%s' (policy=%s): %s",
             guard_name,
             event.type,
             interpreter.machine.guard_error_policy,
-            error,
+            self._safe_exc(error),
         )
 
     def on_unhandled_event(
@@ -1101,7 +1439,14 @@ class LoggingInspector(PluginBase[Any]):
         active_state_ids: Set[str],
         disposition: str,
     ) -> None:
-        """Logs an event that matched no transition."""
+        """Logs an event that matched no transition.
+
+        Args:
+            interpreter: The interpreter instance.
+            event: The unhandled event.
+            active_state_ids: State ids active when it arrived.
+            disposition: ``ignored`` / ``deferred`` / ``errored`` / ``dropped``.
+        """
         logger.warning(
             "🍃 [INSPECT] Event '%s' unhandled in %s -> %s",
             event.type,
@@ -1112,21 +1457,31 @@ class LoggingInspector(PluginBase[Any]):
     def on_error(
         self, interpreter: "BaseInterpreter[Any]", error: BaseException
     ) -> None:
-        """Logs the interpreter entering the terminal error status."""
+        """Logs the interpreter entering the terminal error status.
+
+        Args:
+            interpreter: The interpreter instance.
+            error: The exception that stopped the machine.
+        """
         logger.error(
-            "🚨 [INSPECT] Interpreter '%s' entered status 'error': %r",
+            "🚨 [INSPECT] Interpreter '%s' entered status 'error': %s",
             interpreter.id,
-            error,
+            self._safe_exc(error),
         )
 
     def on_done(
         self, interpreter: "BaseInterpreter[Any]", output: Any
     ) -> None:
-        """Logs the machine reaching a top-level final state."""
+        """Logs the machine reaching a top-level final state.
+
+        Args:
+            interpreter: The interpreter instance.
+            output: The machine's output (redacted by key).
+        """
         logger.info(
             "🏁 [INSPECT] Interpreter '%s' is done. Output: %r",
             interpreter.id,
-            output,
+            self._safe(output),
         )
 
 

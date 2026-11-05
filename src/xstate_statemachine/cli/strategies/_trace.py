@@ -58,6 +58,7 @@ class Trace:
 
 def record(config: Dict[str, Any], *, max_events: int = 24) -> Trace:
     """Run *config* along its reachable event sequence and record it."""
+    previous_disable = logging.root.manager.disable  # CLI-015: restore it
     logging.disable(logging.CRITICAL)
     try:
         actions, guards, services = extract_logic_names(config)
@@ -138,4 +139,4 @@ def record(config: Dict[str, Any], *, max_events: int = 24) -> Trace:
             unreached_events=sorted(set(machine.known_events) - seen),
         )
     finally:
-        logging.disable(logging.NOTSET)
+        logging.disable(previous_disable)

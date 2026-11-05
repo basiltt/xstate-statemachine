@@ -2651,7 +2651,7 @@ class TestSyncInterpreter(unittest.TestCase):
         }
         # ⚡ Act & ✨ Assert
         with self.assertRaisesRegex(
-            InvalidConfigError, "Invalid transition config"
+            InvalidConfigError, "invalid transition config"
         ):
             create_machine(machine_config)
 

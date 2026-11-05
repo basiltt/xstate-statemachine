@@ -49,6 +49,7 @@ from typing import (
 
 from pydantic import BaseModel, ConfigDict, ValidationError, create_model
 
+from ._threads import _in_daemon_thread
 from .messages import AgentConfigError, ToolCall, ToolDeniedError
 from .messages import ToolTimeoutError
 
@@ -117,9 +118,25 @@ class Tool:
         if not isinstance(arguments, Mapping):
             raise ToolDeniedError(self.name, "arguments must be an object")
         try:
-            model = self.args_model.model_validate(  # type: ignore[attr-defined]
-                dict(arguments)
-            )
+            # 🔥 review CM-07: model-proposed arguments are JSON. Strict
+            #    PYTHON-mode validation rejects the str a model sends for a
+            #    datetime / Decimal / UUID / Enum parameter, so such tools
+            #    could never be called; strict JSON mode accepts exactly
+            #    those strings and still refuses "1e3" -> float style
+            #    coercion. Arguments that are not JSON-serialisable (a
+            #    hand-built ToolCall) keep the python-mode check.
+            try:
+                payload: Optional[str] = json.dumps(dict(arguments))
+            except (TypeError, ValueError):
+                payload = None
+            if payload is None:
+                model = self.args_model.model_validate(  # type: ignore[attr-defined]  # noqa: E501
+                    dict(arguments)
+                )
+            else:
+                model = self.args_model.model_validate_json(  # type: ignore[attr-defined]  # noqa: E501
+                    payload
+                )
         except ValidationError as exc:
             # 📝 Error text names fields only (`include_input=False`) --
             #    never echo the rejected values back into the conversation.
@@ -353,8 +370,10 @@ class ToolRegistry:
         if inspect.iscoroutinefunction(t.fn):
             aw = t.fn(**args)
         else:
-            loop = asyncio.get_running_loop()
-            aw = loop.run_in_executor(None, lambda: t.fn(**args))
+            # 🔥 review CM-08: a daemon thread, NOT the default executor --
+            #    a hung sync tool would pin an executor worker and
+            #    `asyncio.run` would wait for it at shutdown.
+            aw = _in_daemon_thread(lambda: t.fn(**args))
         try:
             return await asyncio.wait_for(aw, t.timeout_s)
         except asyncio.TimeoutError:

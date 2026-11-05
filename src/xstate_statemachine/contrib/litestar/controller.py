@@ -25,7 +25,7 @@ from litestar.connection import WebSocket
 from litestar.exceptions import ValidationException
 
 from .._openapi import ident as _ident
-from .._openapi import operation_ids
+from .._openapi import operation_ids, require_route_safe_events
 from ..starlette._http import (
     HTTPProblemError,
     PayloadTooLargeError,
@@ -33,6 +33,8 @@ from ..starlette._http import (
     declared_events,
     problem,
     problem_for_exception,
+    problem_for_exception_logged,
+    read_body,
 )
 from ..starlette.streaming import transition_stream, websocket_endpoint
 from ._edge import to_litestar, to_starlette
@@ -167,7 +169,11 @@ def _models_for(
         return list(event_models)
     try:
         from ..pydantic.events import models_of
-    except Exception:  # noqa: BLE001 -- pydantic is optional here
+    except ImportError:
+        # 📝 Review CW-25: only a MISSING pydantic is "no typed models"
+        #    (`MissingExtraError` is an ImportError). The blanket
+        #    `except Exception` also hid real bugs in `contrib.pydantic`
+        #    and quietly degraded the generated OpenAPI.
         return []
     return list(models_of(machine.event_schemas))
 
@@ -252,7 +258,7 @@ def _http_problem(request: Any, exc: Exception) -> Any:
     return to_litestar(problem_for_exception(exc))
 
 
-def _json_guard(limit: int) -> Callable[..., Any]:
+def _json_guard(limit: int, timeout_s: float) -> Callable[..., Any]:
     async def before(request: Request) -> None:  # type: ignore[type-arg]
         """Refuse an oversized or non-JSON body before the handler runs.
 
@@ -265,14 +271,14 @@ def _json_guard(limit: int) -> Callable[..., Any]:
             raise PayloadTooLargeError()
         # 🔥 battle #278-a: a chunked body (no content-length) was read
         #    WHOLE into memory before the size check. Stop at limit+1.
-        chunks: List[bytes] = []
-        size = 0
-        async for chunk in request.stream():
-            size += len(chunk)
-            if size > limit:
-                raise PayloadTooLargeError()
-            chunks.append(chunk)
-        raw = b"".join(chunks)
+        # 🔥 Review CW-12: no read timeout here -- a stalled client held
+        #    the handler forever although `body_timeout_s` is documented as
+        #    always on. Same helper (and 408) as the Starlette stack.
+        raw = await read_body(
+            cast(Any, request),  # 📝 duck-typed: only `.stream()` is used
+            max_body_bytes=limit,
+            timeout_s=timeout_s,
+        )
         request._body = raw  # what `request.body()` / the edge reuse
         request._connection_state.body = raw
         if raw.strip():
@@ -329,6 +335,7 @@ def create_statechart_controller(
             f"exclude_events= names events {name!r} does not declare: "
             f"{unknown}"
         )
+    require_route_safe_events(declared_events(machine))
     op = operation_id_prefix or name
     kp = "{" + key_param + ":str}"
     body_t = _body_type(name, machine, models)
@@ -351,11 +358,16 @@ def create_statechart_controller(
         """
         conn = to_starlette(request)
         key = key_of(request)
-        if not create_if_missing and not await registry.exists(name, key):
-            from ...persistence.helpers import KeyNotFoundError
-
-            return to_litestar(problem_for_exception(KeyNotFoundError(key)))
-        resp = await registry.send_event(conn, name, key, etype, payload)
+        # 🔐 Review CW-02: the 404 for a missing key is decided INSIDE
+        #    `send_event`, after `authorize` -- not before it.
+        resp = await registry.send_event(
+            conn,
+            name,
+            key,
+            etype,
+            payload,
+            create_if_missing=create_if_missing,
+        )
         return to_litestar(resp)
 
     async def get_state(self: Any, request: Request) -> Response:  # type: ignore[type-arg]
@@ -366,7 +378,9 @@ def create_statechart_controller(
             await guard_read(conn, key)
             body = await registry.peek(name, key)
         except Exception as exc:  # noqa: BLE001
-            return to_litestar(problem_for_exception(exc))  # type: ignore
+            return to_litestar(
+                problem_for_exception_logged(exc, f"{name} read")
+            )
         body["machine_version"] = machine.version or None
         return Response(body)
 
@@ -374,11 +388,24 @@ def create_statechart_controller(
         """``POST /{id}/send`` -- send the body's event; returns the receipt."""
         etype, payload = _split(data)
         if etype in excluded:
+            # 🔐 Authorize first: an unauthorised caller must not learn
+            #    which events the app owns.
+            try:
+                await registry.authorize(
+                    to_starlette(request), name, key_of(request), etype
+                )
+            except Exception as exc:  # noqa: BLE001 -- mapped
+                return cast(
+                    "Response[Any]",
+                    to_litestar(
+                        problem_for_exception_logged(exc, f"send {name}")
+                    ),
+                )
             return cast(
                 "Response[Any]",  # 📝 to_litestar returns Any
                 to_litestar(problem(403, "Use this event's dedicated route")),
             )
-        return await do_send(request, etype, payload)  # type: ignore
+        return await do_send(request, etype, payload)
 
     send.__annotations__["data"] = body_t
 
@@ -390,7 +417,9 @@ def create_statechart_controller(
             await guard_read(conn, key)
             available = (await registry.peek(name, key))["available_events"]
         except Exception as exc:  # noqa: BLE001
-            return to_litestar(problem_for_exception(exc))  # type: ignore
+            return to_litestar(
+                problem_for_exception_logged(exc, f"{name} read")
+            )
         declared = [
             {
                 "type": e,
@@ -409,7 +438,9 @@ def create_statechart_controller(
                 to_starlette(request), name, key_of(request), None
             )
         except Exception as exc:  # noqa: BLE001
-            return to_litestar(problem_for_exception(exc))  # type: ignore
+            return to_litestar(
+                problem_for_exception_logged(exc, f"{name} read")
+            )
         return Response(machine.to_mermaid(), media_type="text/plain")
 
     async def stream(self: Any, request: Request) -> Any:  # type: ignore[type-arg]
@@ -420,7 +451,9 @@ def create_statechart_controller(
         try:
             await guard_read(to_starlette(request), key_of(request))
         except Exception as exc:  # noqa: BLE001
-            return to_litestar(problem_for_exception(exc))
+            return to_litestar(
+                problem_for_exception_logged(exc, f"{name} stream")
+            )
         resp = await transition_stream(
             registry, name, key_of(request), to_starlette(request)
         )
@@ -436,12 +469,17 @@ def create_statechart_controller(
         ):
             await socket.close(code=1008)
             return
-        await ws_endpoint(scope, socket.receive, socket.send)  # type: ignore
+        # 📝 Litestar's ASGI event unions are narrower than Starlette's
+        #    callable aliases; the runtime shapes are identical.
+        endpoint: Any = ws_endpoint
+        await endpoint(scope, socket.receive, socket.send)
 
     ns: Dict[str, Any] = {
         "path": path if path is not None else f"/{name}",
         "tags": list(tags) if tags else None,
-        "before_request": _json_guard(registry.max_body_bytes),
+        "before_request": _json_guard(
+            registry.max_body_bytes, registry.body_timeout_s
+        ),
         "exception_handlers": {
             ValidationException: _validation_problem,
             HTTPProblemError: _http_problem,
@@ -530,7 +568,7 @@ def _event_handler(
             )
         else:
             payload = dict(data)
-        return await do_send(request, etype, payload)  # type: ignore
+        return await do_send(request, etype, payload)
 
     handler.__annotations__["data"] = (
         Optional[model] if model is not None else Optional[Dict[str, Any]]
