@@ -196,4 +196,3 @@ python -m build --wheel && python -m venv /tmp/v && /tmp/v/bin/pip install dist/
 # 6. docs are executable and links resolve
 python -m pytest tests/test_docs_executable.py tests/test_docs_site.py tests/test_readme.py -q
 ```
-

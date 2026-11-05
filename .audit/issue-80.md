@@ -48,4 +48,3 @@ Introduce `ErrorEvent` (subclass of `Event`, `error: BaseException`) and emit it
 
 ## Related
 Split out of #60 (LC-52 in the original register); #33 (error-observability hooks).
-
