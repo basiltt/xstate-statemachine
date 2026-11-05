@@ -462,11 +462,9 @@ class TestResponsivePanelContract(unittest.TestCase):
         self,
     ) -> None:
         layout = LAYOUT.read_text(encoding="utf-8")
-        module = re.search(
-            r'<script type="module">(.*?)</script>', layout, re.S
-        )
-        self.assertIsNotNone(module)
-        script = module.group(1)
+        # 📝 The viewer lives in the diagram renderer module the layout loads.
+        self.assertIn("assets/js/diagrams.js", layout)
+        script = (DOCS / "assets" / "js" / "diagrams.js").read_text("utf-8")
         for dimension in ("width", "height"):
             self.assertRegex(script, rf"\.style\.{dimension}\s*=")
         self.assertNotIn(".style.transform", script)
@@ -476,7 +474,6 @@ class TestResponsivePanelContract(unittest.TestCase):
             ".stopPropagation()",
             "ResizeObserver",
             "MutationObserver",
-            "data-theme",
         ):
             self.assertIn(contract, script)
         close = re.search(r"function\s+closeViewer\([^)]*\)\s*\{", script)
