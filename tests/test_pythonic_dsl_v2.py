@@ -1754,6 +1754,367 @@ class TestToJson(unittest.TestCase):
         self.assertIn("\n", m.to_json(indent=2))
 
 
+# =========================================================================
+# 10. Legacy callback shapes stay positional
+# =========================================================================
+class TestLegacyShapesStayPositional(unittest.TestCase):
+    """A callback whose arity matches a legacy shape is called positionally
+    even when it has defaults, ``**kwargs`` or a parameter named like a
+    payload key -- unless every one of its parameters can be resolved by
+    name, which is the only time injection can mean anything."""
+
+    def test_three_argument_guard_with_default_params(self):
+        seen = {}
+
+        class M(StateMachine):
+            a = State(initial=True)
+            b = State()
+            go = a.to(b, guard="can_go")
+
+            @guard
+            def can_go(self, ctx, e, params=None):
+                seen["args"] = (type(ctx).__name__, e.type, params)
+                return bool(e.payload.get("ok"))
+
+        with M() as sm:
+            sm.go(ok=True)
+            self.assertEqual(sm.state, "b")
+        self.assertEqual(seen["args"], ("dict", "GO", None))
+
+    def test_four_argument_action_with_default_action_def(self):
+        seen = {}
+
+        class M(StateMachine):
+            a = State(initial=True)
+            b = State()
+            go = a.to(b, actions=["record", "follow"])
+
+            @action
+            def record(self, i, ctx, e, a=None):
+                seen["record"] = (i is not None, e.type, a.type)
+
+            @action
+            def follow(self, i, ctx, e, a):
+                seen["follow"] = True
+
+        with M() as sm:
+            sm.go()
+        self.assertEqual(seen["record"], (True, "GO", "record"))
+        self.assertTrue(seen["follow"])
+
+    def test_payload_keys_named_like_legacy_parameters(self):
+        seen = {}
+
+        class M(StateMachine):
+            a = State(initial=True)
+            b = State(invoke={"src": "work", "onDone": "c"})
+            c = State()
+            go = a.to(b, actions=["record"])
+
+            @action
+            def record(self, i, ctx, e, a):
+                seen["action"] = (type(e).__name__, a.type, dict(e.payload))
+
+            @service
+            def work(self, i, ctx, e):
+                seen["service"] = type(e).__name__
+                return 1
+
+        with M() as sm:
+            sm.go(e=1, a=2)
+            self.assertEqual(sm.state, "c")
+        self.assertEqual(seen["action"], ("Event", "record", {"e": 1, "a": 2}))
+        self.assertEqual(seen["service"], "Event")
+
+    def test_var_keyword_on_a_legacy_action_stays_positional(self):
+        seen = {}
+
+        class M(StateMachine):
+            a = State(initial=True)
+            b = State()
+            go = a.to(b, actions=["record"])
+
+            @action
+            def record(self, i, ctx, e, a, **rest):
+                seen["args"] = (type(e).__name__, a.type, rest)
+
+        with M() as sm:
+            sm.go(x=1)
+        self.assertEqual(seen["args"], ("Event", "record", {}))
+
+    def test_injection_style_guard_with_only_defaults_still_injects(self):
+        seen = {}
+
+        class M(StateMachine):
+            a = State(initial=True)
+            b = State()
+            go = a.to(b, guard="allowed")
+
+            @guard
+            def allowed(self, amount=0, limit=5):
+                seen["args"] = (amount, limit)
+                return amount > limit
+
+        with M() as sm:
+            sm.go()
+            self.assertEqual(seen["args"], (0, 5))
+            self.assertEqual(sm.state, "a")
+            sm.go(amount=9)
+            self.assertEqual(seen["args"], (9, 5))
+            self.assertEqual(sm.state, "b")
+
+    def test_functional_api_guard_with_default_params(self):
+        idle = State("idle", initial=True)
+        active = State("active")
+        seen = {}
+
+        @guard
+        def is_ready(ctx, e, params=None):
+            seen["args"] = (type(ctx).__name__, e.type, params)
+            return True
+
+        machine = build_machine(
+            id="t",
+            states=[idle, active],
+            transitions=[idle.to(active, event="GO", guard="isReady")],
+            guards=[is_ready],
+        )
+        interp = SyncInterpreter(machine).start()
+        interp.send("GO", x="payload")
+        self.assertIn("t.active", interp.current_state_ids)
+        self.assertEqual(seen["args"], ("dict", "GO", None))
+        interp.stop()
+
+    def test_async_legacy_action_with_default_is_positional(self):
+        class M(StateMachine):
+            engine = "async"
+            a = State(initial=True)
+            go = a.internal(actions=["act"])
+
+            @action
+            async def act(self, i, ctx, e, a=None):
+                return ("async", e.type, a.type)
+
+        async def main():
+            async with M() as sm:
+                self.assertEqual(await sm.go(e="x"), ("async", "GO", "act"))
+
+        asyncio.run(main())
+
+    def test_is_legacy_signature_ignores_defaults_and_var_keyword(self):
+        from xstate_statemachine._pythonic_runtime import (
+            is_legacy_signature,
+        )
+
+        self.assertTrue(
+            is_legacy_signature(lambda c, e, params=None: None, "guard")
+        )
+        self.assertTrue(
+            is_legacy_signature(lambda i, c, e, a=None: None, "action")
+        )
+        self.assertTrue(
+            is_legacy_signature(lambda i, c, e, a, **kw: None, "action")
+        )
+        self.assertFalse(is_legacy_signature(lambda amount=0: None, "guard"))
+
+    def test_default_in_the_trailing_slot_keeps_action_def_and_params(self):
+        seen = {}
+
+        class M(StateMachine):
+            a = State(initial=True)
+            b = State()
+            go = a.to(
+                b,
+                guard={"type": "overLimit", "params": {"limit": 5}},
+                actions=[{"type": "logIt", "params": {"level": "warn"}}],
+            )
+
+            @guard
+            def over_limit(self, context, event, p=None):
+                seen["p"] = p
+                return p is not None and p["limit"] > 2
+
+            @action
+            def log_it(self, interpreter, context, event, a=None):
+                seen["a"] = None if a is None else a.params
+
+        with M() as sm:
+            sm.go(limit=1)
+            self.assertEqual(sm.state, "b")
+        self.assertEqual(seen["p"], {"limit": 5})
+        self.assertEqual(seen["a"], {"level": "warn"})
+
+    def test_all_unknown_names_with_trailing_default_stay_positional(self):
+        seen = {}
+
+        class M(StateMachine):
+            a = State(initial=True)
+            b = State()
+            go = a.to(b, guard="ok")
+
+            @guard
+            def ok(self, c, e, p=None):
+                seen["args"] = (type(c).__name__, e.type, p)
+                return True
+
+        with M() as sm:
+            sm.go(x=1)
+            self.assertEqual(sm.state, "b")
+        self.assertEqual(seen["args"], ("dict", "GO", None))
+
+    def test_new_style_guard_with_context_and_optional_field(self):
+        seen = {}
+
+        class M(StateMachine):
+            initial_context = {"balance": 10}
+            a = State(initial=True)
+            b = State()
+            go = a.to(b, guard="can_pay")
+
+            @guard
+            def can_pay(self, context, amount=0):
+                seen["amount"] = amount
+                return context["balance"] >= amount
+
+        with M() as sm:
+            sm.go()
+            self.assertEqual(seen["amount"], 0)
+            self.assertEqual(sm.state, "b")
+        with M() as sm:
+            sm.go(amount=50)
+            self.assertEqual(seen["amount"], 50)
+            self.assertEqual(sm.state, "a")
+
+    def test_payload_naming_a_parameter_makes_a_missing_field_loud(self):
+        seen = {}
+
+        class M(StateMachine):
+            a = State(initial=True)
+            b = State(
+                invoke={
+                    "src": "fetch",
+                    "input": event_payload,
+                    "onDone": "c",
+                    "onError": "d",
+                }
+            )
+            c = State()
+            d = State()
+            go = a.to(b)
+
+            @service
+            def fetch(self, url, retries=3, timeout=10):
+                return (url, retries, timeout)
+
+            def on_enter_c(self, data):
+                seen["result"] = data
+
+            def on_enter_d(self, error):
+                seen["error"] = error
+
+        with M() as sm:
+            sm.go(url="x")
+            self.assertEqual(sm.state, "c")
+        self.assertEqual(seen["result"], ("x", 3, 10))
+        with M() as sm:
+            with self.assertLogs("xstate_statemachine", "ERROR"):
+                sm.go(retries=5)
+            self.assertEqual(sm.state, "d")
+        self.assertIsInstance(seen["error"], TypeError)
+        self.assertIn("url", str(seen["error"]))
+
+    def test_guard_default_in_the_params_slot_is_kept(self):
+        seen = {}
+
+        class M(StateMachine):
+            a = State(initial=True)
+            b = State()
+            go = a.to(b, guard="allowed")
+
+            @guard
+            def allowed(self, ctx, e, limit=100):
+                seen["limit"] = limit
+                return isinstance(limit, int)
+
+        with M() as sm:
+            sm.go()
+            self.assertEqual(sm.state, "b")
+        self.assertEqual(seen["limit"], 100)
+
+    def test_underscored_legacy_names_with_var_keyword_stay_positional(
+        self,
+    ):
+        seen = {}
+
+        class M(StateMachine):
+            a = State(initial=True)
+            b = State()
+            go = a.to(b, guard="ok", actions=["record"])
+
+            @guard
+            def ok(self, _ctx, _e, **_kw):
+                seen["guard"] = (type(_e).__name__, _kw)
+                return True
+
+            @action
+            def record(self, interpreter, context, event, action_def, **kw):
+                seen["action"] = (type(event).__name__, kw)
+
+        with M() as sm:
+            sm.go(x=1)
+            self.assertEqual(sm.state, "b")
+        self.assertEqual(seen["guard"], ("Event", {}))
+        self.assertEqual(seen["action"], ("Event", {"x": 1}))
+
+    def test_extra_defaulted_parameters_after_a_legacy_shape(self):
+        seen = {}
+
+        class M(StateMachine):
+            a = State(initial=True)
+            b = State()
+            go = a.to(b, guard="ok", actions=["record"])
+
+            @guard
+            def ok(self, ctx, e, params=None, strict=False):
+                seen["guard"] = (e.type, params, strict)
+                return True
+
+            @action
+            def record(self, i, ctx, e, a, level="info"):
+                seen["action"] = (e.type, a.type, level)
+
+        with M() as sm:
+            sm.go()
+            self.assertEqual(sm.state, "b")
+        self.assertEqual(seen["guard"], ("GO", None, False))
+        self.assertEqual(seen["action"], ("GO", "record", "info"))
+
+    def test_short_legacy_names_survive_a_colliding_payload_key(self):
+        seen = {}
+
+        class M(StateMachine):
+            a = State(initial=True)
+            b = State()
+            go = a.to(b, guard="ok", actions=["record"])
+
+            @guard
+            def ok(self, c, e):
+                seen["guard"] = type(e).__name__
+                return True
+
+            @action
+            def record(self, i, c, e, a):
+                seen["action"] = (type(i).__name__, type(e).__name__, a.type)
+
+        with M() as sm:
+            sm.go(i=7, e=1, a=2)
+            self.assertEqual(sm.state, "b")
+        self.assertEqual(seen["guard"], "Event")
+        self.assertEqual(
+            seen["action"], ("SyncInterpreter", "Event", "record")
+        )
+
+
 if __name__ == "__main__":  # pragma: no cover
     logging.basicConfig(level=logging.WARNING)
     unittest.main()

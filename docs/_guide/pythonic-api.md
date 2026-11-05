@@ -242,7 +242,7 @@ async def main():
 asyncio.run(main())
 ```
 
-The rest of this page documents the three styles in full, including the explicit `@action` / `@guard` / `@service` decorators and the legacy positional callback signatures, which keep working unchanged.
+The rest of this page documents the three styles in full, including the explicit `@action` / `@guard` / `@service` decorators and the legacy positional callback signatures, which keep working unchanged: a callback whose arity matches a legacy shape (`(interpreter, context, event, action_def)`, `(context, event[, params])`, `(interpreter, context, event)`) is called positionally, a default in the trailing `params` / `action_def` slot and extra defaulted parameters after the shape included, and is resolved by name only when it asks for injection (a default elsewhere, a keyword-only parameter, `**kwargs`, or a parameter named like a field the event carries) and every parameter without a default can be supplied by name. A signature with no engine name at all that asks for injection (`def fetch(self, url, retries=3, timeout=10)`) raises a clear `TypeError` when the payload names some of its parameters but not a required one.
 
 ---
 

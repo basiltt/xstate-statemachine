@@ -11,8 +11,11 @@ that are independent of how the chart is *compiled*:
    legacy positional shapes (``(interpreter, context, event, action_def)``
    for actions, ``(context, event[, params])`` for guards, ``(interpreter,
    context, event)`` for services) keep working: a callback whose arity
-   matches and whose parameter names do not ask for anything by name is
-   called positionally, exactly as before.
+   matches one of them is called positionally, a default in the trailing
+   ``params`` / ``action_def`` slot included, and is resolved by name only
+   when it asks for injection (a default elsewhere, a keyword-only
+   parameter, ``**kwargs``, or a parameter named like a field the event
+   carries) and every parameter without a default can be supplied.
 
 2. **Convention hooks that cannot be compiled into the chart**
    (`ConventionHooksPlugin`). ``before_<event>`` / ``before_transition``
@@ -81,6 +84,17 @@ _LEGACY_ORDER: Dict[str, Tuple[Tuple[str, ...], ...]] = {
     ),
 }
 
+#: The last slot of a legacy shape that callers conventionally leave out
+#: when they call the callback by hand (a test calling ``my_action(i, ctx,
+#: e)`` or ``my_guard(ctx, e)``): an action's ``action_def``, a guard's
+#: ``params`` and a service's ``event``. A default there (``a=None``,
+#: ``params=None``) is that idiom, not a request for injection.
+_TRAILING_OPTIONAL_SLOT: Dict[str, int] = {
+    "action": 3,
+    "guard": 2,
+    "service": 2,
+}
+
 _MISSING = object()
 
 
@@ -90,11 +104,43 @@ _MISSING = object()
 
 
 class _Shape:
-    """What a callback's signature tells us, computed once."""
+    """What a callback's signature tells us, computed once.
 
-    __slots__ = ("params", "legacy", "ambiguous", "var_kw", "names")
+    Attributes:
+        legacy: The positional arity matches a legacy shape (or the
+            callback takes ``*args``).
+        ambiguous: Legacy arity, but the parameter names do not settle it;
+            `adapt_callable` decides per call.
+        prefers_injection: The author wrote something the positional call
+            cannot honour on its own -- a default outside the trailing
+            slot, a keyword-only parameter or ``**kwargs`` -- so by-name
+            resolution is tried first.
+        defaults: Per positional parameter, whether it has a default.
+        engine_named: At least one positional parameter is an engine name
+            (for an ambiguous shape, at its legacy position).
+        unknown: Positional parameter names that are not engine names.
+        unknown_required: The subset of ``unknown`` without a default.
+    """
+
+    __slots__ = (
+        "params",
+        "legacy",
+        "ambiguous",
+        "var_kw",
+        "names",
+        "prefers_injection",
+        "defaults",
+        "engine_named",
+        "unknown",
+        "unknown_required",
+    )
 
     def __init__(self, fn: Callable[..., Any], kind: str) -> None:
+        self.prefers_injection = False
+        self.defaults: Tuple[bool, ...] = ()
+        self.engine_named = False
+        self.unknown: Tuple[str, ...] = ()
+        self.unknown_required: Tuple[str, ...] = ()
         try:
             sig = inspect.signature(fn)
         except (TypeError, ValueError):  # pragma: no cover - builtins
@@ -115,23 +161,53 @@ class _Shape:
             )
         ]
         self.names = tuple(p.name for p in positional)
+        self.defaults = tuple(
+            p.default is not inspect.Parameter.empty for p in positional
+        )
         if inspect.Parameter.VAR_POSITIONAL in kinds:
             # ``*args`` wants the raw positional call.
             self.legacy, self.ambiguous = True, False
             return
         has_kw_only = inspect.Parameter.KEYWORD_ONLY in kinds
-        has_defaults = any(
-            p.default is not inspect.Parameter.empty for p in positional
+        trailing = _TRAILING_OPTIONAL_SLOT[kind]
+        default_elsewhere = any(
+            p.default is not inspect.Parameter.empty and pos != trailing
+            for pos, p in enumerate(positional)
         )
-        arity_ok = len(positional) in LEGACY_ARITIES[kind]
-        if not arity_ok or self.var_kw or has_kw_only or has_defaults:
+        self.prefers_injection = (
+            default_elsewhere or has_kw_only or self.var_kw
+        )
+        self.unknown = tuple(
+            p.name for p in positional if p.name not in INJECTABLE_NAMES
+        )
+        self.unknown_required = tuple(
+            p.name
+            for p in positional
+            if p.name not in INJECTABLE_NAMES
+            and p.default is inspect.Parameter.empty
+        )
+        self.engine_named = len(self.unknown) < len(self.names)
+        required = sum(
+            1 for p in positional if p.default is inspect.Parameter.empty
+        )
+        arities = LEGACY_ARITIES[kind]
+        # A legacy shape followed by extra defaulted parameters
+        # (``(i, ctx, e, a, level="info")``) is that shape: the positional
+        # call leaves the extras at their defaults, as 0.11 did.
+        if len(positional) not in arities and not (
+            required in arities and required < len(positional)
+        ):
             self.legacy, self.ambiguous = False, False
             return
         # Arity matches. A recognised engine name at the wrong position
         # means the author is naming things -> injection. Names that all
         # sit at their legacy position, or are unrecognised (``i, ctx, e,
-        # a``), are legacy -- unless the event payload names one of them,
-        # which is decided per call.
+        # a``), are legacy -- unless, per call, the author asked for
+        # injection (a default outside the trailing slot, a keyword-only
+        # parameter, ``**kwargs``, or a payload field named like a
+        # parameter) AND every parameter without a default can be supplied
+        # by name. ``(ctx, e, params=None)`` and ``(i, ctx, e, a=None)``
+        # therefore stay positional; ``(context, amount=0)`` is injected.
         order = _LEGACY_ORDER[kind]
         for pos, name in enumerate(self.names):
             if name in INJECTABLE_NAMES and (
@@ -145,8 +221,10 @@ class _Shape:
 def is_legacy_signature(fn: Callable[..., Any], kind: str) -> bool:
     """``True`` when *fn* is called with the positional engine shape.
 
-    Ambiguous shapes (legacy arity, unrecognised names) count as legacy
-    here; `adapt_callable` re-checks them against each event's payload.
+    Ambiguous shapes (legacy arity, unrecognised names, with or without
+    defaults) count as legacy here; `adapt_callable` re-checks them
+    against each event's payload and only switches to by-name resolution
+    when every parameter can be satisfied.
     """
     return _Shape(fn, kind).legacy
 
@@ -199,10 +277,32 @@ def _payload_of(event: Any, kind: str) -> Dict[str, Any]:
     payload = getattr(event, "payload", None)
     payload = dict(payload) if isinstance(payload, dict) else {}
     # 📝 `input` on an invoke event is the natural injection source for a
-    #    service: `send("START", url=...)` arrives as the service's input.
+    #    service: with `"input": event_payload` declared, `send("START",
+    #    url=...)` arrives as the service's input.
     if kind == "service" and isinstance(payload.get("input"), dict):
         payload = {**payload["input"], **payload}
     return payload
+
+
+def _supplied_names(
+    event: Any,
+    kind: str,
+    action_def: Any,
+    extra: Optional[Mapping[str, Any]],
+) -> "set[str]":
+    """The names a by-name call could take from outside the engine."""
+    payload = getattr(event, "payload", None)
+    names = set(payload) if isinstance(payload, dict) else set()
+    if kind == "service" and isinstance(payload, dict):
+        nested = payload.get("input")
+        if isinstance(nested, dict):
+            names.update(nested)
+    chart = getattr(action_def, "params", None)
+    if isinstance(chart, Mapping):
+        names.update(chart)
+    if extra:
+        names.update(extra)
+    return names
 
 
 def _display_name(fn: Callable[..., Any]) -> str:
@@ -317,10 +417,31 @@ def adapt_callable(
     """Wrap *fn* so the engine can call it with the legacy positional shape.
 
     Unambiguously legacy callables are returned untouched (unless *sink*
-    asks for their return values). Everything else is wrapped: arguments
-    are resolved by name on every call, and a callback with legacy arity
-    but a parameter named like a payload field of the current event is
-    treated as injection-style for that call.
+    asks for their return values). Everything else is wrapped. A callback
+    whose arity does not match a legacy shape has its arguments resolved
+    by name on every call. A callback with legacy arity is called
+    positionally unless the author asked for injection (a default outside
+    the trailing ``params`` / ``action_def`` slot, a keyword-only
+    parameter, ``**kwargs``, or a parameter named like a field of the
+    current event's payload) AND every parameter without a default can be
+    supplied by name for this call: ``(i, ctx, e, a=None)`` and ``(ctx, e,
+    params=None)`` stay positional, ``(context, amount=0)`` and
+    ``(context, amount)`` with an ``amount`` in the payload are injected.
+    A legacy shape followed by extra defaulted parameters (``(i, ctx, e,
+    a, level="info")``) counts as that shape. When a callback with no
+    engine name asks for injection and the payload names some of its
+    parameters but not a required one (``(url, retries=3, timeout=10)``
+    sent ``retries=5`` and no ``url``), the missing one raises
+    ``TypeError`` instead of falling back to the positional call; a plain
+    ``(i, c, e, a)`` sent ``e=1`` stays positional. An engine name in
+    another slot than its own (``params`` as an action's fourth parameter)
+    always means by-name resolution, and a chart ``params`` key or *extra*
+    counts as a supplied field like a payload key. The ambiguity that
+    remains: a legacy callback whose non-engine parameters without a default are all named like
+    fields the event carries (``(ctx, e)`` with ``send("GO", e=1)``) is
+    resolved by name, and a default on its event parameter (``(ctx,
+    e=None)``) asks for injection, so ``e`` is ``None`` when the event
+    carries no such field.
 
     Args:
         fn: The (already ``self``-bound) callback.
@@ -342,44 +463,77 @@ def adapt_callable(
             sink.append(result)
         return result
 
-    def _legacy_for(call_args: Tuple[Any, ...]) -> bool:
+    def _by_name_plan(
+        call_args: Tuple[Any, ...],
+    ) -> Optional[Tuple[List[Any], Dict[str, Any]]]:
+        """The by-name call arguments, or ``None`` for a positional call."""
+        if shape.legacy and not shape.ambiguous:
+            return None
         if not shape.legacy:
-            return False
-        if not shape.ambiguous:
-            return True
-        event = call_args[2] if kind != "guard" else call_args[1]
-        payload = _payload_of(event, kind)
-        return not any(name in payload for name in shape.names)
+            return resolve_arguments(
+                fn, kind, extra=extra, **_split(kind, call_args)
+            )
+        if not shape.prefers_injection and not shape.unknown:
+            # Engine names only, each at its legacy position: the by-name
+            # call would hand over the same objects.
+            return None
+        # 🏛️ Legacy arity. By name only when the author asked for it AND
+        #    every parameter without a default can be supplied; a legacy
+        #    callback whose ``e`` happens to match a payload key, or whose
+        #    ``a=None`` is just a default, keeps receiving the engine's
+        #    objects. When a shape with no engine name asked for injection
+        #    and the payload names some of its parameters but not a
+        #    required one, the author meant injection and the missing
+        #    field is an error, not a cue to fall back; a plain ``(i, c, e,
+        #    a)`` sent ``e=1`` is resolved positionally.
+        event = call_args[1] if kind == "guard" else call_args[2]
+        action_def = call_args[3] if kind == "action" else None
+        supplied = _supplied_names(event, kind, action_def, extra)
+        targeted = any(name in supplied for name in shape.unknown)
+        if not (targeted or shape.prefers_injection):
+            return None
+        parts = _split(kind, call_args)
+        if any(name not in supplied for name in shape.unknown_required):
+            if targeted and shape.prefers_injection and not shape.engine_named:
+                return resolve_arguments(fn, kind, extra=extra, **parts)
+            return None
+        try:
+            return resolve_arguments(fn, kind, extra=extra, **parts)
+        except TypeError:
+            return None
 
     def _legacy_call_args(call_args: Tuple[Any, ...]) -> Tuple[Any, ...]:
         if kind != "guard":
             return call_args
         # A two-argument legacy guard must not receive `params`; a
-        # three-argument one always gets it (`None` when the transition
-        # declares none) instead of a TypeError.
+        # three-argument one gets it (`None` when the transition declares
+        # none) instead of a TypeError -- unless its third parameter has a
+        # default, which then applies.
         if len(shape.names) == 2:
             return call_args[:2]
-        if len(shape.names) == 3 and len(call_args) == 2:
+        if len(shape.names) >= 3 and len(call_args) == 2:
+            if shape.defaults and shape.defaults[2]:
+                return call_args
             return call_args + (None,)
         return call_args
 
     if is_async:
 
         async def async_wrapper(*call_args: Any) -> Any:
-            if _legacy_for(call_args):
+            plan = _by_name_plan(call_args)
+            if plan is None:
                 return _record(await fn(*_legacy_call_args(call_args)))
-            parts = _split(kind, call_args)
-            args, kwargs = resolve_arguments(fn, kind, extra=extra, **parts)
+            args, kwargs = plan
             return _record(await fn(*args, **kwargs))
 
         _copy_metadata(async_wrapper, fn)
         return async_wrapper
 
     def wrapper(*call_args: Any) -> Any:
-        if _legacy_for(call_args):
+        plan = _by_name_plan(call_args)
+        if plan is None:
             return _record(fn(*_legacy_call_args(call_args)))
-        parts = _split(kind, call_args)
-        args, kwargs = resolve_arguments(fn, kind, extra=extra, **parts)
+        args, kwargs = plan
         return _record(fn(*args, **kwargs))
 
     _copy_metadata(wrapper, fn)
