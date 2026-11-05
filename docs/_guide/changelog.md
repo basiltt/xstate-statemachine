@@ -626,8 +626,11 @@ persistence equivalents).
   a plain string event and probes the `on_event_processed` hook once per
   drain, and the microstep epilogue calls its subscriber, completion and
   soft-error helpers only when there is something for them to do (both
-  engines). The cross-library numbers in `benchmarks/competitors/README.md`
-  and on the home page were re-measured on this release.
+  engines); the pure transition API (`transition()`,
+  `get_next_snapshot()`) no longer normalises an event twice per step and
+  binds its recorder's imports once. The cross-library numbers in
+  `benchmarks/competitors/README.md` and on the home page were re-measured
+  on this release.
 
 ### Fixed
 
@@ -692,6 +695,11 @@ defects; each has a regression test.
   discovered; a built-in-named function DEFINED in a scanned module (not
   merely imported there) or implemented by a provider is bound and wins;
   spawn actions route to `services[<key>]` everywhere.
+- **Pydantic:** `validate_machine_json` names the nesting cap on
+  pydantic-core 2.50.4 and later too: its error type for a chart that
+  out-nests the validator changed from `recursion_loop` to
+  `recursion_depth_exceeded`, which the gate reported as a raw 200-segment
+  "Recursion error" path instead of the named limit.
 - **Django & SQLAlchemy:** a management command that the CLI refused
   (`xsm_diagram -o` / `xsm_docs -o` into an unwritable path, a chart that
   does not load) raised `CommandError("exit status 1")` and left the reason

@@ -112,6 +112,12 @@ class TestNeutralHelpers:
 class TestFlaskHttpNeutral:
     """`flask/_http.py` imports nothing framework-specific."""
 
+    @pytest.fixture(autouse=True)
+    def _need_flask(self) -> None:
+        # 📝 The `contrib.flask` package gate raises `MissingExtraError`
+        #    without flask -- for its framework-neutral submodules too.
+        pytest.importorskip("flask")
+
     def test_cw08_deeply_nested_json_is_422_not_recursion_error(self) -> None:
         from src.xstate_statemachine.contrib.flask._http import (
             UnprocessableBodyError,
@@ -207,6 +213,13 @@ class TestFlaskHttpNeutral:
 
 
 class TestFlaskFanout:
+
+    @pytest.fixture(autouse=True)
+    def _need_flask(self) -> None:
+        # 📝 The `contrib.flask` package gate raises `MissingExtraError`
+        #    without flask -- for its framework-neutral submodules too.
+        pytest.importorskip("flask")
+
     def _fan(self) -> Any:
         from src.xstate_statemachine.contrib.flask._core import Fanout
 

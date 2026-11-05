@@ -9,6 +9,7 @@ import queue
 import tempfile
 import threading
 import unittest
+from unittest import mock
 from typing import Any, Dict, List
 
 from src.xstate_statemachine import MachineLogic, create_machine
@@ -344,14 +345,39 @@ class TestEda09ContextNotADict(unittest.TestCase):
 
 
 class TestEda19ReadJsonlDeepNesting(unittest.TestCase):
-    def test_deeply_nested_line_is_a_value_error(self) -> None:
-        from src.xstate_statemachine.inspect import read_jsonl
+    """EDA-19: a line the JSON parser cannot recurse through is corruption
+    (`ValueError`), never a `RecursionError` out of the replayer."""
 
+    def _write(self, text: str) -> str:
         path = os.path.join(tempfile.mkdtemp(), "r.jsonl")
         with open(path, "w", encoding="utf-8") as fh:
-            fh.write("[" * 100000 + "]" * 100000 + "\n")
-        with self.assertRaises(ValueError):
-            list(read_jsonl(path))
+            fh.write(text)
+        return path
+
+    def test_recursion_error_from_the_parser_is_a_value_error(self) -> None:
+        from src.xstate_statemachine.inspect import sinks
+
+        path = self._write('{"a": 1}\n')
+        # 📝 The parser's recursion cap is the interpreter's business
+        #    (CPython 3.14+ parses 100,000 nested arrays on most
+        #    platforms; older ones raise); the mapping is what is pinned.
+        with mock.patch.object(
+            sinks.json, "loads", side_effect=RecursionError("deep")
+        ):
+            with self.assertRaises(ValueError):
+                list(sinks.read_jsonl(path))
+
+    def test_absurdly_deep_line_never_escapes_as_recursion_error(
+        self,
+    ) -> None:
+        from src.xstate_statemachine.inspect import read_jsonl
+
+        path = self._write("[" * 100000 + "]" * 100000 + "\n")
+        try:
+            records = list(read_jsonl(path))
+        except ValueError:
+            return  # the parser hit its cap: reported as corruption
+        self.assertEqual(records, [])  # parsed; a non-object line is skipped
 
 
 class TestEda13BatchValidated(unittest.TestCase):

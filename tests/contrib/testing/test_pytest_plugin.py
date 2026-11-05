@@ -571,6 +571,20 @@ class TestSnapshots:
 # =============================================================================
 # Plugin plumbing: options, no-op without the marker, opt-out, markers
 # =============================================================================
+#: Source of a helper the pytester modules below paste in: every fixture
+#: name pytest knows about. pytest keeps that table under a PRIVATE name
+#: that changed in 9.2 (`_arg2fixturedefs` -> `_arg2node2fixturedefs`,
+#: both keyed by fixture name), and there is no public enumeration API.
+FIXTURE_NAMES_HELPER = """
+            def _fixture_names(request):
+                fm = request.session._fixturemanager
+                table = getattr(fm, "_arg2fixturedefs", None)
+                if table is None:  # pytest >= 9.2
+                    table = fm._arg2node2fixturedefs
+                return set(table)
+"""
+
+
 class TestPlumbing:
     def test_xsm_version_prints_and_exits_zero(self, xsm_pytester) -> None:
         from src.xstate_statemachine import __version__
@@ -580,12 +594,14 @@ class TestPlumbing:
         result.stdout.fnmatch_lines([f"xstate-statemachine {__version__}"])
 
     def test_no_marker_means_nothing_happens(self, xsm_pytester) -> None:
-        xsm_pytester.makepyfile("""
+        xsm_pytester.makepyfile(f"""
             def test_plain():
                 assert 1 + 1 == 2
 
+            {FIXTURE_NAMES_HELPER}
+
             def test_fixture_names_are_prefixed(request):
-                names = request.session._fixturemanager._arg2fixturedefs
+                names = _fixture_names(request)
                 assert "xsm_interp" in names and "interp" not in names
                 assert "machine" not in names and "clock" not in names
             """)
@@ -606,6 +622,8 @@ class TestPlumbing:
 
     def test_opt_out_removes_the_plugin(self, xsm_pytester) -> None:
         xsm_pytester.makepyfile(f"""
+            {FIXTURE_NAMES_HELPER}
+
             def test_it(request):
                 pm = request.config.pluginmanager
                 assert not pm.has_plugin("xstate_statemachine")
@@ -614,9 +632,7 @@ class TestPlumbing:
                     getattr(p, "__name__", "") == {PLUGIN!r}
                     for p in pm.get_plugins()
                 )
-                assert "xsm_interp" not in (
-                    request.session._fixturemanager._arg2fixturedefs
-                )
+                assert "xsm_interp" not in _fixture_names(request)
             """)
         result = xsm_pytester.runpytest_inprocess(
             *NO_DJANGO, "-p", "no:xstate_statemachine", "-q"

@@ -9,10 +9,11 @@
 # -----------------------------------------------------------------------------
 """Regression tests for the models / events / resolver / validation review."""
 
+import contextlib
 import logging
 import unittest
 import warnings
-from typing import Any, Dict, List
+from typing import Any, Dict, Iterator, List
 
 from src.xstate_statemachine import (
     Interpreter,
@@ -492,6 +493,34 @@ class TestReadSiteTypeChecks(_Quiet):
         self.assertEqual([], node.states["a"].entry)
 
 
+@contextlib.contextmanager
+def _no_logs(logger_name: str, level: int) -> Iterator[None]:
+    """Fail if *logger_name* emits a record at or above *level*.
+
+    📝 `TestCase.assertNoLogs` is Python 3.10+; this library's floor is 3.9,
+    so the records are captured by hand (as `tests/test_actor_lifecycle.py`
+    does). The logger's own level is lifted for the block so a record the
+    code emits is seen even when the logger is configured quieter.
+    """
+    logger = logging.getLogger(logger_name)
+    records: List[logging.LogRecord] = []
+    handler = logging.Handler(level)
+    handler.emit = records.append  # type: ignore[method-assign]
+    previous_level = logger.level
+    logger.addHandler(handler)
+    logger.setLevel(logging.DEBUG)
+    try:
+        yield
+    finally:
+        logger.removeHandler(handler)
+        logger.setLevel(previous_level)
+    if records:
+        raise AssertionError(
+            f"{logger_name} logged at {logging.getLevelName(level)}+: "
+            f"{[r.getMessage() for r in records]}"
+        )
+
+
 class TestDottedIds(_Quiet):
     """MOD-13 / RES-01: dots in ids and keys are honoured everywhere."""
 
@@ -515,7 +544,7 @@ class TestDottedIds(_Quiet):
     def test_miss_returns_none_without_a_warning(self) -> None:
         node = _node(_one_state({}))
         logging.disable(logging.NOTSET)
-        with self.assertNoLogs("src.xstate_statemachine.models", "WARNING"):
+        with _no_logs("src.xstate_statemachine.models", logging.WARNING):
             self.assertIsNone(node.get_state_by_id("other.a"))
             self.assertIsNone(node.get_state_by_id("m.zzz"))
 
@@ -541,7 +570,7 @@ class TestDottedIds(_Quiet):
     def test_failed_resolution_does_not_log_errors(self) -> None:
         node = _node(_one_state({}))
         logging.disable(logging.NOTSET)
-        with self.assertNoLogs("src.xstate_statemachine.resolver", "ERROR"):
+        with _no_logs("src.xstate_statemachine.resolver", logging.ERROR):
             with self.assertRaises(Exception):
                 resolve_target_state("nowhere", node.states["a"])
             with self.assertRaises(Exception):

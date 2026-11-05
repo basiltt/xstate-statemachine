@@ -86,6 +86,7 @@ class TestCM02RabbitUnackedRecovers(unittest.TestCase):
 
 class TestCM13StreamsAckDiscardsHeld(unittest.TestCase):
     def test_held_cleared_when_xack_raises(self) -> None:
+        pytest.importorskip("redis")  # the module's extra gate needs it
         from src.xstate_statemachine.contrib.brokers.redis_streams import (
             RedisStreamsTransport,
         )

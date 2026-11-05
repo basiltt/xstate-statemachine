@@ -289,6 +289,13 @@ def _clean_loc(loc: Tuple[Any, ...]) -> str:
     return out or "<root>"
 
 
+#: pydantic-core error types that mean "the validator hit its recursion
+#: cap on a deeply nested chart" (see `_format_errors`).
+_RECURSION_CAP_TYPES = frozenset(
+    {"recursion_loop", "recursion_depth_exceeded"}
+)
+
+
 def _format_errors(exc: ValidationError) -> str:
     # 📝 A value that fits none of a Union's branches produces one error
     #    PER branch. Collapse them to one line per JSON path, keeping the
@@ -302,15 +309,20 @@ def _format_errors(exc: ValidationError) -> str:
         path = _clean_loc(loc)
         depth = len(loc)
         msg = str(e.get("msg"))
-        if e.get("type") == "recursion_loop":
+        if e.get("type") in _RECURSION_CAP_TYPES:
             # 📝 #266 battle (B): pydantic-core caps validator recursion at
-            #    roughly 100 nested `states` and calls it a "cyclic
-            #    reference" -- a JSON document cannot be cyclic. Say what
-            #    happened. (The parser itself copes to a few hundred.)
+            #    roughly 100-200 nested `states` (the depth and the error
+            #    type depend on the pydantic-core release: ``recursion_loop``
+            #    up to 2.50.0, ``recursion_depth_exceeded`` since 2.50.4)
+            #    and used to call it a "cyclic reference" -- a JSON document
+            #    cannot be cyclic. Say what happened. (The parser itself
+            #    copes to a few hundred.)
             path = path.split(".states.")[0] + ".states..."
             msg = (
                 "states nest deeper than the static gate supports "
-                "(about 95 levels); create_machine() still parses it"
+                "(pydantic-core's validator recursion cap, roughly 100-200 "
+                "levels depending on the build); create_machine() still "
+                "parses it"
             )
         if path not in best or depth > best[path][0]:
             best[path] = (depth, msg)

@@ -61,11 +61,20 @@ def _fresh_import_report() -> Dict[str, Any]:
     💡 Only modules *added by the import* are reported, so site hooks or
     coverage plugins that pre-load their own modules cannot skew the result.
     """
+    # 📝 `asyncio` is a genuine dependency of the async engine, and what IT
+    #    imports is the platform's business, not ours: on Windows before
+    #    3.13 `asyncio.windows_utils` imports `tempfile` eagerly. Its share
+    #    is recorded separately so the lazy-stdlib check can discount it;
+    #    `modules` still counts everything a fresh import loads.
     code = (
         "import json, sys\n"
         "before = set(sys.modules)\n"
+        "import asyncio\n"
+        "via_asyncio = set(sys.modules) - before\n"
         "import xstate_statemachine\n"
-        "print(json.dumps(sorted(set(sys.modules) - before)))\n"
+        "added = set(sys.modules) - before\n"
+        "print(json.dumps({'added': sorted(added), "
+        "'asyncio': sorted(via_asyncio)}))\n"
     )
     result = subprocess.run(
         [sys.executable, "-c", code],
@@ -73,9 +82,11 @@ def _fresh_import_report() -> Dict[str, Any]:
         text=True,
         check=True,
     )
-    modules: List[str] = json.loads(result.stdout)
+    data: Dict[str, List[str]] = json.loads(result.stdout)
+    modules = data["added"]
     return {
         "modules": set(modules),
+        "asyncio_modules": set(data["asyncio"]),
         "package": [m for m in modules if m.startswith("xstate_statemachine")],
     }
 
@@ -96,7 +107,9 @@ def test_heavy_package_module_is_not_imported_eagerly(
 def test_heavy_stdlib_module_is_not_imported_eagerly(
     report: Dict[str, Any], module: str
 ) -> None:
-    assert module not in report["modules"]
+    # What `asyncio` pulls in on this platform is discounted (see the
+    # report): the check is about OUR eager imports.
+    assert module not in report["modules"] - report["asyncio_modules"]
 
 
 def test_core_modules_are_still_eager(report: Dict[str, Any]) -> None:
