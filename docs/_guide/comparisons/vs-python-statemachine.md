@@ -120,9 +120,9 @@ If you prefer classes to JSON, the [Pythonic API](../pythonic-api/) builds the s
 
 ## When to choose xstate-statemachine
 
-- The chart must round-trip with **XState / Stately**, or run the same in a TypeScript frontend and a Python backend.
+- The chart must come from **XState / Stately** (the library reads XState v5 JSON and follows v5 statechart semantics; event names for invoke/after/done.state keep the v4 spelling), or run the same in a TypeScript frontend and a Python backend.
 - You need **durable `after` deadlines**, snapshots, cross-process locking and idempotency, not only in-memory state.
-- You want the web and database plumbing already done: routers for FastAPI, Flask and Litestar, and a [SQLAlchemy](../integration-sqlalchemy/) mixin.
+- You want the web and database plumbing already done: routers and blueprints for FastAPI, Starlette, Litestar, Flask and Quart, a Django model field with admin and DRF/Channels surfaces, and a [SQLAlchemy](../integration-sqlalchemy/) mixin.
 - You need an **actor system** (spawned children that message each other), not only invoked child machines.
 
 See [Integration extras](../integrations-extras/) for everything that ships today.

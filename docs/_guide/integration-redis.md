@@ -108,7 +108,7 @@ Implements `StateStore`. `client_or_url` is a `redis.Redis` or a URL. A client b
 - `ttl_s` expires idle instances; `health()` pings and never raises (a down backend reports the exception **class name**, never its text -- it carries host:port). With `ttl_s`, the `keys` set is not expired with the hash: `list_keys()` may still name an instance whose snapshot is gone (`load()` returns `None`); `due_keys()` prunes such orphans, `list_keys()` does not.
 - A damaged record (missing `snapshot` field, non-integer `version`) is `SnapshotCorruptError`; an unreadable `{prefix}:schema` marker is `StoreError` at construction.
 - `due_keys(until_wall, limit=)` reads the deadline index directly — the scanner uses it instead of loading every record. Index members whose snapshot expired (`ttl_s`) are pruned as they are met, so they cannot starve live keys.
-- **Layout 2** (this release): deadline index members are JSON arrays `[key, state_id, entry_seq, event]`, so a key containing `|` is unambiguous. A namespace written by a pre-release build (layout 1) is upgraded in place on construction and its old members are still read; a process on the older layout then refuses the namespace (`StoreError: … newer`) — upgrade every worker sharing a prefix together. No released version wrote layout 1.
+- **Layout 2** (since 0.11.0, the first release with the Redis backend): deadline index members are JSON arrays `[key, state_id, entry_seq, event]`, so a key containing `|` is unambiguous. A namespace written by a pre-release build (layout 1) is upgraded in place on construction and its old members are still read; a process on the older layout then refuses the namespace (`StoreError: … newer`) — upgrade every worker sharing a prefix together.
 
 ### `AsyncRedisStore(...)`
 
@@ -120,7 +120,7 @@ Implements `InboxStore`: one hash per scope (`inbox:{scope}`, field = idempotenc
 
 - **Expiry uses the Redis server clock** (`TIME` inside the scripts), never the worker's: two hosts with skewed clocks agree on whether a key is still live.
 - A worker that dies between `claim` and `mark` leaves the key **in flight** (`409`) until the plugin's `ttl_s` passes, then a retry is admitted — the same rule as `SQLiteInbox`.
-- The mark is written right **after** the snapshot save, not in one transaction with it (Redis cannot span both scripts); the in-snapshot `processed_ids` ring covers a crash in between.
+- The mark is written right **after** the snapshot save, not in one transaction with it (Redis cannot span both scripts); the in-snapshot `__xsm_processed_ids__` ring covers a crash in between.
 
 ### `RedisLog(client_or_url, *, prefix, maxlen=None)`
 
@@ -166,6 +166,6 @@ The SCAN-pattern escaper `list_keys` uses; exported for your own `SCAN`s.
 | `InvalidConfigError: Redis backends need a non-empty prefix` | `prefix=""` | choose a namespace, e.g. your app name |
 | `StoreError: … schema version N, newer than this library supports` | a newer library wrote this namespace | upgrade, or point at a fresh prefix |
 | `ConflictError` from a `PessimisticLock` block | the lock expired (`lock_ttl_ms` too short) and another worker saved | raise `lock_ttl_ms`, or shorten the step — the data is intact, retry |
-| `list_keys()` returns nothing for a prefix with `*` in it | pre-0.11 pattern injection | fixed: metacharacters are escaped |
+| `list_keys()` returns nothing for a prefix with `*` in it | pattern injection | fixed: metacharacters are escaped |
 | every route answers `503 Store unavailable`; log shows one `🔌 store unavailable` WARNING per request | Redis is unreachable (`StoreUnavailableError`: refused connection, socket timeout, `LOADING` after a restart) | nothing was written -- retry after the failover; `/_xsm/ready` is 503 while `/_xsm/health` stays 200, so route traffic on readiness |
 | `StoreUnavailableError` from `RedisStore(url)` at construction | the schema check / script registration ran against a dead server | the store needs Redis at construction; build it lazily or after your readiness gate |

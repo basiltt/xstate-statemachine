@@ -292,7 +292,7 @@ class Logic(MachineLogic):
         # Output: Service failed: API server unreachable
 ```
 
-> **Migrating from 0.8.0:** `event.data` still returns the exception on an `ErrorEvent`, with a `DeprecationWarning`; it is removed in 0.9. Success events are unchanged — `onDone` still receives a `DoneEvent` whose `data` is the service's return value.
+> **Migrating from 0.8.0:** `event.data` still returns the exception on an `ErrorEvent`, with a `DeprecationWarning`; it is removed in 1.0. Success events are unchanged — `onDone` still receives a `DoneEvent` whose `data` is the service's return value.
 
 ## 🔗 Multiple Services (Array Form)
 
@@ -666,7 +666,7 @@ The interpreter uses a specific naming convention for invoke-related events:
 | **Success** | `done.invoke.<id>` | `done.invoke.userFetcher` |
 | **Error** | `error.platform.<id>` | `error.platform.userFetcher` |
 
-The `<id>` defaults to the state's name if no explicit `id` is provided in the invoke config. When using multiple invokes per state, always provide explicit `id` values to avoid event name collisions:
+The `<id>` defaults to the hosting state's full id (for example `done.invoke.userLoader.loading`) if no explicit `id` is provided in the invoke config. When using multiple invokes per state, always provide explicit `id` values to avoid event name collisions:
 
 ```json
 "invoke": [
@@ -697,7 +697,7 @@ If a `maxIterations` cut discards a service's completion while its state is stil
 | **Multiple invokes** | Sequential | Can run concurrently |
 | **Async service?** | Raises `NotSupportedError` | Fully supported |
 
-Engine parity note (0.9.0, #116): a plain `def` service — one that returns a value, not an awaitable — completes at the **same point** on both engines. The async `Interpreter` runs it inline instead of on a separate task, and the sync engine queues its completion behind the current macrostep, so a script such as `send("GO"); send("CANCEL")` lands in the same state whichever interpreter you use. A `def` that returns a coroutine, or an `AsyncMock`, still takes the awaited path.
+Engine parity note (0.9.0, #116): a plain `def` service — one that returns a value, not an awaitable — completes at the **same point** on both engines. The async `Interpreter` runs it on its service executor and the entering macrostep awaits the result (#149), and the sync engine queues its completion behind the current macrostep, so a script such as `send("GO"); send("CANCEL")` lands in the same state whichever interpreter you use. A `def` that returns a coroutine, or an `AsyncMock`, still takes the awaited path.
 
 ## Complete Example: User Data Loader with Retry
 

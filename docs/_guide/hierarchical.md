@@ -216,6 +216,33 @@ The 0.7.x reading — resolving `.child` as a sibling of the source, i.e. a chil
 
 An absolute target such as `"#machineId.path.to.state"` resolves from the machine root regardless of where the transition is defined, and is unaffected by `strictTargets`.
 
+A non-root state may also declare its own `id` and be targeted as `"#thatId"` from anywhere in the machine, without spelling out the path:
+
+```json
+{
+  "id": "m",
+  "initial": "a",
+  "states": {
+    "a": {
+      "on": {
+        "GO": "#deep"
+      }
+    },
+    "b": {
+      "initial": "x",
+      "states": {
+        "x": {},
+        "y": {
+          "id": "deep"
+        }
+      }
+    }
+  }
+}
+```
+
+Sending `GO` lands in `m.b.y`. Custom ids must be unique across the machine: declaring the same `id` twice raises `InvalidConfigError` when the machine is created.
+
 ### Bare Targets Are Sibling-Only
 
 As of 0.8.0, a bare `target: "someState"` (no leading dot, `#`, or path) resolves **only** as a sibling of the transition's source — a child of the source's own parent. There is no whole-tree search by last id segment anymore.

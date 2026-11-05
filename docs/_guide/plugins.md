@@ -194,7 +194,7 @@ Every hook receives the `interpreter` instance as its first argument, giving plu
 | `on_before_send` | `(interpreter, event) -> Receipt \| None` | **[0.11.0]** Before an event is queued, after `strict` / `event_schemas` admission. Return a `Receipt` to short-circuit: the event is not queued and the caller gets that receipt (`duplicate=True` is what the idempotency inbox sets). First plugin to return wins. **Fail-open**: a raising interceptor is reported via `on_plugin_error` and the event is admitted. Not fired for engine-minted events |
 | `on_event_processed` | `(interpreter, event, receipt)` | **[0.11.0]** Once per event that entered the machine — user and engine-minted alike — after its macrostep settled or it was denied / unhandled / deferred / dropped, with the same `Receipt` a `send(wait=True)` caller gets. The outcome hook: audit, coverage, tracing and the inbox "mark" attach here. Not fired for events short-circuited by `on_before_send` |
 | `on_event_refused` | `(interpreter, event, receipt)` | **[0.11.0]** A plugin registered *after* this one short-circuited the event in `on_before_send`. Fires only on the plugins that had already said "proceed", with the refuser's receipt. Not the machine's answer — the signal to undo what you did in `on_before_send` (the idempotency inbox releases its claim here; without it a rate limiter's "not now" left the key 409 for the whole TTL) |
-| `on_transition` | `(interpreter, from_states, to_states, transition)` | After a state transition completes |
+| `on_transition` | `(interpreter, from_states, to_states, transition)` | After the transition's exit, actions and entry ran; with parallel regions it fires once per transition taken, after the whole microstep |
 | `on_event_sent` | `(interpreter, target_id, event)` | **[0.11.0]** On the **sender** when a `sendTo`, `sendParent` or `forwardTo` built-in resolves its target, just before delivery (for a delayed send: when scheduled). `on_event_received` fires later on the receiver; this is the only place the sender is known — the live inspector uses it for `sourceId` ([#274](https://github.com/basiltt/xstate-statemachine/issues/274)). Not fired for `raise` or unresolved targets. Both engines; contained like every hook |
 | `on_action_execute` | `(interpreter, action)` | Right before an action executes |
 | `on_action_error` | `(interpreter, action, error)` | A user action raised, before `action_error_policy` is applied |
@@ -216,7 +216,7 @@ Every hook receives the `interpreter` instance as its first argument, giving plu
 | `on_error` | `(interpreter, error)` | The interpreter enters the `"error"` status |
 | `on_done` | `(interpreter, output)` | The machine reaches a top-level final state |
 
-`LoggingInspector` implements `on_event_received`, `on_transition`, `on_action_execute`, `on_guard_evaluated`, `on_service_start`/`on_service_done`/`on_service_error`, `on_transition_failed`, `on_guard_error`, `on_unhandled_event`, `on_error`, and `on_done`. It does **not** implement `on_interpreter_start`, `on_interpreter_stop`, `on_action_error`, or `on_event_dropped` — action failures and dropped events pass through silently unless you add your own plugin for them.
+`LoggingInspector` implements `on_event_received`, `on_event_processed`, `on_transition`, `on_action_execute`, `on_guard_evaluated`, `on_service_start`/`on_service_done`/`on_service_error`, `on_transition_failed`, `on_guard_error`, `on_unhandled_event`, `on_error`, and `on_done`. It does **not** implement `on_interpreter_start`, `on_interpreter_stop`, `on_action_error`, or `on_event_dropped` — action failures and dropped events pass through silently unless you add your own plugin for them.
 
 > ⚠️ **Hooks are synchronous callbacks.** An `async def` override is never awaited — the engine dispatches hooks from inside a transition and cannot suspend there. Since 0.9.0 such a hook is closed explicitly and reported through `on_plugin_error` / `interpreter.last_plugin_error` as a `TypeError`, instead of vanishing with only a Python `RuntimeWarning`. If a hook needs async work, keep it `def` and schedule a task inside it.
 >
@@ -725,11 +725,11 @@ $ xsm plugins --plain
 thirdparty_audit  xsm-thirdparty-plugin 1.2.3  [xstate_statemachine.plugins]
     hooks: on_interpreter_start, on_transition
 thirdparty_memory  xsm-thirdparty-plugin 1.2.3  [xstate_statemachine.stores]
-kafka  xstate-statemachine 0.11.0  [xstate_statemachine.brokers]
-nats  xstate-statemachine 0.11.0  [xstate_statemachine.brokers]
-rabbitmq  xstate-statemachine 0.11.0  [xstate_statemachine.brokers]
-redis-streams  xstate-statemachine 0.11.0  [xstate_statemachine.brokers]
-sqs  xstate-statemachine 0.11.0  [xstate_statemachine.brokers]
+kafka  xstate-statemachine 0.12.0  [xstate_statemachine.brokers]
+nats  xstate-statemachine 0.12.0  [xstate_statemachine.brokers]
+rabbitmq  xstate-statemachine 0.12.0  [xstate_statemachine.brokers]
+redis-streams  xstate-statemachine 0.12.0  [xstate_statemachine.brokers]
+sqs  xstate-statemachine 0.12.0  [xstate_statemachine.brokers]
 thirdparty_broken  xsm-thirdparty-plugin 1.2.3  [xstate_statemachine.plugins]  SKIPPED: RuntimeError: xsm_thirdparty_plugin.broken: import-time failure
 ```
 

@@ -23,7 +23,7 @@ Solid arrows are code you wrote or chose. Dotted arrows cross the boundary and a
 
 ## The baseline, item by item
 
-Item numbers are those of [#303](https://github.com/basiltt/xstate-statemachine/issues/303) — the same numbers every integration page's **Threat model** box cites. "Evidence" is a test that fails if the property regresses, or the CI job that enforces it. Items whose integration has not shipped yet say so; they are enforced by the group PR that ships it.
+Item numbers are those of [#303](https://github.com/basiltt/xstate-statemachine/issues/303) — the same numbers every integration page's **Threat model** box cites. "Evidence" is a test that fails if the property regresses, or the CI job that enforces it. Every integration the baseline covers has shipped; each item cites its enforcing test.
 
 | # | Item (#303) | What the library does today | Evidence |
 |:--|:--|:--|:--|
@@ -46,7 +46,7 @@ Item numbers are those of [#303](https://github.com/basiltt/xstate-statemachine/
 | X0.16 | Test hygiene | Every test job runs `pytest --disable-socket --allow-hosts=127.0.0.1,::1`; timing tests are opt-in (`XSM_PERF=1`) and nightly only | `.github/workflows/ci.yml` (`test`, `coverage`, `contrib`, `perf`) |
 | X0.17 | `SECURITY.md` + boxes | The trust model in `SECURITY.md` and this page; every integration page carries **Guarantees** and **Threat model** boxes from `docs/_templates/integration-page.md` | `tests/test_docs_site.py::TestSecurityBaseline`, `::TestIntegrationsSection` |
 
-Two properties the table folds in rather than numbering separately, because #303 lists them under other items: **loud failure over silence** (unknown config keys, missing implementations, undeclared events under `strict` all raise — see [Reliability](../reliability/)), and the **caller-pinned machine hash** on restore (under X0.4).
+Two properties the table folds in rather than numbering separately, because #303 lists them under other items: **loud failure over silence** (unknown config keys raise under `strictConfig`; missing implementations and undeclared events under `strict` raise — see [Reliability](../reliability/)), and the **caller-pinned machine hash** on restore (under X0.4).
 
 ## Configuration you own
 

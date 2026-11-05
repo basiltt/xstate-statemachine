@@ -22,7 +22,7 @@ flowchart LR
 Key characteristics:
 
 - **Boolean** — must return `True` or `False`.
-- **Synchronous** — `async def` guards raise `NotSupportedError`.
+- **Synchronous** — decorating an `async def` with `@guard` raises `NotSupportedError`; never register an async callable as a guard some other way (for example `MachineLogic(guards=...)`): a coroutine object is not a boolean, and the engine would treat it as truthy.
 - **Side-effect-free** — guards should only *read* context, never *modify* it. Use actions for mutations.
 - **Short-circuiting** — the first matching transition wins; remaining guards are not evaluated.
 
@@ -602,7 +602,7 @@ Which guards run, and how often, follows XState v5 exactly:
 - Apart from that, one selection never evaluates a guard twice, and
   `interp.can(event)` evaluates exactly the guards `send(event)` would.
 
-> **Changed after 0.12:** every active leaf used to evaluate the guard of
+> **Changed in 0.12.0:** every active leaf used to evaluate the guard of
 > every matching transition up to the root (memoised per pass), and an
 > eventless pass selected its transitions twice. Guards with side effects —
 > counters, metrics, the `on_guard_evaluated` hook — now see XState's
@@ -711,7 +711,7 @@ class Logic(MachineLogic):
 
 ## ⛔ Guards Must Be Synchronous
 
-Guards **cannot** be `async def`. Attempting to register an async guard raises `NotSupportedError` immediately:
+Guards **cannot** be `async def`. The `@guard` decorator refuses one with `NotSupportedError` immediately. The check lives in the decorator only: an `async def` passed straight to `MachineLogic(guards=...)` is not refused, but calling it just produces a coroutine object, which is truthy, so the transition would fire whatever the coroutine would have returned. Keep guards plain functions:
 
 ```python
 from xstate_statemachine import guard, NotSupportedError

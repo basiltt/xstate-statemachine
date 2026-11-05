@@ -18,7 +18,7 @@ This page was checked against transitions 0.9.3.
 | Several sources | `"source": ["a", "b"]` | `a.to(c) \| b.to(c)` |
 | Wildcard source | `"source": "*"` | a machine-level `on` ([Pythonic API](../pythonic-api/), `machine_root`) |
 | Self transition | `"dest": "="` | `s.to(s)` |
-| Condition | `conditions="ok"`, `unless="blocked"` | `guard="ok"` (decorate with `@guard`), `guard="!blocked"` |
+| Condition | `conditions="ok"`, `unless="blocked"` | `guard="ok"` (a plain method named `ok`, or `@guard`), `guard="!blocked"` |
 | Callbacks on a transition | `before=`, `after=`, `prepare=` | `before_<event>`, `on_<event>`, `after_<event>`, or `actions=[...]` |
 | Callbacks on a state | `on_enter_<state>`, `on_exit_<state>` | identical names |
 | Nesting | `HierarchicalMachine`, `"children": [...]`, `red_stopped` | `class red(State.Compound)`, dotted path `red.stopped` |
@@ -101,7 +101,7 @@ light.cycle()           # True: back to green
 
 ### Ours
 
-The same machine, as a class. The chart stopped being data you pass to a constructor and became the class body; the condition moved into a decorated method, the timeout became `after=` in milliseconds, and the counter lives in `context` instead of on the model.
+The same machine, as a class. The chart stopped being data you pass to a constructor and became the class body; the condition moved into a guard method, the timeout became `after=` in milliseconds, and the counter lives in `context` instead of on the model.
 
 ```python
 import time
@@ -189,7 +189,7 @@ counted 1 green
 - **`strict` instead of `MachineError`.** `transitions` raises `MachineError` for a trigger that is invalid in the current state, unless `ignore_invalid_triggers=True`. Here such an event is ignored, as in XState. `strict = True` on the class (or `TrafficLight(strict=True)`) raises `TransitionNotAllowedError` for a declared event no active state can take, and `UnknownEventError` for one the chart never declared.
 - **Nested names use dots.** `red_stopped` is `red.stopped`, and `light.state` returns the dotted path.
 - **A timeout is a deadline, not a thread.** `Timeout` starts a `threading.Timer` in the current process. `after={3000: "red"}` is a deadline recorded in the machine and in its snapshot. On the sync engine a due timer fires on the next `send()` or `tick()` on your thread; on the asyncio engine the loop fires it. See [Delayed Transitions](../delayed-transitions/).
-- **Guards need a decorator.** `guard="can_cycle"` is resolved against methods marked `@guard` (and `actions=["..."]` against `@action`). Only the naming-convention hooks (`on_enter_<state>`, `on_<event>`, `before_<event>`, `after_<event>`) are found by name alone. A missing one is reported when you instantiate the class.
+- **Guards and actions are found by name.** `guard="can_cycle"` binds a plain method; `@guard` / `@action` remain the explicit form. A missing one is reported when you instantiate the class.
 - **The lifecycle is a context manager.** `with TrafficLight() as light:` starts the machine and stops it on exit, exceptions included. For a machine that outlives a block, `light.interpreter.stop()` is the escape hatch.
 - **The chart is fixed when the class is defined.** There is no `add_states()` at run time; build dynamic charts with `MachineBuilder`.
 

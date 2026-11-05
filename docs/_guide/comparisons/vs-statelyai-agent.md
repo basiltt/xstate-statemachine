@@ -25,7 +25,7 @@ This table is generated from [`docs/_data/comparisons.json`](https://github.com/
 
 ## When to choose xstate-statemachine
 
-- Your stack is **Python**: the same XState JSON runs here, and a chart designed in Stately works in both.
+- Your stack is **Python**: the library reads XState v5 JSON and follows XState v5 statechart semantics (event names for invoke/after/done.state keep the v4 spelling), so a chart designed in Stately runs here.
 - You want Python-side persistence (SQLite / Redis / Postgres stores), durable timers via `DueTimerScanner`, and FastAPI / Starlette / Litestar integration.
 - You want the batteries in this extra: budgets as guards, per-state tool allow-lists re-checked in `run_tool`, `FakeModel`, JSONL traces, LangGraph and pydantic-ai interop.
 

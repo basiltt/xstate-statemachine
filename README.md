@@ -63,7 +63,7 @@ interp = SyncInterpreter(TrafficLight.create_machine()).start()
 
 ## 🧭 The same chart as XState JSON
 
-Every Python machine compiles to [XState](https://stately.ai/docs/xstate) JSON, and XState JSON runs here unchanged:
+Every Python machine compiles to [XState](https://stately.ai/docs/xstate) JSON, and XState v5 JSON loads here with the same statechart semantics (engine event names keep the v4 spelling, such as `done.invoke.<id>`):
 
 ```python
 from xstate_statemachine import State, StateMachine
@@ -427,7 +427,7 @@ and [Production characteristics](https://basiltt.github.io/xstate-statemachine/g
 | Testing | Pure transition API, pytest fixtures, path walking, statechart coverage, replay | [Testing](https://basiltt.github.io/xstate-statemachine/guide/integration-testing/) · [Pure API](https://basiltt.github.io/xstate-statemachine/guide/testing-and-pure-api/) |
 | CLI `xsm` | Typed code and tests from JSON, CI / pre-commit validation, diagrams, simulate, inspect, app scaffolds | [CLI](https://basiltt.github.io/xstate-statemachine/guide/cli/) · [Templates](https://basiltt.github.io/xstate-statemachine/guide/cli-templates/) |
 | LLM agents | The model proposes, the chart decides: tool allow-lists, budgets, durable human approval | [Agents](https://basiltt.github.io/xstate-statemachine/guide/integration-agents/) |
-| Production | Failure semantics, threading, trust model, every error explained, 13 runnable example apps | [Reliability](https://basiltt.github.io/xstate-statemachine/guide/reliability/) · [Security](https://basiltt.github.io/xstate-statemachine/guide/security/) · [Troubleshooting](https://basiltt.github.io/xstate-statemachine/guide/troubleshooting/) · [FAQ](https://basiltt.github.io/xstate-statemachine/guide/faq/) · [Examples](https://basiltt.github.io/xstate-statemachine/guide/example-gallery/) |
+| Production | Failure semantics, threading, trust model, every error explained, runnable example apps and recipes | [Reliability](https://basiltt.github.io/xstate-statemachine/guide/reliability/) · [Security](https://basiltt.github.io/xstate-statemachine/guide/security/) · [Troubleshooting](https://basiltt.github.io/xstate-statemachine/guide/troubleshooting/) · [FAQ](https://basiltt.github.io/xstate-statemachine/guide/faq/) · [Examples](https://basiltt.github.io/xstate-statemachine/guide/example-gallery/) |
 
 ### 🤖 For LLM agents
 

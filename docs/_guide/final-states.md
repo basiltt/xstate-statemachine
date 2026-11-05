@@ -463,7 +463,7 @@ Entering a final state raises `done.state.*` events exactly as XState v5 does:
 
 Every event is raised whether or not the state declares `onDone`; one nobody handles reaches a `"*"` handler (or is dropped like any unhandled engine event). When the walk reaches the root — a final state directly under it, or a parallel root whose regions are all final — the machine completes.
 
-> **Changed after 0.12:** only the first ancestor with an `onDone` that was "done" was notified (a compound counted as done when its active child was, recursively), so a grandparent's `onDone` fired in step 3, a parallel state's `onDone` was skipped when the finishing region had its own, and a parallel root never completed the machine.
+> **Changed in 0.12.0:** only the first ancestor with an `onDone` that was "done" was notified (a compound counted as done when its active child was, recursively), so a grandparent's `onDone` fired in step 3, a parallel state's `onDone` was skipped when the finishing region had its own, and a parallel root never completed the machine.
 
 ## 🔀 Multiple Final States: Success/Failure Patterns
 
@@ -1024,7 +1024,7 @@ print(interp.output)
 # {'transactionId': 'TXN-001'}
 ```
 
-See also: [Context](/guide/context/).
+See also: [Context](../context/).
 
 ## Detecting Completion Programmatically
 
@@ -1073,4 +1073,4 @@ asyncio.run(main())
 
 <div class="stately" data-machine="87dfa2bf33" data-height="320" data-title="payment"></div>
 
-See also: [Interpreters](/guide/interpreters/), [Services & Invoke](/guide/services/).
+See also: [Interpreters](../interpreters/), [Services & Invoke](../services/).

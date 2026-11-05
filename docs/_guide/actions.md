@@ -514,6 +514,51 @@ config — each returns a plain action definition, so they also work as raw JSON
 | `escalate` | Raise an error to the parent |
 | `forward_to` | Forward the current event to another actor |
 
+### `emit` and `interpreter.on()` — notify external listeners
+
+`emit` publishes an event to code **outside** the machine. In JSON it is `{"type": "emit", "params": {"event": {...}}}`; the event is not sent to the machine itself. Subscribe with `interpreter.on(event_type, listener)` — use `"*"` to receive every emitted event. The listener gets an `Event` (`.type`, `.payload`), and `on()` returns a callable that unsubscribes:
+
+```python
+from xstate_statemachine import SyncInterpreter, create_machine
+
+config = {
+    "id": "m",
+    "initial": "idle",
+    "states": {
+        "idle": {
+            "on": {
+                "GO": {
+                    "target": "done",
+                    "actions": [
+                        {
+                            "type": "emit",
+                            "params": {
+                                "event": {
+                                    "type": "TOAST",
+                                    "text": "hi",
+                                },
+                            },
+                        }
+                    ],
+                },
+            },
+        },
+        "done": {},
+    },
+}
+
+interp = SyncInterpreter(create_machine(config)).start()
+toasts = []
+unsubscribe = interp.on("TOAST", toasts.append)
+interp.send("GO")
+print(toasts)
+# [Event(type='TOAST', payload={'text': 'hi'})]
+unsubscribe()
+interp.stop()
+```
+
+The `log` built-in writes `params.expr` (a string, or a callable of `{context, event}`) to the library logger at INFO, prefixed with `[label]` when `params.label` is given. `cancel` (`{"type": "cancel", "params": {"sendId": "<id>"}}`) disarms a delayed `raise` / `sendTo` that was given that `id`, before it fires.
+
 ### `assign` — update context
 
 `assign({...})` maps context keys to new values; a value may be a callable of
@@ -567,7 +612,7 @@ directly as `params`: `{"type": "xstate.assign", "params": {"count": 1}}`.
 `"assign"` works as the type too. When `params` has an `assignment` key,
 that key is the mapping.
 
-> **Changed after 0.12:** the properties of one `assign` used to be written
+> **Changed in 0.12.0:** the properties of one `assign` used to be written
 > one at a time, so a later property's callable saw an earlier property's
 > new value; and the JSON form without the `assignment` wrapper was
 > silently ignored.
@@ -1270,6 +1315,16 @@ interp.stop()
 
 <div class="stately" data-machine="055d558d66" data-height="320" data-title="order"></div>
 
+> **What a provider contributes (0.12.0).** Discovery scans the instance's public
+> **bound methods and `@staticmethod`s** (a pure guard needs no `self`). A method
+> named like a **built-in action** -- `log`, `cancel`, `stop`, `send_to`, ... -- is
+> bound and runs *instead of* the built-in, exactly as a same-named entry in an
+> explicit `MachineLogic` does; for a `logic_modules` module the same holds for a
+> function *defined* in that module, not for one merely imported into it (`from
+> logging import log` cannot hijack `log`). Passing `logic=` **together with**
+> `logic_modules` / `logic_providers` emits a `UserWarning`: the explicit logic is
+> used and the other sources are not scanned.
+
 ### Global Registration
 
 For large applications, register modules globally so all machines can discover them:
@@ -1309,5 +1364,5 @@ loader.register_logic_module(my_services)
 - **[Context](../context/)** — the data that actions typically mutate
 - **[Services & Invoke](../services/)** — actions triggered by `onDone` / `onError` service callbacks
 - **[Pythonic API](../pythonic-api/)** — `@action` decorator and `State.enter()`/`State.exit()` decorators
-- **[Core Concepts](../core-concepts/)** — action execution order (entry → transition → exit)
+- **[Core Concepts](../core-concepts/)** — action execution order (exit → transition → entry)
 - **[Interpreters](../interpreters/)** — how actions interact with sync vs async interpreters

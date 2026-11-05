@@ -247,7 +247,7 @@ What the record guarantees:
 - **Both engines.** The plugin uses engine-agnostic hooks and writes the record from `on_event_processed`, after the step has settled, so the snapshot is legal on either engine.
 - **Retention.** `DeadLetterStore.purge_older_than(cutoff_wall)` drops old records; `taken_at` is `interpreter.wall_now()` (epoch seconds).
 
-Options: `state_ids=["job.poison"]` to name the terminal states explicitly instead of tagging; `include_snapshot=False` for smaller records; `attempt_key=` to match a custom counter; `max_errors=20` caps the chain. Broker sinks and the `xsm dlq` CLI arrive with the EDA phase.
+Options: `state_ids=["job.poison"]` to name the terminal states explicitly instead of tagging; `include_snapshot=False` for smaller records; `attempt_key=` to match a custom counter; `max_errors=20` caps the chain. For broker sinks see [EDA](../integration-eda/); `xsm dlq` lists and replays dead letters (see [CLI](../cli/)).
 
 ### Where the error chain lives — and why (battle-test #265)
 

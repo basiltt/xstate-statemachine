@@ -105,7 +105,7 @@ Add `strict = True` to the class and an event the machine cannot take right now 
 
 ## 📄 Also: load XState JSON or design in Stately
 
-Use the JSON route when the chart already exists as an XState file, is edited in [Stately](https://stately.ai/editor), or is shared with a JavaScript frontend. The library is 100% XState JSON compatible, and a class machine exports the same format (`LightSwitch.create_machine().to_json()`).
+Use the JSON route when the chart already exists as an XState file, is edited in [Stately](https://stately.ai/editor), or is shared with a JavaScript frontend. The library reads XState v5 JSON and follows XState v5 statechart semantics (engine event names keep the v4 spelling, such as `done.invoke.<id>`), and a class machine exports the same format (`LightSwitch.create_machine().to_json()`).
 
 **Step 1: `light_switch.json`**
 
@@ -190,7 +190,7 @@ xsm generate-template light_switch.json --template pythonic-class --force
 | `light_switch_logic.py` | Action, guard, and service stubs with full type hints |
 | `light_switch_runner.py` | Interpreter bootstrap code, ready to execute |
 
-Short form: `xsm gt light_switch.json -t pythonic-class -f`. Add `--async-mode no` for synchronous code or `--file-count 1` to merge logic and runner into a single file. The templates:
+Short form: `xsm gt light_switch.json -t pythonic-class -f`. Pythonic templates generate sync code by default; add `--async-mode yes` for async, or `--file-count 1` to merge logic and runner into a single file. The templates:
 
 ```bash
 xsm gt machine.json --template pythonic-class        # Class-based OOP

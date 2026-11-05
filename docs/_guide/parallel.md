@@ -692,7 +692,7 @@ assert ran == [
 ]
 ```
 
-> **Changed after 0.12:** entry used to run the regions *not* on the
+> **Changed in 0.12.0:** entry used to run the regions *not* on the
 > transition's path first and the targeted region last, and exit ran every
 > leaf before every region, ordered by how the state ids sort. If one
 > region's actions must run before another's, declare that region earlier
@@ -839,7 +839,7 @@ transitions "selected first" means the region whose active state was
 entered first (see [Guards → Guard Evaluation
 Order](../guards/#guard-evaluation-order)).
 
-> **Changed after 0.12:** each selected transition used to run as its own
+> **Changed in 0.12.0:** each selected transition used to run as its own
 > exit → actions → entry sequence, one region after another (`exitA`,
 > `left`, `enterB`, `exitC`, `right`, `enterD`), and a transition whose
 > source an earlier one had exited and re-entered still ran.
@@ -1154,6 +1154,7 @@ config = {
                             "on": {
                                 "USER_ACTION": {
                                     "target": "active",
+                                    "reenter": True,
                                     "actions": "recordActivity",
                                 },
                             },
@@ -1254,7 +1255,7 @@ print(interp.active_state_ids)
 print(interp.pending_invocations())
 # []
 
-# User action resets the idle timer in userActivity,
+# User action resets the idle timer in userActivity (reenter: True),
 # without affecting notifications or dataFeed
 interp.send("USER_ACTION")
 

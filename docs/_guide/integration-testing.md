@@ -11,7 +11,7 @@ Testing a statechart is always the same setup: build the machine with stub logic
 pip install "xstate-statemachine[testing]"
 ```
 
-Requires `pytest>=8`. The extra also installs `hypothesis>=6.100` for the model-based tester that lands with [#271](https://github.com/basiltt/xstate-statemachine/issues/271); this page needs only pytest. The plugin is registered through a `pytest11` entry point, so pytest finds it on its own — no `conftest.py`, no `pytest_plugins` line. `xsm_ainterp` additionally needs [`pytest-asyncio`](https://pypi.org/project/pytest-asyncio/). Tested versions are in the [compatibility table](#compatibility).
+Requires `pytest>=8`. The extra also installs `hypothesis>=6.100`, used by the [model-based tester](#model-based-testing); everything else on this page needs only pytest. The plugin is registered through a `pytest11` entry point, so pytest finds it on its own — no `conftest.py`, no `pytest_plugins` line. `xsm_ainterp` additionally needs [`pytest-asyncio`](https://pypi.org/project/pytest-asyncio/). Tested versions are in the [compatibility table](#compatibility).
 
 ## Quick start
 
@@ -150,6 +150,7 @@ The `--xsm-*path*` options are listed under [Path generation](#path-generation),
 | `render_snapshot(normalized)` | The exact file form — `json.dumps(sort_keys=True, indent=2)` plus a newline. |
 | `parse_marker(item)` | What the plugin reads from a collected test's markers (`MachineSpec` or `None`); useful when writing your own fixtures on top. |
 | `SnapshotMismatchError` | Raised by `xsm_snapshot`; carries `.path` and `.diff`. |
+| `events_strategy`, `payload_strategy` | Hypothesis strategies for event sequences and payloads (see [Model-based testing](#model-based-testing)). |
 | `PLUGIN_NAME` | `"xstate_statemachine"` — the name to pass to `-p no:`. |
 
 ### Generated tests on the fixtures
@@ -405,6 +406,25 @@ replay: xsm simulate tests/refund.json --script tests/failing.json
 | `advance_clock` (`clock=True`) | Runs while an `after` timer is armed. It advances the `SimulatedClock` by one of the chart's declared delays, ±1 ms. A named delay without a static value is advanced past with a large sentinel. |
 | `snapshot_roundtrip` (default on) | Saves the interpreter mid-sequence, restores it (`restart_timers="resume"`) and continues on the copy. It fails when the context is not JSON-serialisable, or when the configuration or context does not survive the round trip. |
 | `flip_guard` (`guard_flip=True`, stub logic only) | Sets a stub guard to `True` or `False`. The script records it as `{"guard": name, "value": …}`, which `xsm simulate` replays. |
+
+**`model_test()` parameters** (all keyword-only after the machine)
+
+| Parameter | Default | Meaning |
+|:--|:--|:--|
+| `machine_or_path` | required | A JSON path, a config dict or a built `MachineNode` (used as-is). |
+| `logic` | `None` | A `MachineLogic` or a zero-argument factory returning one (the factory is called once per Hypothesis example, so stateful logic does not leak between examples). `None` runs on stub logic with every guard `True`. |
+| `invariants` | `None` | `name -> check(interp)`, run after start and after every step. |
+| `state_assertions` | `None` | `state -> check(interp)`, run whenever `interp.matches(state)`. |
+| `payloads` | `None` | `EVENT -> strategy` of payload dicts. Unlisted events are inferred from `event_schemas` (pydantic `EventModel` fields), else sent without a payload; an unknown event name raises `ValueError`. |
+| `clock` | `True` | Generate the rule that advances the `SimulatedClock` while a timer is pending. |
+| `max_steps` | `50` | Hypothesis `stateful_step_count`. |
+| `settings` | `None` | A `hypothesis.settings` to start from. |
+| `allow_denied` | `False` | Also send events `can()` refuses; a refused event is never a failure. |
+| `snapshot_roundtrip` | `True` | The rule that saves and restores the interpreter mid-sequence. |
+| `guard_flip` | `False` | Flip stub guards (stub logic only; real logic raises `ValueError`). |
+| `failing_path` | `failing.json` next to the test module | Where the minimal failing sequence is written (or `--xsm-failing-dir`). |
+
+Two helpers build Hypothesis strategies without a state machine: `events_strategy(machine_or_path, *, length=10)` draws event-type sequences in which every event is enabled (`can()`) in the configuration the earlier ones reached and stops early when none is, and `payload_strategy(schema)` infers a strategy of payload dicts from a pydantic `EventModel` (honouring field constraints and validators; a required field of an unsupported type raises `ValueError`, so pass `payloads=` for it). Both are importable from `xstate_statemachine.contrib.testing` and need `hypothesis`.
 
 `invariants` (`name → check(interp)`) run after start and after every step. `state_assertions` (`state → check(interp)`) run whenever `interp.matches(state)`, which includes every region of a parallel configuration. A check fails if it raises **any** exception or returns a falsy value other than `None` -- so an assert-style check that returns nothing passes, `False` / `0` / `""` fail, and a `KeyError` on a missing context key is a failure with the script written (#271 battle). A `state_assertions` key that names no state in the chart is a `ValueError` at `model_test()`. There are no built-in invariants: a refused event is not a failure, and once the machine reaches a top-level final state (`status == "done"`) no further event rule is enabled, so the run settles. Every model test runs with Hypothesis `deadline=None` (pinned, whatever `settings=` you pass), so a slow step on a large chart never causes a flaky `DeadlineExceeded`. Hypothesis's own health checks still apply. Payload strategies are chosen in this order: your `payloads={"ADD": strategy}`; otherwise strategies inferred from `event_schemas` / pydantic [`EventModel`](../integration-pydantic/) fields (`bool`, `int`, `float`, `str`, `None`, `Decimal`, `datetime`, `date`, `Literal`, `Optional`/`Union`, `List`, nested models as dicts; field constraints such as `Field(ge=1)` and validators are honoured by filtering draws through the model); otherwise an empty payload. If a required field has a type outside that mapping, you get a `ValueError` that tells you to pass `payloads=`. A `payloads=` strategy must produce dicts without a `type` key (`TypeError` otherwise). `snapshot_roundtrip` fails on purpose for a `Decimal` in context -- a snapshot would bring it back as a `str`; it restores with `restart_services=True`, so a long-lived `from_callback` / `from_iterator` invoke runs its setup again on the copy. A `logic=` **factory is called once per example** so stateful real logic starts fresh; a factory that returns the same cached instance every call still shares state, and the event list, payload inference and delays are read from the first build (a factory that varies `event_schemas` or `delays` per call is not supported). `assume(...)` inside a check discards the example as usual. `events_strategy(chart, length=10)` is a plain strategy of legal event-name lists, for your own `@given` tests. The failing script is written as `failing.json` next to the calling module by default. `--xsm-failing-dir=DIR` (relative to the directory pytest is run from, created if missing, may be outside the rootdir) or `model_test(failing_path=…)` moves it. Two model tests that fail in the same run and share a directory write the same `failing.json`, so the last one wins; give each its own `failing_path=` when that matters. The file holds the generated event names and payloads (Hypothesis-generated data, nothing from your context), so treat it like any other test artefact and keep it out of version control (`failing.json` in `.gitignore`).
 

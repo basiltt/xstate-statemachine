@@ -11,7 +11,7 @@ A chart already declares its public surface: its events, their payload models an
 pip install "xstate-statemachine[fastapi]"
 ```
 
-This installs FastAPI `>=0.100`, Pydantic `>=2.5` and Starlette `>=0.27`. Tested versions are in the [compatibility table](#compatibility). `fastapi.testclient` (used below) also needs `httpx`.
+This installs FastAPI `>=0.100`, Pydantic `>=2.5` and Starlette `>=0.27`. FastAPI 0.106 or newer is the tested minimum (see [Compatibility](#compatibility)). Tested versions are in the [compatibility table](#compatibility). `fastapi.testclient` (used below) also needs `httpx`.
 
 ## Quick start
 
@@ -251,7 +251,7 @@ assert sent == ["1"]
 
 <div class="stately" data-machine="533ae74a8a" data-height="320" data-title="order"></div>
 
-`send_event` returns only after the save has committed. A `409`, a guard denial or an `Idempotency-Key` replay therefore never schedules the task. `BackgroundTasks` still runs *in the web worker*, and a crash after the response loses the task. When the side effect must happen, write it to an **outbox** in the same transaction and deliver it from a separate process. See the event-driven architecture guide (arriving with the Phase F integrations).
+`send_event` returns only after the save has committed. A `409`, a guard denial or an `Idempotency-Key` replay therefore never schedules the task. `BackgroundTasks` still runs *in the web worker*, and a crash after the response loses the task. When the side effect must happen, write it to an **outbox** in the same transaction and deliver it from a separate process. See the [event-driven architecture guide](../integration-eda/) for the transactional outbox and relay (and [Celery](../integration-celery/) for an `outbox_relay_task`).
 
 ## Request rules
 
@@ -269,7 +269,7 @@ The document is generated from the chart, so it is deterministic for a given cha
 
 * **operationIds** — `<prefix>_get`, `<prefix>_send`, `<prefix>_events`, `<prefix>_diagram`, `<prefix>_stream`, and `<prefix>_<event>` for each event route. Event names are folded to ASCII `[a-z0-9_]` (`ORDER.PAID` → `order_paid`, `éclair` → `eclair`); when two names fold to the same id, or an event is called `GET`/`send`, the later one (in sorted order) gets `_2`, `_3`, … so every id is unique.
 * **`/send` body** — one model: that model; two or more: a `oneOf` with `discriminator: type`; none: `<Name>Event` = `{type: Literal[...], payload: {}}`. Field aliases are honoured on every send path; note that actions then read an aliased field under its **alias** in `event.payload` (the body's key), not the Python field name. Event-route `operationId`s are stable when you add an event later: names that are already plain identifiers (`ORDER_PAID`) keep the unsuffixed id; a name that had to be folded (`ORDER.PAID`, `pay-now`) takes `_2` only when the plain id is taken.
-* **Statuses** — every route documents its failures as `application/problem+json` with the `Problem` schema: `400 401 403 404 409 413 415 422 500 501 503` on sends, `400 401 403 404 500 503` on reads, `429` on `/stream`.
+* **Statuses** — every route documents its failures as `application/problem+json` with the `Problem` schema: `400 401 403 404 409 413 415 422 500 501 503` on sends, `400 401 403 404 500 503` on reads, `429` on `/stream`. A body read timeout (`body_timeout_s`) is also returned as `408` but is not listed in the OpenAPI table.
 * **Schemas are public.** `/events` and `/openapi.json` publish each model's JSON Schema, *including field defaults* — never put a secret in an `EventModel` default.
 * **Golden.** The library pins the AdvancePayment router's document in `tests/contrib/fastapi/openapi_golden.json`; after an intended change run `XSM_UPDATE_GOLDEN=1 pytest tests/contrib/fastapi -k golden` and review the diff. Do the same in your service: commit `app.openapi()` and compare it in a test.
 
@@ -493,7 +493,7 @@ The Pydantic models that describe the wire shapes in OpenAPI. Every 4xx/5xx is d
 
 | FastAPI | Pydantic | Python | Tested in CI |
 |:--|:--|:--|:--|
-| 0.100 – 0.1xx | 2.5 – 2.x | 3.9 – 3.15 | ✅ |
+| `>=0.100` declared; 0.106 – latest tested (0.100 – 0.105 are not supported on Python 3.9, see the [compatibility table](../compatibility/)) | 2.5 – latest | 3.9 and 3.13 cells | ✅ |
 
 ## Troubleshooting
 

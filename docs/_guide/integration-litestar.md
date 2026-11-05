@@ -239,7 +239,7 @@ Yields a started interpreter inside `registry.act()` — saved with `expected_ve
 
 | Litestar | Python | Tested in CI |
 |:--|:--|:--|
-| 2.0 – 2.x | 3.9 – 3.15 | ✅ |
+| `>=2.0` declared; 2.14 – latest tested (2.0 does not import on Python 3.9; 2.1 – 2.13 emit OpenAPI whose per-event path parameters do not validate) | 3.9 and 3.13 cells | ✅ |
 
 ## Troubleshooting
 

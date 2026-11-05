@@ -447,13 +447,18 @@ actors.
 > **Unresolvable `to` (0.9.0, #133).** A `sendTo` whose `to` names no live actor does
 > **not** raise. The send is dropped, `on_event_dropped(reason="unresolved_target")`
 > fires, and the step is marked: `last_transition_ok` is `False` and
-> `receipt.error` / `last_error` carry an `ActorSpawningError` naming the target.
+> `receipt.error` / `last_error` carry an `UnresolvedTargetError` (a subclass of
+> `ActorSpawningError`, 0.12.0) naming the target.
 > `escalate` from an invoked child reaches the parent's `onError` (#130).
 
 > **Threading (sync engine, 0.9.0).** A non-blocking `spawnChild` on `SyncInterpreter`
 > *starts* the child on the spawning thread — its entry actions and any grandchildren
 > exist by the time the spawn action returns — and hands it to a background pump
-> thread afterwards. Only the child's later ticks run on that thread.
+> thread afterwards. Only the child's later ticks run on that thread. Since 0.12.0 a
+> child that shares the parent's `SimulatedClock` pumps **only its own** deadlines on
+> that thread; the parent's `after` timers fire on the parent's next `send()` /
+> `tick()`, never from a child's thread. (A non-blocking child on a `RealClock` has
+> had its own deadline heap since 0.11.0.)
 
 ---
 
@@ -582,7 +587,7 @@ interp.stop()
 
 ## ⚡ Actors with the Async Interpreter
 
-Actors work seamlessly with the async `Interpreter`. The child machine is spawned as another `Interpreter` instance running its own event loop:
+Actors work seamlessly with the async `Interpreter`. The child machine is spawned as another `Interpreter` instance on the same asyncio event loop:
 
 ```python
 import asyncio

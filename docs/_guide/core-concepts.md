@@ -92,13 +92,13 @@ interpreter.send_events(["STEP_1", "STEP_2", "STEP_3"])
 
 > **Tip:** Event names are conventionally UPPER_CASE (`"TOGGLE"`, `"SUBMIT"`, `"FETCH"`). State names are lowercase (`"idle"`, `"loading"`, `"done"`). This makes it easy to tell them apart at a glance.
 
-> **Engine events vs. your events — decided by provenance, not by name.** The engine synthesises `done.invoke.<id>`, `error.platform.<id>`, `after.<ms>`, `xstate.error.actor.<id>` and the init/exit sentinels. Everywhere the library has to ask "is this the machine's own traffic, or a user event it forgot to handle?" — the `onUnhandled` policy and `strict` mode — it checks **who minted the event**, not what it is called. So a user event you name `done.review` is ordinary user traffic: it trips `onUnhandled: "error"` if nothing handles it, and `strict` rejects it unless declared. (`"*"` and `"prefix.*"` descriptors match both kinds, as in XState v5.) (Before 0.9.0 this was a prefix test on the name, and such an event silently got system-event semantics — #79.) The engine's name shapes are still importable as `xstate_statemachine.events.ENGINE_EVENT_SHAPES` for documentation and build-time checks; there is no longer any reason to avoid the prefixes, though `review.done` reads better than `done.review`.
+> **Engine events vs. your events — decided by provenance, not by name.** The engine synthesises `done.invoke.<id>`, `error.platform.<id>`, `after.<ms>.<stateId>` (for example `after.3000.myApp.pending`), `xstate.error.actor.<id>` and the init/exit sentinels. Everywhere the library has to ask "is this the machine's own traffic, or a user event it forgot to handle?" — the `onUnhandled` policy and `strict` mode — it checks **who minted the event**, not what it is called. So a user event you name `done.review` is ordinary user traffic: it trips `onUnhandled: "error"` if nothing handles it, and `strict` rejects it unless declared. (`"*"` and `"prefix.*"` descriptors match both kinds, as in XState v5.) (Before 0.9.0 this was a prefix test on the name, and such an event silently got system-event semantics — #79.) The engine's name shapes are still importable as `xstate_statemachine.events.ENGINE_EVENT_SHAPES` for documentation and build-time checks; there is no longer any reason to avoid the prefixes, though `review.done` reads better than `done.review`.
 
 ---
 
 ## 🏷️ Engine events and provenance
 
-Some events are minted by the engine itself: `done.invoke.<id>` / `done.state.<id>` (`DoneEvent`), `error.platform.<id>` and `xstate.error.actor.<id>` (`ErrorEvent`), `after.<ms>` (`AfterEvent`), and the init/exit sentinels. Two behaviours turn on the distinction between those and *your* events:
+Some events are minted by the engine itself: `done.invoke.<id>` / `done.state.<id>` (`DoneEvent`), `error.platform.<id>` and `xstate.error.actor.<id>` (`ErrorEvent`), `after.<ms>.<stateId>` (`AfterEvent`), and the init/exit sentinels. Two behaviours turn on the distinction between those and *your* events:
 
 | Behaviour | Engine event | Your event |
 |---|---|---|
@@ -120,11 +120,11 @@ is_system_event(system_event("___xstate_statemachine_init___"))  # True
 
 ## 🚨 Error & Unhandled-Event Policies
 
-By default, an event that doesn't match any transition from the current state is dropped silently, and an action or guard that raises an exception propagates as-is. For most apps that's the right default, but a few config keys let you change this per machine:
+By default, an event that doesn't match any transition from the current state is dropped silently, and an action that raises is logged and the transition still completes, and a guard that raises is treated as `False`. For most apps that's the right default, but a few config keys let you change this per machine:
 
 - **`strict`** (bool, default `False`) — when `True`, sending an event *type* the machine never declares anywhere in its config raises `UnknownEventError` instead of being ignored. Useful for catching typos in event names during development.
 - **`onUnhandled`** (`"ignore"` | `"defer"` | `"error"`, default `"ignore"`) — controls what happens when a *known* event has no transition from the current state. `"ignore"` drops it (the default), `"error"` raises `UnhandledEventError`, and `"defer"` queues it for later instead of discarding it.
-- **`actionErrorPolicy`** / **`guardErrorPolicy`** — control whether an exception raised inside an action or guard callback is swallowed, logged, or re-raised, instead of always propagating.
+- **`actionErrorPolicy`** (`"continue"` | `"rollback"` | `"fail"`, default `"continue"`) and **`guardErrorPolicy`** (`"false"` | `"true"` | `"raise"`, default `"false"`) decide what a raising action or guard does: commit, roll back or stop the machine; treat the guard as `False` or `True`, or surface the exception. See [Reliability](../reliability/).
 
 ```python
 from xstate_statemachine import create_machine, SyncInterpreter
@@ -476,7 +476,8 @@ premium = State("premium")
 standard = State("standard")
 rejected = State("rejected")
 
-# Order matters! First match wins.
+# Order matters! First match wins. The group must be passed to
+# build_machine(transitions=...) -- a bare .to() expression is discarded.
 verify = (
     checking.to(premium, event="VERIFY", guard="isPremium")
     | checking.to(standard, event="VERIFY", guard="isAdult")
@@ -497,6 +498,7 @@ def is_adult(context, event):
 machine = build_machine(
     id="accessControl",
     states=[checking, premium, standard, rejected],
+    transitions=[verify],
     guards=[is_premium, is_adult],
     context={
         "age": 25,
@@ -525,8 +527,8 @@ from xstate_statemachine import State, build_machine, SyncInterpreter, action
 counting = State("counting", initial=True)
 done = State("done")
 
-counting.to(counting, event="INCREMENT", actions="addOne")
-counting.to(done, event="FINISH")
+inc = counting.to(counting, event="INCREMENT", actions="addOne")
+finish = counting.to(done, event="FINISH")
 
 
 @action
@@ -538,6 +540,7 @@ def add_one(interpreter, context, event, action_def):
 machine = build_machine(
     id="counter",
     states=[counting, done],
+    transitions=[inc, finish],
     actions=[add_one],
     context={
         "count": 0,
@@ -790,7 +793,7 @@ self-raised events.
 
 ---
 
-
+## 🚀 Next Steps
 
 Now that you understand the building blocks:
 

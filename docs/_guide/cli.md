@@ -3,7 +3,7 @@ title: "CLI Tool"
 description: "Generate, inspect, simulate, diagram and document XState machines from the terminal with the xsm command."
 ---
 
-`xsm` is the command-line companion to the library. It reads XState-compatible JSON machine definitions — exported from [Stately.ai](https://stately.ai) or written by hand — and does five things with them:
+`xsm` is the command-line companion to the library. It reads XState-compatible JSON machine definitions — exported from [Stately.ai](https://stately.ai) or written by hand — and does the following with them (the [All Commands Overview](#all-commands-overview) lists every subcommand):
 
 | You want to… | Command |
 |:--|:--|
@@ -100,7 +100,7 @@ xsm generate-template [JSON_FILES...] [OPTIONS]
 | `-j` | `--json` | `FILE` | — | Additional JSON input file (repeatable) |
 | `-jp` | `--json-parent` | `FILE` | — | Designate the parent machine for hierarchy |
 | `-jc` | `--json-child` | `FILE` | — | Designate child machine(s) for hierarchy (repeatable) |
-| — | `--from-django-fsm` | `app.Model` | — | Extract the chart from a django-fsm-2 model (needs `DJANGO_SETTINGS_MODULE`; no database access); see [vs django-fsm](../comparisons/vs-django-fsm/#migration-recipe) |
+| — | `--from-django-fsm` | `app.Model` | — | Extract the chart from a django-fsm-2 model (needs `DJANGO_SETTINGS_MODULE`; no database access); see [vs django-fsm](../vs-django-fsm/#migration-recipe) |
 | — | `--fsm-field` | `FIELD` | `state` | The `FSMField` for `--from-django-fsm` |
 | `-t` | `--template` | `CHOICE` | `class-json` | Code generation template (see below) |
 | — | `--with-tests` | flag | `false` | Also emit `test_<machine>.py` — a pytest module recorded from the real engine |
@@ -108,6 +108,7 @@ xsm generate-template [JSON_FILES...] [OPTIONS]
 | — | `--with-plugin` | flag | `false` | Also emit `<machine>_observer.py` — a `PluginBase` wired for this chart's hooks |
 | — | `--with-api` | flag | `false` | Also emit `<machine>_api.py` — an editable FastAPI router, one typed route per event (`[fastapi]` extra) |
 | — | `--with-models` | flag | `false` | Also emit `<machine>_models.py` — a pydantic context model and one `EventModel` per event (`[pydantic]` extra) |
+| — | `--fixtures` | flag | `false` | `pytest` template only: emit `@pytest.mark.xstate_machine` and the `xsm_interp` / `xsm_clock` / `xsm_ran` fixtures of the `[testing]` extra instead of building the interpreter by hand (see [Integration testing](../integration-testing/)) |
 | `-s` | `--style` | `CHOICE` | — | **DEPRECATED** — use `--template` instead |
 | `-o` | `--output` | `DIR` | *(same as JSON)* | Output directory for generated files |
 | `-fc` | `--file-count` | `{1, 2}` | `2` | Number of output files: 1 = merged, 2 = separate |
@@ -176,7 +177,7 @@ Hierarchical runs (`-jp parent.json -jc child.json`) name every file after the p
 | Note: verification skipped (extra not installed) | Generation only needs the CLI; the import/mount check runs when `[fastapi]` / `[pydantic]` is installed. Syntax is always checked |
 | `-o …: exists and is not a directory` | `-o` takes a directory (it is created if missing) |
 
-> **Note:** The `--style` flag (`class` / `function`) is deprecated and maps to `class-json` / `function-json`. It is still present in 0.10.0 and will be removed in a future release. Use `--template` instead.
+> **Note:** The `--style` flag (`class` / `function`) is deprecated and maps to `class-json` / `function-json`. It is still accepted in 0.12.0 and will be removed in a future release (see the [deprecation policy](../deprecation-policy/)). Use `--template` instead.
 
 #### Async Mode (`-am` / `--async-mode`)
 
@@ -298,7 +299,7 @@ python -m xstate_statemachine setup
 ✓ `xsm` now runs through cmd.exe -> python; try `xsm info`
 ```
 
-From then on `xsm …` works in PowerShell and `cmd` exactly as on any other machine. `pip install --upgrade xstate-statemachine` recreates `xsm.exe`, so re-run the same command after upgrading; `python -m xstate_statemachine setup --check` reports the current state (exit 1 if `xsm` still resolves to the blocked launcher — handy in a login script), and `--undo` restores pip's launcher. On macOS and Linux `setup` is a no-op that says so.
+From then on `xsm …` works in PowerShell and `cmd` exactly as on any other machine. `pip install --upgrade xstate-statemachine` recreates `xsm.exe`, so re-run the same command after upgrading; `python -m xstate_statemachine setup --check` reports the current state (exit 1 if `xsm` still resolves to the blocked launcher — handy in a login script), and `--undo` restores pip's launcher; `--json` emits the state for scripts and `--scripts-dir DIR` targets another interpreter's `Scripts` folder (default: the one `setup` was run from). On macOS and Linux `setup` is a no-op that says so.
 
 **What is happening.** `pip` does not install a Python file called `xsm`; on Windows it materialises a small, generic, *unsigned* launcher — `Scripts\xsm.exe` — that locates `python.exe` and calls into the package. Machines governed by Windows Defender Application Control (WDAC), AppLocker or Smart App Control allow known signed binaries and block executables that appeared on disk unsigned, so the launcher is refused while Python itself runs fine. Every pip-installed console script (`black.exe`, `pytest.exe`, …) is affected in the same way; `pipx` and `uv tool` generate the same kind of stub. The launcher is produced by pip on your machine at install time, so nothing in the package can sign or replace it automatically — and a signed standalone `xsm.exe` would not help either, because a corporate allow-list trusts specific publishers, not "signed by someone".
 
@@ -453,8 +454,9 @@ The runner will start the interpreter, send the `SUBMIT` event, invoke the payme
 
 ```
 xsm [-h] [-v] [--plain] [--no-color] [--no-anim] [--verbose]
-    {generate-template,gt,list-templates,lt,validate,val,info,update,setup,
-     inspect,ins,paths,diagram,dia,simulate,sim,docs,new} ...
+    {generate-template,gt,list-templates,lt,validate,val,paths,coverage,info,
+     plugins,update,snapshots,dlq,asyncapi,setup,inspect,ins,replay,diagram,
+     dia,simulate,sim,docs,new} ...
 ```
 
 | Command | Alias | Description |
@@ -470,7 +472,9 @@ xsm [-h] [-v] [--plain] [--no-color] [--no-anim] [--verbose]
 | `docs` | — | A Markdown reference page per machine |
 | `info` | — | Version, environment, feature cards, links |
 | `update` | — | Check PyPI and upgrade to the latest release with the installer that installed you (`--check`, `--yes`) |
-| `setup` | — | Windows: swap pip's blocked `xsm.exe` launcher for a batch shim (`--check`, `--undo`) |
+| `setup` | — | Windows: swap pip's blocked `xsm.exe` launcher for a batch shim (`--check`, `--undo`, `--json`, `--scripts-dir`) |
+| `plugins` | — | List the installed plugin / store / broker entry points and the hooks each implements ([`--json`, `--strict`](#plugins)) |
+| `replay` | — | Print or stream (`--live`, `--speed`) a recording written by `xsm simulate --record` (see [Live inspector](#live-inspector)) |
 | `new` | — | Scaffold a project from an example app ([`--template fastapi`](#new-project), `--list`) |
 | `snapshots` | — | Ops view of a persistence store: keys, labels, status, age; [`--stale`](#snapshots) is the drain list for a deploy, `--fail-if-stale` the gate |
 | `coverage` | — | Render a statechart coverage report written by `pytest --xsm-coverage` and gate on it ([`--fail-under`](#coverage)) |
@@ -722,6 +726,8 @@ Template ID          | Style                  | Description
 pytest               | Test scaffold          | A pytest module per machine: initial state, every r…
 typed                | Typed context + events | TypedDict for context, Literal alias for event name…
 plugin               | Plugin skeleton        | A PluginBase subclass wired for exactly the hooks t…
+fastapi-router       | FastAPI router         | An editable APIRouter: GET state + one typed POST p…
+pydantic-models      | Pydantic models        | A context BaseModel inferred from the chart plus on…
 
 Feature support
 
@@ -736,6 +742,8 @@ Feature support
 | pytest               | n/a           | compiles   | no                       |
 | typed                | n/a           | compiles   | no                       |
 | plugin               | n/a           | compiles   | no                       |
+| fastapi-router       | n/a           | compiles   | no                       |
+| pydantic-models      | n/a           | compiles   | no                       |
 +----------------------+---------------+------------+--------------------------+
 
   All templates support nesting, parallel regions, history, guards,
@@ -806,12 +814,12 @@ Example output for a valid file:
   ok checkout.json
       Machine: checkout
       States:  3
-      Events:  4
+      Events:  3
       Actions: calculateTotal, clearCart, showError
       Guards:  cartNotEmpty
       Services: processPayment
 
-✓ All 1 file(s) are valid.
+OK All 1 file(s) are valid.
 ```
 
 A failing file prints its findings under the file name and the command exits 1.
@@ -847,13 +855,13 @@ xsm update --json
 ```
 
 ```
-  Installed:  0.10.0
-  Latest:     0.10.1  (update available)
+  Installed:  0.11.0
+  Latest:     0.12.0  (update available)
   Install:    pip  C:\Python\Python314\Lib\site-packages
 
-  Upgrade to 0.10.1 with `python.exe -m pip install --upgrade xstate-statemachine`? [y/N] y
+  Upgrade to 0.12.0 with `python.exe -m pip install --upgrade xstate-statemachine`? [y/N] y
   …pip output…
-✓ updated xstate-statemachine 0.10.0 -> 0.10.1
+✓ updated xstate-statemachine 0.11.0 -> 0.12.0
 ```
 
 `update` asks PyPI's JSON API for the latest non-prerelease version (stdlib `urllib`, 10 s timeout — offline it says so and exits 1) and then upgrades **with the tool that installed this copy**, because using the wrong one corrupts an environment:
@@ -1013,6 +1021,38 @@ repos:
 
 Both hooks are `language: python`, so pre-commit installs the library into its own environment; nothing is needed on your `PATH`.
 
+## Plugins
+
+```bash
+xsm plugins            # name, distribution, version, group and the PluginBase hooks each implements
+xsm plugins --json
+xsm plugins --strict   # exit 1 if any entry point fails to load (a CI gate)
+```
+
+Loads the entry points declared under the `xstate_statemachine.plugins`, `.stores` and `.brokers` groups. Listing imports them, so set `XSM_DISABLE_PLUGIN_DISCOVERY=1` to disable discovery (the [security](../security/) page explains why). Writing and registering a plugin is covered in [Plugins](../plugins/).
+
+## Dead letters (`xsm dlq`)
+
+`xsm dlq --dlq sqlite:///dlq.db <command>` operates a dead-letter store. `--dlq` also accepts a plain file path.
+
+| Command | Flags |
+|:--|:--|
+| `list` | `--all` (include resolved), `--limit N`, `--json` |
+| `show RECORD_ID` | prints one record as JSON |
+| `replay RECORD_ID` | `--store URL`, `--machine FILE` (repeatable), `--logic MODULE`, `--dry-run` (default) / `--no-dry-run`, `--yes`, `--reason TEXT`, `--force` (replay although the machine changed since capture), `--json` |
+| `purge` | `--id RECORD_ID`, `--older-than 30d` (`12h`, `15m`), `--yes`, `--reason TEXT`, `--json` |
+
+`replay` is a dry run unless given `--no-dry-run --yes --reason`; `purge` needs `--yes --reason`. Exit codes are in the [All Commands](#all-commands-overview) table, and the model behind it is in [Event-driven architecture](../integration-eda/#dead-letters).
+
+## AsyncAPI (`xsm asyncapi`)
+
+```bash
+xsm asyncapi machine.json -o asyncapi.json --server localhost:9092 --protocol kafka --validate
+xsm asyncapi machine.json --inbound orders.in --outbound orders.out
+```
+
+Writes an AsyncAPI 3.0.0 document with CloudEvents messages: the chart's `on` keys are the consumed events, `meta.publish` transitions and `publish`-tagged states the published ones. `--server` is the broker host, `--protocol` one of `kafka`, `kafka-secure`, `amqp`, `amqps`, `nats`, `redis`, `sqs`, `sns`, `mqtt`, `http`, `https`, `ws`, `wss`, `pulsar`, `googlepubsub`, `jms`, `solace`; `--inbound` / `--outbound` set the channel addresses; `--validate` checks the result against the vendored schema (needs `jsonschema`). More in [Event-driven architecture](../integration-eda/).
+
 ## Snapshots
 
 ```bash
@@ -1089,7 +1129,7 @@ python manage.py xsm_migrate_fsm legacy.Ticket --field state --dry-run > ticket.
 python manage.py xsm_migrate_fsm legacy.Ticket --field state --map open=new --batch 500
 ```
 
-`xsm_migrate_fsm` moves a django-fsm-2 model over ([recipe](../comparisons/vs-django-fsm/#migration-recipe)): `--dry-run` prints only the chart JSON on stdout (the recipe goes to stderr); without it, it fills empty snapshots and reports per value, with row counts, any column value the chart does not know; `--map OLD=NEW` folds such a value into a state.
+`xsm_migrate_fsm` moves a django-fsm-2 model over ([recipe](../vs-django-fsm/#migration-recipe)): `--dry-run` prints only the chart JSON on stdout (the recipe goes to stderr); without it, it fills empty snapshots and reports per value, with row counts, any column value the chart does not know; `--map OLD=NEW` folds such a value into a state.
 
 `xsm_inspect`, `xsm_diagram`, `xsm_docs` and `xsm_simulate` print byte for byte what `xsm inspect / diagram / docs / simulate <chart.json>` prints. `xsm_simulate` only runs the `-e` events and never reads stdin. The full table, with `xsm_deadlines`, `xsm_refresh_columns` and `xsm_migrate_fsm`, is in [Django → Management commands](../integration-django/#management-commands). Exit status: 0, 1 (`CommandError`: unknown model, missing pk, bad `--database`, unwritable `-o` / `--write-chart`, bad `--batch` / `--map`), 2 (bad flag).
 

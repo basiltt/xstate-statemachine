@@ -100,9 +100,9 @@ async def submit(request):
 
 ## Reference
 
-### `StatechartRegistry(store, *, lock=None, clock=None, plugins=(), migrator=None, inbox=None, principal=None, max_residents=1000, resident_idle_ttl_s=300.0, max_connections_per_key=16, drain_timeout_s=10.0, run_timers=False, scanner_interval_s=1.0, scanner_now=None, heartbeat_s=15.0, allowed_origins=(), max_body_bytes=None)`
+### `StatechartRegistry(store, *, lock=None, clock=None, plugins=(), migrator=None, inbox=None, principal=None, max_residents=1000, resident_idle_ttl_s=300.0, max_connections_per_key=16, drain_timeout_s=10.0, run_timers=False, scanner_interval_s=1.0, scanner_now=None, heartbeat_s=15.0, allowed_origins=(), max_body_bytes=None, settle_timeout=DEFAULT_SETTLE_TIMEOUT, body_timeout_s=30.0)`
 
-Named machines over one store. *store* is a sync `StateStore` (wrapped with `as_async()` so the event loop never blocks) or an `AsyncStateStore`. An instance lives under the store key `"<name>.<key>"`. `inbox=` enables principal-scoped idempotency; `principal=(conn) -> str` names the authenticated caller for the HTTP/WS helpers. `run_timers=True` needs a **sync** store (the scanner runs in a thread).
+Named machines over one store. *store* is a sync `StateStore` (wrapped with `as_async()` so the event loop never blocks) or an `AsyncStateStore`. An instance lives under the store key `"<name>.<key>"`. `inbox=` enables principal-scoped idempotency; `principal=(conn) -> str` names the authenticated caller for the HTTP/WS helpers. `run_timers=True` needs a **sync** store (the scanner runs in a thread); an `AsyncStateStore` raises `TypeError` at construction. `settle_timeout=` (seconds, default `persistence.DEFAULT_SETTLE_TIMEOUT`) bounds how long a send waits, after its receipt, for engine completions still in flight (a chain of plain `def` invokes) before responding and saving; the SSE/WebSocket helpers and the Litestar plugin's `get_interpreter` wait use the same value. `body_timeout_s=` (default `30.0`) bounds how long the library's routes, and routes mounted with `bounded_route_class`, wait for a request body; a stalled client gets `408` `RequestTimeoutError`.
 
 ### `register(name, machine, *, authorize, context_serializer=None, strict=None)`
 
@@ -112,7 +112,7 @@ Named machines over one store. *store* is a sync `StateStore` (wrapped with `as_
 
 An authorizer that admits everything and logs one `WARNING` the first time it is used. For demos and tests.
 
-### `async with registry.act(name, key, *, principal=None) as interp`
+### `async with registry.act(name, key, *, principal=None, idempotency_key=None) as interp`
 
 Builds an async `Interpreter` via `persistence.apersisted` over `as_async(store)` with the registry's plugins (plus an `IdempotencyPlugin` when `inbox=` was given — `principal=` is then required), yields it started, and saves with `expected_version` on exit. A lost race raises `ConflictError` (→ 409; the client retries). After the save commits, each **changed** receipt is published to this process's SSE/WebSocket subscribers.
 
@@ -267,7 +267,7 @@ Events from one socket are processed one at a time, in order.
 
 | Starlette | Python | Tested in CI |
 |:--|:--|:--|
-| 0.27 – 1.x | 3.9 – 3.15 | ✅ |
+| `>=0.27` declared; 0.45.3 – latest tested (the HTTP surface passes on older releases) | 3.9 and 3.13 cells | ✅ |
 
 ## Troubleshooting
 
@@ -283,4 +283,4 @@ Events from one socket are processed one at a time, in order.
 | `503` on the stream / WebSocket close `1001` | the server is draining (shutdown) | reconnect; the balancer sends you to a live worker |
 | A resident lost an update | residents are single-process; another writer saved first | see `registry.resident()` above — prefer `act()` per request |
 | `409 Conflict` storms | optimistic retries on one hot key | retry with jitter, or `lock=PessimisticLock()` |
-| `RuntimeError: run_timers=True needs a sync StateStore` | registry built on an `AsyncStateStore` | pass the sync store; the scanner runs in a thread |
+| `TypeError: run_timers=True needs a sync StateStore ...` | registry built on an `AsyncStateStore` | pass the sync store; the scanner runs in a thread |

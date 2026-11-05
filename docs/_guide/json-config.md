@@ -115,11 +115,11 @@ This machine has:
 | `states` | `object` | **Yes** | A map of state name → state configuration. At least one state is required. |
 | `strict` | `bool` | No | Default `false`. When `true`, sending an event type the machine has never declared anywhere raises `UnknownEventError`. See [Strict Mode](#strict-mode-unknown-events-and-payload-schemas). |
 | `strictConfig` | `bool` | No | Default `false`. When `true`, an unknown key anywhere in the config — root, state, transition or invoke — is refused with `InvalidConfigError` instead of logged at WARNING (#216, #220). Same as `create_machine(..., strict_config=True)`; the kwarg wins when both are given. |
-| `version` | `string` | No | Free-form version label for your own bookkeeping; carried on `MachineNode` and never interpreted by the engine (the snapshot layout version is a different thing). |
+| `version` | `string` | No | Chart revision label (`MachineNode.version`). Since 0.11.0 it is written into every snapshot as `machine_version`; restoring a snapshot written under a different label raises `MachineVersionMismatchError` unless `on_version_mismatch="warn"` or a `SnapshotMigrator` step applies. Not part of `structure_hash`, and different from the snapshot *layout* version. See [Snapshots](../snapshots/). |
 | `strictTargets` | `bool` | No | Default `false`. When `true`, a plain (non-dotted) transition target must name a sibling or ancestor-scope state — it will no longer fall back to matching an unrelated state elsewhere in the tree that happens to share the same trailing id segment. |
 | `maxIterations` | `int` | No | Default `1000`. Runaway guard for work the machine generates *for itself* **within a step**: eventless (`always`) microsteps while settling, and unbroken chains of zero-delay self-`raise` / self-`send()` / `done.invoke` events. A **delayed** self-send (`raise` with `delay`) is a *timer* like `after` (#212): arming it ends the step's chain, its firing is a clock event, and a self-paced heartbeat or poller of any period runs indefinitely. Counted per **chain** — it resets whenever a step generates nothing — so a batch of any size of independent user events is always processed in full on both engines; only a genuinely self-feeding loop trips it, and only the generated tail is dropped. A trip is **observable** (0.9.0): the triggering `send(wait=True)` receipt carries a `RunawayChainError`, `interp.last_transition_ok` is `False` / `interp.last_error` is set, and `on_event_dropped` fires with `reason="chain_budget"` for each discarded event. Engine completions (`done.invoke`, `error.platform`) are never discarded. |
 | `spawnBlockingTimeout` | `number` | No | Milliseconds a `spawn_blocking_<key>` action waits for the child to reach a final state before giving up, on both engines. Default `30000` (30 s) — never unbounded, so a child that never finishes cannot wedge the parent mid-transition. |
-| `actionErrorPolicy` | `"continue" \| "rollback" \| "fail"` | No | Default `"continue"`. What happens when an `entry`/`exit`/transition action raises: `"continue"` logs and proceeds (the 0.7.x behavior, and the current default — planned to change to `"rollback"` in 1.0), `"rollback"` undoes the transition, `"fail"` puts the interpreter into the terminal `"error"` status. |
+| `actionErrorPolicy` | `"continue" \| "rollback" \| "fail"` | No | Default `"continue"`. What happens when an `entry`/`exit`/transition action raises: `"continue"` logs and proceeds (the 0.7.x behavior, and the current default — planned to change to `"rollback"` in 1.0), `"rollback"` undoes the transition, `"fail"` rolls back, then stops the interpreter (`status == "stopped"`, `interpreter.error` is a `TransitionFailedError`). |
 | `guardErrorPolicy` | `"false" \| "true" \| "raise"` | No | Default `"false"`. What happens when a guard function raises: `"false"` treats the guard as not passing, `"true"` as passing, `"raise"` propagates the exception. Every outcome fires the `on_guard_error` plugin hook first. |
 | `onUnhandled` | `"ignore" \| "defer" \| "error"` | No | Default `"ignore"`. Policy applied when a **known** event (declared somewhere in the machine) matches no transition in the currently active state(s). See [`onUnhandled`: what happens to a known-but-unmatched event](#onunhandled-what-happens-to-a-known-but-unmatched-event) below. |
 | `output` | `any` | No | Machine-level output value, resolved when a top-level `final` state is reached. Surfaced on the generated `done.state.*` event. |
@@ -190,7 +190,7 @@ Every value in the `states` object is a **state configuration** with the followi
 | `entry` | `string \| string[]` | Action(s) to run when entering this state. |
 | `exit` | `string \| string[]` | Action(s) to run when leaving this state. |
 | `invoke` | `object \| object[]` | Service(s) to start when entering this state. |
-| `after` | `object` | Delayed transitions: `{ "milliseconds": target_or_transition }`. |
+| `after` | `object` | Delayed transitions: `{ "<ms>" \| "<delayName>": target_or_transition }`. A non-numeric key is a named delay resolved from `MachineLogic(delays=...)` (see [Delayed Transitions](../delayed-transitions/#named-and-computed-delays)). |
 | `type` | `string` | One of `"atomic"`, `"compound"`, `"parallel"`, `"final"`, or `"history"`. Default: `"atomic"`. |
 | `initial` | `string` | Initial child state name (required for compound states). |
 | `states` | `object` | Nested child state configurations (makes this a compound state). |
@@ -200,6 +200,8 @@ Every value in the `states` object is a **state configuration** with the followi
 | `meta` | `object` | Arbitrary metadata attached to the state, retrievable via `interpreter.get_meta()` (returns a `{state_id: meta}` map for every currently active state that declares one). |
 | `description` | `string` | Free-text documentation for the state. Not used by the runtime — purely informational, e.g. for tooling or generated docs. |
 | `history` | `"shallow" \| "deep"` | Only meaningful on a state with `"type": "history"` (see below). Default `"shallow"`. |
+| `target` | `string` | Only meaningful on a `"type": "history"` state: the default state entered when no history has been recorded yet (otherwise the parent's `initial` is used). |
+| `id` | `string` | Optional custom id on a non-root state. Any transition can then target it as `"#thatId"` from anywhere in the machine. Ids must be unique: a duplicate raises `InvalidConfigError` at `create_machine()` time. See [Hierarchical States](../hierarchical/#relative-and-absolute-targets). |
 | `output` | `any` | Only meaningful on a `"type": "final"` state. The value surfaced on the `done.state.*` / `done.invoke.*` event when this final state is reached. |
 
 **Example — state with all fields:**
@@ -570,7 +572,7 @@ A state can have multiple `after` timers running simultaneously:
 ```
 
 This state:
-1. Sends a heartbeat every 5 seconds (self-transition re-enters the state, restarting all timers).
+1. Sends a heartbeat every 5 seconds. Give that transition `"reenter": true` (`"5000": {"target": "monitoring", "reenter": true, "actions": "heartbeat"}`): re-entering restarts every timer of the state, so the 60 s and 300 s timers only fire if the heartbeat stops. Without `reenter` a self-transition leaves the state active and the 5 s timer fires once.
 2. Transitions to `"stale"` after 60 seconds if no recent data.
 3. Hard-timeouts at 5 minutes regardless.
 
@@ -586,7 +588,10 @@ This state:
         "300000": "warning"
       },
       "on": {
-        "ACTIVITY": "active"
+        "ACTIVITY": {
+          "target": "active",
+          "reenter": true
+        }
       }
     },
     "warning": {
@@ -606,7 +611,7 @@ This state:
 
 <div class="stately" data-machine="8158a0c746" data-height="320" data-title="sessionTimeout"></div>
 
-> **Tip:** The `ACTIVITY` event on `"active"` triggers a self-transition, which **restarts the 5-minute timer**. This is how you implement "idle timeout with reset on activity".
+> **Tip:** Write `"ACTIVITY": {"target": "active", "reenter": true}`. A self-transition restarts the 5-minute timer only with `reenter: true` (XState v5 semantics). This is how you implement "idle timeout with reset on activity".
 
 ---
 
@@ -1159,7 +1164,7 @@ print(interp.current_state_ids)  # {'order.filled'}
 
 <div class="stately" data-machine="a1aa3b0fa1" data-height="420" data-title="order"></div>
 
-> **Note:** `filled` is given an unrelated `on: {"SHIP": ...}` handler here (rather than being a bare `"type": "final"` state) so the example actually demonstrates "declared elsewhere, not handled here." A `final` state has no `on` at all, and `SyncInterpreter` auto-stops once the machine reaches a top-level final state — so sending `CANCEL` to an already-final `filled` would be a no-op because the interpreter had stopped, not because of any unhandled-event policy.
+> **Note:** `filled` is given an unrelated `on: {"SHIP": ...}` handler here (rather than being a bare `"type": "final"` state) so the example actually demonstrates "declared elsewhere, not handled here." A `final` state has no `on` at all, and `SyncInterpreter` completes (status `"done"`) once the machine reaches a top-level final state — so sending `CANCEL` to an already-final `filled` would be a no-op because the interpreter had stopped, not because of any unhandled-event policy.
 
 ### Internal `raise` events
 
@@ -1170,7 +1175,7 @@ A `{"type": "raise", "params": {"event": "..."}}` action is checked in two place
 
 ### Engine events are always "known"; yours are checked
 
-Events the engine synthesises are never "unknown" — `strict` is never tripped by a `done.invoke.<id>`, `error.platform.<id>`, `after.<ms>` or `xstate.*` event the machine produced for itself. Since 0.9.0 that exemption is by **provenance** (the engine flags the events it mints), so a *user*-sent event is checked whatever it is called: `interp.send("done.typo")` on a strict machine raises `UnknownEventError` exactly like `interp.send("TYPO")` (#79). `Machine.is_known_event()` mirrors this for names: only the exact engine **shapes** (`done.invoke.`, `done.state.`, `error.platform.`, `after.`, `xstate.`) are implicitly known; a bare `done.` prefix is not.
+Events the engine synthesises are never "unknown" — `strict` is never tripped by a `done.invoke.<id>`, `error.platform.<id>`, `after.<ms>.<stateId>` or `xstate.*` event the machine produced for itself. Since 0.9.0 that exemption is by **provenance** (the engine flags the events it mints), so a *user*-sent event is checked whatever it is called: `interp.send("done.typo")` on a strict machine raises `UnknownEventError` exactly like `interp.send("TYPO")` (#79). `Machine.is_known_event()` mirrors this for names: only the exact engine **shapes** (`done.invoke.`, `done.state.`, `error.platform.`, `after.`, `xstate.`) are implicitly known; a bare `done.` prefix is not.
 
 ### `send_threadsafe()` is covered too
 
