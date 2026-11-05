@@ -22,8 +22,9 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
   pills with their `if` guard and actions, `after` delays, `done:` / `error:`
   service results, a final-state mark, dashed parallel regions. Every chart
   keeps its **Open in Stately** link and the **Full screen** viewer and
-  follows the site theme. `scripts/check_diagrams.py` renders all of them
-  headlessly and fails on any overlapping or clipped element. No library
+  follows the site theme; in dark mode the charts use the Stately editor's
+  own palette. `scripts/check_diagrams.py` renders all of them headlessly
+  and fails on any overlapping, touching or clipped element. No library
   code changed.
 
 ## [0.12.0] - 2026-11-05

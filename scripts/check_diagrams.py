@@ -5,11 +5,14 @@ diagrams.js`` + ``docs/assets/data/diagrams.json``). This script serves the
 repository, opens ``scripts/diagram_harness.html`` in headless Chromium,
 renders the charts with the real stylesheet and fonts, and measures the SVG:
 
-* an error when two state boxes, a box and a transition label, two labels,
-  or a label and a composite title overlap, when a transition line crosses
-  a state box that is not one of its ends, or when a label is clipped;
-* a warning when a transition line crosses another transition's label or a
-  composite title band.
+* an error when two state boxes overlap, when a transition label overlaps
+  or touches (within ``CLEAR`` px) a state box, another label, a start
+  marker or a composite's title band, when a label sits on a composite's
+  border or hangs outside the machine box, when a transition line runs
+  through a state box that is not one of its ends or over another
+  transition's label, when a label covers the arrowhead of its own
+  transition, or when a label is clipped;
+* a warning when a transition line crosses a composite's title text.
 
 ``--tune`` tries the alternative layout direction for every chart with
 errors, keeps the first clean one in ``scripts/stately/diagram_layout.json``
@@ -44,6 +47,8 @@ sys.path.insert(0, str(ROOT / "scripts"))
 import diagram_mermaid as dm  # noqa: E402
 
 Box = Tuple[float, float, float, float]  # x, y, w, h (CSS px, SVG origin)
+CLEAR = 2.5  # px a transition label keeps from anything it is not attached to
+ARROW = 14.0  # the last stretch of a transition, where its arrowhead is drawn
 
 MEASURE_JS = r"""
 (key) => {
@@ -67,9 +72,14 @@ MEASURE_JS = r"""
     (cls.includes('statediagram-state') ? leaves : markers).push({ id: n.id, box: box(shape), text: text(n) });
   });
   svg.querySelectorAll('g.statediagram-cluster').forEach(c => {
-    const outer = c.querySelector('rect.outer') || c.querySelector('rect') || c;
-    const title = c.querySelector(':scope > g.cluster-label, :scope > .cluster-label');
-    clusters.push({ id: c.id, box: box(outer), title: title && title.getBoundingClientRect().width ? box(title) : null, text: title ? text(title) : '' });
+    const own = sel => [...c.querySelectorAll(sel)].find(el => el.closest('g.statediagram-cluster') === c) || null;
+    const outer = own('rect.outer') || own('rect') || c, inner = own('rect.inner');
+    const title = own('g.cluster-label') || own('.cluster-label');
+    const ob = box(outer), tb = title && title.getBoundingClientRect().width ? box(title) : null;
+    // The title band spans the full width: what the inner rectangle leaves uncovered.
+    let bandH = inner ? box(inner)[1] - ob[1] : 0;
+    if (!(bandH > 0) && tb) bandH = tb[1] + tb[3] - ob[1];
+    clusters.push({ id: c.id, box: ob, title: tb, band: bandH > 0 ? [ob[0], ob[1], ob[2], bandH] : null, text: title ? text(title) : '' });
   });
   svg.querySelectorAll('g.edgeLabel').forEach(g => {
     const t = text(g);
@@ -80,8 +90,8 @@ MEASURE_JS = r"""
   });
   svg.querySelectorAll('path.transition').forEach(p => {
     const len = p.getTotalLength(), m = p.getScreenCTM(), pts = [];
-    for (let s = 0; s <= len; s += 5) {
-      const pt = p.getPointAtLength(s).matrixTransform(m);
+    for (let s = 0; s <= len + 4.99; s += 5) { // the last sample is the arrow tip
+      const pt = p.getPointAtLength(Math.min(s, len)).matrixTransform(m);
       pts.push([pt.x - base.left, pt.y - base.top]);
     }
     edges.push({ id: p.getAttribute('data-id'), len, points: pts });
@@ -141,6 +151,7 @@ def analyse(geometry: Dict[str, Any]) -> Tuple[List[str], List[str]]:
         geometry["clusters"], geometry["leaves"], geometry["labels"]
     )
     errors += _bounds_errors(geometry["clusters"], geometry["labels"])
+    errors += _canvas_errors(geometry)
     edge_errors, warnings = _edge_collisions(
         geometry["edges"],
         geometry["leaves"],
@@ -160,7 +171,7 @@ def _box_collisions(leaves, labels, markers) -> List[str]:
                     f"state {a['text']!r} overlaps state {b['text']!r}"
                 )
         for lab in labels:
-            if _intersects(a["box"], lab["box"]):
+            if _intersects(a["box"], lab["box"], slack=-CLEAR):
                 errors.append(
                     f"state {a['text']!r} overlaps label {lab['text']!r}"
                 )
@@ -169,14 +180,15 @@ def _box_collisions(leaves, labels, markers) -> List[str]:
                 errors.append(
                     f"state {a['text']!r} overlaps a start/end marker"
                 )
+    # 📝 Touching counts: a label needs CLEAR px of space around it.
     for i, a in enumerate(labels):
         for b in labels[i + 1 :]:  # noqa: E203
-            if _intersects(a["box"], b["box"]):
+            if _intersects(a["box"], b["box"], slack=-CLEAR):
                 errors.append(
                     f"label {a['text']!r} overlaps label {b['text']!r}"
                 )
         for m in markers:
-            if _intersects(a["box"], m["box"]):
+            if _intersects(a["box"], m["box"], slack=-CLEAR):
                 errors.append(
                     f"label {a['text']!r} overlaps a start/end marker"
                 )
@@ -187,14 +199,16 @@ def _cluster_collisions(clusters, leaves, labels) -> List[str]:
     """Composite title bands stay clear; boxes nest, they never cross."""
     errors: List[str] = []
     for c in clusters:
-        if c["title"]:
+        # The band spans the composite's full width, not just its title text.
+        band = c.get("band") or c["title"]
+        if band:
             for lab in labels:
-                if _intersects(c["title"], lab["box"]):
+                if _intersects(band, lab["box"], slack=-CLEAR):
                     errors.append(
                         f"title {c['text']!r} overlaps label {lab['text']!r}"
                     )
             for leaf in leaves:
-                if _intersects(c["title"], leaf["box"]):
+                if _intersects(band, leaf["box"]):
                     errors.append(
                         f"title {c['text']!r} overlaps state {leaf['text']!r}"
                     )
@@ -222,23 +236,54 @@ def _cluster_collisions(clusters, leaves, labels) -> List[str]:
 
 def _bounds_errors(clusters, labels) -> List[str]:
     """A transition label must stay inside the machine box (the largest
-    composite), not hang over its border."""
+    composite), not hang over its border, and must keep clear of the border
+    of any other composite: inside it or outside it, never on it."""
     if not clusters:
         return []
     root = max(clusters, key=lambda c: c["box"][2] * c["box"][3])
-    return [
+    errors = [
         f"label {lab['text']!r} hangs outside the machine box"
         for lab in labels
-        if not _contains(root["box"], lab["box"], slack=2.0)
+        if not _contains(root["box"], lab["box"], slack=-CLEAR)
     ]
+    for c in clusters:
+        if c is root:
+            continue
+        for lab in labels:
+            if _intersects(
+                c["box"], lab["box"], slack=-CLEAR
+            ) and not _contains(c["box"], lab["box"], slack=-CLEAR):
+                errors.append(
+                    f"label {lab['text']!r} sits on the border of "
+                    f"{c['text']!r}"
+                )
+    return errors
+
+
+def _canvas_errors(geometry) -> List[str]:
+    """Nothing may be drawn beyond the SVG canvas (it would be cut off)."""
+    width, height = geometry.get("width", 0), geometry.get("height", 0)
+    errors = []
+    for kind, items in (
+        ("state", geometry["leaves"]),
+        ("label", geometry["labels"]),
+    ):
+        for item in items:
+            x, y, w, h = item["box"]
+            if x < -1 or y < -1 or x + w > width + 1 or y + h > height + 1:
+                errors.append(
+                    f"{kind} {item['text']!r} is cut off by the canvas"
+                )
+    return errors
 
 
 def _edge_collisions(
     edges, leaves, labels, clusters
 ) -> Tuple[List[str], List[str]]:
-    """A transition line through a state that is not one of its ends is an
-    error; one crossing another transition's label or a composite title
-    band is a warning."""
+    """A transition line through a state that is not one of its ends, or
+    through (or touching) another transition's label, is an error, as is a
+    label sitting on the arrowhead of its own transition; a line crossing a
+    composite's title text is a warning."""
     errors: List[str] = []
     warnings: List[str] = []
     trim = 12.0
@@ -251,6 +296,7 @@ def _edge_collisions(
             for p in points
             if _dist(p, points[0]) > trim and _dist(p, points[-1]) > trim
         ]
+        head = [p for p in points if _dist(p, points[-1]) <= ARROW]
         hit_leaf = {
             leaf["text"]
             for p in body
@@ -261,7 +307,13 @@ def _edge_collisions(
             lab["text"]
             for p in body
             for lab in labels
-            if lab["edge"] != edge["id"] and _inside(p, lab["box"], 1.0)
+            if lab["edge"] != edge["id"] and _inside(p, lab["box"], -4.0)
+        }
+        own_arrow = {
+            lab["text"]
+            for p in head
+            for lab in labels
+            if lab["edge"] == edge["id"] and _inside(p, lab["box"], -1.0)
         }
         hit_title = {
             c["text"]
@@ -274,7 +326,11 @@ def _edge_collisions(
                 f"transition {edge['id']} runs through state {name!r}"
             )
         for name in sorted(hit_label):
-            warnings.append(f"transition {edge['id']} crosses label {name!r}")
+            errors.append(f"transition {edge['id']} crosses label {name!r}")
+        for name in sorted(own_arrow):
+            errors.append(
+                f"label {name!r} covers the arrowhead of its transition"
+            )
         for name in sorted(hit_title):
             warnings.append(f"transition {edge['id']} crosses title {name!r}")
     return errors, warnings
@@ -414,17 +470,30 @@ def run(
 def _candidates(
     key: str, config: Dict[str, Any], layout: Dict[str, Dict[str, Any]]
 ) -> List[Dict[str, Any]]:
-    """Layouts to try for a failing chart: the other top-level direction,
-    then each compound state laid out left to right (a wide title fits a
-    wider box)."""
+    """Layouts to try next for a failing chart: the other top-level
+    direction, then each compound state not yet laid out left to right (a
+    wide title or label fits a wider box)."""
     current = layout.get(key, {})
     top = current.get("direction") or dm.default_direction(config)
     out = [dict(current, direction=d) for d in dm.DIRECTIONS if d != top]
+    composites = current.get("composites", {})
     for state_id in dm.compound_ids(config):
-        composites = dict(current.get("composites", {}))
-        composites[state_id] = "LR"
-        out.append(dict(current, composites=composites))
+        if composites.get(state_id) == "LR":
+            continue
+        out.append(
+            dict(current, composites=dict(composites, **{state_id: "LR"}))
+        )
     return out
+
+
+def _render_candidate(page: Any, key: str, config: Dict[str, Any], candidate):
+    source = dm.render_entry(key, config, {key: candidate})
+    page.evaluate(
+        "([k, s]) => window.xsmDiagrams.renderInto(k, s)", [key, source]
+    )
+    geo = page.evaluate(MEASURE_JS, key)
+    errs, warns = analyse(geo)
+    return errs, warns, geo
 
 
 def _tune(
@@ -436,33 +505,34 @@ def _tune(
     warnings: List[str],
     geometry: Dict[str, Any],
 ):
-    """Try the alternative layouts; keep the first clean rendering.
+    """Greedily accumulate layout changes while they reduce the errors.
 
     Returns ``(errors, warnings, geometry, changed)``; the page is left
     showing the rendering that matches the returned geometry.
     """
     config = inventory[key]["config"]
-    best = (errors, warnings, geometry, None)
-    for candidate in _candidates(key, config, layout):
-        source = dm.render_entry(key, config, {key: candidate})
-        page.evaluate(
-            "([k, s]) => window.xsmDiagrams.renderInto(k, s)", [key, source]
-        )
-        geo = page.evaluate(MEASURE_JS, key)
-        errs, warns = analyse(geo)
-        if len(errs) < len(best[0]):
-            best = (errs, warns, geo, candidate)
-        if not errs:
+    best = (errors, warnings, geometry)
+    chosen = layout.get(key, {})
+    changed = False
+    for _round in range(6):
+        if not best[0]:
             break
-    if best[3] is None:
-        # Nothing better: put the committed rendering back for the shots.
-        source = dm.render_entry(key, config, layout)
-        page.evaluate(
-            "([k, s]) => window.xsmDiagrams.renderInto(k, s)", [key, source]
-        )
-        return best[0], best[1], best[2], False
-    layout[key] = best[3]
-    return best[0], best[1], best[2], True
+        trial = {key: chosen}
+        step = None
+        for candidate in _candidates(key, config, trial):
+            errs, warns, geo = _render_candidate(page, key, config, candidate)
+            if len(errs) < len(best[0]):
+                best, step = (errs, warns, geo), candidate
+            if not errs:
+                break
+        if step is None:
+            break
+        chosen, changed = step, True
+    if changed:
+        layout[key] = chosen
+    # Leave the page on the rendering the result describes.
+    _render_candidate(page, key, config, chosen)
+    return best[0], best[1], best[2], changed
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:

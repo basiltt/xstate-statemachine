@@ -1,11 +1,105 @@
 {
+ "02faa5020c": {
+  "direction": "LR"
+ },
+ "038864b323": {
+  "direction": "LR"
+ },
+ "03ec6205df": {
+  "direction": "LR"
+ },
+ "042326ef14": {
+  "direction": "LR"
+ },
+ "0c14cbdcb5": {
+  "direction": "LR"
+ },
+ "10fa219c77": {
+  "direction": "LR"
+ },
  "262e2f753f": {
   "direction": "LR"
  },
  "2c832ad692": {
   "direction": "LR"
  },
+ "34db8b3bc3": {
+  "composites": {
+   "mediaPlayer.playing.controls": "LR"
+  }
+ },
+ "49ba251fae": {
+  "direction": "LR"
+ },
+ "4b5ddfa3d3": {
+  "composites": {
+   "Audio recording with websocket.mediarecorder": "LR",
+   "Audio recording with websocket.websocket": "LR"
+  }
+ },
+ "5e6790e067": {
+  "composites": {
+   "ciCdPipeline.validating.security_scan": "LR"
+  }
+ },
+ "71632cc384": {
+  "direction": "LR"
+ },
+ "73bfd9006f": {
+  "direction": "LR"
+ },
+ "8876f1ea7a": {
+  "composites": {
+   "twoFactorAuth.authenticating.codeDelivery": "LR"
+  }
+ },
+ "917ea351d3": {
+  "composites": {
+   "ECommerceFulfillment.customerSupport": "LR",
+   "ECommerceFulfillment.inventorySync": "LR"
+  }
+ },
+ "95fca98534": {
+  "composites": {
+   "game.running.physics": "LR"
+  }
+ },
+ "afe4ad5ce0": {
+  "direction": "LR"
+ },
+ "bb74f90d4f": {
+  "composites": {
+   "nestedParallel.app.notifications": "LR"
+  }
+ },
+ "cf5d577650": {
+  "composites": {
+   "collaborativeEditor.network_sync": "LR"
+  }
+ },
+ "d9ab4a5a30": {
+  "direction": "LR"
+ },
+ "df6cf24265": {
+  "composites": {
+   "warehouseRobot.fulfilling.manipulation": "LR"
+  }
+ },
+ "efe320edcb": {
+  "composites": {
+   "approval.review.finance": "LR",
+   "approval.review.legal": "LR"
+  }
+ },
+ "f4d5d2f880": {
+  "direction": "LR"
+ },
  "fa26b9205f": {
   "direction": "LR"
+ },
+ "ff265f0d35": {
+  "composites": {
+   "dashboard.active.notifications": "LR"
+  }
  }
 }

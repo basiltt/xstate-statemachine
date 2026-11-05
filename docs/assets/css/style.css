@@ -716,29 +716,43 @@ pre > code { display: block; width: max-content; min-width: 100%; }
 ---------------------------------------------------------------------------- */
 /* the palette is also needed by the Full screen viewer, which lives outside the figure */
 .statechart, .statechart-lightbox {
-  --sc-fg: #0F1222; --sc-dim: #5B6178; --sc-node: #FFFFFF; --sc-node-border: #C9CDDC;
-  --sc-cluster: rgba(16, 18, 36, .035); --sc-cluster-title: #E6E8F2; --sc-region: #A9AFC6;
-  --sc-edge: #6B7190; --sc-pill: #F3F4F9; --sc-pill-border: #C9CDDC; --sc-chip: #FFFFFF; --sc-chip-border: #C9CDDC;
-  --sc-marker: #5B6178; --sc-done: #0F8F6B; --sc-error: #C2410C; --sc-if: #5B55B5;
+  --sc-canvas: #F6F7FB; --sc-fg: #0F1222; --sc-text: #1F2335; --sc-dim: #5B6178; --sc-dim-strong: #4A5068;
+  --sc-node: #FFFFFF; --sc-node-body: #FBFBFE; --sc-node-border: #C9CDDC;
+  --sc-cluster: #F1F2F8; --sc-cluster-title: #E6E8F2; --sc-region: #A9AFC6;
+  --sc-edge: #6B7190; --sc-pill: #FFFFFF; --sc-pill-shadow: 0 1px 3px rgba(16, 18, 36, .18), 0 0 0 1px rgba(16, 18, 36, .08);
+  --sc-chip: #F3F4F9; --sc-chip-border: #C9CDDC;
+  --sc-marker: #5B6178; --sc-done: #0F8F6B; --sc-error: #C2410C; --sc-if: #5B6178;
 }
+/* Stately's own dark palette, read off the editor: canvas #101119, headers
+   and plain states #2D3143, bodies #12141B, pills #1B1C27, chips #1A1C28. */
 html[data-theme="dark"] .statechart, html[data-theme="dark"] .statechart-lightbox {
-  --sc-fg: #EEF0FA; --sc-dim: #9AA1BD; --sc-node: #1F2130; --sc-node-border: #3B3F55;
-  --sc-cluster: rgba(255, 255, 255, .035); --sc-cluster-title: #2B2D3D; --sc-region: #4A4F6A;
-  --sc-edge: #8E94B0; --sc-pill: #1C1D29; --sc-pill-border: #3B3F55; --sc-chip: #141522; --sc-chip-border: #3B3F55;
-  --sc-marker: #C7CBE0; --sc-done: #34D399; --sc-error: #F59E0B; --sc-if: #A5A1D6;
+  --sc-canvas: #101119; --sc-fg: #FFFFFF; --sc-text: #D9DBE8; --sc-dim: #868BA7; --sc-dim-strong: #A5A9C0;
+  --sc-node: #2D3143; --sc-node-body: #12141B; --sc-node-border: rgba(255, 255, 255, .16);
+  --sc-cluster: #12141B; --sc-cluster-title: #2D3143; --sc-region: rgba(255, 255, 255, .3);
+  --sc-edge: #5A5E78; --sc-pill: #1B1C27; --sc-pill-shadow: 0 0 2px rgba(0, 0, 0, .45), 0 .5px 0 rgba(255, 255, 255, .12);
+  --sc-chip: #1A1C28; --sc-chip-border: rgba(100, 105, 135, .36);
+  --sc-marker: #D9DBE8; --sc-done: #54B559; --sc-error: #F18622; --sc-if: #868BA7;
 }
+html[data-theme="dark"] .statechart { background: var(--sc-canvas); border-color: rgba(255, 255, 255, .08); }
+html[data-theme="dark"] .statechart::before { opacity: 1; background-image: linear-gradient(to right, rgba(255, 255, 255, .035) 1px, transparent 1px), linear-gradient(to bottom, rgba(255, 255, 255, .035) 1px, transparent 1px); background-size: 24px 24px; }
+html[data-theme="dark"] .statechart-lightbox-canvas { background: var(--sc-canvas); }
 /* state boxes, composite containers, dividers */
-.statechart-canvas .node rect, .statechart-canvas .node polygon, .statechart-canvas .statediagram-state rect.basic, .statechart-canvas .statediagram-state rect.title-state { fill: var(--sc-node) !important; stroke: var(--sc-node-border) !important; stroke-width: 1px !important; rx: 8px; ry: 8px; }
+.statechart-canvas .node rect, .statechart-canvas .node polygon, .statechart-canvas .statediagram-state rect.basic { fill: var(--sc-node) !important; stroke: var(--sc-node-border) !important; stroke-width: 1px !important; rx: 6px; ry: 6px; }
+/* a state with rows: Stately's header band over a darker body (the band is a path diagrams.js adds) */
+.statechart-canvas .statediagram-state rect.title-state { fill: var(--sc-node-body) !important; stroke: var(--sc-node-border) !important; stroke-width: 1px !important; rx: 6px; ry: 6px; }
+.statechart-canvas .statediagram-state path.xsm-head { fill: var(--sc-cluster-title); stroke: none; }
 .statechart-canvas .statediagram-state .divider { stroke: var(--sc-node-border) !important; }
 .statechart-canvas .statediagram-cluster rect { stroke: var(--sc-node-border) !important; stroke-width: 1px !important; }
-.statechart-canvas .statediagram-cluster rect.outer { fill: var(--sc-cluster-title) !important; rx: 8px; ry: 8px; }
+.statechart-canvas .statediagram-cluster rect.outer { fill: var(--sc-cluster-title) !important; rx: 6px; ry: 6px; }
+.statechart-canvas .statediagram-cluster.xsm-root .inner { fill: var(--sc-canvas) !important; }
 .statechart-canvas .statediagram-cluster .inner, .statechart-canvas .statediagram-cluster.statediagram-cluster-alt .inner { fill: var(--sc-cluster) !important; }
 .statechart-canvas .statediagram-cluster.xsmRegion rect { stroke: var(--sc-region) !important; }
 .statechart-canvas .statediagram-cluster.xsmParallel rect.outer { fill: var(--sc-cluster-title) !important; }
 .statechart-canvas .xsmHistory rect { rx: 999px !important; ry: 999px !important; }
-.statechart-canvas .nodeLabel, .statechart-canvas .nodeLabel p, .statechart-canvas .cluster-label, .statechart-canvas .cluster-label p, .statechart-canvas .cluster-label span { color: var(--sc-fg) !important; }
+.statechart-canvas .nodeLabel, .statechart-canvas .nodeLabel p, .statechart-canvas .cluster-label, .statechart-canvas .cluster-label p, .statechart-canvas .cluster-label span { color: var(--sc-text) !important; }
+.statechart-canvas .xsm-title { color: var(--sc-fg); }
 /* transitions, markers, start/end */
-.statechart-canvas path.transition { stroke: var(--sc-edge) !important; stroke-width: 1.4px !important; }
+.statechart-canvas path.transition { stroke: var(--sc-edge) !important; stroke-width: 2px !important; }
 .statechart-canvas .marker, .statechart-canvas marker path { fill: var(--sc-edge) !important; stroke: var(--sc-edge) !important; }
 .statechart-canvas .node circle.state-start { fill: var(--sc-marker) !important; stroke: var(--sc-marker) !important; }
 .statechart-canvas .node circle.state-end { fill: var(--sc-marker) !important; stroke: var(--sc-node) !important; }
@@ -747,25 +761,28 @@ html[data-theme="dark"] .statechart, html[data-theme="dark"] .statechart-lightbo
    label (export examples) gets a lighter pill of its own */
 .statechart-canvas .edgeLabel, .statechart-canvas .edgeLabel p, .statechart-canvas .edgeLabel .labelBkg { background: transparent !important; color: var(--sc-fg) !important; }
 .statechart-canvas .edgeLabel .label rect, .statechart-canvas .edgeLabel rect { fill: transparent !important; opacity: 0 !important; }
-.statechart-canvas .edgeLabel foreignObject { overflow: visible; }
+.statechart-canvas foreignObject { overflow: visible; } /* an italic's overhang is never cut */
 .statechart-canvas .edgeLabel foreignObject[width="0"] { display: none; }
 /* Mermaid caps HTML labels (edge and node) at 200px after measuring them
    unconstrained; one width for both, line breaks only where the source puts <br/>. */
 foreignObject > div { max-width: none !important; white-space: nowrap !important; }
-.statechart-canvas .edgeLabel .labelBkg:not(:has(.xsm-pill)) { background: var(--sc-pill) !important; border-color: var(--sc-pill-border); }
+/* A state's title and rows carry Stately's inner padding; measured with it,
+   so Mermaid sizes the box to fit (unscoped on purpose, see above). */
+.nodeLabel { display: inline-block; padding: 0 6px; }
+.statechart-canvas .edgeLabel .labelBkg:not(:has(.xsm-pill)) { background: var(--sc-pill) !important; box-shadow: var(--sc-pill-shadow); }
 .edgeLabel .labelBkg:not(:has(.xsm-pill)):not(:has(> span:empty)) { padding: 3px 10px; border: 1px solid transparent; border-radius: 999px; font: 600 12px/1.5 var(--font-mono); }
 /* Stately-style label parts (unscoped: see the note above) */
-.xsm-title { font-weight: 600; letter-spacing: -.01em; }
-.xsm-pill { display: inline-block; padding: 6px 14px; border: 1px solid transparent; border-radius: 16px; background: var(--sc-pill, #1C1D29); color: var(--sc-fg, #EEF0FA); line-height: 1.35; text-align: center; box-shadow: 0 1px 3px rgba(0, 0, 0, .35); }
-.xsm-ev { font-weight: 700; }
-.xsm-kw { color: var(--sc-dim, #9AA1BD); font-style: italic; font-weight: 400; }
-.xsm-sec { color: var(--sc-dim, #9AA1BD); font-weight: 500; font-size: 12.5px; }
-.xsm-if { color: var(--sc-if, #A5A1D6); font-weight: 700; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; vertical-align: 1px; }
+.xsm-title { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.xsm-pill { display: inline-block; padding: 7px 14px; border-radius: 20px; background: var(--sc-pill, #1B1C27); color: var(--sc-text, #D9DBE8); font-size: 13px; line-height: 1.4; text-align: center; box-shadow: var(--sc-pill-shadow, 0 0 2px rgba(0, 0, 0, .45)); }
+.xsm-ev { font-weight: 600; }
+.xsm-kw { color: var(--sc-dim-strong, #A5A9C0); font-style: italic; font-weight: 400; }
+.xsm-sec { color: var(--sc-dim, #868BA7); font-weight: 500; font-size: 12px; }
+.xsm-if { color: var(--sc-if, #868BA7); font-weight: 600; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
 .xsm-num { display: inline-block; min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box; border-radius: 999px; background: var(--sc-dim, #9AA1BD); color: var(--sc-pill, #1C1D29); font-size: 10.5px; font-weight: 700; line-height: 16px; text-align: center; vertical-align: 1px; }
-.xsm-chip { display: inline-block; padding: 1px 8px; margin: 1px 0; border: 1px solid var(--sc-chip-border, #3B3F55); border-radius: 6px; background: var(--sc-chip, #141522); color: var(--sc-fg, #EEF0FA); font-family: var(--font-mono); font-size: 12px; font-weight: 500; font-style: normal; line-height: 1.5; }
+.xsm-chip { display: inline-block; padding: 2px 8px; margin: 1px 0; border: 1px solid var(--sc-chip-border, rgba(100, 105, 135, .36)); border-radius: 4px; background: var(--sc-chip, #1A1C28); color: var(--sc-text, #D9DBE8); font-family: var(--font-body); font-size: 12px; font-weight: 500; font-style: normal; letter-spacing: 0; line-height: 1.5; }
 .xsm-chip::before { content: ""; display: inline-block; width: 9px; height: 11px; margin-right: 5px; vertical-align: -1px; background: var(--sc-dim, #9AA1BD); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M13 2 3 14h7l-1 8 10-12h-7l1-8z'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M13 2 3 14h7l-1 8 10-12h-7l1-8z'/%3E%3C/svg%3E") center / contain no-repeat; }
 .xsm-chip-invoke::before { width: 0; height: 0; margin-right: 6px; border-left: 7px solid var(--sc-dim, #9AA1BD); border-top: 4px solid transparent; border-bottom: 4px solid transparent; background: none; -webkit-mask: none; mask: none; vertical-align: 0; }
-.xsm-final { display: inline-block; width: 11px; height: 11px; box-sizing: border-box; border: 2px solid currentColor; outline: 2px solid currentColor; outline-offset: 1px; vertical-align: -1px; margin-right: 7px; }
+.xsm-final { display: inline-block; width: 11px; height: 11px; box-sizing: border-box; border: 2px solid var(--sc-marker, #D9DBE8); outline: 2px solid var(--sc-marker, #D9DBE8); outline-offset: 1px; vertical-align: -1px; margin-right: 7px; }
 .xsm-dot { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: var(--sc-dim, #9AA1BD); vertical-align: 1px; }
 .xsm-dot-done { background: var(--sc-done, #34D399); }
 .xsm-dot-error { background: var(--sc-error, #F59E0B); }

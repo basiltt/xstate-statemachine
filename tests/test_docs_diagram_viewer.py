@@ -152,8 +152,12 @@ class TestRendererContracts(unittest.TestCase):
         settle = _function(self.script, "settleLabels")
         self.assertIn("getTotalLength()", settle)
         self.assertIn("shiftGroup(group", settle)
-        self.assertIn("g.cluster-label", settle)  # composite titles count
+        self.assertIn("bandBox(svg, cluster)", settle)  # title bands count
         self.assertIn("within(box)", settle)  # and the machine box bounds
+        self.assertIn("onArrow(box, ownId)", settle)  # own arrowhead too
+        band = _function(self.script, "bandBox")
+        self.assertIn("rect.inner", band)  # the band is the uncovered strip
+        self.assertIn("g.cluster-label", band)  # or the title's height
 
     def test_render_failure_keeps_the_page_readable(self) -> None:
         render = _function(self.script, "render")
@@ -213,14 +217,21 @@ class TestStylesheetContracts(unittest.TestCase):
             "xsm-if",
             "xsm-num",
             "xsm-chip",
+            "nodeLabel",  # a state's rows carry their padding when measured
         ):
             with self.subTest(cls=cls):
                 self.assertRegex(self.css, rf"(?m)^\.{cls}\s*\{{")
+        rows = _declarations(self.css, ".nodeLabel")
+        self.assertIn("padding", rows)
+        self.assertEqual(rows.get("display"), "inline-block")
+        # Glyph ink (an italic's overhang) is never cut at a label's edge.
+        clip = _declarations(self.css, ".statechart-canvas foreignObject")
+        self.assertEqual(clip.get("overflow"), "visible")
         pill = _declarations(self.css, ".xsm-pill")
         self.assertIn("padding", pill)
-        self.assertIn("border", pill)
+        self.assertIn("border-radius", pill)
         chip = _declarations(self.css, ".xsm-chip")
-        self.assertEqual(chip.get("font-family"), "var(--font-mono)")
+        self.assertEqual(chip.get("font-family"), "var(--font-body)")
         self.assertIn("padding", chip)
 
     def test_both_themes_define_the_diagram_palette(self) -> None:
@@ -293,6 +304,8 @@ class TestOverlapAnalysis(unittest.TestCase):
                 }
             ],
             "clipped": [],
+            "width": 400,
+            "height": 300,
         }
         base.update(overrides)
         return base
@@ -308,7 +321,13 @@ class TestOverlapAnalysis(unittest.TestCase):
                 ]
             )
         )
-        self.assertEqual(errors, ["label 'GO' hangs outside the machine box"])
+        self.assertEqual(
+            errors,
+            [
+                "label 'GO' hangs outside the machine box",
+                "label 'GO' is cut off by the canvas",
+            ],
+        )
 
     def test_overlaps_and_clipping_are_errors(self) -> None:
         errors, warnings = self.analyse(
@@ -332,7 +351,7 @@ class TestOverlapAnalysis(unittest.TestCase):
         self.assertIn("state 'a' overlaps label 'ON_A'", errors)
         self.assertEqual(warnings, [])
 
-    def test_a_line_through_a_foreign_state_is_an_error_and_over_a_label_a_warning(
+    def test_a_line_through_a_foreign_state_or_label_is_an_error(
         self,
     ) -> None:
         errors, warnings = self.analyse(
@@ -354,8 +373,98 @@ class TestOverlapAnalysis(unittest.TestCase):
                 ],
             )
         )
-        self.assertEqual(errors, ["transition edge0 runs through state 'c'"])
-        self.assertEqual(warnings, ["transition edge0 crosses label 'X'"])
+        self.assertEqual(
+            errors,
+            [
+                "transition edge0 runs through state 'c'",
+                "transition edge0 crosses label 'X'",
+            ],
+        )
+        self.assertEqual(warnings, [])
+
+    def test_a_label_may_not_straddle_a_composite_border(self) -> None:
+        errors, _ = self.analyse(
+            self._geometry(
+                clusters=[
+                    {
+                        "id": "root",
+                        "box": [0, 0, 400, 300],
+                        "title": None,
+                        "text": "m",
+                    },
+                    {
+                        "id": "inner",
+                        "box": [20, 40, 160, 240],
+                        "title": None,
+                        "text": "inner",
+                    },
+                ],
+                labels=[
+                    {"edge": "edge0", "box": [150, 130, 60, 30], "text": "GO"}
+                ],
+            )
+        )
+        self.assertEqual(errors, ["label 'GO' sits on the border of 'inner'"])
+
+    def test_touching_counts_as_overlapping(self) -> None:
+        # 📝 A pill flush against another pill, a title band or a region
+        #    border reads as "on" it; a label needs clear space around it.
+        errors, _ = self.analyse(
+            self._geometry(
+                labels=[
+                    {"edge": "edge0", "box": [60, 130, 60, 30], "text": "GO"},
+                    {"edge": "edge1", "box": [121, 130, 60, 30], "text": "ON"},
+                ]
+            )
+        )
+        self.assertEqual(errors, ["label 'GO' overlaps label 'ON'"])
+        errors, _ = self.analyse(
+            self._geometry(
+                clusters=[
+                    {
+                        "id": "root",
+                        "box": [0, 0, 400, 300],
+                        "title": [150, 0, 100, 24],
+                        "band": [0, 0, 400, 24],
+                        "text": "m",
+                    }
+                ],
+                labels=[
+                    {"edge": "edge0", "box": [60, 25, 60, 30], "text": "GO"}
+                ],
+            )
+        )
+        self.assertEqual(errors, ["title 'm' overlaps label 'GO'"])
+
+    def test_a_label_may_not_cover_its_own_arrowhead(self) -> None:
+        errors, _ = self.analyse(
+            self._geometry(
+                labels=[
+                    {"edge": "edge0", "box": [60, 172, 60, 24], "text": "GO"}
+                ],
+                edges=[
+                    {
+                        "id": "edge0",
+                        "len": 100,
+                        "points": [
+                            [80, 100],
+                            [80, 130],
+                            [80, 160],
+                            [80, 190],
+                            [80, 200],
+                        ],
+                    }
+                ],
+            )
+        )
+        self.assertEqual(
+            errors, ["label 'GO' covers the arrowhead of its transition"]
+        )
+
+    def test_drawing_beyond_the_canvas_is_an_error(self) -> None:
+        errors, _ = self.analyse(self._geometry(width=100, height=300))
+        self.assertIn("state 'a' is cut off by the canvas", errors)
+        self.assertIn("label 'GO' is cut off by the canvas", errors)
 
     def test_render_failure_is_reported_as_one_error(self) -> None:
         self.assertEqual(

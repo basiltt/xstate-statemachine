@@ -111,6 +111,7 @@ function render(diagram) {
       try {
         settleLabels(surface.querySelector('svg'));
         fitMachineBox(surface.querySelector('svg'));
+        decorateStates(surface.querySelector('svg'));
       } catch (_) { /* keep the chart as Mermaid drew it */ }
       diagram.fig.classList.remove('is-pending', 'is-failed');
       diagram.fig.setAttribute('data-rendered', 'true');
@@ -169,6 +170,22 @@ function shiftGroup(group, dx, dy) {
 }
 
 /**
+ * A composite's title band, across its full width: the strip of its outer
+ * rectangle that the inner one leaves uncovered (the title's height when
+ * there is no inner rectangle).
+ */
+function bandBox(svg, cluster) {
+  const own = selector => [...cluster.querySelectorAll(selector)].find(el => el.closest('g.statediagram-cluster') === cluster) || null;
+  const outer = own('rect.outer') || own('rect');
+  if (!outer) return null;
+  const box = userBox(svg, outer);
+  const inner = own('rect.inner'), title = own('g.cluster-label');
+  let height = inner ? userBox(svg, inner).y - box.y : 0;
+  if (!(height > 0) && title) { const t = userBox(svg, title); height = t.h ? t.y + t.h - box.y : 0; }
+  return height > 0 && box.w > 0 ? { x: box.x, y: box.y, w: box.w, h: height } : null;
+}
+
+/**
  * Mermaid centres every transition label on its path, which in a dense chart
  * can land on a state box or on another label. Slide such a label along its
  * own transition, then beside it, to the first free spot. Runs once, right
@@ -176,48 +193,78 @@ function shiftGroup(group, dx, dy) {
  */
 function settleLabels(svg) {
   if (!svg || !svg.getScreenCTM()) return;
-  const GAP = 4;
+  // Clear space a label keeps from a state, a title band or another label;
+  // from another transition's line; from a composite border (either side).
+  const GAP = 6, LINE_GAP = 6, EDGE_GAP = 4;
+  const ARROW = 16; // the last stretch of a transition, where its arrowhead is drawn
   const obstacles = [];
   svg.querySelectorAll('g.node').forEach(node => {
     const shape = node.querySelector(':scope > rect, :scope > g > rect, :scope > circle, :scope > polygon') || node;
     obstacles.push(userBox(svg, shape));
   });
-  svg.querySelectorAll('g.statediagram-cluster > g.cluster-label').forEach(title => {
-    const box = userBox(svg, title);
-    if (box.w && box.h) obstacles.push(box);
+  svg.querySelectorAll('g.statediagram-cluster').forEach(cluster => {
+    const band = bandBox(svg, cluster);
+    if (band) obstacles.push(band);
   });
   const paths = new Map();
   svg.querySelectorAll('path.transition[data-id]').forEach(p => paths.set(p.getAttribute('data-id'), p));
+  // Every other transition's line, sampled: a label must not sit on one.
+  const sampled = new Map();
+  paths.forEach((p, id) => {
+    const points = [], length = p.getTotalLength();
+    for (let s = 0; s <= length; s += 6) points.push(pathPoint(svg, p, s));
+    points.push(pathPoint(svg, p, length));
+    sampled.set(id, points);
+  });
+  const near = (pt, box, gap) => pt.x > box.x - gap && pt.x < box.x + box.w + gap && pt.y > box.y - gap && pt.y < box.y + box.h + gap;
+  const crossed = (box, ownId) => {
+    for (const [id, points] of sampled) {
+      if (id === ownId) continue;
+      if (points.some(pt => near(pt, box, LINE_GAP))) return true;
+    }
+    return false;
+  };
+  // Nor does a label cover the arrowhead of its own transition.
+  const onArrow = (box, ownId) => {
+    const points = ownId ? sampled.get(ownId) : null;
+    if (!points || points.length < 2) return false;
+    const end = points[points.length - 1];
+    return points.some(pt => Math.hypot(pt.x - end.x, pt.y - end.y) <= ARROW && near(pt, box, 5));
+  };
+  // Composite borders: a label sits inside a box or outside it, never across.
+  const clusterBoxes = [...svg.querySelectorAll('g.statediagram-cluster')]
+    .map(cluster => cluster.querySelector('rect.outer') || cluster.querySelector('rect'))
+    .filter(Boolean).map(rect => userBox(svg, rect));
+  const inside = (box, c, gap) => box.x >= c.x + gap && box.y >= c.y + gap
+    && box.x + box.w <= c.x + c.w - gap && box.y + box.h <= c.y + c.h - gap;
+  // Clear of the border on one side or the other: never on it, never touching it.
+  const straddles = box => clusterBoxes.some(c => overlaps(box, c, EDGE_GAP) && !inside(box, c, EDGE_GAP));
   // The machine box: a label must not hang outside it.
   let bounds = null;
-  svg.querySelectorAll('g.statediagram-cluster').forEach(cluster => {
-    const rect = cluster.querySelector('rect.outer') || cluster.querySelector('rect');
-    if (!rect) return;
-    const box = userBox(svg, rect);
-    if (!bounds || box.w * box.h > bounds.w * bounds.h) bounds = box;
-  });
-  const within = box => !bounds || (box.x >= bounds.x - 1 && box.y >= bounds.y - 1
-    && box.x + box.w <= bounds.x + bounds.w + 1 && box.y + box.h <= bounds.y + bounds.h + 1);
+  clusterBoxes.forEach(box => { if (!bounds || box.w * box.h > bounds.w * bounds.h) bounds = box; });
+  const within = box => !bounds || inside(box, bounds, EDGE_GAP);
   const placed = [];
-  const free = box => !obstacles.some(o => overlaps(box, o, GAP)) && !placed.some(p => overlaps(box, p, GAP));
+  const free = (box, ownId) => !obstacles.some(o => overlaps(box, o, GAP)) && !placed.some(p => overlaps(box, p, GAP))
+    && !straddles(box) && !crossed(box, ownId) && !onArrow(box, ownId);
   svg.querySelectorAll('g.edgeLabel').forEach(group => {
     if (!(group.textContent || '').trim()) return;
     const inner = group.querySelector('.xsm-pill, .labelBkg') || group;
     const box = userBox(svg, inner);
-    if (free(box) && within(box)) { placed.push(box); return; }
-    const clear = free;
+    const label = group.querySelector('g.label');
+    const ownId = label ? label.getAttribute('data-id') : null;
+    if (free(box, ownId) && within(box)) { placed.push(box); return; }
+    const clear = b => free(b, ownId);
     let target = null;
     if (bounds && !within(box)) {
       // Hanging over the machine border: the smallest move that brings it inside.
       const clamped = {
-        x: Math.min(Math.max(box.x, bounds.x + 2), bounds.x + bounds.w - box.w - 2),
-        y: Math.min(Math.max(box.y, bounds.y + 2), bounds.y + bounds.h - box.h - 2),
+        x: Math.min(Math.max(box.x, bounds.x + EDGE_GAP + 1), bounds.x + bounds.w - box.w - EDGE_GAP - 1),
+        y: Math.min(Math.max(box.y, bounds.y + EDGE_GAP + 1), bounds.y + bounds.h - box.h - EDGE_GAP - 1),
         w: box.w, h: box.h
       };
       if (clear(clamped)) target = clamped;
     }
-    const label = group.querySelector('g.label');
-    const path = label && paths.get(label.getAttribute('data-id'));
+    const path = ownId ? paths.get(ownId) : null;
     if (!target && path) {
       const length = path.getTotalLength();
       const centred = (point) => ({ x: point.x - box.w / 2, y: point.y - box.h / 2, w: box.w, h: box.h });
@@ -226,19 +273,23 @@ function settleLabels(svg) {
       for (let step = 0.03; step <= 0.42; step += 0.03) fractions.push(0.5 - step, 0.5 + step);
       for (const fraction of fractions) {
         const candidate = centred(pathPoint(svg, path, fraction * length));
-        if (free(candidate)) { target = candidate; break; }
+        if (clear(candidate)) { target = candidate; break; }
       }
       if (!target) {
-        // Beside the line, touching it: a label must stay with its transition.
-        for (const fraction of fractions) {
-          const at = fraction * length;
-          const p = pathPoint(svg, path, at), q = pathPoint(svg, path, Math.min(length, at + 2));
-          const dx = q.x - p.x, dy = q.y - p.y, norm = Math.hypot(dx, dy) || 1;
-          const nx = -dy / norm, ny = dx / norm;
-          const reach = Math.abs(nx) * (box.w / 2) + Math.abs(ny) * (box.h / 2) + 6;
-          for (const side of [1, -1]) {
-            const candidate = centred({ x: p.x + side * nx * reach, y: p.y + side * ny * reach });
-            if (free(candidate)) { target = candidate; break; }
+        // Off-centre on the line, then beside it (touching): a label must
+        // stay with its transition. The smallest shift that frees it wins.
+        for (const share of [0.35, 0.7, 1]) {
+          for (const fraction of fractions) {
+            const at = fraction * length;
+            const p = pathPoint(svg, path, at), q = pathPoint(svg, path, Math.min(length, at + 2));
+            const dx = q.x - p.x, dy = q.y - p.y, norm = Math.hypot(dx, dy) || 1;
+            const nx = -dy / norm, ny = dx / norm;
+            const reach = share * (Math.abs(nx) * (box.w / 2) + Math.abs(ny) * (box.h / 2) + 6);
+            for (const side of [1, -1]) {
+              const candidate = centred({ x: p.x + side * nx * reach, y: p.y + side * ny * reach });
+              if (clear(candidate)) { target = candidate; break; }
+            }
+            if (target) break;
           }
           if (target) break;
         }
@@ -250,6 +301,27 @@ function settleLabels(svg) {
     } else {
       placed.push(box);
     }
+  });
+}
+
+/**
+ * Stately draws a state that has rows as a header band over a darker body.
+ * Mermaid gives such a state one rectangle and a divider line, so a path with
+ * rounded top corners is laid over the title area to form the band.
+ */
+function decorateStates(svg) {
+  svg.querySelectorAll('g.node.statediagram-state').forEach(node => {
+    const rect = node.querySelector('rect.title-state');
+    const divider = node.querySelector('line.divider');
+    if (!rect || !divider || node.querySelector('path.xsm-head')) return;
+    const x = parseFloat(rect.getAttribute('x')), y = parseFloat(rect.getAttribute('y'));
+    const w = parseFloat(rect.getAttribute('width')), h = parseFloat(divider.getAttribute('y1')) - y;
+    if (!(w > 0 && h > 0)) return;
+    const r = Math.min(6, h / 2);
+    const head = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    head.setAttribute('class', 'xsm-head');
+    head.setAttribute('d', `M${x + r},${y} h${w - 2 * r} a${r},${r} 0 0 1 ${r},${r} v${h - r} h${-w} v${-(h - r)} a${r},${r} 0 0 1 ${r},${-r} z`);
+    rect.parentNode.insertBefore(head, rect.nextSibling);
   });
 }
 
@@ -269,6 +341,7 @@ function fitMachineBox(svg) {
     .sort((a, b) => b.box.w * b.box.h - a.box.w * a.box.h);
   const root = clusters[0];
   if (!root) return;
+  root.cluster.classList.add('xsm-root'); // the machine box: Stately leaves its body the canvas colour
   let minX = root.box.x, minY = root.box.y, maxX = root.box.x + root.box.w, maxY = root.box.y + root.box.h;
   const include = element => {
     const b = userBox(svg, element);

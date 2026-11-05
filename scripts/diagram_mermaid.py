@@ -144,7 +144,10 @@ def _names(actions: Sequence[ActionDefinition]) -> str:
 
 
 def _pill(head: str, actions: Sequence[ActionDefinition]) -> str:
-    inner = head + (f"<br/>{_chips(actions)}" if actions else "")
+    # 📝 Stately stacks a transition's actions one per line; that also keeps
+    #    the pill narrow enough for the region its transition lives in.
+    stacked = "<br/>".join(_chip(_action_text(a)) for a in actions)
+    inner = head + (f"<br/>{stacked}" if actions else "")
     return f"<span class='xsm-pill'>{inner}</span>"
 
 
