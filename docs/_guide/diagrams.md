@@ -30,10 +30,13 @@ The guides show two kinds of chart, both drawn in your browser by
 - **Machine diagrams** (captioned *statechart · name*) are generated from the
   same JSON the example or guide runs, in the notation of the Stately editor:
   a state box lists its `entry /` and `exit /` actions and the service it
-  invokes; a transition pill shows the event, its `if` guard and its actions;
-  delays read `after 5 s`; an invoked service's results read `done:` and
-  `error:`; a final state carries a square mark; the regions of a parallel
-  state have dashed borders. A transition that stays inside its own state
+  invokes; a transition pill shows the event, its `IF` guard (an unguarded
+  alternative after guarded ones reads `ELSE`, and alternatives of one event
+  are numbered) and its actions; delays read `after 5000 ms`; an invoked
+  service's results read `done:` and `error:`; a final state carries a square
+  mark; a history state an `H` badge; the regions of a parallel state have
+  dashed borders. Small linear machines are laid out left to right, the rest
+  top to bottom, as the Stately editor does. A transition that stays inside its own state
   (no target, a self-target, or a target up or down its own branch) is listed
   as an `on EVENT` row inside the box instead of an arrow. **Open in Stately**
   under a chart opens the same machine in the Stately editor, which asks you

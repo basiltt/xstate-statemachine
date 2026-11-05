@@ -12,6 +12,7 @@ import json
 import re
 import tempfile
 import unittest
+from typing import List
 from pathlib import Path
 from unittest.mock import patch
 
@@ -242,12 +243,16 @@ class TestGenerator(unittest.TestCase):
         self.assertIn("<span class='xsm-title'>cart</span>", src)
         self.assertRegex(
             src,
-            r"order_cart : <span class='xsm-kw'>entry /</span> "
+            r"order_cart : <span class='xsm-sec'>entry /</span> "
             r"<span class='xsm-chip'>init</span>",
         )
         self.assertIn("<span class='xsm-chip'>raise PING</span>", src)
         self.assertIn("<span class='xsm-final'></span>shipped", src)
-        self.assertIn("state \"<span class='xsm-title'>H</span>\" as", src)
+        self.assertIn(
+            "state \"<span class='xsm-title'>"
+            "<span class='xsm-num xsm-hist'>H</span> hist</span>\" as",
+            src,
+        )
         self.assertIn("class order_charging_hist xsmHistory", src)
 
     def test_internal_and_self_transitions_are_rows_not_edges(self) -> None:
@@ -255,7 +260,7 @@ class TestGenerator(unittest.TestCase):
         self.assertNotIn("order_cart --> order_cart", src)
         self.assertRegex(
             src,
-            r"order_cart : <span class='xsm-kw'>on</span> "
+            r"order_cart : <span class='xsm-sec'>on</span> "
             r"<span class='xsm-ev'>ADD</span> <span class='xsm-kw'>/</span> "
             r"<span class='xsm-chip'>addItem</span>",
         )
@@ -283,12 +288,12 @@ class TestGenerator(unittest.TestCase):
         src = self.source
         self.assertIn(
             "order_cart --> order_charging : <span class='xsm-pill'>"
-            "<span class='xsm-ev'>CHECKOUT</span> <span class='xsm-kw'>if</span> hasItems</span>",
+            "<span class='xsm-ev'>CHECKOUT</span> <span class='xsm-if'>if</span> hasItems</span>",
             src,
         )
         self.assertIn(
             "order_cart --> order_expired : <span class='xsm-pill'>"
-            "<span class='xsm-kw'>after</span> 90 s</span>",
+            "<span class='xsm-kw'>after</span> 90000 ms</span>",
             src,
         )
         self.assertIn(
@@ -302,12 +307,14 @@ class TestGenerator(unittest.TestCase):
         )
 
     def test_compound_states_put_their_rows_in_the_title(self) -> None:
-        self.assertRegex(
+        self.assertIn(
+            "state \"<span class='xsm-title'>charging</span> "
+            "<span class='xsm-chip'>entry / bumpAttempt</span> "
+            "<span class='xsm-chip'>invoke chargeCard</span>\" "
+            "as order_charging {",
             self.source,
-            r'state "<span class=\'xsm-title\'>charging</span> '
-            r"<span class='xsm-chip'>entry / bumpAttempt</span> "
-            r"<span class='xsm-chip'>invoke chargeCard</span>\" as order_charging \{",
         )
+        self.assertNotIn("__info", self.source)
 
     def test_parallel_regions_are_dashed_classed_clusters(self) -> None:
         src = self.dm.to_stately_mermaid(
@@ -361,23 +368,59 @@ class TestGenerator(unittest.TestCase):
     def test_format_delay(self) -> None:
         fd = self.dm.format_delay
         self.assertEqual(fd(500), "500 ms")
-        self.assertEqual(fd(1000), "1 s")
-        self.assertEqual(fd(1500), "1.5 s")
-        self.assertEqual(fd(90000), "90 s")
-        self.assertEqual(fd(60000), "1 min")
-        self.assertEqual(fd(7200000), "2 h")
+        self.assertEqual(fd(1000), "1000 ms")
+        self.assertEqual(fd(1500), "1500 ms")
+        self.assertEqual(fd(90000), "90000 ms")
+        self.assertEqual(fd(60000), "60000 ms")
+        self.assertEqual(fd(7200000), "7200000 ms")
         self.assertEqual(fd("BACKOFF"), "BACKOFF")
 
     def test_layout_override_changes_only_the_direction(self) -> None:
         inv = _inventory()
         key = next(iter(json.loads(ASSET.read_text("utf-8"))["machines"]))
-        default = self.dm.render_entry(key, inv[key]["config"], {})
-        turned = self.dm.render_entry(
-            key, inv[key]["config"], {key: {"direction": "LR"}}
+        config = inv[key]["config"]
+        default = self.dm.render_entry(key, config, {})
+        self.assertEqual(
+            default.split("\n")[1],
+            f"direction {self.dm.default_direction(config)}",
         )
-        self.assertEqual(default.split("\n")[1], "direction TB")
-        self.assertEqual(turned.split("\n")[1], "direction LR")
-        self.assertEqual(default.split("\n")[2:], turned.split("\n")[2:])
+
+        def body(source: str) -> List[str]:
+            # the direction is stated at the top and repeated in the box
+            return [
+                line
+                for line in source.split("\n")
+                if not line.strip().startswith("direction ")
+            ]
+
+        for direction in ("TB", "LR"):
+            turned = self.dm.render_entry(
+                key, config, {key: {"direction": direction}}
+            )
+            self.assertEqual(turned.split("\n")[1], f"direction {direction}")
+            self.assertEqual(body(default), body(turned))
+
+    def test_default_direction_follows_stately(self) -> None:
+        """A small flat chain reads left to right, anything else top down."""
+        chain = {
+            "id": "m",
+            "initial": "a",
+            "states": {
+                "a": {"on": {"GO": "b"}},
+                "b": {"on": {"GO": "c"}},
+                "c": {},
+            },
+        }
+        self.assertEqual(self.dm.default_direction(chain), "LR")
+        nested = json.loads(json.dumps(chain))
+        nested["states"]["c"] = {"initial": "x", "states": {"x": {}}}
+        self.assertEqual(self.dm.default_direction(nested), "TB")
+        busy = json.loads(json.dumps(chain))
+        busy["states"]["a"] = {"on": {"GO": "b", "SKIP": "c", "RESET": "a"}}
+        self.assertEqual(self.dm.default_direction(busy), "TB")
+        wide = json.loads(json.dumps(chain))
+        wide["states"]["d"] = {}
+        self.assertEqual(self.dm.default_direction(wide), "TB")
 
 
 class TestGalleryGenerator(unittest.TestCase):

@@ -397,6 +397,22 @@ def run(
     return 1 if failed else 0
 
 
+def _candidates(
+    key: str, config: Dict[str, Any], layout: Dict[str, Dict[str, Any]]
+) -> List[Dict[str, Any]]:
+    """Layouts to try for a failing chart: the other top-level direction,
+    then each compound state laid out left to right (a wide title fits a
+    wider box)."""
+    current = layout.get(key, {})
+    top = current.get("direction") or dm.default_direction(config)
+    out = [dict(current, direction=d) for d in dm.DIRECTIONS if d != top]
+    for state_id in dm.compound_ids(config):
+        composites = dict(current.get("composites", {}))
+        composites[state_id] = "LR"
+        out.append(dict(current, composites=composites))
+    return out
+
+
 def _tune(
     page: Any,
     key: str,
@@ -406,20 +422,15 @@ def _tune(
     warnings: List[str],
     geometry: Dict[str, Any],
 ):
-    """Try the other top-level direction; keep the first clean rendering.
+    """Try the alternative layouts; keep the first clean rendering.
 
     Returns ``(errors, warnings, geometry, changed)``; the page is left
     showing the rendering that matches the returned geometry.
     """
+    config = inventory[key]["config"]
     best = (errors, warnings, geometry, None)
-    current = layout.get(key, {}).get("direction", "TB")
-    for direction in dm.DIRECTIONS:
-        if direction == current:
-            continue
-        candidate = dict(layout.get(key, {}), direction=direction)
-        source = dm.render_entry(
-            key, inventory[key]["config"], {key: candidate}
-        )
+    for candidate in _candidates(key, config, layout):
+        source = dm.render_entry(key, config, {key: candidate})
         page.evaluate(
             "([k, s]) => window.xsmDiagrams.renderInto(k, s)", [key, source]
         )
@@ -431,7 +442,7 @@ def _tune(
             break
     if best[3] is None:
         # Nothing better: put the committed rendering back for the shots.
-        source = dm.render_entry(key, inventory[key]["config"], layout)
+        source = dm.render_entry(key, config, layout)
         page.evaluate(
             "([k, s]) => window.xsmDiagrams.renderInto(k, s)", [key, source]
         )

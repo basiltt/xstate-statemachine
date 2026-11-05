@@ -198,7 +198,16 @@ class TestStylesheetContracts(unittest.TestCase):
     ) -> None:
         # 📝 Mermaid measures a label before the SVG is inside .statechart;
         #    a size-affecting rule scoped there would clip the shown text.
-        for cls in ("xsm-title", "xsm-pill", "xsm-ev", "xsm-kw", "xsm-chip"):
+        for cls in (
+            "xsm-title",
+            "xsm-pill",
+            "xsm-ev",
+            "xsm-kw",
+            "xsm-sec",
+            "xsm-if",
+            "xsm-num",
+            "xsm-chip",
+        ):
             with self.subTest(cls=cls):
                 self.assertRegex(self.css, rf"(?m)^\.{cls}\s*\{{")
         pill = _declarations(self.css, ".xsm-pill")
