@@ -105,7 +105,7 @@ Some events are minted by the engine itself: `done.invoke.<id>` / `done.state.<i
 | `onUnhandled: "error"` / `"defer"` | exempt | applies |
 | `strict=True` | never rejected | must be declared |
 
-Wildcard descriptors do **not** distinguish them: as in XState v5, `"*"` and `"prefix.*"` match engine events too. A state's own `onDone`, `onError` or `after` handler still outranks a `"*"` on the same state, and a `"*"` on a deeper state outranks an ancestor's handler. So a service failure caught only by a `"*"` (or `"error.*"`) handler is consumed there and the machine keeps running. (Up to 0.12 engine events never reached a wildcard.)
+Wildcard descriptors do **not** distinguish them: as in XState v5, `"*"` and `"prefix.*"` match engine events too. A state's own `onDone`, `onError` or `after` handler still outranks a `"*"` on the same state, and a `"*"` on a deeper state outranks an ancestor's handler. So a service failure caught only by a `"*"` (or `"error.*"`) handler is consumed there and the machine keeps running. (Before 0.12.0 engine events never reached a wildcard.)
 
 The decision is made by **provenance — who created the event — not by its name**. `is_system_event(event)` is the single predicate both consult; `system_event(type, **payload)` is the only way to mint a plain `Event` that passes it. Both are exported from the package root. A user event you happen to name `done.review` is user traffic; the marker cannot be forged from a name, and it survives `deepcopy`, `pickle`, `send(wait=True)` and a snapshot round-trip.
 
@@ -570,7 +570,7 @@ flowchart LR
     A["🧩 create<br/><small>define states & rules</small>"] --> B["▶️ start<br/><small>enter initial state</small>"]
     B --> C["📨 send events<br/><small>process transitions</small>"]
     C --> C
-    C --> D["⏹️ stop<br/><small>exit all states, clean up</small>"]
+    C --> D["⏹️ stop<br/><small>cancel timers, services and children; no exit actions</small>"]
 ```
 
 In code:
@@ -740,7 +740,7 @@ Processing a single external event is a **macrostep**, made of one or more
    The `done.state.<id>` event the engine generates when a compound or
    parallel state completes goes onto the same internal queue, so its
    `onDone` transition is taken before any external event that is already
-   waiting (up to 0.12 it was appended to the inbox, behind such events).
+   waiting (before 0.12.0 it was appended to the inbox, behind such events).
 3. Before the interpreter looks at the next *external* event, it drains the
    internal queue completely, one microstep at a time, in the order events
    were raised. Each internal event may itself raise further internal

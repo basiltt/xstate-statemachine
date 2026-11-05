@@ -22,7 +22,7 @@ The interpreter manages the full lifecycle of a running state machine:
 4. **Execute actions** — runs side effects (entry, exit, and transition actions).
 5. **Invoke services** — starts async/sync operations and handles their results.
 6. **Track state** — maintains the current state(s) and context.
-7. **Stop** — exits all active states (runs exit actions) and shuts down.
+7. **Stop** — cancels timers, services and child actors and shuts down. Exit actions do not run on `stop()` (as in XState v5); they run when a transition leaves a state and when the machine completes.
 
 This library provides two interpreter implementations:
 
@@ -128,7 +128,7 @@ asyncio.run(main())
 
 - `await interpreter.start()` — enters the initial state and returns the interpreter (for chaining).
 - `await interpreter.send("EVENT")` — sends an event and processes the resulting transition(s).
-- `await interpreter.stop()` — exits all active states and shuts down.
+- `await interpreter.stop()` — cancels pending timers and services, stops child actors and shuts down (`status` becomes `stopped`; exit actions are not run).
 - Services defined with `async def` are awaited automatically.
 
 ### Use Cases
@@ -219,7 +219,7 @@ interp.stop()
 
 - `.start()` returns `self`, so you can chain: `SyncInterpreter(machine).start()`.
 - `.send("EVENT")` processes the event synchronously and blocks until all actions complete.
-- `.stop()` exits all active states and runs their exit actions.
+- `.stop()` cancels timers and services, stops child actors and shuts down without running exit actions.
 - Services defined with `def` (not `async def`) are called directly.
 
 ### Use Cases
@@ -237,7 +237,7 @@ interp.stop()
 | Property / Method | Type | Description |
 |-------------------|------|-------------|
 | `.start()` | method | Initialize the interpreter and enter the initial state. Runs entry actions. Returns the interpreter (chainable). |
-| `.stop()` | method | Exit all active states (runs exit actions) and shut down. |
+| `.stop()` | method | Cancel timers, services and child actors and shut down. Exit actions do not run on `stop()`; a machine that reaches a top-level final state runs them as part of completing. |
 | `.send(event, **kwargs)` | method | Send an event to the machine. Accepts string, dict, or `Event` object. Extra kwargs become event payload. |
 | `.send_events(events)` | method | Send multiple events in sequence. Each event is processed before the next. |
 | `.active_state_ids` | `set[str]` | The set of currently active state IDs (e.g., `{'machine.idle'}`). |
@@ -799,7 +799,7 @@ print(interp.active_state_ids)  # {'lifecycle.running'}
 interp.send("STOP")
 print(interp.active_state_ids)  # {'lifecycle.done'}
 
-# 4. STOP — exits all states, runs exit actions
+# 4. STOP — cancels timers and services and shuts down (no exit actions)
 interp.stop()
 print(interp.is_running)  # False
 ```

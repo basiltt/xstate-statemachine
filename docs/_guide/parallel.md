@@ -755,7 +755,7 @@ assert interp.current_state_ids == {"m.p.left.a", "m.p.right.d"}
 
 To move **only** the other region, handle the event inside that region
 instead — every region receives every event, so `right.c: {"on": {"JUMP":
-"d"}}` leaves `left` untouched. (Up to 0.12 a cross-region target exited and
+"d"}}` leaves `left` untouched. (Before 0.12.0 a cross-region target exited and
 re-entered only the targeted region.)
 
 ## When Several Regions Handle the Same Event

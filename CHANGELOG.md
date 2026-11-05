@@ -9,16 +9,166 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.12.0] - 2026-11-05
+
+> **Behaviour changes in this release.** The statechart engine now
+> follows XState v5 where it used to differ, the Pythonic DSL gained an
+> instance façade, and a few things an existing chart or class relied
+> on behave differently. Read **Changed** before upgrading: the behaviour
+> changes there say who notices and how to migrate.
+
+### Added
+
+- **Pythonic DSL, second generation.** A `StateMachine` subclass is now a
+  running machine: `sm = Light()` starts it (sync engine), `sm.cycle()` /
+  `sm.send("CYCLE", amount=3)` send events and return the actions' return
+  values, and `sm.state`, `sm.configuration`, `sm.context`, `sm.status`,
+  `sm.can()`, `sm.matches()`, `sm.allowed_events`, `sm.green.is_active`
+  and a readable `repr()` answer the questions a caller has. The
+  recommended lifecycle idiom is `with Light() as sm:` / `async with
+  Light() as sm:` (stops on exit, exceptions included); for an instance
+  that outlives a block, `sm.interpreter.start()` / `sm.interpreter.stop()`
+  are the explicit escape hatch. `Light.create_machine()` is unchanged and
+  still returns the bare `MachineNode`.
+- **Events are named by the attribute**: `cycle = green.to(yellow)` is the
+  `CYCLE` event (`slow_down` → `SLOW_DOWN`); `event=` remains an override.
+  Transitions declared inside nested state classes are exposed as event
+  methods on the machine (`order.ship()`).
+- **Naming-convention hooks**: `on_enter_<state>`, `on_exit_<state>`,
+  `on_<event>`, `before_<event>`, `after_<event>` and the generic
+  `on_enter_state`, `on_exit_state`, `on_transition`, `before_transition`,
+  `after_transition`. A hook whose suffix matches no state or event logs
+  a warning instead of silently never running. `before_*` / `after_*`
+  need the instance façade (`create_machine()` warns when they exist)
+  and must be plain `def` (an `async def` hook is an `InvalidConfigError`).
+  Convention bindings and inferred event names are recorded per class,
+  never written into the `State` / `Transition` objects, so module-level
+  states can be shared between machines.
+- **Signature-based argument injection** for every class-based and
+  functional callback: declare only what you need (`context`, `event`,
+  `event_type`, `interpreter`, `action_def`, `error`, `data`, `input`,
+  `source`, `target`, `state`, any payload field, `**kwargs` for the rest).
+  The legacy positional shapes (`(interpreter, context, event,
+  action_def)`, `(context, event[, params])`, `(interpreter, context,
+  event)`) are detected by arity and keep working unchanged, a default in
+  the trailing slot (`params=None`, `a=None`) and extra defaulted
+  parameters after the shape (`level="info"`) included. A callback whose
+  arity matches a legacy shape is resolved by name only when it asks for
+  injection -- a default anywhere but that trailing slot, a keyword-only
+  parameter, `**kwargs` (which receives the payload fields once the call
+  is resolved by name), or a
+  parameter named like a field the event carries, a chart `params` key or
+  a hook's injected `state` -- and every parameter without a default can
+  then be supplied: `def can_pay(self, context, amount=0)`, and `def
+  can_pay(self, context, amount)` with an `amount` in the payload, are
+  injected; `def is_big(self, ctx, e, params=None)` and `def log_it(self,
+  i, ctx, e, a=None)` are positional, as are `def ok(self, c, e)` and
+  `def log_it(self, i, c, e, a)` even when the payload carries a key
+  named `e` or `a`. An engine name in another slot than its own (`params`
+  as an action's fourth parameter, `state` as a guard's first) always
+  switches the callback to by-name resolution. When a callback with no
+  engine name asks for injection and the payload names some of its
+  parameters but not a required one (`def fetch(self, url, retries=3,
+  timeout=10)` sent `retries=5` and no `url`), the missing one is a
+  `TypeError` that names it; otherwise the positional call happens as
+  before. Two ambiguities remain. A legacy callback whose non-engine
+  parameters without a default are all named like fields the event
+  carries is resolved by name: `def ok(self, ctx, e)` with `send("GO",
+  e=1)` binds `e=1` (a defaulted `a=None` then takes its default). And a
+  default on the event parameter of a legacy shape (`def ok(self, ctx,
+  e=None)`) asks for injection, so `e` is `None` whenever the event
+  carries no `e` field. Name such parameters `event` / `interpreter` /
+  `action_def` if your payloads can carry those keys, and keep the event
+  parameter without a default.
+- **`State.Compound` / `State.Parallel`** aliases for the nested-class
+  form, and nested classes now accept every `State(...)` keyword
+  (`after=`, `on_done=`, `history=`, `tags=`, `entry=`, `invoke=`, …).
+  A nested class is a valid transition source and target.
+- **`strict = True`** on a `StateMachine` refuses undeclared events
+  (`UnknownEventError`) and declared events that no active state will
+  take right now (new `TransitionNotAllowedError`), at the call site,
+  without dispatching or stopping the machine.
+- **Build-time logic validation**: instantiating a `StateMachine` raises
+  one `ImplementationMissingError` listing every guard, action and
+  service the chart names but no method implements, instead of one name
+  at a time at the first `send()`. `validate_logic = False` defers the
+  check to runtime; `create_machine(validate=True)` applies it to a bare
+  `MachineNode` (off by default there, because a chart without logic is
+  a legitimate static artifact for `to_json()`, diagrams and codegen).
+- `MachineNode.to_json(indent=None)` serialises the XState configuration
+  the machine was built from (raising `TypeError` on a value JSON cannot
+  represent rather than stringifying it). The Pythonic API guide had
+  advertised it since 0.5.0; it did not exist.
+- A subclass of a `StateMachine` subclass inherits its states,
+  transitions and callbacks; attributes it redefines win. Before, the
+  base's chart was silently dropped and the subclass compiled to an
+  empty machine.
+- `engine = "sync" | "async" | "auto"` on a `StateMachine`; `auto` picks
+  the asyncio `Interpreter` when any callback is `async def`. The façade
+  also accepts `clock=` (a `SimulatedClock` in tests) and `plugins=`.
+- **Services see the triggering event.** An invoked service's `input`
+  factory now receives the event whose transition entered the state
+  (XState's `input: ({context, event}) => ...`; it used to get `None`),
+  verified against xstate 5.33.3. A state that declares no `input` still
+  passes the service `{}` (XState passes `undefined`): forwarding the
+  payload implicitly would make the same Stately export behave
+  differently under this engine than under XState. To forward it, declare
+  it -- `"input": event_payload` (new, exported from the package root; the
+  JSON equivalent is `input: ({event}) => event`) or any
+  `lambda ctx, ev: ...` factory. `@state.service(input=event_payload, ...)`
+  is the class-DSL spelling, and argument injection of payload fields
+  into a service's parameters works through that declared input. Child
+  machines invoked as actors follow the same rule. Both engines.
+- **Plain methods satisfy string references by name.** `guard="can_pay"`
+  (or `"canPay"`) plus an undecorated `def can_pay(self, amount)` now
+  binds, as do `actions=["reserve"]` and `invoke={"src": "charge_card"}`
+  -- for names the chart references and no decorated callable already
+  provides, so helper methods are never swept in. The decorators remain
+  the explicit form and the only way to register under another name.
+- **`@state.service(on_done=..., on_error=..., id=..., input=...)`**
+  decorator on a `State`: the method becomes the service AND the state
+  gains the matching `invoke` entry, so the two cannot drift apart.
+- **`SyncInterpreter.from_state(machine, state, context=...)` /
+  `Interpreter.from_state(...)`** build an interpreter that is already in
+  a given state -- a dot path relative to the root (`"paid.packing"`),
+  an absolute id, or several for parallel regions -- without running
+  entry actions, exactly like a snapshot restore (it is one: a minimal
+  snapshot handed to `from_snapshot`, so the same legality checks
+  apply). A compound or parallel state completes to its initial leaves;
+  a top-level final state restores as `done`. `StateMachine(state=...)`
+  exposes the same on the façade. This is the "state string stored on a
+  model row" case that previously needed a hand-built `PureSnapshot`
+  with its ancestor set.
+- Docs: "Coming from python-statemachine" and "Coming from transitions"
+  migration guides, each with a concept map, a worked traffic-light port
+  (guard, nested state, `after` timeout) shown in the other library and
+  as an executable block in ours, and "what maps 1:1 / what differs /
+  what you gain" sections. Linked from the comparison pages and the
+  integrations journey.
+- Docs: `jekyll-sitemap` is enabled and `docs/robots.txt` points
+  crawlers at the sitemap.
+- `tests/test_battle_310_pythonic_dsl.py`: battle tests for the new
+  surface -- 200 concurrent async sends keep their results apart,
+  cross-thread `send_threadsafe` into a façade, hooks that raise, five
+  levels of nesting with deep history and a simulated-clock `after`,
+  same-named leaves at every level, snapshot round-trips of façade-built
+  machines, three-level inheritance, every callback signature shape in
+  one machine, a 200-state machine with the compiled-config cache, the
+  bounded result sink, and lifecycle misuse.
+
 ### Changed
 
-**Behaviour change: the next release notes must call this section out.**
-The statechart algorithm now matches XState v5 in the places listed below,
-where it used to give a different answer. Each item was checked against
-xstate 5.33.3 by the conformance cases the Rust engine shares with this
-library. Both engines (`Interpreter` and `SyncInterpreter`) change
-together. Machines that never relied on the old answers are unaffected;
-tests that pin the order of entry or exit actions in parallel or nested
-charts may need their expected lists updated.
+**Behaviour changes.** The statechart algorithm now matches XState v5 in
+the places listed below, where it used to give a different answer. Each
+item was checked against xstate 5.33.3 by the conformance cases the Rust
+engine shares with this library. Both engines (`Interpreter` and
+`SyncInterpreter`) change together. Machines that never relied on the old
+answers are unaffected; tests that pin the order of entry or exit actions
+in parallel or nested charts may need their expected lists updated. The
+entries after the engine ones say what an existing Pythonic `StateMachine`
+class, a plugin or a `subscribe()` listener may notice.
 
 - **Exit actions run in reverse document order, one region at a time.**
   When a transition leaves several states, they now exit in reverse
@@ -84,9 +234,12 @@ charts may need their expected lists updated.
   catches is now consumed there and the machine keeps running; before,
   the wildcard never saw it and the machine went to `status == "error"`.
   If a catch-all handler should ignore engine events, give it a guard
-  that checks the event type (for example
-  `lambda ctx, ev: not ev.type.startswith(("done.", "error.", "after."))`)
-  or declare explicit `onDone` / `onError` handlers.
+  that checks the event type (for example `lambda ctx, ev: not
+  ev.type.startswith(("done.", "error.", "after.", "xstate."))`), or
+  declare explicit `onDone` / `onError` handlers on the same state as the
+  wildcard or deeper -- a wildcard on a child state outranks an ancestor's
+  `onDone`, `onError` and `after`, so a child's `"*"` can keep a parent
+  from ever seeing its service's completion.
 - **Multi-target transitions are supported.** `target` may now be a list
   of states that lie in different regions of one parallel state
   (`"target": ["#m.p.r1.x", "#m.p.r2.y"]`); each region enters its
@@ -262,133 +415,93 @@ charts may need their expected lists updated.
   region that finishes. To react to a nested completion higher up, put the
   `onDone` on the state that owns the final child, or transition to a
   final child of the outer state from there.
+- **A `StateMachine` instance owns a few attribute names.** A subclass is
+  now a running machine (see *Added*), so `status`, `state`, `context`,
+  `configuration`, `machine`, `interpreter` and `allowed_events` are
+  read-only properties of every instance. A class whose `__init__` or
+  methods assigned one of them on `self` -- `self.status = "fresh"` --
+  now raises `AttributeError`, also through `create_machine()`, which
+  still runs the user's `__init__`. Rename the attribute (`self._status`).
+- **Naming-convention hooks bind existing methods too.** An undecorated
+  method named `on_enter_<state>`, `on_exit_<state>`, `on_<event>`,
+  `on_transition`, `on_enter_state` or `on_exit_state` is now called by
+  the engine. A helper that carried such a name in an earlier release
+  runs once more per entry, exit or transition; one whose parameters
+  cannot be resolved raises inside the action list, which is logged as an
+  action error and skips the explicitly declared actions after it. Rename
+  the helper, or give it parameters the engine can inject.
+- **`internal: false` with a child target re-enters the source.**
+  `internal` is the XState v4 alias of `reenter` (`"internal": false`
+  means `reenter: true`), so the `reenter` change above applies to it: a
+  transition from `p` to its own child with `"internal": false` now exits
+  and re-enters `p` (its `exit` / `entry` actions run, its `after` timers
+  and invokes restart). Before, neither spelling re-entered for a child
+  target. XState v5 ignores `internal` altogether; drop the key where the
+  source must stay.
+- **`subscribe()` listeners are notified once per microstep.** When one
+  event takes transitions in several parallel regions, a subscriber now
+  sees one notification with the settled configuration instead of one per
+  region transition, each showing an intermediate configuration. Plugins'
+  `on_transition` still fires once per transition taken, after the whole
+  step (see the microstep entry above). Diff successive snapshots instead
+  of counting notifications.
+- **A declared falsy `input` reaches the service as declared.** An
+  `invoke` whose `input` is `0`, `""`, `[]` or `False` now passes that
+  value; before it was coerced to `{}`. Only an undeclared (or `null`)
+  `input` becomes `{}`.
+- **`xstate_statemachine.pythonic` re-exports only its own names.** With
+  the implementation moved to private modules (below), names the module
+  merely imported -- `MachineLogic`, `MachineNode`, `InvalidConfigError`,
+  `ActionCallable`, `GuardCallable`, `ServiceCallable` -- are no longer
+  importable from it, and neither is the private `_StateMachineMeta`
+  metaclass (now in `_pythonic_class`); import them from the package root
+  (`from xstate_statemachine import MachineLogic`) or their own modules.
+  Every documented DSL name is unchanged; the DSL classes' `__module__`
+  is now a private module (`xstate_statemachine._pythonic_core` for
+  `State` and `Transition`, `_pythonic_class` for `StateMachine`,
+  `_pythonic_builder` for `MachineBuilder`).
 
-### Fixed
-
-- **XState parity: an `invoke` without `input` passes the actor nothing.**
-  0.12.0 made a service whose state declares no `input` receive the
-  triggering event's payload. XState v5 passes `undefined` there (verified
-  against xstate 5.33.3 with `fromPromise` and `fromCallback`), so the same
-  Stately export behaved differently under this engine, and a machine
-  written against the shortcut would silently receive nothing under
-  XState or the Rust engine. The shortcut is reverted on both engines: a
-  service with no declared `input` receives `{}` again (the 0.11 behaviour).
-  The XState-faithful half of the 0.12.0 change stays: a declared `input`
-  factory still sees the triggering event. To forward the payload, declare
-  it -- `"input": event_payload` (new, exported from the package root; the
-  JSON equivalent is `input: ({event}) => event`) or any
-  `lambda ctx, ev: ...` factory. `@state.service(input=event_payload, ...)`
-  is the class-DSL spelling; argument injection of payload fields into a
-  service's parameters works through that declared input.
-
-## [0.12.0] - 2026-10-20
-
-### Added
-
-- **Pythonic DSL, second generation.** A `StateMachine` subclass is now a
-  running machine: `sm = Light()` starts it (sync engine), `sm.cycle()` /
-  `sm.send("CYCLE", amount=3)` send events and return the actions' return
-  values, and `sm.state`, `sm.configuration`, `sm.context`, `sm.status`,
-  `sm.can()`, `sm.matches()`, `sm.allowed_events`, `sm.green.is_active`
-  and a readable `repr()` answer the questions a caller has. The
-  recommended lifecycle idiom is `with Light() as sm:` / `async with
-  Light() as sm:` (stops on exit, exceptions included); for an instance
-  that outlives a block, `sm.interpreter.start()` / `sm.interpreter.stop()`
-  are the explicit escape hatch. `Light.create_machine()` is unchanged and
-  still returns the bare `MachineNode`.
-- **Events are named by the attribute**: `cycle = green.to(yellow)` is the
-  `CYCLE` event (`slow_down` → `SLOW_DOWN`); `event=` remains an override.
-  Transitions declared inside nested state classes are exposed as event
-  methods on the machine (`order.ship()`).
-- **Naming-convention hooks**: `on_enter_<state>`, `on_exit_<state>`,
-  `on_<event>`, `before_<event>`, `after_<event>` and the generic
-  `on_enter_state`, `on_exit_state`, `on_transition`, `before_transition`,
-  `after_transition`. A hook whose suffix matches no state or event logs
-  a warning instead of silently never running. `before_*` / `after_*`
-  need the instance façade (`create_machine()` warns when they exist)
-  and must be plain `def` (an `async def` hook is an `InvalidConfigError`).
-  Convention bindings and inferred event names are recorded per class,
-  never written into the `State` / `Transition` objects, so module-level
-  states can be shared between machines.
-- **Signature-based argument injection** for every class-based and
-  functional callback: declare only what you need (`context`, `event`,
-  `event_type`, `interpreter`, `action_def`, `error`, `data`, `input`,
-  `source`, `target`, `state`, any payload field, `**kwargs` for the rest).
-  The legacy positional shapes (`(interpreter, context, event,
-  action_def)`, `(context, event)`, `(interpreter, context, event)`) are
-  detected by arity and keep working unchanged.
-- **`State.Compound` / `State.Parallel`** aliases for the nested-class
-  form, and nested classes now accept every `State(...)` keyword
-  (`after=`, `on_done=`, `history=`, `tags=`, `entry=`, `invoke=`, …).
-  A nested class is a valid transition source and target.
-- **`strict = True`** on a `StateMachine` refuses undeclared events
-  (`UnknownEventError`) and declared events that no active state will
-  take right now (new `TransitionNotAllowedError`), at the call site,
-  without dispatching or stopping the machine.
-- **Build-time logic validation**: instantiating a `StateMachine` raises
-  one `ImplementationMissingError` listing every guard, action and
-  service the chart names but no method implements, instead of one name
-  at a time at the first `send()`. `validate_logic = False` defers the
-  check to runtime; `create_machine(validate=True)` applies it to a bare
-  `MachineNode` (off by default there, because a chart without logic is
-  a legitimate static artifact for `to_json()`, diagrams and codegen).
-- `MachineNode.to_json(indent=None)` serialises the XState configuration
-  the machine was built from (raising `TypeError` on a value JSON cannot
-  represent rather than stringifying it). The Pythonic API guide had
-  advertised it since 0.5.0; it did not exist.
-- A subclass of a `StateMachine` subclass inherits its states,
-  transitions and callbacks; attributes it redefines win. Before, the
-  base's chart was silently dropped and the subclass compiled to an
-  empty machine.
-- `engine = "sync" | "async" | "auto"` on a `StateMachine`; `auto` picks
-  the asyncio `Interpreter` when any callback is `async def`. The façade
-  also accepts `clock=` (a `SimulatedClock` in tests) and `plugins=`.
-- **Services see the triggering event.** An invoked service's `input`
-  factory now receives the event whose transition entered the state
-  (XState's `input: ({context, event}) => ...`; it used to get `None`),
-  and when a state declares no `input` the service's input defaults to
-  that event's payload: `send("START", url=...)` arrives as
-  `event.payload["input"]["url"]` -- or simply as a `url` parameter with
-  argument injection -- instead of an empty dict, so a machine no longer
-  needs an action whose only job is to copy the payload into `context`.
-  Child machines invoked as actors keep the previous rule (no input
-  unless declared). Both engines.
-- **Plain methods satisfy string references by name.** `guard="can_pay"`
-  (or `"canPay"`) plus an undecorated `def can_pay(self, amount)` now
-  binds, as do `actions=["reserve"]` and `invoke={"src": "charge_card"}`
-  -- for names the chart references and no decorated callable already
-  provides, so helper methods are never swept in. The decorators remain
-  the explicit form and the only way to register under another name.
-- **`@state.service(on_done=..., on_error=..., id=..., input=...)`**
-  decorator on a `State`: the method becomes the service AND the state
-  gains the matching `invoke` entry, so the two cannot drift apart.
-- **`SyncInterpreter.from_state(machine, state, context=...)` /
-  `Interpreter.from_state(...)`** build an interpreter that is already in
-  a given state -- a dot path relative to the root (`"paid.packing"`),
-  an absolute id, or several for parallel regions -- without running
-  entry actions, exactly like a snapshot restore (it is one: a minimal
-  snapshot handed to `from_snapshot`, so the same legality checks
-  apply). A compound or parallel state completes to its initial leaves;
-  a top-level final state restores as `done`. `StateMachine(state=...)`
-  exposes the same on the façade. This is the "state string stored on a
-  model row" case that previously needed a hand-built `PureSnapshot`
-  with its ancestor set.
-- Docs: "Coming from python-statemachine" and "Coming from transitions"
-  migration guides, each with a concept map, a worked traffic-light port
-  (guard, nested state, `after` timeout) shown in the other library and
-  as an executable block in ours, and "what maps 1:1 / what differs /
-  what you gain" sections. Linked from the comparison pages and the
-  integrations journey.
-- Docs: `jekyll-sitemap` is enabled and `docs/robots.txt` points
-  crawlers at the sitemap.
-- `tests/test_battle_310_pythonic_dsl.py`: battle tests for the new
-  surface -- 200 concurrent async sends keep their results apart,
-  cross-thread `send_threadsafe` into a façade, hooks that raise, five
-  levels of nesting with deep history and a simulated-clock `after`,
-  same-named leaves at every level, snapshot round-trips of façade-built
-  machines, three-level inheritance, every callback signature shape in
-  one machine, a 200-state machine with the compiled-config cache, the
-  bounded result sink, and lifecycle misuse.
+- `State.to()` and `State.internal()` no longer raise when `event=` is
+  omitted; the event may be inferred from the attribute name. Compiling a
+  transition that still has no event (functional API, `build_machine()`)
+  raises `InvalidConfigError` at build time instead.
+- `send`, `state`, `configuration`, `context`, `status`, `can`, `matches`,
+  `allowed_events`, `machine`, `interpreter`, `engine`, `strict`,
+  `plugins`, `validate_logic` and the existing class settings are reserved
+  attribute names in a `StateMachine` body and raise `InvalidConfigError`
+  if used for a state or transition. `start` and `stop` are deliberately
+  not reserved -- timers and media players need those events and Stately
+  exports use them -- but the lifecycle always wins: a `stop` transition
+  stays in the chart (`sm.send("STOP")`) and gets no `sm.stop()` sugar,
+  and a warning is logged at class definition. Letting the event win
+  would have turned a documented shutdown call into a machine that keeps
+  running silently.
+- `import xstate_statemachine` is lighter: about 25-30% less import time
+  with warm bytecode and 47 fewer modules loaded. The graph algorithms
+  (`reachable_states`, `shortest_paths`, ...), the pure transition API
+  (`wait_for`, `get_next_snapshot`, ...), the testing utilities
+  (`stub_logic`, `logic_names`), the receipt codec and the file / SQLite /
+  async store backends are imported on first use (PEP 562 module
+  `__getattr__`). `__all__` and every `from xstate_statemachine import X`
+  are unchanged and type checkers still see every name. Those submodules
+  are no longer attributes of the package after a bare
+  `import xstate_statemachine` -- `xstate_statemachine.helpers.wait_for`
+  raises `AttributeError` until `xstate_statemachine.helpers` is
+  imported; import the name from the package root or import the
+  submodule explicitly. `hashlib` and
+  `uuid` are loaded only when a structure hash or an anonymous actor id
+  is first needed. `tests/test_import_time.py` pins which modules a bare
+  import may load.
+- Docs: the Quick Start is one recommended path -- a `StateMachine`
+  class run with `with Machine() as sm:` -- followed by "Also: load
+  XState JSON or design in Stately", "Choose your engine" and "Next
+  steps"; the older Python styles are kept in a compact section. Getting
+  Started leads with the class DSL.
+- `xstate_statemachine.pythonic` is now a thin public module; the
+  implementation moved to `_pythonic_core`, `_pythonic_builder`,
+  `_pythonic_class` and `_pythonic_runtime`. Every documented DSL name,
+  and the private compiler helpers the test suite imports, is re-exported
+  unchanged; the incidental imports listed in the entry above are not.
 
 ### Fixed
 
@@ -428,44 +541,6 @@ charts may need their expected lists updated.
   `event.data` on an error event; it now reads `event.error`. The
   hierarchical guide's `FormWizard` referenced a service and an action it
   never implemented.
-
-### Changed
-
-- `State.to()` and `State.internal()` no longer raise when `event=` is
-  omitted; the event may be inferred from the attribute name. Compiling a
-  transition that still has no event (functional API, `build_machine()`)
-  raises `InvalidConfigError` at build time instead.
-- `send`, `state`, `configuration`, `context`, `status`, `can`, `matches`,
-  `allowed_events`, `machine`, `interpreter`, `engine`, `strict`,
-  `plugins`, `validate_logic` and the existing class settings are reserved
-  attribute names in a `StateMachine` body and raise `InvalidConfigError`
-  if used for a state or transition. `start` and `stop` are deliberately
-  not reserved -- timers and media players need those events and Stately
-  exports use them -- but the lifecycle always wins: a `stop` transition
-  stays in the chart (`sm.send("STOP")`) and gets no `sm.stop()` sugar,
-  and a warning is logged at class definition. Letting the event win
-  would have turned a documented shutdown call into a machine that keeps
-  running silently.
-- `import xstate_statemachine` is lighter: about 25-30% less import time
-  with warm bytecode and 47 fewer modules loaded. The graph algorithms
-  (`reachable_states`, `shortest_paths`, ...), the pure transition API
-  (`wait_for`, `get_next_snapshot`, ...), the testing utilities
-  (`stub_logic`, `logic_names`), the receipt codec and the file / SQLite /
-  async store backends are imported on first use (PEP 562 module
-  `__getattr__`). `__all__` and every `from xstate_statemachine import X`
-  are unchanged and type checkers still see every name. `hashlib` and
-  `uuid` are loaded only when a structure hash or an anonymous actor id
-  is first needed. `tests/test_import_time.py` pins which modules a bare
-  import may load.
-- Docs: the Quick Start is one recommended path -- a `StateMachine`
-  class run with `with Machine() as sm:` -- followed by "Also: load
-  XState JSON or design in Stately", "Choose your engine" and "Next
-  steps"; the older Python styles are kept in a compact section. Getting
-  Started leads with the class DSL.
-- `xstate_statemachine.pythonic` is now a thin public module; the
-  implementation moved to `_pythonic_core`, `_pythonic_builder`,
-  `_pythonic_class` and `_pythonic_runtime`. Every public name (and the
-  private compiler helpers tests import) is re-exported unchanged.
 
 ## [0.11.0] - 2026-10-13
 
@@ -6711,7 +6786,8 @@ existing.
 <!-- Without these definitions they render as literal bracketed text.  -->
 <!-- ---------------------------------------------------------------- -->
 
-[Unreleased]: https://github.com/basiltt/xstate-statemachine/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/basiltt/xstate-statemachine/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/basiltt/xstate-statemachine/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/basiltt/xstate-statemachine/compare/v0.10.5...v0.11.0
 [0.10.5]: https://github.com/basiltt/xstate-statemachine/compare/v0.10.4...v0.10.5
 [0.10.4]: https://github.com/basiltt/xstate-statemachine/compare/v0.10.3...v0.10.4

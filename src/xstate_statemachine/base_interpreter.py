@@ -3193,13 +3193,12 @@ class BaseInterpreter(Generic[TContext]):
         resolved against the parent's context AND the event that entered
         the state, so the factory sees the triggering event. With no
         ``input`` declared the actor receives *nothing* (``undefined`` in
-        XState; ``{}`` here, the 0.7.x convention). 0.12.0 briefly forwarded
-        the triggering event's payload instead; that made a Stately export
-        behave differently under this engine than under XState and was
-        reverted. A chart that wants the payload declares it:
-        ``"input": event_payload`` (`xstate_statemachine.event_payload`) or
-        ``lambda ctx, ev: ev.payload``. Child MACHINES follow the same
-        rule.
+        XState; ``{}`` here, the 0.7.x convention). Forwarding the
+        triggering event's payload by default would make a Stately export
+        behave differently under this engine than under XState, so a chart
+        that wants the payload declares it: ``"input": event_payload``
+        (`xstate_statemachine.event_payload`) or ``lambda ctx, ev:
+        ev.payload``. Child MACHINES follow the same rule.
 
         Args:
             invocation: The invoke being armed.
@@ -4089,8 +4088,8 @@ class BaseInterpreter(Generic[TContext]):
             # 🧮 XState v5 `assign`: EVERY property is computed against the
             #    context as it was BEFORE this action, then all are merged --
             #    `{"a": lambda a: a["context"]["b"], "b": 1}` gives `a` the
-            #    old `b`. Up to 0.12 each property was written as soon as it
-            #    was computed, so later ones saw earlier ones' writes.
+            #    old `b`. Before 0.12.0 each property was written as soon as
+            #    it was computed, so later ones saw earlier ones' writes.
             updates = {
                 key: value(args) if callable(value) else value
                 for key, value in assignment.items()
@@ -4171,7 +4170,7 @@ class BaseInterpreter(Generic[TContext]):
             #    XState's `enqueueActions(({check}) => ...)` translation of
             #    `choose`. `params.branches` is the JSON dialect (the
             #    conformance fixtures, the Rust engine); `params.conditions`
-            #    is what `choose()` builds. Up to 0.12 only `conditions`
+            #    is what `choose()` builds. Before 0.12.0 only `conditions`
             #    was read, so a JSON `choose` silently ran no branch.
             for branch in choose_branches(params):
                 guard_cfg = branch.get("guard", branch.get("cond"))
@@ -4464,7 +4463,7 @@ class BaseInterpreter(Generic[TContext]):
         transition's actions run (selection order), then every state they
         enter is entered (document order).
 
-        🏛️ Architecture decision: up to 0.12 each selected transition ran
+        🏛️ Architecture decision: before 0.12.0 each selected transition ran
         as its own exit → actions → entry sequence, one after the other,
         re-checking only that the next one's source was still active. Two
         regions' transitions interleaved their actions, and a transition
@@ -4587,7 +4586,7 @@ class BaseInterpreter(Generic[TContext]):
                 # 🔀 XState / SCXML `exitStates`: REVERSE DOCUMENT ORDER.
                 #    Descendants exit before their ancestors and parallel
                 #    regions exit one whole region at a time, the region
-                #    declared last first. (Up to 0.12 the key was
+                #    declared last first. (Before 0.12.0 the key was
                 #    `(depth, id)` descending, which interleaved regions --
                 #    every leaf, then every region -- and let an id's
                 #    spelling decide which region went first.)
@@ -5340,7 +5339,7 @@ class BaseInterpreter(Generic[TContext]):
         time, not at record time.
 
         🏛️ Architecture decision: only the owner's OWN exit records, as in
-        XState v5 / SCXML ``exitStates``. Up to 0.12 every ancestor of an
+        XState v5 / SCXML ``exitStates``. Before 0.12.0 every ancestor of an
         exited state was a candidate, so a transition between two states
         inside the owner (which never leaves it) overwrote its history, and
         a later transition to the history node from inside the owner
@@ -5554,7 +5553,7 @@ class BaseInterpreter(Generic[TContext]):
         ``onDone`` -- one nobody handles reaches a ``"*"`` handler or is
         dropped like any unhandled engine event.
 
-        🏛️ Architecture decision: up to 0.12 the ancestors were walked for
+        🏛️ Architecture decision: before 0.12.0 the ancestors were walked for
         the FIRST one with an ``onDone`` that was "done" (a compound counted
         as done when its active child was, recursively), only that one was
         notified, and only a final state directly under the root completed
@@ -6322,7 +6321,7 @@ class BaseInterpreter(Generic[TContext]):
         order and the walk stops at the first enabled one, so a guard is
         evaluated only when its transition could actually be taken.
 
-        🏛️ Architecture decision: up to 0.12 every active leaf walked up to
+        🏛️ Architecture decision: before 0.12.0 every active leaf walked up to
         the root evaluating EVERY matching candidate's guard (memoised per
         pass), and the deepest eligible transition per leaf won. That ran
         guards XState never evaluates (an ancestor's, a later candidate's
@@ -6371,7 +6370,7 @@ class BaseInterpreter(Generic[TContext]):
         resolved by the microstep (`_remove_conflicting_transitions`) in the
         same order, so the leaf entered first wins a conflict.
 
-        🏛️ Architecture decision: up to 0.12 the leaves were visited in
+        🏛️ Architecture decision: before 0.12.0 the leaves were visited in
         document order. XState visits them in the order its snapshot holds
         them -- the states a microstep keeps stay in place, the ones it
         enters are appended -- so after one region moved, a guard of the
@@ -6419,14 +6418,14 @@ class BaseInterpreter(Generic[TContext]):
         transition from one region into a sibling region), EVERY region
         exits, not only the targeted one, and `_compute_entry_set`
         re-enters the others through their initial states -- XState v5 and
-        SCXML semantics. Up to 0.12 the exit set was scoped to the targeted
+        SCXML semantics. Before 0.12.0 the exit set was scoped to the targeted
         region, so the source region silently stayed put.
 
         Args:
             domain (Optional[StateNode]): The transition domain, or `None`
                 when it lies above the machine root.
             target_state (Optional[StateNode]): Unused; kept so callers of
-                the 0.12 signature keep working.
+                the earlier signature keep working.
 
         Returns:
             Set[StateNode]: The active states to exit.
@@ -6527,7 +6526,7 @@ class BaseInterpreter(Generic[TContext]):
                 #    source is neither exited nor entered, but its active
                 #    descendants exit and its default descendants are
                 #    entered again (XState `computeEntrySet` /
-                #    `addDescendantStatesToEnter`). Up to 0.12 a compound
+                #    `addDescendantStatesToEnter`). Before 0.12.0 a compound
                 #    source ran the transition's actions and nothing else.
                 implied: Set[StateNode[Any]] = {target}
                 self._complete_entry_set(implied)

@@ -2527,7 +2527,7 @@ class Interpreter(BaseInterpreter[TContext]):
         # 🔁 A `done.state.*` raised while a macrostep is running is an
         #    INTERNAL event (XState v5 `internalQueue`), processed before
         #    any external event already waiting -- and, like a `raise`,
-        #    self-generated work counted toward the chain budget. Up to 0.12
+        #    self-generated work counted toward the chain budget. Before 0.12.0
         #    it went to the inbox, behind the events queued there.
         if self._processing:
             self._raise_depth += 1
