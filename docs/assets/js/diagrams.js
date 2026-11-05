@@ -1,6 +1,6 @@
 /* Statecharts for the documentation site ------------------------------------
  *
- * Two kinds of chart are drawn in the browser with Mermaid 11:
+ * Two kinds of chart are drawn in the browser with Mermaid 12 (ELK layout):
  *
  *  1. ```mermaid fenced blocks (export examples in the guides) become a
  *     <figure class="statechart"> with a Full screen viewer.
@@ -17,7 +17,7 @@
  * is used by scripts/check_diagrams.py to render every chart headlessly and
  * check it for overlapping or clipped elements.
  */
-const MERMAID_URL = 'https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/mermaid.esm.min.mjs';
+const MERMAID_URL = 'https://cdn.jsdelivr.net/npm/mermaid@12.3.0/dist/mermaid.esm.min.mjs';
 let mermaid = null; // loaded in start(); null when the CDN is unreachable
 
 const DATA_URL = new URL('../data/diagrams.json', import.meta.url);
@@ -72,9 +72,10 @@ function buildFigure(kind, title, link, minHeight) {
 
 function configureMermaid() {
   // 📝 Structural settings only: every colour is overridden by style.css so
-  //    both themes come from the same SVG.
+  //    both themes come from the same SVG. ELK (Mermaid 12's default) routes
+  //    transitions orthogonally, the way the Stately editor draws them.
   mermaid.initialize({
-    startOnLoad: false, theme: 'base', securityLevel: 'loose', suppressErrorRendering: true,
+    startOnLoad: false, theme: 'base', securityLevel: 'loose', suppressErrorRendering: true, layout: 'elk',
     state: { padding: 16, nodeSpacing: 48, rankSpacing: 56, useMaxWidth: true },
     flowchart: { padding: 14, nodeSpacing: 36, rankSpacing: 44, useMaxWidth: true, htmlLabels: true },
     themeVariables: {
@@ -106,8 +107,11 @@ function render(diagram) {
       if (!mermaid) throw new Error('Mermaid did not load');
       const { svg } = await mermaid.render('sc-' + (++sequence), diagram.source);
       surface.innerHTML = svg;
-      // Cosmetic pass: a geometry quirk must never take a drawn chart away.
-      try { settleLabels(surface.querySelector('svg')); } catch (_) { /* keep the unsettled chart */ }
+      // Cosmetic passes: a geometry quirk must never take a drawn chart away.
+      try {
+        settleLabels(surface.querySelector('svg'));
+        fitMachineBox(surface.querySelector('svg'));
+      } catch (_) { /* keep the chart as Mermaid drew it */ }
       diagram.fig.classList.remove('is-pending', 'is-failed');
       diagram.fig.setAttribute('data-rendered', 'true');
       button.disabled = false;
@@ -184,36 +188,60 @@ function settleLabels(svg) {
   });
   const paths = new Map();
   svg.querySelectorAll('path.transition[data-id]').forEach(p => paths.set(p.getAttribute('data-id'), p));
+  // The machine box: a label must not hang outside it.
+  let bounds = null;
+  svg.querySelectorAll('g.statediagram-cluster').forEach(cluster => {
+    const rect = cluster.querySelector('rect.outer') || cluster.querySelector('rect');
+    if (!rect) return;
+    const box = userBox(svg, rect);
+    if (!bounds || box.w * box.h > bounds.w * bounds.h) bounds = box;
+  });
+  const within = box => !bounds || (box.x >= bounds.x - 1 && box.y >= bounds.y - 1
+    && box.x + box.w <= bounds.x + bounds.w + 1 && box.y + box.h <= bounds.y + bounds.h + 1);
   const placed = [];
   const free = box => !obstacles.some(o => overlaps(box, o, GAP)) && !placed.some(p => overlaps(box, p, GAP));
   svg.querySelectorAll('g.edgeLabel').forEach(group => {
     if (!(group.textContent || '').trim()) return;
     const inner = group.querySelector('.xsm-pill, .labelBkg') || group;
     const box = userBox(svg, inner);
-    if (free(box)) { placed.push(box); return; }
+    if (free(box) && within(box)) { placed.push(box); return; }
+    const clear = free;
+    let target = null;
+    if (bounds && !within(box)) {
+      // Hanging over the machine border: the smallest move that brings it inside.
+      const clamped = {
+        x: Math.min(Math.max(box.x, bounds.x + 2), bounds.x + bounds.w - box.w - 2),
+        y: Math.min(Math.max(box.y, bounds.y + 2), bounds.y + bounds.h - box.h - 2),
+        w: box.w, h: box.h
+      };
+      if (clear(clamped)) target = clamped;
+    }
     const label = group.querySelector('g.label');
     const path = label && paths.get(label.getAttribute('data-id'));
-    if (!path) { placed.push(box); return; }
-    const length = path.getTotalLength();
-    const centred = (point) => ({ x: point.x - box.w / 2, y: point.y - box.h / 2, w: box.w, h: box.h });
-    let target = null;
-    for (const fraction of [0.5, 0.42, 0.58, 0.34, 0.66, 0.26, 0.74, 0.18, 0.82]) {
-      const candidate = centred(pathPoint(svg, path, fraction * length));
-      if (free(candidate)) { target = candidate; break; }
-    }
-    if (!target) {
-      // Beside the line: offset along the normal at a few points of the path.
-      for (const fraction of [0.5, 0.36, 0.64, 0.25, 0.75]) {
-        const at = fraction * length;
-        const p = pathPoint(svg, path, at), q = pathPoint(svg, path, Math.min(length, at + 2));
-        const dx = q.x - p.x, dy = q.y - p.y, norm = Math.hypot(dx, dy) || 1;
-        const nx = -dy / norm, ny = dx / norm;
-        const reach = Math.abs(nx) * (box.w / 2) + Math.abs(ny) * (box.h / 2) + 6;
-        for (const side of [1, -1]) {
-          const candidate = centred({ x: p.x + side * nx * reach, y: p.y + side * ny * reach });
-          if (free(candidate)) { target = candidate; break; }
+    if (!target && path) {
+      const length = path.getTotalLength();
+      const centred = (point) => ({ x: point.x - box.w / 2, y: point.y - box.h / 2, w: box.w, h: box.h });
+      // Along the line, working outwards from its middle.
+      const fractions = [0.5];
+      for (let step = 0.03; step <= 0.42; step += 0.03) fractions.push(0.5 - step, 0.5 + step);
+      for (const fraction of fractions) {
+        const candidate = centred(pathPoint(svg, path, fraction * length));
+        if (free(candidate)) { target = candidate; break; }
+      }
+      if (!target) {
+        // Beside the line, touching it: a label must stay with its transition.
+        for (const fraction of fractions) {
+          const at = fraction * length;
+          const p = pathPoint(svg, path, at), q = pathPoint(svg, path, Math.min(length, at + 2));
+          const dx = q.x - p.x, dy = q.y - p.y, norm = Math.hypot(dx, dy) || 1;
+          const nx = -dy / norm, ny = dx / norm;
+          const reach = Math.abs(nx) * (box.w / 2) + Math.abs(ny) * (box.h / 2) + 6;
+          for (const side of [1, -1]) {
+            const candidate = centred({ x: p.x + side * nx * reach, y: p.y + side * ny * reach });
+            if (free(candidate)) { target = candidate; break; }
+          }
+          if (target) break;
         }
-        if (target) break;
       }
     }
     if (target) {
@@ -223,6 +251,54 @@ function settleLabels(svg) {
       placed.push(box);
     }
   });
+}
+
+/**
+ * ELK sizes a composite from its states only, so a transition label on an
+ * outer edge can hang over the machine border. Widen the machine box (the
+ * largest composite) until every label and state sits inside it, keep its
+ * title centred, and let the SVG canvas follow.
+ */
+function fitMachineBox(svg) {
+  if (!svg || !svg.getScreenCTM()) return;
+  const PAD = 10;
+  const clusters = [...svg.querySelectorAll('g.statediagram-cluster')]
+    .map(cluster => ({ cluster, rect: cluster.querySelector('rect.outer') || cluster.querySelector('rect') }))
+    .filter(entry => entry.rect)
+    .map(entry => ({ ...entry, box: userBox(svg, entry.rect) }))
+    .sort((a, b) => b.box.w * b.box.h - a.box.w * a.box.h);
+  const root = clusters[0];
+  if (!root) return;
+  let minX = root.box.x, minY = root.box.y, maxX = root.box.x + root.box.w, maxY = root.box.y + root.box.h;
+  const include = element => {
+    const b = userBox(svg, element);
+    if (!b.w || !b.h) return;
+    minX = Math.min(minX, b.x - PAD); minY = Math.min(minY, b.y - PAD);
+    maxX = Math.max(maxX, b.x + b.w + PAD); maxY = Math.max(maxY, b.y + b.h + PAD);
+  };
+  svg.querySelectorAll('g.edgeLabel').forEach(group => {
+    if ((group.textContent || '').trim()) include(group.querySelector('.xsm-pill, .labelBkg') || group);
+  });
+  svg.querySelectorAll('g.node').forEach(node => {
+    include(node.querySelector(':scope > rect, :scope > g > rect, :scope > circle') || node);
+  });
+  const left = Math.max(0, root.box.x - minX), top = Math.max(0, root.box.y - minY);
+  const right = Math.max(0, maxX - root.box.x - root.box.w), bottom = Math.max(0, maxY - root.box.y - root.box.h);
+  if (!left && !top && !right && !bottom) return;
+  root.cluster.querySelectorAll(':scope > rect, :scope > g > rect').forEach(rect => {
+    const outer = rect.classList.contains('outer');
+    const x = parseFloat(rect.getAttribute('x')) || 0, y = parseFloat(rect.getAttribute('y')) || 0;
+    const w = parseFloat(rect.getAttribute('width')) || 0, h = parseFloat(rect.getAttribute('height')) || 0;
+    rect.setAttribute('x', x - left);
+    rect.setAttribute('width', w + left + right);
+    rect.setAttribute('height', h + bottom + (outer ? top : 0));
+    if (outer && top) rect.setAttribute('y', y - top);
+  });
+  const title = root.cluster.querySelector(':scope > g.cluster-label');
+  if (title) shiftGroup(title, (right - left) / 2, -top);
+  const bbox = svg.getBBox();
+  svg.setAttribute('viewBox', [bbox.x - 4, bbox.y - 4, bbox.width + 8, bbox.height + 8].join(' '));
+  svg.style.maxWidth = (bbox.width + 8) + 'px';
 }
 
 /* ---------------------------------------------------------------- viewer -- */

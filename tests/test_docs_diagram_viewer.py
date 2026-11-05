@@ -25,7 +25,7 @@ STYLE = DOCS / "assets" / "css" / "style.css"
 CHECKER = ROOT / "scripts" / "check_diagrams.py"
 HARNESS = ROOT / "scripts" / "diagram_harness.html"
 MERMAID = (
-    "https://cdn.jsdelivr.net/npm/mermaid@11.17.2/dist/mermaid.esm.min.mjs"
+    "https://cdn.jsdelivr.net/npm/mermaid@12.3.0/dist/mermaid.esm.min.mjs"
 )
 
 
@@ -91,6 +91,7 @@ class TestRendererContracts(unittest.TestCase):
         self.assertIn("securityLevel: 'loose'", config)  # HTML labels
         self.assertIn("htmlLabels: true", config)
         self.assertIn("useMaxWidth: true", config)
+        self.assertIn("layout: 'elk'", config)  # orthogonal routing
 
     def test_every_chart_gets_a_viewer_button_and_an_editor_link(
         self,
@@ -142,12 +143,17 @@ class TestRendererContracts(unittest.TestCase):
             render.index("surface.innerHTML = svg"),
             render.index("settleLabels(surface.querySelector('svg'))"),
         )
-        # A geometry quirk in the cosmetic pass must not remove the chart.
-        self.assertIn("try { settleLabels(", render)
+        # A geometry quirk in the cosmetic passes must not remove the chart.
+        self.assertRegex(render, r"try \{\s*settleLabels\(")
+        self.assertIn("fitMachineBox(surface.querySelector('svg'))", render)
+        fit = _function(self.script, "fitMachineBox")
+        self.assertIn("setAttribute('viewBox'", fit)  # the canvas follows
+        self.assertIn("g.cluster-label", fit)  # the title stays centred
         settle = _function(self.script, "settleLabels")
         self.assertIn("getTotalLength()", settle)
         self.assertIn("shiftGroup(group", settle)
         self.assertIn("g.cluster-label", settle)  # composite titles count
+        self.assertIn("within(box)", settle)  # and the machine box bounds
 
     def test_render_failure_keeps_the_page_readable(self) -> None:
         render = _function(self.script, "render")
@@ -242,6 +248,119 @@ class TestStylesheetContracts(unittest.TestCase):
             self.css, ".statechart.is-pending .statechart-canvas"
         )
         self.assertIn("min-height", pending)
+
+
+class TestOverlapAnalysis(unittest.TestCase):
+    """``scripts/check_diagrams.analyse`` on synthetic geometry: the rules
+    the headless check enforces, without a browser."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        import importlib.util
+
+        spec = importlib.util.spec_from_file_location(
+            "check_diagrams", ROOT / "scripts" / "check_diagrams.py"
+        )
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+        cls.analyse = staticmethod(module.analyse)
+
+    @staticmethod
+    def _geometry(**overrides):
+        base = {
+            "clusters": [
+                {
+                    "id": "root",
+                    "box": [0, 0, 400, 300],
+                    "title": [0, 0, 400, 24],
+                    "text": "m",
+                }
+            ],
+            "leaves": [
+                {"id": "a", "box": [40, 60, 80, 40], "text": "a"},
+                {"id": "b", "box": [40, 200, 80, 40], "text": "b"},
+            ],
+            "markers": [],
+            "labels": [
+                {"edge": "edge0", "box": [60, 130, 60, 30], "text": "GO"}
+            ],
+            "edges": [
+                {
+                    "id": "edge0",
+                    "len": 100,
+                    "points": [[80, 100], [80, 130], [80, 160], [80, 200]],
+                }
+            ],
+            "clipped": [],
+        }
+        base.update(overrides)
+        return base
+
+    def test_clean_geometry_has_no_findings(self) -> None:
+        self.assertEqual(self.analyse(self._geometry()), ([], []))
+
+    def test_label_outside_the_machine_box_is_an_error(self) -> None:
+        errors, _ = self.analyse(
+            self._geometry(
+                labels=[
+                    {"edge": "edge0", "box": [370, 130, 60, 30], "text": "GO"}
+                ]
+            )
+        )
+        self.assertEqual(errors, ["label 'GO' hangs outside the machine box"])
+
+    def test_overlaps_and_clipping_are_errors(self) -> None:
+        errors, warnings = self.analyse(
+            self._geometry(
+                labels=[
+                    {"edge": "edge0", "box": [60, 130, 60, 30], "text": "GO"},
+                    {
+                        "edge": "edge1",
+                        "box": [80, 140, 60, 30],
+                        "text": "BACK",
+                    },
+                    {"edge": "edge2", "box": [50, 70, 60, 30], "text": "ON_A"},
+                ],
+                clipped=[{"text": "GO", "fo": [60, 30], "content": [70, 30]}],
+            )
+        )
+        self.assertIn(
+            "clipped label 'GO': box [60, 30] < content [70, 30]", errors
+        )
+        self.assertIn("label 'GO' overlaps label 'BACK'", errors)
+        self.assertIn("state 'a' overlaps label 'ON_A'", errors)
+        self.assertEqual(warnings, [])
+
+    def test_a_line_through_a_foreign_state_is_an_error_and_over_a_label_a_warning(
+        self,
+    ) -> None:
+        errors, warnings = self.analyse(
+            self._geometry(
+                leaves=[
+                    {"id": "a", "box": [40, 60, 80, 40], "text": "a"},
+                    {"id": "b", "box": [40, 240, 80, 40], "text": "b"},
+                    {"id": "c", "box": [50, 170, 60, 20], "text": "c"},
+                ],
+                labels=[
+                    {"edge": "edge9", "box": [60, 120, 40, 20], "text": "X"}
+                ],
+                edges=[
+                    {
+                        "id": "edge0",
+                        "len": 140,
+                        "points": [[80, 100 + 5 * i] for i in range(29)],
+                    }
+                ],
+            )
+        )
+        self.assertEqual(errors, ["transition edge0 runs through state 'c'"])
+        self.assertEqual(warnings, ["transition edge0 crosses label 'X'"])
+
+    def test_render_failure_is_reported_as_one_error(self) -> None:
+        self.assertEqual(
+            self.analyse({"error": "boom"}), (["render failed: boom"], [])
+        )
 
 
 if __name__ == "__main__":

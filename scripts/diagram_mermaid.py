@@ -15,7 +15,8 @@ public, plain-text Mermaid (documented in the diagrams guide and pinned by
 tests). The docs embeds need richer, Stately-like output, which is a
 presentation concern of the site, so it lives here with the docs tooling.
 
-🏛️ Design notes (each one is a Mermaid 11 constraint found by rendering):
+🏛️ Design notes (each one is a Mermaid constraint found by rendering, with
+Mermaid 11 and 12):
 
 * A composite state cannot carry description rows ("Group nodes can only
   have label"), so a compound state's entry/exit/invoke/internal rows

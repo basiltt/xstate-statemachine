@@ -140,6 +140,7 @@ def analyse(geometry: Dict[str, Any]) -> Tuple[List[str], List[str]]:
     errors += _cluster_collisions(
         geometry["clusters"], geometry["leaves"], geometry["labels"]
     )
+    errors += _bounds_errors(geometry["clusters"], geometry["labels"])
     edge_errors, warnings = _edge_collisions(
         geometry["edges"],
         geometry["leaves"],
@@ -217,6 +218,19 @@ def _cluster_collisions(clusters, leaves, labels) -> List[str]:
                     f"{b['text']!r}"
                 )
     return errors
+
+
+def _bounds_errors(clusters, labels) -> List[str]:
+    """A transition label must stay inside the machine box (the largest
+    composite), not hang over its border."""
+    if not clusters:
+        return []
+    root = max(clusters, key=lambda c: c["box"][2] * c["box"][3])
+    return [
+        f"label {lab['text']!r} hangs outside the machine box"
+        for lab in labels
+        if not _contains(root["box"], lab["box"], slack=2.0)
+    ]
 
 
 def _edge_collisions(

@@ -16,7 +16,8 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
   frames on the docs site were blank. The 245 charts in the guides and the
   example gallery are generated from each machine's JSON
   (`scripts/diagram_mermaid.py` → `docs/assets/data/diagrams.json`) and
-  rendered in the browser by Mermaid in the Stately notation: `entry /` and
+  rendered in the browser by Mermaid 12 (ELK layout, so transitions are
+  routed orthogonally as in Stately) in the Stately notation: `entry /` and
   `exit /` action chips and the invoked service inside the state box, event
   pills with their `if` guard and actions, `after` delays, `done:` / `error:`
   service results, a final-state mark, dashed parallel regions. Every chart
