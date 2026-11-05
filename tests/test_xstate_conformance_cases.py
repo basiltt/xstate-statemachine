@@ -45,7 +45,23 @@ _SIBLING = (
     / "conformance"
     / "cases"
 )
-CASES_DIR = Path(os.environ.get("XSM_CONFORMANCE_CASES") or _SIBLING)
+#: 📦 The cases are vendored under tests/conformance_cases (see its README
+#: for the source commit) so CI replays them on every push; the Rust
+#: checkout next to this repository is still consulted when it exists and
+#: the vendored copy does not, and `XSM_CONFORMANCE_CASES` overrides both.
+_VENDORED = ROOT / "tests" / "conformance_cases"
+
+
+def _default_cases_dir() -> Path:
+    override = os.environ.get("XSM_CONFORMANCE_CASES")
+    if override:
+        return Path(override)
+    if any(_VENDORED.glob("*.json")):
+        return _VENDORED
+    return _SIBLING
+
+
+CASES_DIR = _default_cases_dir()
 
 #: The keys of an observation the comparison covers (as the generator's).
 OBSERVATION_KEYS = ("state_ids", "context", "actions", "status", "guards")
@@ -184,4 +200,4 @@ def test_every_case_was_loaded() -> None:
     """The directory is the Rust repository's, not an empty stand-in."""
     names = [case["name"] for case in CASES]
     assert len(names) == len(set(names))
-    assert len(names) >= 37
+    assert len(names) >= 50

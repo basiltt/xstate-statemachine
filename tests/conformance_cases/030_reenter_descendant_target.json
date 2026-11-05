@@ -1,0 +1,173 @@
+{
+  "name": "reenter_descendant_target",
+  "description": "Targeting a descendant without reenter leaves the source active (no exit/entry of the source); with reenter the source is exited and re-entered.",
+  "tags": [
+    "reenter",
+    "hierarchy"
+  ],
+  "machine": {
+    "id": "m",
+    "initial": "p",
+    "states": {
+      "p": {
+        "initial": "a",
+        "entry": "e_p",
+        "exit": "x_p",
+        "on": {
+          "SOFT": {
+            "target": ".b",
+            "actions": "soft"
+          },
+          "HARD": {
+            "target": ".a",
+            "reenter": true,
+            "actions": "hard"
+          }
+        },
+        "states": {
+          "a": {
+            "entry": "e_a",
+            "exit": "x_a"
+          },
+          "b": {
+            "entry": "e_b",
+            "exit": "x_b"
+          }
+        }
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "SOFT"
+    },
+    {
+      "send": "HARD"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "m.p.a"
+        ],
+        "context": {},
+        "actions": [
+          "e_p",
+          "e_a"
+        ],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.p.b"
+          ],
+          "context": {},
+          "actions": [
+            "x_a",
+            "soft",
+            "e_b"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.p.a"
+          ],
+          "context": {},
+          "actions": [
+            "x_b",
+            "x_p",
+            "hard",
+            "e_p",
+            "e_a"
+          ],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "m.p.a"
+        ],
+        "context": {},
+        "actions": [
+          "e_p",
+          "e_a"
+        ],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.p.b"
+          ],
+          "context": {},
+          "actions": [
+            "x_a",
+            "soft",
+            "e_b"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.p.a"
+          ],
+          "context": {},
+          "actions": [
+            "x_b",
+            "x_p",
+            "hard",
+            "e_p",
+            "e_a"
+          ],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "cf949a2eb93712cc",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "m",
+        "machine_hash": "cf949a2eb93712cc",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "m.p.a"
+        ],
+        "value": {
+          "p": "a"
+        },
+        "configuration": [
+          "m",
+          "m.p",
+          "m.p.a"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"m\",\n  \"machine_hash\": \"cf949a2eb93712cc\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"m.p.a\"\n  ],\n  \"value\": {\n    \"p\": \"a\"\n  },\n  \"configuration\": [\n    \"m\",\n    \"m.p\",\n    \"m.p.a\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

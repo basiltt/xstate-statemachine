@@ -1,0 +1,179 @@
+{
+  "name": "parallel_cross_region_target",
+  "description": "A transition inside one region targets a state in a sibling region; the parallel state itself must not be re-entered, only the sibling region.",
+  "tags": [
+    "parallel",
+    "entry-exit-order"
+  ],
+  "machine": {
+    "id": "m",
+    "initial": "p",
+    "states": {
+      "p": {
+        "type": "parallel",
+        "entry": "e_p",
+        "exit": "x_p",
+        "states": {
+          "r1": {
+            "initial": "a",
+            "entry": "e_r1",
+            "exit": "x_r1",
+            "states": {
+              "a": {
+                "entry": "e_a",
+                "exit": "x_a",
+                "on": {
+                  "E": "#m.p.r2.d"
+                }
+              }
+            }
+          },
+          "r2": {
+            "initial": "c",
+            "entry": "e_r2",
+            "exit": "x_r2",
+            "states": {
+              "c": {
+                "entry": "e_c",
+                "exit": "x_c"
+              },
+              "d": {
+                "entry": "e_d",
+                "exit": "x_d"
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "E"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "m.p.r1.a",
+          "m.p.r2.c"
+        ],
+        "context": {},
+        "actions": [
+          "e_p",
+          "e_r1",
+          "e_a",
+          "e_r2",
+          "e_c"
+        ],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.p.r1.a",
+            "m.p.r2.d"
+          ],
+          "context": {},
+          "actions": [
+            "x_c",
+            "x_r2",
+            "x_a",
+            "x_r1",
+            "e_r1",
+            "e_a",
+            "e_r2",
+            "e_d"
+          ],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "m.p.r1.a",
+          "m.p.r2.c"
+        ],
+        "context": {},
+        "actions": [
+          "e_p",
+          "e_r1",
+          "e_a",
+          "e_r2",
+          "e_c"
+        ],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.p.r1.a",
+            "m.p.r2.d"
+          ],
+          "context": {},
+          "actions": [
+            "x_c",
+            "x_r2",
+            "x_a",
+            "x_r1",
+            "e_r1",
+            "e_a",
+            "e_r2",
+            "e_d"
+          ],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "5869edfdc8353a72",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "m",
+        "machine_hash": "5869edfdc8353a72",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "m.p.r1.a",
+          "m.p.r2.d"
+        ],
+        "value": {
+          "p": {
+            "r1": "a",
+            "r2": "d"
+          }
+        },
+        "configuration": [
+          "m",
+          "m.p",
+          "m.p.r1",
+          "m.p.r1.a",
+          "m.p.r2",
+          "m.p.r2.d"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"m\",\n  \"machine_hash\": \"5869edfdc8353a72\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"m.p.r1.a\",\n    \"m.p.r2.d\"\n  ],\n  \"value\": {\n    \"p\": {\n      \"r1\": \"a\",\n      \"r2\": \"d\"\n    }\n  },\n  \"configuration\": [\n    \"m\",\n    \"m.p\",\n    \"m.p.r1\",\n    \"m.p.r1.a\",\n    \"m.p.r2\",\n    \"m.p.r2.d\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

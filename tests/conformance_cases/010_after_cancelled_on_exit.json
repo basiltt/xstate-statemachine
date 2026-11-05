@@ -1,0 +1,212 @@
+{
+  "name": "after_cancelled_on_exit",
+  "description": "Leaving a state cancels its pending timer; re-entering re-arms it from scratch.",
+  "tags": [
+    "after",
+    "timers"
+  ],
+  "machine": {
+    "id": "login",
+    "initial": "active",
+    "states": {
+      "active": {
+        "after": {
+          "500": "expired"
+        },
+        "on": {
+          "LOGOUT": "loggedOut"
+        }
+      },
+      "expired": {
+        "type": "final"
+      },
+      "loggedOut": {
+        "on": {
+          "LOGIN": "active"
+        }
+      }
+    }
+  },
+  "steps": [
+    {
+      "advance_ms": 400
+    },
+    {
+      "send": "LOGOUT"
+    },
+    {
+      "advance_ms": 200
+    },
+    {
+      "send": "LOGIN"
+    },
+    {
+      "advance_ms": 499
+    },
+    {
+      "advance_ms": 1
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "login.active"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "login.active"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "login.loggedOut"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "login.loggedOut"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "login.active"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "login.active"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "login.expired"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "done",
+          "output": null
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "login.active"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "login.active"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "login.loggedOut"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "login.loggedOut"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "login.active"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "login.active"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "login.expired"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "done",
+          "output": null
+        }
+      ],
+      "machine_hash": "c80362a09b1d2c7f",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "login",
+        "machine_hash": "c80362a09b1d2c7f",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "done",
+        "context": {},
+        "state_ids": [
+          "login.expired"
+        ],
+        "value": "expired",
+        "configuration": [
+          "login",
+          "login.expired"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"login\",\n  \"machine_hash\": \"c80362a09b1d2c7f\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"done\",\n  \"context\": {},\n  \"state_ids\": [\n    \"login.expired\"\n  ],\n  \"value\": \"expired\",\n  \"configuration\": [\n    \"login\",\n    \"login.expired\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

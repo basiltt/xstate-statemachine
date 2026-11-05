@@ -1,0 +1,167 @@
+{
+  "name": "assign_without_assignment_wrapper",
+  "description": "The JSON assign built-in accepts its properties either under params.assignment or directly as params. Two consecutive assigns run in order, the second overwriting what the first wrote.",
+  "tags": [
+    "actions",
+    "assign",
+    "context"
+  ],
+  "machine": {
+    "id": "m",
+    "initial": "a",
+    "context": {
+      "count": 0,
+      "label": "start"
+    },
+    "states": {
+      "a": {
+        "on": {
+          "SET": {
+            "target": "b",
+            "actions": [
+              {
+                "type": "xstate.assign",
+                "params": {
+                  "count": 1,
+                  "label": "first"
+                }
+              },
+              "between",
+              {
+                "type": "assign",
+                "params": {
+                  "label": "second"
+                }
+              }
+            ]
+          }
+        }
+      },
+      "b": {
+        "entry": [
+          {
+            "type": "assign",
+            "params": {
+              "assignment": {
+                "count": 2
+              }
+            }
+          },
+          {
+            "type": "assign",
+            "params": {
+              "flag": true
+            }
+          }
+        ]
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "SET"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "m.a"
+        ],
+        "context": {
+          "count": 0,
+          "label": "start"
+        },
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.b"
+          ],
+          "context": {
+            "count": 2,
+            "label": "second",
+            "flag": true
+          },
+          "actions": [
+            "between"
+          ],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "m.a"
+        ],
+        "context": {
+          "count": 0,
+          "label": "start"
+        },
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.b"
+          ],
+          "context": {
+            "count": 2,
+            "label": "second",
+            "flag": true
+          },
+          "actions": [
+            "between"
+          ],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "dc2f17ba3eee9d58",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "m",
+        "machine_hash": "dc2f17ba3eee9d58",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {
+          "count": 2,
+          "label": "second",
+          "flag": true
+        },
+        "state_ids": [
+          "m.b"
+        ],
+        "value": "b",
+        "configuration": [
+          "m",
+          "m.b"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"m\",\n  \"machine_hash\": \"dc2f17ba3eee9d58\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {\n    \"count\": 2,\n    \"label\": \"second\",\n    \"flag\": true\n  },\n  \"state_ids\": [\n    \"m.b\"\n  ],\n  \"value\": \"b\",\n  \"configuration\": [\n    \"m\",\n    \"m.b\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

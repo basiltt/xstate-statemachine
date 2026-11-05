@@ -1,0 +1,199 @@
+{
+  "name": "history_shallow",
+  "description": "Shallow history returns to the last direct child of the compound state, then descends via initial.",
+  "tags": [
+    "history"
+  ],
+  "machine": {
+    "id": "wizard",
+    "initial": "form",
+    "states": {
+      "form": {
+        "initial": "name",
+        "states": {
+          "name": {
+            "on": {
+              "NEXT": "address"
+            }
+          },
+          "address": {
+            "initial": "street",
+            "states": {
+              "street": {
+                "on": {
+                  "NEXT": "city"
+                }
+              },
+              "city": {}
+            }
+          },
+          "resume": {
+            "type": "history",
+            "history": "shallow"
+          }
+        },
+        "on": {
+          "ASK": "help"
+        }
+      },
+      "help": {
+        "on": {
+          "BACK": "form.resume"
+        }
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "NEXT"
+    },
+    {
+      "send": "NEXT"
+    },
+    {
+      "send": "ASK"
+    },
+    {
+      "send": "BACK"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "wizard.form.name"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "wizard.form.address.street"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "wizard.form.address.city"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "wizard.help"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "wizard.form.address.street"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "wizard.form.name"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "wizard.form.address.street"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "wizard.form.address.city"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "wizard.help"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "wizard.form.address.street"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "5e3ee1a014f99134",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "wizard",
+        "machine_hash": "5e3ee1a014f99134",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "wizard.form.address.street"
+        ],
+        "value": {
+          "form": {
+            "address": "street"
+          }
+        },
+        "configuration": [
+          "wizard",
+          "wizard.form",
+          "wizard.form.address",
+          "wizard.form.address.street"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {
+          "wizard.form": [
+            "wizard.form.address",
+            "wizard.form.address.city"
+          ]
+        },
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"wizard\",\n  \"machine_hash\": \"5e3ee1a014f99134\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"wizard.form.address.street\"\n  ],\n  \"value\": {\n    \"form\": {\n      \"address\": \"street\"\n    }\n  },\n  \"configuration\": [\n    \"wizard\",\n    \"wizard.form\",\n    \"wizard.form.address\",\n    \"wizard.form.address.street\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {\n    \"wizard.form\": [\n      \"wizard.form.address\",\n      \"wizard.form.address.city\"\n    ]\n  },\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

@@ -1,0 +1,141 @@
+{
+  "name": "done_state_before_queued_external_event",
+  "description": "FINISH and NEXT are queued together. Entering the final child raises done.state.work on the INTERNAL queue, so the onDone transition is taken before NEXT is processed and NEXT is handled in after, not in work.",
+  "tags": [
+    "final",
+    "onDone",
+    "internal-queue"
+  ],
+  "machine": {
+    "id": "m",
+    "initial": "work",
+    "states": {
+      "work": {
+        "initial": "step",
+        "onDone": {
+          "target": "after",
+          "actions": "onDoneTaken"
+        },
+        "on": {
+          "NEXT": {
+            "actions": "nextInWork"
+          }
+        },
+        "states": {
+          "step": {
+            "on": {
+              "FINISH": "last"
+            }
+          },
+          "last": {
+            "type": "final",
+            "entry": "enterLast"
+          }
+        }
+      },
+      "after": {
+        "on": {
+          "NEXT": {
+            "actions": "nextInAfter"
+          }
+        }
+      }
+    }
+  },
+  "steps": [
+    {
+      "send_batch": [
+        "FINISH",
+        "NEXT"
+      ]
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "m.work.step"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.after"
+          ],
+          "context": {},
+          "actions": [
+            "enterLast",
+            "onDoneTaken",
+            "nextInAfter"
+          ],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "m.work.step"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.after"
+          ],
+          "context": {},
+          "actions": [
+            "enterLast",
+            "onDoneTaken",
+            "nextInAfter"
+          ],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "8c812b8c5ef74312",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "m",
+        "machine_hash": "8c812b8c5ef74312",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "m.after"
+        ],
+        "value": "after",
+        "configuration": [
+          "m",
+          "m.after"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"m\",\n  \"machine_hash\": \"8c812b8c5ef74312\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"m.after\"\n  ],\n  \"value\": \"after\",\n  \"configuration\": [\n    \"m\",\n    \"m.after\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

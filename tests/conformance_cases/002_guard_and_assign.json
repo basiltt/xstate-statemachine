@@ -1,0 +1,211 @@
+{
+  "name": "guard_and_assign",
+  "description": "Named guard refuses; JSON-form assign writes static values; payload travels with the event. Guards are constants in the oracles, so UNLOCK changes context but the guard stays false and OPEN is still refused.",
+  "tags": [
+    "guards",
+    "assign",
+    "context"
+  ],
+  "machine": {
+    "id": "door",
+    "initial": "closed",
+    "context": {
+      "opens": 0,
+      "locked": true
+    },
+    "states": {
+      "closed": {
+        "on": {
+          "UNLOCK": {
+            "actions": {
+              "type": "assign",
+              "params": {
+                "assignment": {
+                  "locked": false
+                }
+              }
+            }
+          },
+          "OPEN": {
+            "target": "opened",
+            "guard": "isUnlocked",
+            "actions": [
+              "countOpen",
+              {
+                "type": "assign",
+                "params": {
+                  "assignment": {
+                    "opens": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      },
+      "opened": {
+        "on": {
+          "CLOSE": "closed"
+        }
+      }
+    }
+  },
+  "logic": {
+    "guards": {
+      "isUnlocked": false
+    }
+  },
+  "steps": [
+    {
+      "send": "OPEN"
+    },
+    {
+      "send": "UNLOCK"
+    },
+    {
+      "send": {
+        "type": "OPEN",
+        "by": "ada"
+      }
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "door.closed"
+        ],
+        "context": {
+          "opens": 0,
+          "locked": true
+        },
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "door.closed"
+          ],
+          "context": {
+            "opens": 0,
+            "locked": true
+          },
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "door.closed"
+          ],
+          "context": {
+            "opens": 0,
+            "locked": false
+          },
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "door.closed"
+          ],
+          "context": {
+            "opens": 0,
+            "locked": false
+          },
+          "actions": [],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "door.closed"
+        ],
+        "context": {
+          "opens": 0,
+          "locked": true
+        },
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "door.closed"
+          ],
+          "context": {
+            "opens": 0,
+            "locked": true
+          },
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "door.closed"
+          ],
+          "context": {
+            "opens": 0,
+            "locked": false
+          },
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "door.closed"
+          ],
+          "context": {
+            "opens": 0,
+            "locked": false
+          },
+          "actions": [],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "31e81323b8b09cd8",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "door",
+        "machine_hash": "31e81323b8b09cd8",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {
+          "opens": 0,
+          "locked": false
+        },
+        "state_ids": [
+          "door.closed"
+        ],
+        "value": "closed",
+        "configuration": [
+          "door",
+          "door.closed"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"door\",\n  \"machine_hash\": \"31e81323b8b09cd8\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {\n    \"opens\": 0,\n    \"locked\": false\n  },\n  \"state_ids\": [\n    \"door.closed\"\n  ],\n  \"value\": \"closed\",\n  \"configuration\": [\n    \"door\",\n    \"door.closed\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

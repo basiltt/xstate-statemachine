@@ -1,0 +1,162 @@
+{
+  "name": "nested_final_ondone_propagation",
+  "description": "onDone fires on the nearest ancestor that declares it; the outer compound keeps running until its own child becomes final.",
+  "tags": [
+    "final",
+    "onDone",
+    "output"
+  ],
+  "machine": {
+    "id": "m",
+    "initial": "outer",
+    "states": {
+      "outer": {
+        "initial": "inner",
+        "onDone": "complete",
+        "states": {
+          "inner": {
+            "initial": "s",
+            "onDone": {
+              "target": "next",
+              "actions": "innerDone"
+            },
+            "states": {
+              "s": {
+                "on": {
+                  "X": "f"
+                }
+              },
+              "f": {
+                "type": "final",
+                "output": {
+                  "code": 7
+                }
+              }
+            }
+          },
+          "next": {
+            "on": {
+              "Y": "fin"
+            }
+          },
+          "fin": {
+            "type": "final"
+          }
+        }
+      },
+      "complete": {
+        "type": "final"
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "X"
+    },
+    {
+      "send": "Y"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "m.outer.inner.s"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.outer.next"
+          ],
+          "context": {},
+          "actions": [
+            "innerDone"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.complete"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "done",
+          "output": null
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "m.outer.inner.s"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.outer.next"
+          ],
+          "context": {},
+          "actions": [
+            "innerDone"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.complete"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "done",
+          "output": null
+        }
+      ],
+      "machine_hash": "50b59ea84973a038",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "m",
+        "machine_hash": "50b59ea84973a038",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "done",
+        "context": {},
+        "state_ids": [
+          "m.complete"
+        ],
+        "value": "complete",
+        "configuration": [
+          "m",
+          "m.complete"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"m\",\n  \"machine_hash\": \"50b59ea84973a038\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"done\",\n  \"context\": {},\n  \"state_ids\": [\n    \"m.complete\"\n  ],\n  \"value\": \"complete\",\n  \"configuration\": [\n    \"m\",\n    \"m.complete\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

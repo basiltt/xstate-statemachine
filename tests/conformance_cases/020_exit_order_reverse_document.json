@@ -1,0 +1,157 @@
+{
+  "name": "exit_order_reverse_document",
+  "description": "Exiting a parallel state exits its regions in reverse document order (SCXML), not by state-id string. Regions are deliberately named so that id order and document order disagree.",
+  "tags": [
+    "parallel",
+    "entry-exit-order",
+    "divergence-probe"
+  ],
+  "machine": {
+    "id": "m",
+    "initial": "p",
+    "states": {
+      "p": {
+        "type": "parallel",
+        "on": {
+          "STOP": "done"
+        },
+        "states": {
+          "zeta": {
+            "initial": "z1",
+            "entry": "e_zeta",
+            "exit": "x_zeta",
+            "states": {
+              "z1": {
+                "entry": "e_z1",
+                "exit": "x_z1"
+              }
+            }
+          },
+          "alpha": {
+            "initial": "a1",
+            "entry": "e_alpha",
+            "exit": "x_alpha",
+            "states": {
+              "a1": {
+                "entry": "e_a1",
+                "exit": "x_a1"
+              }
+            }
+          }
+        }
+      },
+      "done": {
+        "type": "final"
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "STOP"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "m.p.alpha.a1",
+          "m.p.zeta.z1"
+        ],
+        "context": {},
+        "actions": [
+          "e_zeta",
+          "e_z1",
+          "e_alpha",
+          "e_a1"
+        ],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.done"
+          ],
+          "context": {},
+          "actions": [
+            "x_a1",
+            "x_alpha",
+            "x_z1",
+            "x_zeta"
+          ],
+          "status": "done",
+          "output": null
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "m.p.alpha.a1",
+          "m.p.zeta.z1"
+        ],
+        "context": {},
+        "actions": [
+          "e_zeta",
+          "e_z1",
+          "e_alpha",
+          "e_a1"
+        ],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.done"
+          ],
+          "context": {},
+          "actions": [
+            "x_a1",
+            "x_alpha",
+            "x_z1",
+            "x_zeta"
+          ],
+          "status": "done",
+          "output": null
+        }
+      ],
+      "machine_hash": "6e54cfbb526556c6",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "m",
+        "machine_hash": "6e54cfbb526556c6",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "done",
+        "context": {},
+        "state_ids": [
+          "m.done"
+        ],
+        "value": "done",
+        "configuration": [
+          "m",
+          "m.done"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"m\",\n  \"machine_hash\": \"6e54cfbb526556c6\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"done\",\n  \"context\": {},\n  \"state_ids\": [\n    \"m.done\"\n  ],\n  \"value\": \"done\",\n  \"configuration\": [\n    \"m\",\n    \"m.done\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

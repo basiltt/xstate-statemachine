@@ -1,0 +1,193 @@
+{
+  "name": "microstep_groups_exit_actions_entry",
+  "description": "E is handled by regions r1 and r3 and by their parallel ancestor p; r2 has no handler. XState selects per region and consults p only when no region matched, so p's transition is not taken. The two region transitions form ONE microstep: every exit (reverse document order), then each transition's actions, then every entry (document order).",
+  "tags": [
+    "parallel",
+    "conflict",
+    "microstep",
+    "entry-exit-order"
+  ],
+  "machine": {
+    "id": "m",
+    "initial": "p",
+    "states": {
+      "p": {
+        "type": "parallel",
+        "on": {
+          "E": {
+            "target": "#m.out",
+            "actions": "tp"
+          }
+        },
+        "states": {
+          "r1": {
+            "initial": "a",
+            "states": {
+              "a": {
+                "exit": "x_a",
+                "on": {
+                  "E": {
+                    "target": "b",
+                    "actions": "ta"
+                  }
+                }
+              },
+              "b": {
+                "entry": "e_b"
+              }
+            }
+          },
+          "r2": {
+            "initial": "c",
+            "states": {
+              "c": {
+                "exit": "x_c"
+              }
+            }
+          },
+          "r3": {
+            "initial": "d",
+            "states": {
+              "d": {
+                "exit": "x_d",
+                "on": {
+                  "E": {
+                    "target": "f",
+                    "actions": "td"
+                  }
+                }
+              },
+              "f": {
+                "entry": "e_f"
+              }
+            }
+          }
+        }
+      },
+      "out": {
+        "entry": "e_out"
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "E"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "m.p.r1.a",
+          "m.p.r2.c",
+          "m.p.r3.d"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.p.r1.b",
+            "m.p.r2.c",
+            "m.p.r3.f"
+          ],
+          "context": {},
+          "actions": [
+            "x_d",
+            "x_a",
+            "ta",
+            "td",
+            "e_b",
+            "e_f"
+          ],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "m.p.r1.a",
+          "m.p.r2.c",
+          "m.p.r3.d"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.p.r1.b",
+            "m.p.r2.c",
+            "m.p.r3.f"
+          ],
+          "context": {},
+          "actions": [
+            "x_d",
+            "x_a",
+            "ta",
+            "td",
+            "e_b",
+            "e_f"
+          ],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "54b5ff7b6f99dabe",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "m",
+        "machine_hash": "54b5ff7b6f99dabe",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "m.p.r1.b",
+          "m.p.r2.c",
+          "m.p.r3.f"
+        ],
+        "value": {
+          "p": {
+            "r1": "b",
+            "r2": "c",
+            "r3": "f"
+          }
+        },
+        "configuration": [
+          "m",
+          "m.p",
+          "m.p.r1",
+          "m.p.r1.b",
+          "m.p.r2",
+          "m.p.r2.c",
+          "m.p.r3",
+          "m.p.r3.f"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"m\",\n  \"machine_hash\": \"54b5ff7b6f99dabe\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"m.p.r1.b\",\n    \"m.p.r2.c\",\n    \"m.p.r3.f\"\n  ],\n  \"value\": {\n    \"p\": {\n      \"r1\": \"b\",\n      \"r2\": \"c\",\n      \"r3\": \"f\"\n    }\n  },\n  \"configuration\": [\n    \"m\",\n    \"m.p\",\n    \"m.p.r1\",\n    \"m.p.r1.b\",\n    \"m.p.r2\",\n    \"m.p.r2.c\",\n    \"m.p.r3\",\n    \"m.p.r3.f\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

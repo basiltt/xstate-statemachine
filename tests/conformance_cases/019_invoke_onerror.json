@@ -1,0 +1,158 @@
+{
+  "name": "invoke_onerror",
+  "description": "An invoked service that fails routes to onError; re-entering the state re-invokes it.",
+  "tags": [
+    "invoke",
+    "services",
+    "errors"
+  ],
+  "machine": {
+    "id": "profile",
+    "initial": "idle",
+    "states": {
+      "idle": {
+        "on": {
+          "LOAD": "loading"
+        }
+      },
+      "loading": {
+        "invoke": {
+          "src": "fetchUser",
+          "id": "fetchUser",
+          "onDone": "ready",
+          "onError": {
+            "target": "failed",
+            "actions": "recordError"
+          }
+        }
+      },
+      "ready": {
+        "type": "final"
+      },
+      "failed": {
+        "on": {
+          "RETRY": "loading"
+        }
+      }
+    }
+  },
+  "logic": {
+    "services": {
+      "fetchUser": {
+        "error": "boom"
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "LOAD"
+    },
+    {
+      "send": "RETRY"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "profile.idle"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "profile.failed"
+          ],
+          "context": {},
+          "actions": [
+            "recordError"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "profile.failed"
+          ],
+          "context": {},
+          "actions": [
+            "recordError"
+          ],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "profile.idle"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "profile.failed"
+          ],
+          "context": {},
+          "actions": [
+            "recordError"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "profile.failed"
+          ],
+          "context": {},
+          "actions": [
+            "recordError"
+          ],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "b5401c94afd4a861",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "profile",
+        "machine_hash": "b5401c94afd4a861",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "profile.failed"
+        ],
+        "value": "failed",
+        "configuration": [
+          "profile",
+          "profile.failed"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"profile\",\n  \"machine_hash\": \"b5401c94afd4a861\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"profile.failed\"\n  ],\n  \"value\": \"failed\",\n  \"configuration\": [\n    \"profile\",\n    \"profile.failed\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

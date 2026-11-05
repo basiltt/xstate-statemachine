@@ -1,0 +1,175 @@
+{
+  "name": "reenter_self_transition",
+  "description": "A self-targeting transition with reenter runs exit and entry actions; without reenter it runs only its own actions; a targetless transition never exits.",
+  "tags": [
+    "reenter",
+    "self-transition"
+  ],
+  "machine": {
+    "id": "s",
+    "initial": "a",
+    "states": {
+      "a": {
+        "entry": "e_a",
+        "exit": "x_a",
+        "on": {
+          "SOFT": {
+            "target": "a",
+            "actions": "soft"
+          },
+          "HARD": {
+            "target": "a",
+            "reenter": true,
+            "actions": "hard"
+          },
+          "TARGETLESS": {
+            "actions": "targetless"
+          }
+        }
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "SOFT"
+    },
+    {
+      "send": "HARD"
+    },
+    {
+      "send": "TARGETLESS"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "s.a"
+        ],
+        "context": {},
+        "actions": [
+          "e_a"
+        ],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "s.a"
+          ],
+          "context": {},
+          "actions": [
+            "soft"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "s.a"
+          ],
+          "context": {},
+          "actions": [
+            "x_a",
+            "hard",
+            "e_a"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "s.a"
+          ],
+          "context": {},
+          "actions": [
+            "targetless"
+          ],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "s.a"
+        ],
+        "context": {},
+        "actions": [
+          "e_a"
+        ],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "s.a"
+          ],
+          "context": {},
+          "actions": [
+            "soft"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "s.a"
+          ],
+          "context": {},
+          "actions": [
+            "x_a",
+            "hard",
+            "e_a"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "s.a"
+          ],
+          "context": {},
+          "actions": [
+            "targetless"
+          ],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "78e30ca02345ffd9",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "s",
+        "machine_hash": "78e30ca02345ffd9",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "s.a"
+        ],
+        "value": "a",
+        "configuration": [
+          "s",
+          "s.a"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"s\",\n  \"machine_hash\": \"78e30ca02345ffd9\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"s.a\"\n  ],\n  \"value\": \"a\",\n  \"configuration\": [\n    \"s\",\n    \"s.a\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

@@ -1,0 +1,182 @@
+{
+  "name": "targetless_on_ancestor",
+  "description": "A targetless transition on an ancestor runs its actions without exiting or entering anything; the deeper state is unchanged.",
+  "tags": [
+    "hierarchy",
+    "targetless"
+  ],
+  "machine": {
+    "id": "m",
+    "initial": "p",
+    "states": {
+      "p": {
+        "initial": "a",
+        "entry": "e_p",
+        "exit": "x_p",
+        "on": {
+          "LOG": {
+            "actions": "logged"
+          }
+        },
+        "states": {
+          "a": {
+            "entry": "e_a",
+            "exit": "x_a",
+            "on": {
+              "NEXT": "b"
+            }
+          },
+          "b": {
+            "entry": "e_b"
+          }
+        }
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "LOG"
+    },
+    {
+      "send": "NEXT"
+    },
+    {
+      "send": "LOG"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "m.p.a"
+        ],
+        "context": {},
+        "actions": [
+          "e_p",
+          "e_a"
+        ],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.p.a"
+          ],
+          "context": {},
+          "actions": [
+            "logged"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.p.b"
+          ],
+          "context": {},
+          "actions": [
+            "x_a",
+            "e_b"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.p.b"
+          ],
+          "context": {},
+          "actions": [
+            "logged"
+          ],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "m.p.a"
+        ],
+        "context": {},
+        "actions": [
+          "e_p",
+          "e_a"
+        ],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.p.a"
+          ],
+          "context": {},
+          "actions": [
+            "logged"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.p.b"
+          ],
+          "context": {},
+          "actions": [
+            "x_a",
+            "e_b"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.p.b"
+          ],
+          "context": {},
+          "actions": [
+            "logged"
+          ],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "526a51283e12b4b7",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "m",
+        "machine_hash": "526a51283e12b4b7",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "m.p.b"
+        ],
+        "value": {
+          "p": "b"
+        },
+        "configuration": [
+          "m",
+          "m.p",
+          "m.p.b"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"m\",\n  \"machine_hash\": \"526a51283e12b4b7\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"m.p.b\"\n  ],\n  \"value\": {\n    \"p\": \"b\"\n  },\n  \"configuration\": [\n    \"m\",\n    \"m.p\",\n    \"m.p.b\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

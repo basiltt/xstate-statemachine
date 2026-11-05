@@ -1,0 +1,428 @@
+{
+  "name": "always_self_target",
+  "description": "An always transition whose microstep leaves the snapshot unchanged (same configuration, no history recorded, no assign) is not re-selected: XState's macrostep selects eventless transitions again only after a microstep that changed the snapshot or after an internal event. A self-targeting always on an atomic state (with or without reenter) and on a compound state (which exits and re-enters its child) therefore runs once per macrostep, once more after each internal event (R raises PING), and never loops.",
+  "tags": [
+    "always",
+    "self-transition",
+    "macrostep",
+    "guards"
+  ],
+  "machine": {
+    "id": "m",
+    "initial": "a",
+    "on": {
+      "E": {
+        "actions": "rootE"
+      },
+      "R": {
+        "actions": {
+          "type": "raise",
+          "params": {
+            "event": {
+              "type": "PING"
+            }
+          }
+        }
+      },
+      "GO_B": "#m.b",
+      "GO_P": "#m.p"
+    },
+    "states": {
+      "a": {
+        "entry": "e_a",
+        "exit": "x_a",
+        "always": {
+          "target": "a",
+          "guard": "gA",
+          "actions": "tA"
+        }
+      },
+      "b": {
+        "entry": "e_b",
+        "exit": "x_b",
+        "always": {
+          "target": "b",
+          "reenter": true,
+          "guard": "gB",
+          "actions": "tB"
+        }
+      },
+      "p": {
+        "initial": "c",
+        "entry": "e_p",
+        "exit": "x_p",
+        "always": {
+          "target": "p",
+          "guard": "gP",
+          "actions": "tP"
+        },
+        "states": {
+          "c": {
+            "entry": "e_c",
+            "exit": "x_c"
+          }
+        }
+      }
+    }
+  },
+  "logic": {
+    "record_guards": true
+  },
+  "steps": [
+    {
+      "send": "X"
+    },
+    {
+      "send": "E"
+    },
+    {
+      "send": "R"
+    },
+    {
+      "send": "GO_B"
+    },
+    {
+      "send": "X"
+    },
+    {
+      "send": "GO_P"
+    },
+    {
+      "send": "X"
+    },
+    {
+      "send": "R"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "m.a"
+        ],
+        "context": {},
+        "actions": [
+          "e_a",
+          "tA"
+        ],
+        "status": "running",
+        "guards": [
+          "gA"
+        ]
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.a"
+          ],
+          "context": {},
+          "actions": [
+            "tA"
+          ],
+          "status": "running",
+          "guards": [
+            "gA"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.a"
+          ],
+          "context": {},
+          "actions": [
+            "rootE",
+            "tA"
+          ],
+          "status": "running",
+          "guards": [
+            "gA"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.a"
+          ],
+          "context": {},
+          "actions": [
+            "tA",
+            "tA"
+          ],
+          "status": "running",
+          "guards": [
+            "gA",
+            "gA"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.b"
+          ],
+          "context": {},
+          "actions": [
+            "x_a",
+            "e_b",
+            "x_b",
+            "tB",
+            "e_b"
+          ],
+          "status": "running",
+          "guards": [
+            "gB"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.b"
+          ],
+          "context": {},
+          "actions": [
+            "x_b",
+            "tB",
+            "e_b"
+          ],
+          "status": "running",
+          "guards": [
+            "gB"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.p.c"
+          ],
+          "context": {},
+          "actions": [
+            "x_b",
+            "e_p",
+            "e_c",
+            "x_c",
+            "tP",
+            "e_c"
+          ],
+          "status": "running",
+          "guards": [
+            "gP"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.p.c"
+          ],
+          "context": {},
+          "actions": [
+            "x_c",
+            "tP",
+            "e_c"
+          ],
+          "status": "running",
+          "guards": [
+            "gP"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.p.c"
+          ],
+          "context": {},
+          "actions": [
+            "x_c",
+            "tP",
+            "e_c",
+            "x_c",
+            "tP",
+            "e_c"
+          ],
+          "status": "running",
+          "guards": [
+            "gP",
+            "gP"
+          ]
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "m.a"
+        ],
+        "context": {},
+        "actions": [
+          "e_a",
+          "tA"
+        ],
+        "status": "running",
+        "guards": [
+          "gA"
+        ]
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.a"
+          ],
+          "context": {},
+          "actions": [
+            "tA"
+          ],
+          "status": "running",
+          "guards": [
+            "gA"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.a"
+          ],
+          "context": {},
+          "actions": [
+            "rootE",
+            "tA"
+          ],
+          "status": "running",
+          "guards": [
+            "gA"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.a"
+          ],
+          "context": {},
+          "actions": [
+            "tA",
+            "tA"
+          ],
+          "status": "running",
+          "guards": [
+            "gA",
+            "gA"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.b"
+          ],
+          "context": {},
+          "actions": [
+            "x_a",
+            "e_b",
+            "x_b",
+            "tB",
+            "e_b"
+          ],
+          "status": "running",
+          "guards": [
+            "gB"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.b"
+          ],
+          "context": {},
+          "actions": [
+            "x_b",
+            "tB",
+            "e_b"
+          ],
+          "status": "running",
+          "guards": [
+            "gB"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.p.c"
+          ],
+          "context": {},
+          "actions": [
+            "x_b",
+            "e_p",
+            "e_c",
+            "x_c",
+            "tP",
+            "e_c"
+          ],
+          "status": "running",
+          "guards": [
+            "gP"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.p.c"
+          ],
+          "context": {},
+          "actions": [
+            "x_c",
+            "tP",
+            "e_c"
+          ],
+          "status": "running",
+          "guards": [
+            "gP"
+          ]
+        },
+        {
+          "state_ids": [
+            "m.p.c"
+          ],
+          "context": {},
+          "actions": [
+            "x_c",
+            "tP",
+            "e_c",
+            "x_c",
+            "tP",
+            "e_c"
+          ],
+          "status": "running",
+          "guards": [
+            "gP",
+            "gP"
+          ]
+        }
+      ],
+      "machine_hash": "2182b5bffc6f2ef0",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "m",
+        "machine_hash": "2182b5bffc6f2ef0",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "m.p.c"
+        ],
+        "value": {
+          "p": "c"
+        },
+        "configuration": [
+          "m",
+          "m.p",
+          "m.p.c"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"m\",\n  \"machine_hash\": \"2182b5bffc6f2ef0\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"m.p.c\"\n  ],\n  \"value\": {\n    \"p\": \"c\"\n  },\n  \"configuration\": [\n    \"m\",\n    \"m.p\",\n    \"m.p.c\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

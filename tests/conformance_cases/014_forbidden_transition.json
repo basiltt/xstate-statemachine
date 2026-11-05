@@ -1,0 +1,160 @@
+{
+  "name": "forbidden_transition",
+  "description": "A null handler on the child consumes the event and blocks the handler on the parent.",
+  "tags": [
+    "events",
+    "forbidden"
+  ],
+  "machine": {
+    "id": "f",
+    "initial": "p",
+    "states": {
+      "p": {
+        "initial": "c1",
+        "on": {
+          "E": {
+            "target": "q",
+            "actions": "parentHandled"
+          }
+        },
+        "states": {
+          "c1": {
+            "on": {
+              "E": null,
+              "NEXT": "c2"
+            }
+          },
+          "c2": {}
+        }
+      },
+      "q": {}
+    }
+  },
+  "steps": [
+    {
+      "send": "E"
+    },
+    {
+      "send": "NEXT"
+    },
+    {
+      "send": "E"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "f.p.c1"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "f.p.c1"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "f.p.c2"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "f.q"
+          ],
+          "context": {},
+          "actions": [
+            "parentHandled"
+          ],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "f.p.c1"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "f.p.c1"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "f.p.c2"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "f.q"
+          ],
+          "context": {},
+          "actions": [
+            "parentHandled"
+          ],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "35f09c7d2d38e2b7",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "f",
+        "machine_hash": "35f09c7d2d38e2b7",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "f.q"
+        ],
+        "value": "q",
+        "configuration": [
+          "f",
+          "f.q"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"f\",\n  \"machine_hash\": \"35f09c7d2d38e2b7\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"f.q\"\n  ],\n  \"value\": \"q\",\n  \"configuration\": [\n    \"f\",\n    \"f.q\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

@@ -7,7 +7,7 @@ A Python library for parsing and running XState-compatible JSON state machines. 
 **Key Facts:**
 - Python 3.9+ support (3.9 through 3.15 in CI)
 - Async-first (`Interpreter`) with sync fallback (`SyncInterpreter`)
-- 100% XState JSON compatible
+- Reads XState v5 JSON and follows XState v5 statechart semantics (checked against xstate 5.33.3 by the 50 shared conformance cases under `tests/conformance_cases/`); engine event names keep the v4 spelling (`done.invoke.<id>`, `error.platform.<id>`)
 - Actor model support with spawn actions
 - Plugin architecture for extensibility
 - CLI tool (`xsm`) for code generation

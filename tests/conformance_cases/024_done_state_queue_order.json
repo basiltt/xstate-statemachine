@@ -1,0 +1,149 @@
+{
+  "name": "done_state_queue_order",
+  "description": "Entering a final child enqueues done.state internally. The final state also raises PING from its entry action. Both are internal events; their relative order and which state handles PING is what this case pins down.",
+  "tags": [
+    "final",
+    "onDone",
+    "internal-queue",
+    "divergence-probe"
+  ],
+  "machine": {
+    "id": "m",
+    "initial": "work",
+    "states": {
+      "work": {
+        "initial": "step",
+        "onDone": {
+          "target": "after",
+          "actions": "onDoneTaken"
+        },
+        "states": {
+          "step": {
+            "on": {
+              "FINISH": "end"
+            }
+          },
+          "end": {
+            "type": "final",
+            "entry": [
+              "enterEnd",
+              {
+                "type": "raise",
+                "params": {
+                  "event": {
+                    "type": "PING"
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "on": {
+          "PING": {
+            "actions": "pingInWork"
+          }
+        }
+      },
+      "after": {
+        "on": {
+          "PING": {
+            "actions": "pingInAfter"
+          }
+        }
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "FINISH"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "m.work.step"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.after"
+          ],
+          "context": {},
+          "actions": [
+            "enterEnd",
+            "pingInWork",
+            "onDoneTaken"
+          ],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "m.work.step"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.after"
+          ],
+          "context": {},
+          "actions": [
+            "enterEnd",
+            "pingInWork",
+            "onDoneTaken"
+          ],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "a64e8da487e47081",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "m",
+        "machine_hash": "a64e8da487e47081",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "m.after"
+        ],
+        "value": "after",
+        "configuration": [
+          "m",
+          "m.after"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"m\",\n  \"machine_hash\": \"a64e8da487e47081\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"m.after\"\n  ],\n  \"value\": \"after\",\n  \"configuration\": [\n    \"m\",\n    \"m.after\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

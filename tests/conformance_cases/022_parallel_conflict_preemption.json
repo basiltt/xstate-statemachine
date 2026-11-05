@@ -1,0 +1,160 @@
+{
+  "name": "parallel_conflict_preemption",
+  "description": "When transitions in both regions and a transition on the parallel ancestor all match, the region-level transitions win and the ancestor transition is preempted (SCXML optimal enabled set).",
+  "tags": [
+    "parallel",
+    "conflict",
+    "divergence-probe"
+  ],
+  "machine": {
+    "id": "m",
+    "initial": "p",
+    "states": {
+      "p": {
+        "type": "parallel",
+        "on": {
+          "E": {
+            "target": "outside",
+            "actions": "ancestorTook"
+          }
+        },
+        "states": {
+          "r1": {
+            "initial": "a",
+            "states": {
+              "a": {
+                "on": {
+                  "E": {
+                    "target": "b",
+                    "actions": "r1Took"
+                  }
+                }
+              },
+              "b": {}
+            }
+          },
+          "r2": {
+            "initial": "c",
+            "states": {
+              "c": {
+                "on": {
+                  "E": {
+                    "target": "d",
+                    "actions": "r2Took"
+                  }
+                }
+              },
+              "d": {}
+            }
+          }
+        }
+      },
+      "outside": {}
+    }
+  },
+  "steps": [
+    {
+      "send": "E"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "m.p.r1.a",
+          "m.p.r2.c"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.p.r1.b",
+            "m.p.r2.d"
+          ],
+          "context": {},
+          "actions": [
+            "r1Took",
+            "r2Took"
+          ],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "m.p.r1.a",
+          "m.p.r2.c"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.p.r1.b",
+            "m.p.r2.d"
+          ],
+          "context": {},
+          "actions": [
+            "r1Took",
+            "r2Took"
+          ],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "e90857e070f180cf",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "m",
+        "machine_hash": "e90857e070f180cf",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "m.p.r1.b",
+          "m.p.r2.d"
+        ],
+        "value": {
+          "p": {
+            "r1": "b",
+            "r2": "d"
+          }
+        },
+        "configuration": [
+          "m",
+          "m.p",
+          "m.p.r1",
+          "m.p.r1.b",
+          "m.p.r2",
+          "m.p.r2.d"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"m\",\n  \"machine_hash\": \"e90857e070f180cf\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"m.p.r1.b\",\n    \"m.p.r2.d\"\n  ],\n  \"value\": {\n    \"p\": {\n      \"r1\": \"b\",\n      \"r2\": \"d\"\n    }\n  },\n  \"configuration\": [\n    \"m\",\n    \"m.p\",\n    \"m.p.r1\",\n    \"m.p.r1.b\",\n    \"m.p.r2\",\n    \"m.p.r2.d\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

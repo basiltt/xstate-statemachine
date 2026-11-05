@@ -1,0 +1,264 @@
+{
+  "name": "history_records_only_on_owner_exit",
+  "description": "XState records a history value only when the state that owns the history node is itself exited (exitStates). NEXT and TOK leave states inside s but never s itself, so when k targets s's deep history nothing has been recorded and the history default (s's initial g, then g1) is entered. Once s is exited (OUT), IN restores the configuration recorded at that exit (g2).",
+  "tags": [
+    "history",
+    "deep-history"
+  ],
+  "machine": {
+    "id": "m",
+    "initial": "s",
+    "states": {
+      "s": {
+        "initial": "g",
+        "on": {
+          "OUT": "#m.out"
+        },
+        "states": {
+          "h": {
+            "type": "history",
+            "history": "deep"
+          },
+          "g": {
+            "initial": "g1",
+            "on": {
+              "TOK": "k"
+            },
+            "states": {
+              "g1": {
+                "entry": "e_g1",
+                "on": {
+                  "NEXT": "g2"
+                }
+              },
+              "g2": {
+                "entry": "e_g2"
+              }
+            }
+          },
+          "k": {
+            "on": {
+              "BACK": "h"
+            }
+          }
+        }
+      },
+      "out": {
+        "on": {
+          "IN": "#m.s.h"
+        }
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "NEXT"
+    },
+    {
+      "send": "TOK"
+    },
+    {
+      "send": "BACK"
+    },
+    {
+      "send": "NEXT"
+    },
+    {
+      "send": "OUT"
+    },
+    {
+      "send": "IN"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "m.s.g.g1"
+        ],
+        "context": {},
+        "actions": [
+          "e_g1"
+        ],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.s.g.g2"
+          ],
+          "context": {},
+          "actions": [
+            "e_g2"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.s.k"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.s.g.g1"
+          ],
+          "context": {},
+          "actions": [
+            "e_g1"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.s.g.g2"
+          ],
+          "context": {},
+          "actions": [
+            "e_g2"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.out"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.s.g.g2"
+          ],
+          "context": {},
+          "actions": [
+            "e_g2"
+          ],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "m.s.g.g1"
+        ],
+        "context": {},
+        "actions": [
+          "e_g1"
+        ],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "m.s.g.g2"
+          ],
+          "context": {},
+          "actions": [
+            "e_g2"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.s.k"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.s.g.g1"
+          ],
+          "context": {},
+          "actions": [
+            "e_g1"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.s.g.g2"
+          ],
+          "context": {},
+          "actions": [
+            "e_g2"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.out"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "m.s.g.g2"
+          ],
+          "context": {},
+          "actions": [
+            "e_g2"
+          ],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "6390b43f6c5d7e79",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "m",
+        "machine_hash": "6390b43f6c5d7e79",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "m.s.g.g2"
+        ],
+        "value": {
+          "s": {
+            "g": "g2"
+          }
+        },
+        "configuration": [
+          "m",
+          "m.s",
+          "m.s.g",
+          "m.s.g.g2"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {
+          "m.s": [
+            "m.s.g",
+            "m.s.g.g2"
+          ]
+        },
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"m\",\n  \"machine_hash\": \"6390b43f6c5d7e79\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"m.s.g.g2\"\n  ],\n  \"value\": {\n    \"s\": {\n      \"g\": \"g2\"\n    }\n  },\n  \"configuration\": [\n    \"m\",\n    \"m.s\",\n    \"m.s.g\",\n    \"m.s.g.g2\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {\n    \"m.s\": [\n      \"m.s.g\",\n      \"m.s.g.g2\"\n    ]\n  },\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

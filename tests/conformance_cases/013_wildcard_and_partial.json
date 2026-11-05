@@ -1,0 +1,185 @@
+{
+  "name": "wildcard_and_partial",
+  "description": "Exact descriptors beat partial wildcards, which beat the catch-all.",
+  "tags": [
+    "events",
+    "wildcard"
+  ],
+  "machine": {
+    "id": "ev",
+    "initial": "a",
+    "states": {
+      "a": {
+        "on": {
+          "mouse.click": {
+            "actions": "exact"
+          },
+          "mouse.*": {
+            "actions": "partial"
+          },
+          "*": {
+            "actions": "any"
+          }
+        }
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "mouse.click"
+    },
+    {
+      "send": "mouse.move"
+    },
+    {
+      "send": "mouse"
+    },
+    {
+      "send": "keyboard.down"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "ev.a"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "ev.a"
+          ],
+          "context": {},
+          "actions": [
+            "exact"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "ev.a"
+          ],
+          "context": {},
+          "actions": [
+            "partial"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "ev.a"
+          ],
+          "context": {},
+          "actions": [
+            "partial"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "ev.a"
+          ],
+          "context": {},
+          "actions": [
+            "any"
+          ],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "ev.a"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "ev.a"
+          ],
+          "context": {},
+          "actions": [
+            "exact"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "ev.a"
+          ],
+          "context": {},
+          "actions": [
+            "partial"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "ev.a"
+          ],
+          "context": {},
+          "actions": [
+            "partial"
+          ],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "ev.a"
+          ],
+          "context": {},
+          "actions": [
+            "any"
+          ],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "70065728e1e29db4",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "ev",
+        "machine_hash": "70065728e1e29db4",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "ev.a"
+        ],
+        "value": "a",
+        "configuration": [
+          "ev",
+          "ev.a"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"ev\",\n  \"machine_hash\": \"70065728e1e29db4\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"ev.a\"\n  ],\n  \"value\": \"a\",\n  \"configuration\": [\n    \"ev\",\n    \"ev.a\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

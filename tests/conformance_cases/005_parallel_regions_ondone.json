@@ -1,0 +1,181 @@
+{
+  "name": "parallel_regions_ondone",
+  "description": "Two orthogonal regions advance independently; onDone of the parallel state fires once both regions are final.",
+  "tags": [
+    "parallel",
+    "final",
+    "onDone"
+  ],
+  "machine": {
+    "id": "release",
+    "initial": "checks",
+    "states": {
+      "checks": {
+        "type": "parallel",
+        "onDone": "deployed",
+        "states": {
+          "build": {
+            "initial": "compiling",
+            "states": {
+              "compiling": {
+                "on": {
+                  "BUILD_OK": "built"
+                }
+              },
+              "built": {
+                "type": "final"
+              }
+            }
+          },
+          "lint": {
+            "initial": "linting",
+            "states": {
+              "linting": {
+                "on": {
+                  "LINT_OK": "clean"
+                }
+              },
+              "clean": {
+                "type": "final"
+              }
+            }
+          }
+        }
+      },
+      "deployed": {
+        "type": "final"
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "LINT_OK"
+    },
+    {
+      "send": "LINT_OK"
+    },
+    {
+      "send": "BUILD_OK"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "release.checks.build.compiling",
+          "release.checks.lint.linting"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "release.checks.build.compiling",
+            "release.checks.lint.clean"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "release.checks.build.compiling",
+            "release.checks.lint.clean"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "release.deployed"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "done",
+          "output": null
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "release.checks.build.compiling",
+          "release.checks.lint.linting"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "release.checks.build.compiling",
+            "release.checks.lint.clean"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "release.checks.build.compiling",
+            "release.checks.lint.clean"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        },
+        {
+          "state_ids": [
+            "release.deployed"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "done",
+          "output": null
+        }
+      ],
+      "machine_hash": "3139060de7a14b0a",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "release",
+        "machine_hash": "3139060de7a14b0a",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "done",
+        "context": {},
+        "state_ids": [
+          "release.deployed"
+        ],
+        "value": "deployed",
+        "configuration": [
+          "release",
+          "release.deployed"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"release\",\n  \"machine_hash\": \"3139060de7a14b0a\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"done\",\n  \"context\": {},\n  \"state_ids\": [\n    \"release.deployed\"\n  ],\n  \"value\": \"deployed\",\n  \"configuration\": [\n    \"release\",\n    \"release.deployed\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}

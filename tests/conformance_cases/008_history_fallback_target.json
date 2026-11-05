@@ -1,0 +1,118 @@
+{
+  "name": "history_fallback_target",
+  "description": "A history node with no recorded history resolves to its declared target.",
+  "tags": [
+    "history"
+  ],
+  "machine": {
+    "id": "wizard",
+    "initial": "intro",
+    "states": {
+      "intro": {
+        "on": {
+          "GO": "form.resume"
+        }
+      },
+      "form": {
+        "initial": "name",
+        "states": {
+          "name": {},
+          "address": {},
+          "resume": {
+            "type": "history",
+            "history": "shallow",
+            "target": "address"
+          }
+        }
+      }
+    }
+  },
+  "steps": [
+    {
+      "send": "GO"
+    }
+  ],
+  "expected": {
+    "xstate": {
+      "initial": {
+        "state_ids": [
+          "wizard.intro"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "wizard.form.address"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        }
+      ],
+      "oracle": {
+        "name": "xstate",
+        "version": "5.33.3"
+      }
+    },
+    "python": {
+      "oracle": {
+        "name": "xstate-statemachine",
+        "version": "0.12.0"
+      },
+      "initial": {
+        "state_ids": [
+          "wizard.intro"
+        ],
+        "context": {},
+        "actions": [],
+        "status": "running"
+      },
+      "steps": [
+        {
+          "state_ids": [
+            "wizard.form.address"
+          ],
+          "context": {},
+          "actions": [],
+          "status": "running"
+        }
+      ],
+      "machine_hash": "3f55e2860f071508",
+      "snapshot": {
+        "version": 4,
+        "machine_id": "wizard",
+        "machine_hash": "3f55e2860f071508",
+        "machine_version": null,
+        "taken_at": 0.0,
+        "status": "running",
+        "context": {},
+        "state_ids": [
+          "wizard.form.address"
+        ],
+        "value": {
+          "form": "address"
+        },
+        "configuration": [
+          "wizard",
+          "wizard.form",
+          "wizard.form.address"
+        ],
+        "output": null,
+        "error": null,
+        "chain_trips": 0,
+        "last_chain_error": null,
+        "deferred": [],
+        "pending_events": [],
+        "scheduled_sends": [],
+        "deadlines": [],
+        "history": {},
+        "actors": {},
+        "system": {}
+      },
+      "snapshot_text": "{\n  \"version\": 4,\n  \"machine_id\": \"wizard\",\n  \"machine_hash\": \"3f55e2860f071508\",\n  \"machine_version\": null,\n  \"taken_at\": 0.0,\n  \"status\": \"running\",\n  \"context\": {},\n  \"state_ids\": [\n    \"wizard.form.address\"\n  ],\n  \"value\": {\n    \"form\": \"address\"\n  },\n  \"configuration\": [\n    \"wizard\",\n    \"wizard.form\",\n    \"wizard.form.address\"\n  ],\n  \"output\": null,\n  \"error\": null,\n  \"chain_trips\": 0,\n  \"last_chain_error\": null,\n  \"deferred\": [],\n  \"pending_events\": [],\n  \"scheduled_sends\": [],\n  \"deadlines\": [],\n  \"history\": {},\n  \"actors\": {},\n  \"system\": {}\n}"
+    }
+  }
+}
