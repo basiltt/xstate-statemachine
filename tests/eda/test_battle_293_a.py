@@ -427,20 +427,37 @@ class TestDeadLetters(unittest.TestCase):
         self.store.close()
 
     def test_threads_put_and_purge_concurrently(self) -> None:
+        # 📝 A worker's exception is invisible to unittest, and join(30)
+        #    returns while a slow runner is still inserting: on the Windows
+        #    3.9 cell the count read 387 of 400 with no error printed
+        #    (PR #424). Collect what the threads raise, wait for them
+        #    properly, and only then count.
+        errors: List[BaseException] = []
+
         def put(k: int) -> None:
-            for i in range(100):
-                self.dlq.put(_dl(k * 1000 + i))
+            try:
+                for i in range(100):
+                    self.dlq.put(_dl(k * 1000 + i))
+            except BaseException as exc:  # a lock timeout under load
+                errors.append(exc)
 
         def purge() -> None:
-            for _ in range(20):
-                self.dlq.purge_older_than(0.0)  # 📝 nothing that old
+            try:
+                for _ in range(20):
+                    self.dlq.purge_older_than(
+                        0.0
+                    )  # 📝 absolute cutoff 0: no rows
+            except BaseException as exc:
+                errors.append(exc)
 
         ts = [threading.Thread(target=put, args=(k,)) for k in range(4)]
         ts.append(threading.Thread(target=purge))
         for t in ts:
             t.start()
         for t in ts:
-            t.join(30)
+            t.join(120)
+        self.assertEqual([t.name for t in ts if t.is_alive()], [])
+        self.assertEqual(errors, [])
         self.assertEqual(len(self.dlq), 400)
 
     def test_secrets_are_redacted_on_disk(self) -> None:
