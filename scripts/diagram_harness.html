@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <title>Statechart render harness</title>
+  <!-- Served from the repository root by scripts/check_diagrams.py; loads the
+       real site stylesheet, fonts and renderer so what is measured here is
+       what the docs ship. ?keys=a,b,c&theme=dark|light -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/docs/assets/css/style.css">
+  <style>
+    body { margin: 0; padding: 24px; }
+    .content { max-width: none !important; width: max-content; min-width: 720px; }
+    .statechart { width: max-content; min-width: 720px; max-width: none; }
+    /* natural size: the overlap check measures unscaled geometry */
+    .statechart-canvas svg { max-width: none !important; }
+  </style>
+  <script>
+    (function () {
+      var query = new URLSearchParams(location.search);
+      document.documentElement.setAttribute('data-theme', query.get('theme') === 'light' ? 'light' : 'dark');
+      window.__harnessKeys = (query.get('keys') || '').split(',').filter(Boolean);
+    })();
+  </script>
+</head>
+<body>
+  <main class="content" id="main-content" tabindex="-1">
+    <h1>Statechart render harness</h1>
+    <script>
+      // Classic script: the markers must exist before the module renderer runs.
+      (function () {
+        var main = document.currentScript.parentNode;
+        window.__harnessKeys.forEach(function (key) {
+          var div = document.createElement('div');
+          div.className = 'stately';
+          div.setAttribute('data-machine', key);
+          div.setAttribute('data-title', key);
+          main.appendChild(div);
+        });
+      })();
+    </script>
+  </main>
+  <script type="module" src="/docs/assets/js/diagrams.js"></script>
+</body>
+</html>

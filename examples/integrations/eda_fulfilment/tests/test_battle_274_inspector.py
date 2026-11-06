@@ -169,10 +169,18 @@ def _read_frames(resp: Any, n: int, deadline: float = 20.0) -> List[Dict]:
 def test_stalled_sse_client_is_bounded_and_dropped() -> None:
     from xstate_statemachine import SyncInterpreter
 
-    sink = SseSink(port=0, history=50).start()
+    # 📝 3 000 orders emit 15 000 frames (5 per order). The default
+    #    `max_queue=10_000` let a fast runner swallow the whole storm
+    #    through the kernel socket buffer, so `dropped == 0` flaked once
+    #    on CI (Ubuntu 3.9 `Extra [fastapi]`). With `max_queue=256` the
+    #    drop is deterministic on any speed of machine: the stalled
+    #    client's socket buffer holds only a fraction of the stream, its
+    #    handler blocks mid-write and the queue fills -- and the cut is
+    #    a `put_nowait` on the producing thread, so the machine never
+    #    blocks either way.
+    sink = SseSink(port=0, history=50, max_queue=256).start()
     try:
         stalled = _connect(sink)
-        reader = _connect(sink)
         m = app.order_machine()
         plug = InspectorPlugin(sink, context_allowlist=("orderId",))
         t0 = time.perf_counter()
@@ -186,12 +194,19 @@ def test_stalled_sse_client_is_bounded_and_dropped() -> None:
         assert sink.dropped > 0
         assert sink.max_queue >= sink.dropped
         assert len(sink.clients) <= 2
-        # the reader still gets a live frame
+        # a client that connects now replays the 50-message backlog, then
+        # still receives the next live frame
+        reader = _connect(sink)
         i = SyncInterpreter(m).use(plug).start()
         i.send("PAY", orderId="o-last", total=1)
         i.stop()
-        frames = _read_frames(reader, 1, deadline=10)
-        assert frames, "reader starved"
+        # 📝 `history=50` is replayed before the live stream; read past it
+        #    so this covers LIVE delivery too, not just the backlog.
+        frames = _read_frames(reader, 55, deadline=10)
+        assert len(frames) > 50, "reader got only the backlog"
+        assert any(
+            "o-last" in json.dumps(f) for f in frames
+        ), "the live o-last frame never reached the reconnected reader"
         stalled._xsm_conn.close()  # type: ignore[attr-defined]
         reader._xsm_conn.close()  # type: ignore[attr-defined]
     finally:

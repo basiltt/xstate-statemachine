@@ -26,6 +26,45 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
   unchanged and pinned by `tests/test_sync_send_fast_paths.py`. On the
   cross-library benchmark the guard + action row goes from behind
   `transitions` to 1.34x ahead; see `benchmarks/competitors/README.md`.
+- **The documentation draws its diagrams itself.** Stately now asks every
+  visitor to sign in before it shows a hosted machine, so the embedded editor
+  frames on the docs site were blank. The 245 charts in the guides and the
+  example gallery are generated from each machine's JSON
+  (`scripts/diagram_mermaid.py` → `docs/assets/data/diagrams.json`) and
+  rendered in the browser by Mermaid 12 (ELK layout, so transitions are
+  routed orthogonally as in Stately) in the Stately notation: `entry /` and
+  `exit /` action chips and the invoked service inside the state box, event
+  pills with their `if` guard and actions, `after` delays, `done:` / `error:`
+  service results, a final-state mark, dashed parallel regions. Every chart
+  keeps its **Open in Stately** link and the **Full screen** viewer and
+  follows the site theme; in dark mode the charts use the Stately editor's
+  own palette. `scripts/check_diagrams.py` renders all of them headlessly
+  and fails on any overlapping, touching or clipped element. No library
+  code changed.
+
+- **`FileStore` no longer rewrites a lock file's holder stamp on every
+  acquisition.** The stamp (`<pid> <wall time>` from byte 1 of the key's
+  `.lock` file, read by waiters for the `holder=` on `LockTimeoutError`
+  and for the stale-lock retry) was written inside the critical section
+  on every lock, and a modified file is rescanned by on-access antivirus
+  when its handle closes: on Windows 11 with Defender real-time
+  protection a lock cycle cost 9.9 ms median (15.8 ms p90) against
+  0.14 ms for the same open/lock/unlock/close without the write, paid by
+  every `save` and again by every `OptimisticLock` retry. The stamp is
+  now read first (a read does not dirty the file) and left alone when it
+  already names the acquiring process and is younger than
+  `stale_lock_after / 2`; a stamp by another pid (live or dead), an
+  unparseable one, an older one or a future-dated one is rewritten as
+  before. Same machine after the change: lock cycle 0.18 ms median
+  (0.25 ms p90), `save` with `fsync` off 26 ms to 10 ms (the rest is the
+  record file's own rescan). The stamp still names the live holder; its
+  timestamp is now the holder's last refresh, at most
+  `stale_lock_after / 2` before the current acquisition, so a hold
+  shorter than `stale_lock_after / 2` (30 s by default; it was the whole
+  `stale_lock_after`) can never read as stale to a waiter. A stale
+  verdict only shortens a waiter's retry sleep from 10 ms to 1 ms; the
+  OS lock stays the truth. Cross-process stale-lock reclamation and the
+  documented holder info are unchanged.
 
 ### Fixed
 
@@ -42,7 +81,6 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 - The pure-vs-sync timing test counts the pure API's real per-step allocation
   (inbound and outbound context copies, the rebuilt snapshot sets) in its
   floor, so a cheaper `send()` no longer pushes it towards its limit.
-
 ## [0.12.0] - 2026-11-05
 
 > **Behaviour changes in this release.** The statechart engine now

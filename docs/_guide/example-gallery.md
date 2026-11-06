@@ -1,12 +1,13 @@
 ---
 title: Example gallery
-description: Every statechart shipped under examples/, drawn live by the Stately editor.
+description: Every statechart shipped under examples/, drawn from its JSON with a link to the same machine in Stately.
 ---
 
-Every machine under [`examples/`](https://github.com/basiltt/xstate-statemachine/tree/main/examples)
-as the Stately editor draws it. The diagrams follow the site theme; each one links to the
-public editor page where you can simulate it. The JSON next to each diagram is what the
-example runs unchanged.
+Every machine under [`examples/`](https://github.com/basiltt/xstate-statemachine/tree/main/examples),
+drawn from its JSON in the Stately style. The diagrams follow the site theme; **Full screen**
+opens a zoomable view and **Open in Stately** takes you to the same machine in the editor
+(a Stately account is needed there). The JSON next to each diagram is what the example
+runs unchanged.
 
 ## `async/basic`
 
