@@ -607,12 +607,6 @@ pre > code { display: block; width: max-content; min-width: 100%; }
 .statechart-lightbox-canvas svg { display: block; flex: none; margin: auto; max-width: none; width: auto; height: auto; }
 .statechart figcaption { position: relative; margin-top: 10px; text-align: right; font-family: var(--font-mono); font-size: 11px; color: var(--fg-faint); }
 .statechart-canvas .edgeLabel foreignObject { overflow: visible; }
-.statechart-canvas .edgeLabel .labelBkg { background: var(--panel-solid) !important; border-radius: 5px; box-shadow: 0 0 0 3px var(--panel-solid); }
-.statechart-canvas .edgeLabel, .statechart-canvas .edgeLabel p, .statechart-canvas .edgeLabel span { color: var(--signal) !important; background: transparent !important; font-family: var(--font-mono) !important; font-size: 11.5px !important; font-weight: 600; }
-.statechart-canvas .edgeLabel rect { fill: var(--panel-solid) !important; stroke: none; }
-.statechart-canvas .node rect, .statechart-canvas .node circle, .statechart-canvas .node polygon, .statechart-canvas .statediagram-state rect { rx: 10px; ry: 10px; }
-.statechart-canvas .start-state, .statechart-canvas .end-state-outer { fill: var(--a1) !important; stroke: var(--a1) !important; }
-.statechart-canvas .end-state-inner { fill: var(--ink) !important; }
 
 /* ----------------------------------------------------------------------------
    15. Responsive
@@ -712,42 +706,97 @@ pre > code { display: block; width: max-content; min-width: 100%; }
 }
 
 /* ----------------------------------------------------------------------------
-   Stately editor embeds (assets/js/stately.js turns <div class="stately"> into
-   a theme-following iframe of the chart in the public Stately project)
+   Statecharts drawn by assets/js/diagrams.js: ```mermaid fences and the
+   <div class="stately" data-machine="…"> machine embeds (Stately-style Mermaid
+   from assets/data/diagrams.json, each with an "Open in Stately" link).
+   Colours live in CSS variables so the theme toggle restyles the SVG without
+   a re-render. The xsm-* classes are deliberately NOT scoped under .statechart:
+   Mermaid measures every label before the SVG is placed in the figure, and the
+   measured box must match the displayed one or text gets clipped.
 ---------------------------------------------------------------------------- */
-.stately-embed { margin: 1.4em 0 1.8em; border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--panel); box-shadow: var(--glass-hi); overflow: hidden; }
-.stately-embed, .stately-fullscreen { --stately-accent: #087052; }
-html[data-theme="dark"] .stately-embed, html[data-theme="dark"] .stately-fullscreen { --stately-accent: var(--signal); }
-.stately-frame { position: relative; width: 100%; background: var(--panel-solid); }
-.stately-iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; opacity: 0; transition: opacity .35s ease; }
-.stately-iframe.is-ready { opacity: 1; }
-.stately-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; font-family: var(--font-mono); font-size: 12px; color: var(--fg-faint); }
-.stately-caption { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 8px 14px; border-top: 1px solid var(--line); font-size: 12.5px; color: var(--fg-dim); }
-.stately-name { min-width: 0; overflow-wrap: anywhere; font-family: var(--font-mono); }
-.stately-name::before { content: "statechart · "; color: var(--fg-faint); }
-.stately-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
-.stately-open { display: inline-flex; align-items: center; min-height: 44px; font-weight: 600; color: var(--stately-accent); text-decoration: none; white-space: nowrap; }
-.stately-open:hover { text-decoration: underline; }
-.stately-expand, .stately-fullscreen-close, .stately-fullscreen-return { display: inline-flex; align-items: center; justify-content: center; gap: 8px; flex: none; min-width: 44px; min-height: 44px; padding: 8px 14px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: var(--signal-soft); color: var(--stately-accent); font-size: .875rem; font-weight: 600; line-height: 1.4; cursor: pointer; touch-action: manipulation; }
-.stately-expand:hover, .stately-fullscreen-close:hover, .stately-fullscreen-return:hover { border-color: var(--stately-accent); background: var(--panel-solid); }
-.stately-expand:focus-visible, .stately-fullscreen-close:focus-visible, .stately-fullscreen-return:focus-visible, .stately-open:focus-visible { outline-color: var(--stately-accent); }
-.stately-expand svg, .stately-fullscreen-close svg { width: 16px; height: 16px; flex: none; }
-/* A native modal keeps the page inert and traps focus, including its iframe.
-   Explicitly hide the closed dialog: display:flex alone overrides UA hiding. */
-.stately-fullscreen { position: fixed; inset: 0; display: none; flex-direction: column; width: 100%; max-width: none; height: 100vh; height: 100dvh; max-height: none; margin: 0; padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); border: 0; border-radius: 0; background: var(--panel-solid); color: var(--fg); overflow: hidden; overscroll-behavior: contain; }
-.stately-fullscreen[open] { display: flex; }
-.stately-fullscreen::backdrop { background: var(--ink); }
-.stately-fullscreen-toolbar { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 10px clamp(12px, 2vw, 24px); border-bottom: 1px solid var(--line-strong); box-shadow: var(--glass-hi); }
-.stately-fullscreen-title { flex: 1 1 12rem; min-width: 0; margin: 0; font-family: var(--font-mono); font-size: .9375rem; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
-.stately-fullscreen-actions { display: flex; flex: none; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
-.stately-fullscreen-actions .stately-open { font-size: .875rem; }
-.stately-fullscreen-frame { position: relative; flex: 1 1 0; width: 100%; min-width: 0; min-height: 0; overflow: hidden; background: var(--panel-solid); }
-.stately-fullscreen-status { flex: none; margin: 0; padding: 6px clamp(12px, 2vw, 24px); border-top: 1px solid var(--line); color: var(--fg-dim); font-size: .75rem; line-height: 1.4; overflow-wrap: anywhere; }
-/* A keyboard-visible return path after the cross-origin iframe also avoids
-   Firefox's native dialog/iframe forward-Tab wrap edge case. */
-.stately-fullscreen-return { position: absolute; right: max(12px, env(safe-area-inset-right, 0px)); bottom: max(12px, env(safe-area-inset-bottom, 0px)); z-index: 1; max-width: calc(100% - 24px); background: var(--panel-solid); box-shadow: var(--shadow); }
-.stately-fullscreen-return:not(:focus) { width: 1px; height: 1px; min-width: 0; min-height: 0; padding: 0; border: 0; clip-path: inset(50%); overflow: hidden; white-space: nowrap; }
-@media (max-width: 760px) { .stately-frame { min-height: 320px; } .stately-caption { padding: 8px 10px; } }
-@media (max-width: 480px) { .stately-fullscreen-toolbar { gap: 6px; padding: 8px 12px; } .stately-fullscreen-title { flex-basis: 100%; } .stately-fullscreen-actions { width: 100%; justify-content: space-between; } }
-@media (prefers-reduced-motion: reduce) { .stately-iframe { transition: none; } }
-@media print { .stately-expand, .stately-fullscreen, .stately-fullscreen[open] { display: none; } }
+/* the palette is also needed by the Full screen viewer, which lives outside the figure */
+.statechart, .statechart-lightbox {
+  --sc-canvas: #F6F7FB; --sc-fg: #0F1222; --sc-text: #1F2335; --sc-dim: #5B6178; --sc-dim-strong: #4A5068;
+  --sc-node: #FFFFFF; --sc-node-body: #FBFBFE; --sc-node-border: #C9CDDC;
+  --sc-cluster: #F1F2F8; --sc-cluster-title: #E6E8F2; --sc-region: #A9AFC6;
+  --sc-edge: #6B7190; --sc-pill: #FFFFFF; --sc-pill-shadow: 0 1px 3px rgba(16, 18, 36, .18), 0 0 0 1px rgba(16, 18, 36, .08);
+  --sc-chip: #F3F4F9; --sc-chip-border: #C9CDDC;
+  --sc-marker: #5B6178; --sc-done: #0F8F6B; --sc-error: #C2410C; --sc-if: #5B6178;
+}
+/* Stately's own dark palette, read off the editor: canvas #101119, headers
+   and plain states #2D3143, bodies #12141B, pills #1B1C27, chips #1A1C28. */
+html[data-theme="dark"] .statechart, html[data-theme="dark"] .statechart-lightbox {
+  --sc-canvas: #101119; --sc-fg: #FFFFFF; --sc-text: #D9DBE8; --sc-dim: #868BA7; --sc-dim-strong: #A5A9C0;
+  --sc-node: #2D3143; --sc-node-body: #12141B; --sc-node-border: rgba(255, 255, 255, .16);
+  --sc-cluster: #12141B; --sc-cluster-title: #2D3143; --sc-region: rgba(255, 255, 255, .3);
+  --sc-edge: #5A5E78; --sc-pill: #1B1C27; --sc-pill-shadow: 0 0 2px rgba(0, 0, 0, .45), 0 .5px 0 rgba(255, 255, 255, .12);
+  --sc-chip: #1A1C28; --sc-chip-border: rgba(100, 105, 135, .36);
+  --sc-marker: #D9DBE8; --sc-done: #54B559; --sc-error: #F18622; --sc-if: #868BA7;
+}
+html[data-theme="dark"] .statechart { background: var(--sc-canvas); border-color: rgba(255, 255, 255, .08); }
+html[data-theme="dark"] .statechart::before { opacity: 1; background-image: linear-gradient(to right, rgba(255, 255, 255, .035) 1px, transparent 1px), linear-gradient(to bottom, rgba(255, 255, 255, .035) 1px, transparent 1px); background-size: 24px 24px; }
+html[data-theme="dark"] .statechart-lightbox-canvas { background: var(--sc-canvas); }
+/* state boxes, composite containers, dividers */
+.statechart-canvas .node rect, .statechart-canvas .node polygon, .statechart-canvas .statediagram-state rect.basic { fill: var(--sc-node) !important; stroke: var(--sc-node-border) !important; stroke-width: 1px !important; rx: 6px; ry: 6px; }
+/* a state with rows: Stately's header band over a darker body (the band is a path diagrams.js adds) */
+.statechart-canvas .statediagram-state rect.title-state { fill: var(--sc-node-body) !important; stroke: var(--sc-node-border) !important; stroke-width: 1px !important; rx: 6px; ry: 6px; }
+.statechart-canvas .statediagram-state path.xsm-head { fill: var(--sc-cluster-title); stroke: none; }
+.statechart-canvas .statediagram-state .divider { stroke: var(--sc-node-border) !important; }
+.statechart-canvas .statediagram-cluster rect { stroke: var(--sc-node-border) !important; stroke-width: 1px !important; }
+.statechart-canvas .statediagram-cluster rect.outer { fill: var(--sc-cluster-title) !important; rx: 6px; ry: 6px; }
+.statechart-canvas .statediagram-cluster.xsm-root .inner { fill: var(--sc-canvas) !important; }
+.statechart-canvas .statediagram-cluster .inner, .statechart-canvas .statediagram-cluster.statediagram-cluster-alt .inner { fill: var(--sc-cluster) !important; }
+.statechart-canvas .statediagram-cluster.xsmRegion rect { stroke: var(--sc-region) !important; }
+.statechart-canvas .statediagram-cluster.xsmParallel rect.outer { fill: var(--sc-cluster-title) !important; }
+.statechart-canvas .xsmHistory rect { rx: 999px !important; ry: 999px !important; }
+.statechart-canvas .nodeLabel, .statechart-canvas .nodeLabel p, .statechart-canvas .cluster-label, .statechart-canvas .cluster-label p, .statechart-canvas .cluster-label span { color: var(--sc-text) !important; }
+.statechart-canvas .xsm-title { color: var(--sc-fg); }
+/* transitions, markers, start/end */
+.statechart-canvas path.transition { stroke: var(--sc-edge) !important; stroke-width: 2px !important; }
+.statechart-canvas .marker, .statechart-canvas marker path { fill: var(--sc-edge) !important; stroke: var(--sc-edge) !important; }
+.statechart-canvas .node circle.state-start { fill: var(--sc-marker) !important; stroke: var(--sc-marker) !important; }
+.statechart-canvas .node circle.state-end { fill: var(--sc-marker) !important; stroke: var(--sc-node) !important; }
+.statechart-canvas .end-state-inner { fill: var(--sc-node) !important; }
+/* edge labels: the Stately-style pill is the .xsm-pill span; a plain Mermaid
+   label (export examples) gets a lighter pill of its own */
+.statechart-canvas .edgeLabel, .statechart-canvas .edgeLabel p, .statechart-canvas .edgeLabel .labelBkg { background: transparent !important; color: var(--sc-fg) !important; }
+.statechart-canvas .edgeLabel .label rect, .statechart-canvas .edgeLabel rect { fill: transparent !important; opacity: 0 !important; }
+.statechart-canvas foreignObject { overflow: visible; } /* an italic's overhang is never cut */
+.statechart-canvas .edgeLabel foreignObject[width="0"] { display: none; }
+/* Mermaid caps HTML labels (edge and node) at 200px after measuring them
+   unconstrained; one width for both, line breaks only where the source puts <br/>. */
+foreignObject > div { max-width: none !important; white-space: nowrap !important; }
+/* A state's title and rows carry Stately's inner padding; measured with it,
+   so Mermaid sizes the box to fit (unscoped on purpose, see above). */
+.nodeLabel { display: inline-block; padding: 0 6px; }
+.statechart-canvas .edgeLabel .labelBkg:not(:has(.xsm-pill)) { background: var(--sc-pill) !important; box-shadow: var(--sc-pill-shadow); }
+.edgeLabel .labelBkg:not(:has(.xsm-pill)):not(:has(> span:empty)) { padding: 3px 10px; border: 1px solid transparent; border-radius: 999px; font: 600 12px/1.5 var(--font-mono); }
+/* Stately-style label parts (unscoped: see the note above) */
+.xsm-title { font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+.xsm-pill { display: inline-block; padding: 7px 14px; border-radius: 20px; background: var(--sc-pill, #1B1C27); color: var(--sc-text, #D9DBE8); font-size: 13px; line-height: 1.4; text-align: center; box-shadow: var(--sc-pill-shadow, 0 0 2px rgba(0, 0, 0, .45)); }
+.xsm-ev { font-weight: 600; }
+.xsm-kw { color: var(--sc-dim-strong, #A5A9C0); font-style: italic; font-weight: 400; }
+.xsm-sec { color: var(--sc-dim, #868BA7); font-weight: 500; font-size: 12px; }
+.xsm-if { color: var(--sc-if, #868BA7); font-weight: 600; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
+.xsm-num { display: inline-block; min-width: 16px; height: 16px; padding: 0 4px; box-sizing: border-box; border-radius: 999px; background: var(--sc-dim, #9AA1BD); color: var(--sc-pill, #1C1D29); font-size: 10.5px; font-weight: 700; line-height: 16px; text-align: center; vertical-align: 1px; }
+.xsm-chip { display: inline-block; padding: 2px 8px; margin: 1px 0; border: 1px solid var(--sc-chip-border, rgba(100, 105, 135, .36)); border-radius: 4px; background: var(--sc-chip, #1A1C28); color: var(--sc-text, #D9DBE8); font-family: var(--font-body); font-size: 12px; font-weight: 500; font-style: normal; letter-spacing: 0; line-height: 1.5; }
+.xsm-chip::before { content: ""; display: inline-block; width: 9px; height: 11px; margin-right: 5px; vertical-align: -1px; background: var(--sc-dim, #9AA1BD); -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M13 2 3 14h7l-1 8 10-12h-7l1-8z'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M13 2 3 14h7l-1 8 10-12h-7l1-8z'/%3E%3C/svg%3E") center / contain no-repeat; }
+.xsm-chip-invoke::before { width: 0; height: 0; margin-right: 6px; border-left: 7px solid var(--sc-dim, #9AA1BD); border-top: 4px solid transparent; border-bottom: 4px solid transparent; background: none; -webkit-mask: none; mask: none; vertical-align: 0; }
+.xsm-final { display: inline-block; width: 11px; height: 11px; box-sizing: border-box; border: 2px solid var(--sc-marker, #D9DBE8); outline: 2px solid var(--sc-marker, #D9DBE8); outline-offset: 1px; vertical-align: -1px; margin-right: 7px; }
+.xsm-dot { display: inline-block; width: 7px; height: 7px; margin-right: 6px; border-radius: 50%; background: var(--sc-dim, #9AA1BD); vertical-align: 1px; }
+.xsm-dot-done { background: var(--sc-done, #34D399); }
+.xsm-dot-error { background: var(--sc-error, #F59E0B); }
+/* machine embeds: caption with the chart name and the editor link; a sized
+   placeholder while the lazy render is pending */
+.statechart-embed figcaption { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 12px; text-align: left; }
+.statechart-embed .statechart-name { min-width: 0; overflow-wrap: anywhere; }
+.statechart-embed .statechart-name::before { content: "statechart · "; }
+.statechart-actions { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+.statechart-open { display: inline-flex; align-items: center; min-height: 44px; font-family: var(--font-body); font-size: 12.5px; font-weight: 600; color: #087052; text-decoration: none; white-space: nowrap; }
+html[data-theme="dark"] .statechart-open { color: var(--signal); }
+.statechart-open:hover { text-decoration: underline; }
+.statechart.is-pending .statechart-canvas { min-height: var(--statechart-min, 240px); align-items: center; }
+.statechart.is-pending .statechart-canvas::after { content: "Drawing diagram…"; font-family: var(--font-mono); font-size: 12px; color: var(--fg-faint); }
+.statechart-error { margin: 0; padding: 24px 8px; font-family: var(--font-mono); font-size: 12px; color: var(--fg-faint); text-align: center; }
+@media (max-width: 760px) { .statechart.is-pending .statechart-canvas { min-height: min(var(--statechart-min, 240px), 60vh); } }
+@media print { .statechart-expand, .statechart-lightbox { display: none; } .statechart-open { color: inherit; } }

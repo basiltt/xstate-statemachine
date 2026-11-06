@@ -22,6 +22,21 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
   unchanged and pinned by `tests/test_sync_send_fast_paths.py`. On the
   cross-library benchmark the guard + action row goes from behind
   `transitions` to 1.34x ahead; see `benchmarks/competitors/README.md`.
+- **The documentation draws its diagrams itself.** Stately now asks every
+  visitor to sign in before it shows a hosted machine, so the embedded editor
+  frames on the docs site were blank. The 245 charts in the guides and the
+  example gallery are generated from each machine's JSON
+  (`scripts/diagram_mermaid.py` → `docs/assets/data/diagrams.json`) and
+  rendered in the browser by Mermaid 12 (ELK layout, so transitions are
+  routed orthogonally as in Stately) in the Stately notation: `entry /` and
+  `exit /` action chips and the invoked service inside the state box, event
+  pills with their `if` guard and actions, `after` delays, `done:` / `error:`
+  service results, a final-state mark, dashed parallel regions. Every chart
+  keeps its **Open in Stately** link and the **Full screen** viewer and
+  follows the site theme; in dark mode the charts use the Stately editor's
+  own palette. `scripts/check_diagrams.py` renders all of them headlessly
+  and fails on any overlapping, touching or clipped element. No library
+  code changed.
 
 ### Fixed
 
@@ -38,7 +53,6 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
 - The pure-vs-sync timing test counts the pure API's real per-step allocation
   (inbound and outbound context copies, the rebuilt snapshot sets) in its
   floor, so a cheaper `send()` no longer pushes it towards its limit.
-
 ## [0.12.0] - 2026-11-05
 
 > **Behaviour changes in this release.** The statechart engine now

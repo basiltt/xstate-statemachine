@@ -1,16 +1,22 @@
-"""Place Stately embeds in the docs.
+"""Place the machine diagrams in the docs.
 
 Reads scripts/stately/machine_inventory.json (what is where) and
 scripts/stately/stately_ids.json (inventory key -> Stately machineId), then:
 
-* writes docs/assets/data/stately.json  (the map stately.js fetches),
+* writes docs/assets/data/diagrams.json  (Stately-style Mermaid plus the
+  Stately machine id for every embedded chart; assets/js/diagrams.js draws
+  it in the browser and links "Open in Stately" to the editor page),
 * inserts  <div class="stately" data-machine="KEY" …></div>  after the
   fenced block that defines each machine in every docs page (idempotent:
   a page that already has the div for that key is left alone),
-* writes docs/_guide/example-gallery.md with one embed per machine that
+* writes docs/_guide/example-gallery.md with one diagram per machine that
   lives under examples/ (the shipped example apps and recipes).
+
+Run scripts/check_diagrams.py afterwards: it renders every chart headlessly
+and fails on overlapping or clipped elements.
 """
 
+import html
 import json
 import pathlib
 import re
@@ -18,10 +24,14 @@ import re
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 DOCS = ROOT / "docs"
 INV = json.loads(
-    (ROOT / "scripts" / "stately" / "machine_inventory.json").read_text()
+    (ROOT / "scripts" / "stately" / "machine_inventory.json").read_text(
+        encoding="utf-8"
+    )
 )
 IDS = json.loads(
-    (ROOT / "scripts" / "stately" / "stately_ids.json").read_text()
+    (ROOT / "scripts" / "stately" / "stately_ids.json").read_text(
+        encoding="utf-8"
+    )
 )
 PROJECT = "4dbe1227-e533-4104-9772-dd7c7b3a86df"
 FENCE = re.compile(r"```(\w*)[^\n]*\n(.*?)```\n", re.S)
@@ -69,7 +79,7 @@ def height_for(cfg) -> int:
 
 
 def div(key, cfg, title=None) -> str:
-    t = title or cfg.get("id") or key
+    t = html.escape(str(title or cfg.get("id") or key), quote=True)
     return (
         f'<div class="stately" data-machine="{key}" '
         f'data-height="{height_for(cfg)}" data-title="{t}"></div>\n'
@@ -118,12 +128,29 @@ def place_in_pages() -> int:
     return placed
 
 
+def embedded_keys():
+    """The inventory keys the docs draw: whole machines with a Stately id."""
+    return [
+        key
+        for key, e in INV.items()
+        if key in IDS and worth_drawing(e["config"])
+    ]
+
+
 def write_map() -> None:
-    (DOCS / "assets" / "data").mkdir(parents=True, exist_ok=True)
-    (DOCS / "assets" / "data" / "stately.json").write_text(
-        json.dumps({"project": PROJECT, "machines": IDS}, indent=1),
-        encoding="utf-8",
-    )
+    """Write docs/assets/data/diagrams.json for every embedded chart."""
+    try:
+        from scripts import diagram_mermaid as dm
+    except ImportError:  # run as a script with scripts/ on sys.path
+        import diagram_mermaid as dm
+
+    keys = embedded_keys()
+    titles = {k: INV[k]["config"].get("id") or k for k in keys}
+    asset = dm.build_asset(INV, IDS, keys, titles)
+    dm.DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with dm.DATA_FILE.open("w", encoding="utf-8", newline="\n") as handle:
+        json.dump(asset, handle, indent=1, ensure_ascii=False)
+        handle.write("\n")
 
 
 def write_gallery() -> None:
@@ -140,17 +167,19 @@ def write_gallery() -> None:
     lines = [
         "---",
         "title: Example gallery",
-        "description: Every statechart shipped under examples/, "
-        "drawn live by the Stately editor.",
+        "description: Every statechart shipped under examples/, drawn "
+        "from its JSON with a link to the same machine in Stately.",
         "---",
         "",
         "Every machine under [`examples/`]"
-        "(https://github.com/basiltt/xstate-statemachine/tree/main/examples)",
-        "as the Stately editor draws it. The diagrams follow the site "
-        "theme; each one links to the",
-        "public editor page where you can simulate it. The JSON next to "
-        "each diagram is what the",
-        "example runs unchanged.",
+        "(https://github.com/basiltt/xstate-statemachine/tree/main/examples),",
+        "drawn from its JSON in the Stately style. The diagrams follow the "
+        "site theme; **Full screen**",
+        "opens a zoomable view and **Open in Stately** takes you to the same "
+        "machine in the editor",
+        "(a Stately account is needed there). The JSON next to each diagram "
+        "is what the example",
+        "runs unchanged.",
         "",
     ]
     for group in sorted(groups):
