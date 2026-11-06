@@ -20,7 +20,7 @@ import tempfile
 import threading
 import time
 import unittest
-from typing import Any, Callable, List
+from typing import Any, Callable, List, Optional
 from unittest import mock
 
 from src.xstate_statemachine import (
@@ -92,7 +92,26 @@ def _count(store: Any, key: str) -> int:
         r.stop()
 
 
-def _threads(target: Callable[[int], None], n: int) -> List[BaseException]:
+def _threads(
+    target: Callable[[int], None],
+    n: int,
+    *,
+    stop: Optional[threading.Event] = None,
+    watchdog: float = WATCHDOG_S,
+) -> List[BaseException]:
+    """Run ``target(i)`` on *n* daemon threads; return what they raised.
+
+    Past *watchdog* seconds the still-running threads are ABANDONED: *stop*
+    is set so a cooperative worker exits at its next check, the hung
+    threads ride on the raised error (``exc.threads``) for a test that
+    wants to join them, and the caller fails with "hung past the watchdog".
+
+    📝 Local Windows 11 battle (2026-11): the abandoned threads used to
+       keep running -- and `test_counts`'s worker closed over the enclosing
+       loop's variables by CELL, so once the loop moved on they drove the
+       NEXT subtest's key and counters (`attempted` 1435 and 808 of 800).
+       That "over-count" was never a double-applied event; see `_Smoke`.
+    """
     errors: List[BaseException] = []
 
     def wrap(i: int) -> None:
@@ -106,11 +125,16 @@ def _threads(target: Callable[[int], None], n: int) -> List[BaseException]:
     ]
     for t in ts:
         t.start()
-    deadline = time.monotonic() + WATCHDOG_S
+    deadline = time.monotonic() + watchdog
     for t in ts:
         t.join(max(0.0, deadline - time.monotonic()))
-    if any(t.is_alive() for t in ts):
-        raise AssertionError("threads hung past the watchdog")
+    hung = [t for t in ts if t.is_alive()]
+    if hung:
+        if stop is not None:
+            stop.set()
+        err = AssertionError("threads hung past the watchdog")
+        err.threads = hung  # type: ignore[attr-defined]
+        raise err
     return errors
 
 
@@ -133,6 +157,23 @@ class FaultyStore:
         self.attempts += 1
         if self.attempts in self.fail_on:
             raise self.exc_factory(key, kw)
+        return self.inner.save(key, snapshot, **kw)
+
+
+class _StallingStore:
+    """Wraps a store; while ``stall`` is set every `save` waits at the door
+    (the inner store is untouched). Everything else is delegated."""
+
+    def __init__(self, inner: Any) -> None:
+        self.inner = inner
+        self.stall = threading.Event()
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self.inner, name)
+
+    def save(self, key: str, snapshot: str, **kw: Any) -> int:
+        while self.stall.is_set():
+            time.sleep(0.005)
         return self.inner.save(key, snapshot, **kw)
 
 
@@ -840,12 +881,85 @@ class TestAsync(_Tmp):
 # =============================================================================
 # 🔥 Smoke: 16 threads x 50 on ONE key, per strategy x store
 # =============================================================================
+class _Smoke:
+    """One thread-smoke run: ``threads`` workers each making ``each``
+    ``lock.run`` calls against ONE ``(store, lock, key)``.
+
+    🏛️ Every counter lives on THIS object and the workers re-check ``stop``
+       before every call, so a run the watchdog abandoned can neither reach
+       a later run's counters nor keep hammering the store. The previous
+       shape -- a `work` closure inside the subtest loop -- captured the
+       loop's `lock` / `key` / counters by cell, and one slow FileStore leg
+       turned into "over-counts" on the legs after it.
+    """
+
+    def __init__(
+        self, store: Any, lock: Any, key: str, threads: int, each: int
+    ) -> None:
+        self.store, self.lock, self.key = store, lock, key
+        self.threads, self.each = threads, each
+        self.attempted = 0
+        self.ok = 0
+        self.errs: List[BaseException] = []
+        self.stop = threading.Event()
+        self._lk = threading.Lock()
+
+    def work(self, _n: int) -> None:
+        # 📝 Per-CALL outcomes. A thread that hits one LockTimeoutError
+        #    must keep going, or the thread's REMAINING calls are silently
+        #    lost and `total - len(errs)` undercounts (Windows 3.9 CI: 1
+        #    error, 756 of 800 counted -- the error cost that thread its
+        #    other 44 calls, #263 battle).
+        for _ in range(self.each):
+            if self.stop.is_set():
+                return
+            with self._lk:
+                self.attempted += 1
+            try:
+                self.lock.run(
+                    self.store, self.key, MACHINE, lambda i: i.send("T")
+                )
+            except LockTimeoutError as exc:
+                with self._lk:
+                    self.errs.append(exc)
+            else:
+                with self._lk:
+                    self.ok += 1
+
+    def run(self, watchdog: float = WATCHDOG_S) -> List[BaseException]:
+        return _threads(
+            self.work, self.threads, stop=self.stop, watchdog=watchdog
+        )
+
+
 class TestThreadSmoke(_Tmp):
     THREADS, EACH = 16, 50
+
+    def _watchdog_for(self, store: Any) -> float:
+        """A hang detector scaled to THIS machine's store speed.
+
+        📝 The watchdog exists to catch a deadlock, which never finishes;
+           it must not fire on a disk that is merely slow. On a Windows 11
+           box with on-access antivirus scanning, every `FileStore` lock
+           acquisition cost ~7.5 ms (the holder stamp written into the
+           lock file is scanned on close) and every read of a just-replaced
+           record ~4 ms, so the Optimistic leg -- 8.5 attempts per call --
+           took 96 s against the fixed 60 s that CI's Windows runners stay
+           inside. The bound is the Optimistic worst case: every call
+           conflicting once with every other thread, each attempt a full
+           quiet cycle.
+        """
+        t0 = time.monotonic()
+        for _ in range(3):
+            NoLock().run(store, "calibrate", MACHINE, lambda i: i.send("T"))
+        per_cycle = (time.monotonic() - t0) / 3
+        worst_case = self.THREADS * self.EACH * self.THREADS * per_cycle
+        return max(WATCHDOG_S, worst_case)
 
     def test_counts(self) -> None:
         total = self.THREADS * self.EACH
         for store in self.stores():
+            watchdog = self._watchdog_for(store)
             for lock in (
                 OptimisticLock(retries=100_000, backoff=NO_BACKOFF),
                 PessimisticLock(timeout=60),
@@ -853,34 +967,10 @@ class TestThreadSmoke(_Tmp):
             ):
                 key = type(lock).__name__
                 with self.subTest(store=type(store).__name__, lock=key):
-                    # 📝 Per-CALL outcomes. A thread that hits one
-                    #    LockTimeoutError must keep going, or the thread's
-                    #    REMAINING calls are silently lost and `total -
-                    #    len(errs)` undercounts (Windows 3.9 CI: 1 error,
-                    #    756 of 800 counted -- the error cost that thread
-                    #    its other 44 calls, #263 battle).
-                    attempted = [0]
-                    ok = [0]
-                    errs: List[BaseException] = []
-                    lk = threading.Lock()
-
-                    def work(_n: int) -> None:
-                        for _ in range(self.EACH):
-                            with lk:
-                                attempted[0] += 1
-                            try:
-                                lock.run(
-                                    store, key, MACHINE, lambda i: i.send("T")
-                                )
-                            except LockTimeoutError as exc:
-                                with lk:
-                                    errs.append(exc)
-                            else:
-                                with lk:
-                                    ok[0] += 1
-
-                    self.assertEqual(_threads(work, self.THREADS), [])
-                    self.assertEqual(attempted[0], total)
+                    smoke = _Smoke(store, lock, key, self.THREADS, self.EACH)
+                    self.assertEqual(smoke.run(watchdog), [])
+                    self.assertEqual(smoke.attempted, total)
+                    errs = smoke.errs
                     n = _count(store, key)
                     # 📝 FileStore's per-save critical section waits a
                     #    FIXED 10 s for the OS lock, whatever the STRATEGY
@@ -909,12 +999,50 @@ class TestThreadSmoke(_Tmp):
                         # once; the exact-800 claim is proved on Memory and
                         # SQLite and on FileStore under Pessimistic.
                         self.assertTrue(file_starved, errs)
-                        self.assertEqual(n, ok[0])
-                        self.assertEqual(ok[0] + len(errs), total)
+                        self.assertEqual(n, smoke.ok)
+                        self.assertEqual(smoke.ok + len(errs), total)
                         continue
                     self.assertEqual(errs, [])
                     self.assertEqual(n, total)
                     self.assertEqual(store.load(key).version, total)
+
+    def test_abandoned_run_stops_and_the_next_run_is_exact(self) -> None:
+        """Regression (local Windows 11 battle, 2026-11): a run the watchdog
+        gave up on winds down after its in-flight calls and leaves the next
+        run's key and counters untouched -- no 1435-of-800 "over-count"."""
+        total = self.THREADS * self.EACH
+        for make_lock in (
+            lambda: PessimisticLock(timeout=60),
+            lambda: OptimisticLock(retries=100_000, backoff=NO_BACKOFF),
+        ):
+            lock = make_lock()
+            store = _StallingStore(MemoryStore())
+            with self.subTest(lock=type(lock).__name__):
+                store.stall.set()  # every save blocks: the run cannot finish
+                first = _Smoke(store, lock, "a", self.THREADS, self.EACH)
+                with self.assertRaises(AssertionError) as cm:
+                    first.run(watchdog=0.3)
+                self.assertIn("watchdog", str(cm.exception))
+                self.assertTrue(first.stop.is_set())
+                hung = cm.exception.threads  # type: ignore[attr-defined]
+                self.assertTrue(hung)
+                # Let the stalled saves through: the abandoned workers finish
+                # the call they were inside and then STOP.
+                store.stall.clear()
+                for t in hung:
+                    t.join(WATCHDOG_S)
+                self.assertFalse(any(t.is_alive() for t in hung))
+                self.assertEqual(first.errs, [])
+                self.assertEqual(first.ok, first.attempted)
+                self.assertLessEqual(first.attempted, self.THREADS)
+                self.assertEqual(_count(store, "a"), first.ok)
+                # The next run on the same store sees exactly its own calls.
+                second = _Smoke(store, lock, "b", self.THREADS, self.EACH)
+                self.assertEqual(second.run(), [])
+                self.assertEqual(second.attempted, total)
+                self.assertEqual(_count(store, "b"), total)
+                self.assertEqual(store.load("b").version, total)
+                self.assertEqual(_count(store, "a"), first.ok)
 
 
 if __name__ == "__main__":  # pragma: no cover
