@@ -13,7 +13,18 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **Benchmark table corrected.** The cross-library benchmark was re-measured on
+  2026-11-06 on the unchanged 0.12.0 code, three full sessions on a quiet machine.
+  The 0.12.0 notes claimed the guard + action row for XState-StateMachine (1.14x
+  `transitions`); that rested on a low `transitions` sample (83,360 ev/s against
+  127,000-131,000 in every session since), and the row is `transitions`' by about
+  1.26x. Every other row keeps its winner: statechart scenarios 4.1-4.6x the next
+  library, construction 1.30x and 1,000 instances 1.28x ahead of `transitions`,
+  delayed transitions 1.5x `sismic`. `benchmarks/competitors/README.md`, its
+  `results.json` and the home page carry the new table; the 2026-11-05 table stays
+  in the README as the previous one.
 
 ## [0.12.0] - 2026-11-05
 
