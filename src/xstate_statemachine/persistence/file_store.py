@@ -63,6 +63,14 @@ _SUFFIX = ".xsm.json"
 #: per char once `ensure_ascii` escapes it) with room to spare.
 _HEADER_BYTES = 8192
 _LOCK_SUFFIX = ".lock"
+#: Width of the holder stamp (``"<pid> <wall time>\n"``, space padded) that
+#: `FileStore._os_lock` keeps from byte 1 of a lock file; byte 0 is the
+#: locked byte.
+_STAMP_WIDTH = 63
+#: A stamp that already names the acquiring process and is younger than
+#: this fraction of ``stale_lock_after`` is left alone instead of being
+#: rewritten (see `FileStore._stamp_is_fresh`).
+_STAMP_FRESH_FRACTION = 0.5
 #: 🔐 X0.10: the record FORMAT version (distinct from the per-key record
 #: `version`, the optimistic-locking counter). Bump with an upgrade step
 #: in `_upcast_record`; a newer format is refused, never guessed at.
@@ -302,6 +310,12 @@ else:  # pragma: no cover - exercised on POSIX CI
             fcntl.flock(fd, fcntl.LOCK_UN)
         except OSError:
             pass
+
+
+def _holder_stamp() -> bytes:
+    """The lock-file holder stamp: ``"<pid> <wall time>\n"``, space padded
+    to ``_STAMP_WIDTH`` so a rewrite always covers the previous stamp."""
+    return f"{os.getpid()} {time.time():.3f}\n".ljust(_STAMP_WIDTH).encode()
 
 
 def _pid_alive(pid: int) -> bool:
@@ -854,11 +868,18 @@ class FileStore(BaseStore):
             # Record ownership for stale-lock diagnosis. The OS lock covers
             # byte 0 only; the info lives from byte 1 so a WAITER can still
             # read it (msvcrt.locking blocks reads of the locked byte).
+            # 🏛️ The stamp is rewritten only when it does not already name
+            #    THIS process with a fresh timestamp (`_stamp_is_fresh`).
+            #    A modified lock file is rescanned by on-access antivirus
+            #    when the fd closes -- 10 ms per acquisition under Windows
+            #    Defender against 0.14 ms for the same open/lock/unlock/
+            #    close without the write -- and every `save` and every
+            #    OptimisticLock retry takes this lock. Reading the stamp
+            #    does not dirty the file.
             with contextlib.suppress(OSError):
-                os.lseek(fd, 1, os.SEEK_SET)
-                os.write(
-                    fd, f"{os.getpid()} {time.time():.3f}\n".ljust(63).encode()
-                )
+                if not self._stamp_is_fresh(fd):
+                    os.lseek(fd, 1, os.SEEK_SET)
+                    os.write(fd, _holder_stamp())
                 os.lseek(fd, 0, os.SEEK_SET)
             try:
                 yield
@@ -868,11 +889,39 @@ class FileStore(BaseStore):
         finally:
             os.close(fd)
 
+    def _stamp_is_fresh(self, fd: int) -> bool:
+        """Whether the holder stamp already names THIS pid, recently.
+
+        A fresh stamp is left in place by `_os_lock`, so the common case
+        -- one process taking its own lock again and again -- does not
+        rewrite the lock file; the rewrite, not the lock, is what an
+        on-access scanner charges for. The bound is half
+        ``stale_lock_after``: a waiter judges a holder stale once the
+        stamp is older than ``stale_lock_after`` (`_reclaim_stale`), so
+        with a stamp at most half that old at acquisition a hold shorter
+        than the other half can never read as stale, where a stamp
+        written on every acquisition allowed a hold up to the whole
+        ``stale_lock_after``. A stamp by another pid (live or dead), an
+        unparseable one, one older than the bound or one dated in the
+        future (a clock step) is not fresh and is rewritten as before.
+        """
+        try:
+            os.lseek(fd, 1, os.SEEK_SET)
+            raw = os.read(fd, _STAMP_WIDTH)
+            pid_s, ts_s = raw.decode("utf-8", "replace").split()
+            pid, ts = int(pid_s), float(ts_s)
+        except (OSError, ValueError):
+            return False
+        if pid != os.getpid():
+            return False
+        age = time.time() - ts
+        return 0.0 <= age < self.stale_lock_after * _STAMP_FRESH_FRACTION
+
     def _holder_info(self, lock_path: Path) -> str:
         try:
             with open(lock_path, "rb") as fh:
                 fh.seek(1)  # byte 0 is the locked byte; see _file_lock
-                return fh.read(63).decode("utf-8", "replace").strip()
+                return fh.read(_STAMP_WIDTH).decode("utf-8", "replace").strip()
         except OSError:
             return ""
 
