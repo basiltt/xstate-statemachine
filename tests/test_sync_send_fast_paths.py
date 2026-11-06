@@ -313,6 +313,57 @@ class TestChainResetOrder(unittest.TestCase):
         self.assertEqual(interp.status, "running")
         interp.stop()
 
+    def test_runaway_raise_chain_is_cut_by_max_iterations(self) -> None:
+        # 📝 The budget resets only when a chain has ENDED: internal queue
+        #    empty and the inbox not grown. A reset taken while raised
+        #    events are still queued would let this loop run forever, so
+        #    the drain runs on its own thread under a watchdog.
+        limit = 12
+        cfg = {
+            "id": "m",
+            "initial": "a",
+            "maxIterations": limit,
+            "context": {"n": 0},
+            "states": {
+                "a": {
+                    "on": {
+                        "PING": {
+                            "actions": [
+                                "count",
+                                {"type": "raise", "params": {"event": "PING"}},
+                            ]
+                        }
+                    }
+                }
+            },
+        }
+
+        def count(i: Any, ctx: Any, e: Any, a: Any) -> None:
+            ctx["n"] += 1
+
+        machine = create_machine(
+            cfg, logic=MachineLogic(actions={"count": count})
+        )
+        result: Dict[str, Any] = {}
+
+        def run() -> None:  # the interpreter lives on this thread
+            interp = SyncInterpreter(machine).start()
+            interp.send("PING")
+            result["trips"] = interp.chain_trips
+            result["n"] = interp.context["n"]
+            result["status"] = interp.status
+            interp.stop()
+
+        worker = threading.Thread(target=run, daemon=True)
+        worker.start()
+        worker.join(10.0)
+        self.assertFalse(worker.is_alive(), "the raise loop was never cut")
+        self.assertEqual(result["trips"], 1)
+        # The caller's PING plus at most `limit` raised ones ran.
+        self.assertGreaterEqual(result["n"], 1)
+        self.assertLessEqual(result["n"], limit + 1)
+        self.assertEqual(result["status"], "running")
+
 
 # -------------------------------------------------------------------------
 # 7. actions-only microstep, both engines
