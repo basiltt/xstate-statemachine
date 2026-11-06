@@ -29,7 +29,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Dict, List, Set
+from typing import Dict, List, Optional, Set
 
 import pytest
 
@@ -318,17 +318,34 @@ def test_the_order_charts_reach_paid_with_stub_logic(app: str) -> None:
     assert re.findall(r'"value":\s*"(\w+)"', proc.stdout)[-1] == "paid"
 
 
-def test_fastapi_compose_file_validates() -> None:
+def _compose(*args: str) -> Optional[subprocess.CompletedProcess]:
+    """Run ``docker compose <args>`` in the fastapi example directory.
+
+    📝 GitHub's windows-latest image ships the docker CLI without a
+    running engine, and plugin discovery can then block indefinitely
+    (the 120 s timeout failed the Windows 3.9 cell on PR #425): a hang
+    means "cannot validate here", not "the compose file is wrong".
+    """
     docker = shutil.which("docker")
     if not docker:
         pytest.skip("docker CLI not installed")
-    proc = subprocess.run(
-        [docker, "compose", "config", "-q"],
-        cwd=EXAMPLES / "fastapi_orders",
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
+    try:
+        return subprocess.run(
+            [docker, "compose", *args],
+            cwd=EXAMPLES / "fastapi_orders",
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.skip("docker compose does not answer in this environment")
+
+
+def test_fastapi_compose_file_validates() -> None:
+    version = _compose("version")
+    if version.returncode != 0 or "unknown command" in version.stderr:
+        pytest.skip("docker compose plugin unavailable")
+    proc = _compose("config", "-q")
     if "unknown command" in proc.stderr or "is not a docker" in proc.stderr:
         pytest.skip("docker compose plugin unavailable")
     assert proc.returncode == 0, proc.stderr
