@@ -13,8 +13,35 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ## [Unreleased]
 
+### Changed
+
+- **`SyncInterpreter.send()` does about half the Python calls per event on a
+  guarded self-transition** (66 to 32 under cProfile): the admission, mailbox,
+  timer-pump and held-replay checks are read at the call site instead of
+  calling helpers that return early; a single named-event transition that
+  neither exits nor enters a state (targetless, or an atomic self-transition
+  without `reenter`) takes an actions-only microstep that skips the planning
+  passes; a guard without params is called directly; the rollback queue-depth
+  probe runs only under a non-`"continue"` `actionErrorPolicy`. Semantics are
+  unchanged and pinned by `tests/test_sync_send_fast_paths.py`. On the
+  cross-library benchmark the guard + action row goes from behind
+  `transitions` to 1.34x ahead; see `benchmarks/competitors/README.md`.
+
 ### Fixed
 
+- **Benchmark table corrected and re-measured.** The 0.12.0 notes claimed the
+  guard + action row for XState-StateMachine (1.14x `transitions`); on the
+  unchanged 0.12.0 code three quiet sessions put `transitions` ahead by about
+  1.26x (its 2026-11-05 figure of 83,360 ev/s was a low sample against
+  127,000-131,000 since). The benchmark README keeps that corrected 0.12.0 table
+  as the previous one; `results.json`, the README's current table and the home
+  page now show the measurement with the `send()` fast paths above, where every
+  other row keeps its winner: statechart scenarios 4.7-4.9x the next
+  library, construction 1.35x and 1,000 instances 1.29x ahead of
+  `transitions`, delayed transitions 1.7x `sismic`.
+- The pure-vs-sync timing test counts the pure API's real per-step allocation
+  (inbound and outbound context copies, the rebuilt snapshot sets) in its
+  floor, so a cheaper `send()` no longer pushes it towards its limit.
 - **The `xsm` console no longer keeps the first `sys.stdout` it saw.** A
   `Console` built without an explicit stream (the process-wide one that
   `get_console()` caches, which every subcommand writes through) bound
