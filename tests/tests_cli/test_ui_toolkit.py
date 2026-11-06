@@ -449,6 +449,111 @@ class TestDetectAndConsole(unittest.TestCase):
     def test_console_interactive_requires_tty_stdin(self) -> None:
         self.assertFalse(Console(PLAIN, io.StringIO()).interactive)
 
+    def test_default_console_follows_sys_stdout(self) -> None:
+        """A console built without a stream writes to the CURRENT
+        ``sys.stdout``, not to the one it saw at construction.
+
+        The process-wide console `get_console()` caches outlives any one
+        ``sys.stdout``: under pytest the first CLI test's capture stream
+        is closed at its teardown, and the next command through the
+        cached console used to raise ``ValueError: I/O operation on
+        closed file`` (the `xsm inspect`/`replay`/`simulate` battle tests
+        failed or passed depending on test order).
+        """
+        first = io.StringIO()
+        with mock.patch.object(sys, "stdout", first):
+            c = Console(PLAIN)
+        first.close()  # what pytest does to a per-test capture stream
+        second = io.StringIO()
+        with mock.patch.object(sys, "stdout", second):
+            c.print("hello")
+            c.ok("done")
+        self.assertEqual(second.getvalue(), "hello\nOK done\n")
+        self.assertTrue(first.closed)
+        err = io.StringIO()
+        with mock.patch.object(sys, "stderr", err):
+            c.error("boom", to_stderr=True)
+        self.assertEqual(err.getvalue(), "X boom\n")
+
+    def test_explicit_stream_stays_bound(self) -> None:
+        buf = io.StringIO()
+        c = Console(PLAIN, buf)
+        elsewhere = io.StringIO()
+        with mock.patch.object(sys, "stdout", elsewhere):
+            c.print("pinned")
+        self.assertEqual(buf.getvalue(), "pinned\n")
+        self.assertEqual(elsewhere.getvalue(), "")
+        self.assertIs(c.out, buf)
+
+    def test_out_can_be_reassigned(self) -> None:
+        c = Console(PLAIN)
+        target = io.StringIO()
+        c.out = target
+        c.print("moved")
+        self.assertEqual(target.getvalue(), "moved\n")
+        c.out = None  # back to following sys.stdout
+        live = io.StringIO()
+        with mock.patch.object(sys, "stdout", live):
+            c.print("back")
+        self.assertEqual(live.getvalue(), "back\n")
+
+    def test_followed_stdout_redetects_capabilities(self) -> None:
+        """A probed console re-probes when it follows a swapped stream.
+
+        The write destination already followed ``sys.stdout``; the caps
+        (colour, glyphs, animation) stayed frozen from construction, so a
+        swap to a file or pipe kept receiving ANSI and box glyphs.
+        """
+        first, second = io.StringIO(), io.StringIO()
+        with (
+            mock.patch(
+                "src.xstate_statemachine.cli.ui.console.detect",
+                side_effect=[RICH, PLAIN],
+            ) as probe,
+            mock.patch.object(sys, "stdout", first),
+        ):
+            c = Console()
+            self.assertIs(c.caps, RICH)
+            with mock.patch.object(sys, "stdout", second):
+                c.ok("done")
+                # 📝 Asserted while the swap is in force: after it, the
+                #    console correctly re-probes the real stdout again.
+                self.assertIs(c.caps, PLAIN)
+                self.assertEqual(probe.call_count, 2)
+                self.assertNotIn("", second.getvalue())
+
+    def test_explicit_caps_are_never_reprobed(self) -> None:
+        with mock.patch(
+            "src.xstate_statemachine.cli.ui.console.detect"
+        ) as probe:
+            c = Console(PLAIN)
+            probe.assert_not_called()
+            with mock.patch.object(sys, "stdout", io.StringIO()):
+                c.print("x")
+            probe.assert_not_called()
+        self.assertIs(c.caps, PLAIN)
+
+    def test_cached_console_survives_a_stdout_swap(self) -> None:
+        """`get_console()` builds the process-wide console once; every
+        later command must still reach the live ``sys.stdout``."""
+        from src.xstate_statemachine.cli.commands import (
+            get_console,
+            reset_console,
+        )
+
+        reset_console()
+        try:
+            first = io.StringIO()
+            with mock.patch.object(sys, "stdout", first):
+                self.assertIs(get_console(), get_console())
+            first.close()
+            second = io.StringIO()
+            with mock.patch.object(sys, "stdout", second):
+                get_console().print("still here")
+            self.assertEqual(second.getvalue(), "still here\n")
+        finally:
+            reset_console()
+
     def test_zero_dependency_guard(self) -> None:
         _zero_dep_guard()
 

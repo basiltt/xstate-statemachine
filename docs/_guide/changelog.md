@@ -81,6 +81,23 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 - The pure-vs-sync timing test counts the pure API's real per-step allocation
   (inbound and outbound context copies, the rebuilt snapshot sets) in its
   floor, so a cheaper `send()` no longer pushes it towards its limit.
+- **The `xsm` console no longer keeps the first `sys.stdout` it saw.** A
+  `Console` built without an explicit stream (the process-wide one that
+  `get_console()` caches, which every subcommand writes through) bound
+  `sys.stdout` once, at construction. A host that redirected output after
+  the CLI package was first used (a test runner's per-test capture, a
+  server or management command that swaps `sys.stdout`) then saw that
+  output land in the old stream, or got `ValueError: I/O operation on
+  closed file` once the old stream was closed; in this repository's own
+  suite three `inspect` / `replay` / `simulate` tests passed or failed
+  depending on which test ran first. The console now looks `sys.stdout`
+  up on every write (`error(to_stderr=True)` already read `sys.stderr`
+  at call time), `Console.out` is a settable property, and a stream passed
+  explicitly (`Console(stream=...)`) stays bound exactly as before.
+  A probed console also re-probes its colour, glyph and animation
+  capabilities when the stream it follows changes, so a swap to a
+  file or pipe stops emitting ANSI and box glyphs.
+
 ## [0.12.0] - 2026-11-05
 
 > **Behaviour changes in this release.** The statechart engine now
