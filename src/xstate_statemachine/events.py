@@ -332,6 +332,10 @@ def is_system_event(event: Any) -> bool:
     A plain `Event` is engine-made only when created via
     :func:`system_event` (init/exit sentinels, `escalate`, restore).
     """
+    # ⚡ The exact public class (every `send("X")`) cannot be one of the
+    #    private `_Engine*` subclasses: its provenance mark decides alone.
+    if type(event) is Event:
+        return event._provenance is _ENGINE_MARK
     if isinstance(event, _ENGINE_MINTED_TYPES):
         return True
     return isinstance(event, Event) and event._provenance is _ENGINE_MARK
