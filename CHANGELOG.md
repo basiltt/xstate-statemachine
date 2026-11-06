@@ -22,6 +22,18 @@ deprecations are retired: [Deprecation Policy](https://basiltt.github.io/xstate-
   `results.json` and the home page carry the new table; the 2026-11-05 table stays
   in the README as the previous one.
 
+### Changed
+
+- `SyncInterpreter.send()` on the guarded self-transition hot path does
+  about half the Python calls per event (66 -> 32): the admission, mailbox,
+  timer-pump and held-replay checks are read at the call site, a
+  single-transition actions-only microstep skips the planning passes, a
+  plain guard without params is called directly, an action callable is
+  vetted as sync once, and the rollback queue-depth probe runs only under
+  a non-`"continue"` `actionErrorPolicy`. Semantics are unchanged. The
+  cross-library "guard + action" row (S2) went from ~92k to ~150k
+  events/s on the reference laptop.
+
 ## [0.12.0] - 2026-11-05
 
 > **Behaviour changes in this release.** The statechart engine now
