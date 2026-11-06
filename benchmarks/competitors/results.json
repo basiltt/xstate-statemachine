@@ -15,120 +15,120 @@
       "lib": "python-statemachine",
       "scenario": "S1",
       "n": 20000,
-      "median_s": 2.4240147001110017,
-      "ops_per_s": 8250.775046489673,
+      "median_s": 2.1082363999448717,
+      "ops_per_s": 9486.602166874161,
       "note": ""
     },
     {
       "lib": "python-statemachine",
       "scenario": "S2",
       "n": 20000,
-      "median_s": 2.483521099900827,
-      "ops_per_s": 8053.082375985712,
+      "median_s": 2.5259378000628203,
+      "ops_per_s": 7917.851341985775,
       "note": ""
     },
     {
       "lib": "python-statemachine",
       "scenario": "S3",
       "n": 20000,
-      "median_s": 5.7356793999206275,
-      "ops_per_s": 3486.945243187192,
+      "median_s": 5.313584200106561,
+      "ops_per_s": 3763.9377201548646,
       "note": ""
     },
     {
       "lib": "python-statemachine",
       "scenario": "S4",
       "n": 20000,
-      "median_s": 6.076773200184107,
-      "ops_per_s": 3291.220412733861,
+      "median_s": 5.45986959990114,
+      "ops_per_s": 3663.091147884216,
       "note": ""
     },
     {
       "lib": "python-statemachine",
       "scenario": "S5",
       "n": 200,
-      "median_s": 0.16308790002949536,
-      "ops_per_s": 1226.3325480543247,
+      "median_s": 0.16073819994926453,
+      "ops_per_s": 1244.2592990535422,
       "note": ""
     },
     {
       "lib": "python-statemachine",
       "scenario": "S6",
       "n": 1000,
-      "median_s": 0.37307079997844994,
-      "ops_per_s": 2680.456363933505,
+      "median_s": 0.2817486999556422,
+      "ops_per_s": 3549.262162194315,
       "note": ""
     },
     {
       "lib": "python-statemachine",
       "scenario": "S7",
       "n": 200,
-      "median_s": 0.07796450005844235,
-      "ops_per_s": 2565.270088951761,
+      "median_s": 0.05008429987356067,
+      "ops_per_s": 3993.267361326924,
       "note": ""
     },
     {
       "lib": "python-statemachine",
       "scenario": "S8",
       "n": 20000,
-      "median_s": 3.1471881000325084,
-      "ops_per_s": 6354.879137917881,
+      "median_s": 3.0043582001235336,
+      "ops_per_s": 6656.995826655303,
       "note": ""
     },
     {
       "lib": "sismic",
       "scenario": "S1",
       "n": 20000,
-      "median_s": 1.6784055999014527,
-      "ops_per_s": 11916.07082410491,
+      "median_s": 1.578086300054565,
+      "ops_per_s": 12673.578117564588,
       "note": ""
     },
     {
       "lib": "sismic",
       "scenario": "S2",
       "n": 20000,
-      "median_s": 1.6934433998540044,
-      "ops_per_s": 11810.255956428331,
+      "median_s": 1.7168687998782843,
+      "ops_per_s": 11649.11378284577,
       "note": ""
     },
     {
       "lib": "sismic",
       "scenario": "S3",
       "n": 20000,
-      "median_s": 4.1809891001321375,
-      "ops_per_s": 4783.557077287744,
+      "median_s": 4.185817099874839,
+      "ops_per_s": 4778.039633073797,
       "note": ""
     },
     {
       "lib": "sismic",
       "scenario": "S4",
       "n": 20000,
-      "median_s": 4.5535005000419915,
-      "ops_per_s": 4392.225278072456,
+      "median_s": 4.052372799953446,
+      "ops_per_s": 4935.380081573384,
       "note": "supported natively via 'parallel states' in the statechart YAML"
     },
     {
       "lib": "sismic",
       "scenario": "S5",
       "n": 200,
-      "median_s": 0.7984986999072134,
-      "ops_per_s": 250.47003836479664,
+      "median_s": 0.7213159999810159,
+      "ops_per_s": 277.27098803473615,
       "note": ""
     },
     {
       "lib": "sismic",
       "scenario": "S6",
       "n": 1000,
-      "median_s": 0.1588814000133425,
-      "ops_per_s": 6294.002947582425,
+      "median_s": 0.12269419990479946,
+      "ops_per_s": 8150.344521386644,
       "note": ""
     },
     {
       "lib": "sismic",
       "scenario": "S7",
       "n": 200,
-      "median_s": 0.036722199991345406,
-      "ops_per_s": 5446.296791780871,
+      "median_s": 0.03391989995725453,
+      "ops_per_s": 5896.243805318934,
       "note": ""
     },
     {
@@ -143,64 +143,64 @@
       "lib": "transitions",
       "scenario": "S1",
       "n": 20000,
-      "median_s": 0.14370310003869236,
-      "ops_per_s": 139175.84237650377,
+      "median_s": 0.14148820005357265,
+      "ops_per_s": 141354.54400032837,
       "note": ""
     },
     {
       "lib": "transitions",
       "scenario": "S2",
       "n": 20000,
-      "median_s": 0.23992449999786913,
-      "ops_per_s": 83359.55686133608,
+      "median_s": 0.16388789983466268,
+      "ops_per_s": 122034.63477277383,
       "note": ""
     },
     {
       "lib": "transitions",
       "scenario": "S3",
       "n": 20000,
-      "median_s": 2.9846995000261813,
-      "ops_per_s": 6700.842078013067,
+      "median_s": 2.231289600022137,
+      "ops_per_s": 8963.426352097718,
       "note": ""
     },
     {
       "lib": "transitions",
       "scenario": "S4",
       "n": 20000,
-      "median_s": 3.5045608999207616,
-      "ops_per_s": 5706.849037907203,
+      "median_s": 3.1169888998847455,
+      "ops_per_s": 6416.448900648804,
       "note": ""
     },
     {
       "lib": "transitions",
       "scenario": "S5",
       "n": 200,
-      "median_s": 0.02294659987092018,
-      "ops_per_s": 8715.88824161511,
+      "median_s": 0.022802300052717328,
+      "ops_per_s": 8771.045005881597,
       "note": ""
     },
     {
       "lib": "transitions",
       "scenario": "S6",
       "n": 1000,
-      "median_s": 0.028592299902811646,
-      "ops_per_s": 34974.4512823071,
+      "median_s": 0.02703690016642213,
+      "ops_per_s": 36986.48860796281,
       "note": ""
     },
     {
       "lib": "transitions",
       "scenario": "S7",
       "n": 200,
-      "median_s": 3.05262149986811,
-      "ops_per_s": 65.5174577027126,
+      "median_s": 2.774542900035158,
+      "ops_per_s": 72.08394579066184,
       "note": ""
     },
     {
       "lib": "transitions",
       "scenario": "S8",
       "n": 20000,
-      "median_s": 0.5688728999812156,
-      "ops_per_s": 35157.23811181796,
+      "median_s": 0.5081276001874357,
+      "ops_per_s": 39360.19218917156,
       "note": ""
     },
     {
@@ -263,32 +263,32 @@
       "lib": "xstate-statemachine (async)",
       "scenario": "S8",
       "n": 20000,
-      "median_s": 0.8052809999790043,
-      "ops_per_s": 24836.05101886354,
+      "median_s": 0.7426852001808584,
+      "ops_per_s": 26929.31001604665,
       "note": ""
     },
     {
       "lib": "xstate-statemachine (pure)",
       "scenario": "S1",
       "n": 20000,
-      "median_s": 0.5059334000106901,
-      "ops_per_s": 39530.89477701494,
+      "median_s": 0.4253038000315428,
+      "ops_per_s": 47025.20880019575,
       "note": ""
     },
     {
       "lib": "xstate-statemachine (pure)",
       "scenario": "S2",
       "n": 20000,
-      "median_s": 0.5781397998798639,
-      "ops_per_s": 34593.7090028328,
+      "median_s": 0.3861439998727292,
+      "ops_per_s": 51794.149349962405,
       "note": ""
     },
     {
       "lib": "xstate-statemachine (pure)",
       "scenario": "S3",
       "n": 20000,
-      "median_s": 1.0757359999697655,
-      "ops_per_s": 18591.922182173057,
+      "median_s": 0.9023601000662893,
+      "ops_per_s": 22164.100560885567,
       "note": ""
     },
     {
@@ -335,56 +335,56 @@
       "lib": "xstate-statemachine (sync)",
       "scenario": "S1",
       "n": 20000,
-      "median_s": 0.24703530012629926,
-      "ops_per_s": 80960.08946808332,
+      "median_s": 0.20757069997489452,
+      "ops_per_s": 96352.71260548325,
       "note": ""
     },
     {
       "lib": "xstate-statemachine (sync)",
       "scenario": "S2",
       "n": 20000,
-      "median_s": 0.21074089989997447,
-      "ops_per_s": 94903.26751709208,
+      "median_s": 0.12257910007610917,
+      "ops_per_s": 163159.9513096607,
       "note": ""
     },
     {
       "lib": "xstate-statemachine (sync)",
       "scenario": "S3",
       "n": 20000,
-      "median_s": 0.5673467998858541,
-      "ops_per_s": 35251.80719098768,
+      "median_s": 0.47908749990165234,
+      "ops_per_s": 41746.02761313043,
       "note": ""
     },
     {
       "lib": "xstate-statemachine (sync)",
       "scenario": "S4",
       "n": 20000,
-      "median_s": 0.7572624001186341,
-      "ops_per_s": 26410.924399345276,
+      "median_s": 0.6373634999617934,
+      "ops_per_s": 31379.267876492606,
       "note": ""
     },
     {
       "lib": "xstate-statemachine (sync)",
       "scenario": "S5",
       "n": 200,
-      "median_s": 0.015798900043591857,
-      "ops_per_s": 12659.109143558471,
+      "median_s": 0.01694550015963614,
+      "ops_per_s": 11802.543336926472,
       "note": ""
     },
     {
       "lib": "xstate-statemachine (sync)",
       "scenario": "S6",
       "n": 1000,
-      "median_s": 0.021910800132900476,
-      "ops_per_s": 45639.59298311683,
+      "median_s": 0.02088640001602471,
+      "ops_per_s": 47878.04500693122,
       "note": ""
     },
     {
       "lib": "xstate-statemachine (sync)",
       "scenario": "S7",
       "n": 200,
-      "median_s": 0.02360660000704229,
-      "ops_per_s": 8472.206922654523,
+      "median_s": 0.020024599973112345,
+      "ops_per_s": 9987.715123825008,
       "note": ""
     },
     {

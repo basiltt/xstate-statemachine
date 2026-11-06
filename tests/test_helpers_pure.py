@@ -128,10 +128,13 @@ class TestPurePerf(_Quiet):
     def test_pure_api_not_slower_than_sync_interpreter(self) -> None:
         """Engine work of the pure path within 2x of a real `send()`.
 
-        The pure API must allocate a new immutable snapshot per step (one
-        context deepcopy + object), which `send()` never pays; that floor
-        is subtracted so the assertion measures ENGINE cost. Best-of-5 to
-        reject scheduler noise. Measured ~1.1x on a quiet host.
+        The pure API must copy the caller's context in (the snapshot stays
+        immutable), copy it out again and build a fresh snapshot with its
+        id and node sets on every step -- work `send()` never pays. That
+        floor is subtracted so the assertion measures ENGINE cost.
+        Best-of-5 to reject scheduler noise. Measured ~1.3x on a quiet
+        host (it was ~1.1x before the 0.12.x sync `send()` fast paths made
+        the denominator cheaper).
         """
         cfg = {
             "id": "p",
@@ -168,14 +171,22 @@ class TestPurePerf(_Quiet):
             return (time.perf_counter() - t0) / N
 
         def time_floor() -> float:
+            # 📝 Mirrors what `_reset_probe` + `_capture` allocate per step
+            #    without any engine work: the inbound copy, the outbound
+            #    copy, the snapshot object and its rebuilt sets/dicts.
             ctx = {"n": 0}
+            nodes = {m, m.get_state_by_id("p.a")}
             t0 = time.perf_counter()
             for _ in range(N):
-                PureSnapshot(
-                    state_ids={"p.a"},
-                    configuration={"p", "p.a"},
+                copy.deepcopy(ctx)  # inbound: the caller's snapshot is kept
+                snap = PureSnapshot(
+                    state_ids={node.id for node in nodes},
+                    configuration={node.id for node in nodes},
                     context=copy.deepcopy(ctx),
                 )
+                snap._nodes = set(nodes)
+                snap._history = {}
+                snap._entry_order = {node: 1 for node in nodes}
             return (time.perf_counter() - t0) / N
 
         for fn in (time_sync, time_pure, time_floor):
