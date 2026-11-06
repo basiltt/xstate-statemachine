@@ -155,6 +155,14 @@ class _Done(Generic[_T]):
         return repr(self.value)
 
 
+# ⚡ `_Done` is never mutated after construction (`value` is written only
+#    in `__init__`), so the leaves that finish with ``None`` share one.
+_DONE_NONE: "_Done[None]" = _Done(None)
+# ⚡ Clocks whose `pump()` is exactly "return 0 on an empty heap"; `send()`
+#    reads the heap itself for these (exact classes only, see the pump).
+_HEAP_CLOCKS = (RealClock, SimulatedClock)
+
+
 #: Statuses with no owner left to drain the #305 mailbox.
 _TERMINAL_STATUSES = ("stopped", "done", "error")
 
@@ -286,6 +294,9 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #: 🧵 ENG-06: set on a spawned child that shares its parent's clock
         #: (a `SimulatedClock`), so its pump fires only its OWN deadlines.
         self._shares_parent_clock: bool = False
+        #: ⚡ Action callables already proven sync by `_is_async_callable`.
+        #: Keyed by the callable OBJECT, so replacing `logic.actions[name]`
+        #: re-checks the new one; only a sync verdict is ever cached.
         _info = logger.isEnabledFor(logging.INFO)  # ⚡ per construction
         if _info:
             logger.info("⛓️ Initializing Synchronous Interpreter... 🚀")
@@ -809,18 +820,26 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 )
             return None
 
-        event_obj = self._prepare_event_reporting(event_or_type, **payload)
-        if type(event_or_type) is not str:
-            # ⚡ A `str` send cannot carry a reserved key: `wait` and
-            #    `priority` are consumed by the signature. Only the dict
-            #    and Event forms can clash (#39).
-            self._warn_reserved_payload_keys(event_obj)
-        self._check_strict(event_obj)  # #51
-        # ⛔ #304: an interceptor (idempotency inbox, rate limit) may answer
-        #    the caller without the machine ever seeing the event.
-        intercepted = self._intercept_before_send(event_obj)
-        if intercepted is not None:
-            return intercepted if wait else None
+        if type(event_or_type) is str and event_or_type:
+            # ⚡ `_prepare_event_reporting`'s own str fast path, inlined:
+            #    a non-empty str cannot be invalid and carries no reserved
+            #    key (`wait` / `priority` are consumed by the signature).
+            event_obj: AnyEvent = Event(type=event_or_type, payload=payload)
+        else:
+            event_obj = self._prepare_event_reporting(event_or_type, **payload)
+            if type(event_or_type) is not str:
+                # ⚡ Only the dict and Event forms can clash (#39).
+                self._warn_reserved_payload_keys(event_obj)
+        # 📝 The callees test exactly these conditions first; reading them
+        #    here only saves the call frames when there is nothing to do.
+        if self.strict or self.machine.event_schemas:
+            self._check_strict(event_obj)  # #51
+        if self._plugins:
+            # ⛔ #304: an interceptor (idempotency inbox, rate limit) may
+            #    answer the caller without the machine ever seeing it.
+            intercepted = self._intercept_before_send(event_obj)
+            if intercepted is not None:
+                return intercepted if wait else None
         if wait and self._is_processing:
             # 🔒 #219 (parity): a `send(wait=True)` from inside an action is
             #    re-entrant -- the event is queued behind the running step
@@ -848,8 +867,10 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         # 🧵 #305: cross-thread events run FIRST, as their own steps, so
         #    the per-step flags and before-image below describe only the
         #    caller's event.
-        self._drain_mailbox()
-        self._deferred_this_step.clear()  # #106: per-step scope
+        if self._mailbox or self._finished_children:  # 📝 = its own gate
+            self._drain_mailbox()
+        if self._deferred_this_step:
+            self._deferred_this_step.clear()  # #106: per-step scope
         self._guard_denied_this_step = False  # #153: per-step scope
         if wait:
             config_before = frozenset(self._active_state_nodes)
@@ -859,7 +880,16 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         step_error: Optional[BaseException] = None
         # ⏰ #50: deliver every deadline that has elapsed BEFORE this event,
         #    on this thread, in due order -- the pump.
-        self._pump_timers()
+        # 📝 `RealClock.pump` / `SimulatedClock.pump` return at once on an
+        #    empty heap; for exactly those classes (not subclasses, not a
+        #    custom Clock, not an ENG-06 shared clock) read it here.
+        clock = self.clock
+        if (
+            self._shares_parent_clock
+            or type(clock) not in _HEAP_CLOCKS
+            or not clock._heap.is_empty()  # type: ignore[attr-defined]
+        ):
+            self._pump_timers()
         self._event_queue.append(event_obj)
         self._caller_event, self._caller_receipt = event_obj, None
         try:
@@ -877,7 +907,8 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         finally:
             self._caller_event = None
         if not wait:
-            self._run_held_replays()
+            if self._held_replays:  # 📝 = `_run_held_replays`' own gate
+                self._run_held_replays()
             return None
         if self._caller_receipt is not None:
             # 🧾 #304: the observer path already built this event's receipt
@@ -1314,7 +1345,9 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #    as a user event so the chain count starts at their FIRST
         #    descendant, which is what the async engine's `_raise_depth`
         #    does. Without this the sync engine cut a chain one link short.
-        seed_internal = len(self._internal_queue)
+        seed_internal = (
+            len(self._internal_queue) if self._internal_queue else 0
+        )
         generated = 0
         # 🏛️ #88: `tripped` is per CHAIN, not per drain. It is cleared by
         #    the same condition that resets `generated` (a step that produced
@@ -1329,7 +1362,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         # ⚡ Once per drain, not per event: whether any attached plugin
         #    overrides `on_event_processed` (a plugin attached by an
         #    action mid-drain is observed from the next drain on).
-        observe = self._wants_event_processed
+        observe = bool(self._plugins) and self._wants_event_processed
         try:
             while self._event_queue or self._internal_queue:
                 if self.status != "running":
@@ -1501,12 +1534,20 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                     self._deferred_this_step.clear()
                     self._guard_denied_this_step = False
                     self.last_transition_ok = True
-                queued_before = len(self._internal_queue) + len(
-                    self._event_queue
+                # ⚡ Empty queues are the common case: skip both len() calls.
+                queued_before = (
+                    len(self._internal_queue) + len(self._event_queue)
+                    if self._internal_queue or self._event_queue
+                    else 0
                 )
                 try:
                     self._drive(self._process_event(current_event))
-                    self._process_transient_transitions()
+                    # 📝 `_process_transient_transitions`' own early return,
+                    #    read here: no `always` -> only #204 invoke arming.
+                    if self.machine.has_always_transitions:
+                        self._process_transient_transitions()
+                    elif self._states_to_invoke:
+                        self._arm_pending_invokes()
                 except Exception as exc:
                     if observe:
                         self._emit_event_processed(
@@ -1556,10 +1597,11 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 #    self-generated work remains queued: the internal queue
                 #    is empty (the inbox may still hold the caller's own
                 #    events, which are not part of any chain).
-                if (
-                    len(self._internal_queue) + len(self._event_queue)
-                    <= queued_before
-                    and not self._internal_queue
+                # 📝 Same test, ordered so the empty case needs no len():
+                #    with the internal queue empty, the sum is len(inbox).
+                if not self._internal_queue and (
+                    not self._event_queue
+                    or len(self._event_queue) <= queued_before
                 ):
                     generated = 0
                     tripped = False
@@ -1734,13 +1776,17 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         event: Any,
     ) -> "_Done[None]":
         """Leaf: call one action inline; refuse every async shape (LC-58)."""
+        # 📝 `_is_async_callable` is memoised per callable (weak keys), so
+        #    the shape check costs one lookup here, never the probes again.
         if self._is_async_callable(impl):
             raise NotSupportedError(
                 f"Async action '{action_def.type}' not supported by "
                 f"SyncInterpreter."
             )
         result = impl(self, self.context, event, action_def)
-        if inspect.iscoroutine(result):
+        # ⚡ An action returns None; only a non-None result can be the
+        #    coroutine of an async action in disguise (ENG-08).
+        if result is not None and inspect.iscoroutine(result):
             # 🔥 ENG-08: a plain def that RETURNS a coroutine is an async
             #    action in disguise. Its body never ran; refuse it loudly
             #    like any async action (and close it: no "never awaited"
@@ -1750,7 +1796,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
                 f"Action '{action_def.type}' returned a coroutine; async "
                 f"actions are not supported by SyncInterpreter."
             )
-        return _Done(None)
+        return _DONE_NONE
 
     def _deliver_completion(self, event: AnyEvent) -> None:
         """Queue a service completion produced INSIDE the current macrostep.

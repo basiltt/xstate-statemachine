@@ -73,6 +73,7 @@ from .events import (
     _engine_after,
     _engine_done,
     _engine_error,
+    _ENGINE_MARK,
     is_system_event,
     persist_event,
     restore_event,
@@ -1841,7 +1842,8 @@ class BaseInterpreter(Generic[TContext]):
         #    sees a refused event; the caller still gets `InvalidEventError`.
         # ⚡ `str` is the overwhelmingly common shape and cannot be invalid
         #    (a non-empty str IS an event type; an empty one is caught by
-        #    `_prepare_event`); skip the try/except frame for it.
+        #    `_prepare_event`); skip the try/except frame for it. This
+        #    branch is inlined in `SyncInterpreter.send()`: keep them in step.
         if type(raw) is str and raw:
             return Event(type=raw, payload=payload)
         try:
@@ -4044,6 +4046,22 @@ class BaseInterpreter(Generic[TContext]):
         # 2. Execute the selected set as one microstep: conflicting
         #    transitions are dropped first, then every exit, every
         #    transition's actions, every entry (XState v5 `microstep`).
+        elif len(transitions) == 1 and event.type:
+            # ⚡ One named-event transition that `_plan_transition` would
+            #    map to ``None`` (targetless, or an atomic self-transition
+            #    without `reenter`) is the microstep's actions-only branch;
+            #    the same test on build-time data skips its list passes.
+            #    The eventless case keeps the generic path.
+            only = transitions[0]
+            if not only.target_str or (
+                only.resolved_target is only.source
+                and not only.reenter
+                and not only.source.states
+                and len(only.target_strs) == 1
+            ):
+                await self._execute_actions_only_microstep(only, event)
+            else:
+                await self._execute_microstep(transitions, event)
         else:
             await self._execute_microstep(transitions, event)
 
@@ -4827,6 +4845,21 @@ class BaseInterpreter(Generic[TContext]):
             len(self._actors) != actors
         )
 
+    async def _execute_actions_only_microstep(
+        self, transition: TransitionDefinition, event: AnyEvent
+    ) -> None:
+        """`_execute_microstep`'s actions-only branch for ONE named event.
+
+        Identical to that branch with a single plan: nothing exits or
+        enters, the transition runs as its own context transaction and
+        subscribers are notified once (an actions-only microstep is still
+        a new snapshot).
+        """
+        self._microstep_changed = True
+        await self._execute_internal_transition(transition, event)
+        if self._subscribers:
+            self._notify_subscribers()
+
     async def _execute_microstep(
         self,
         transitions: Sequence[TransitionDefinition],
@@ -5159,7 +5192,14 @@ class BaseInterpreter(Generic[TContext]):
             and transition.actions
             else None
         )
-        internal_depth_before = self._internal_queue_depth()
+        # 📝 Read only by `_finish_rollback`, i.e. after `_RollbackRequested`,
+        #    which `_apply_action_error_policy` raises only when the policy
+        #    is not "continue"; under "continue" ``None`` is never consumed.
+        internal_depth_before = (
+            self._internal_queue_depth()
+            if self.machine.action_error_policy != "continue"
+            else None
+        )
         try:
             failed = await self._execute_actions(transition.actions, event)
             if failed:
@@ -5234,8 +5274,15 @@ class BaseInterpreter(Generic[TContext]):
             #    claimed a name out of the user's own namespace: a user
             #    action `spawn_place_order` was hijacked into a spawn of a
             #    service called "place_order" that did not exist.
+            # ⚡ The lookup runs first: a found user action can never satisfy
+            #    the spawn test below (it requires the name NOT to be in
+            #    `logic.actions`), so that test runs only on a miss.
+            impl = self.machine.logic.actions.get(action_def.type)
             if (
-                action_def.type.startswith((SPAWN_BLOCKING_PREFIX, "spawn_"))
+                impl is None
+                and action_def.type.startswith(
+                    (SPAWN_BLOCKING_PREFIX, "spawn_")
+                )
                 and not is_builtin(action_def.type)
                 and action_def.type not in self.machine.logic.actions
             ):
@@ -5244,8 +5291,6 @@ class BaseInterpreter(Generic[TContext]):
                 # missing action -- both engines behaved this way before.
                 await self._spawn_actor(action_def, event)
                 continue
-
-            impl = self.machine.logic.actions.get(action_def.type)
 
             # 🎬 Built-in action creators. Resolved only when the user has
             #    NOT supplied an action of the same name, so a machine that
@@ -6678,7 +6723,12 @@ class BaseInterpreter(Generic[TContext]):
         """
         event_type = event.type
         on_map = node.on
-        system = is_system_event(event)
+        # ⚡ `is_system_event`'s exact-class fast path, inlined (#79/#195).
+        system = (
+            event._provenance is _ENGINE_MARK
+            if type(event) is Event
+            else is_system_event(event)
+        )
 
         # 📨 Standard `on` event transitions, including wildcard and partial
         #    descriptors, most specific first. ⚡ Inline the exact-key case
@@ -7431,12 +7481,18 @@ class BaseInterpreter(Generic[TContext]):
         # A *missing* guard still raises above — that is a configuration
         # error, not a runtime condition, and must fail loudly.
         try:
-            params = self._resolve_params(guard.params, event)
-            result = bool(
-                self._call_with_optional_params(
-                    guard_callable, self.context, event, params
+            params = guard.params
+            if params is None:
+                # ⚡ What `_resolve_params(None)` and
+                #    `_call_with_optional_params(..., None)` reduce to.
+                result = bool(guard_callable(self.context, event))
+            else:
+                params = self._resolve_params(params, event)
+                result = bool(
+                    self._call_with_optional_params(
+                        guard_callable, self.context, event, params
+                    )
                 )
-            )
         except Exception as exc:
             # 🛡️ #35: apply the machine's guard_error_policy. Before 0.8.0 a
             #    raising guard was unconditionally `False` -- a crashing
@@ -7474,11 +7530,14 @@ class BaseInterpreter(Generic[TContext]):
         # 📉 #55: DEBUG, not INFO. This runs on EVERY guard evaluation; at
         #    INFO it was one of four hot-path log calls costing ~4x
         #    throughput for anyone with INFO logging configured.
-        logger.debug(
-            "🛡️  Evaluating guard '%s': %s",
-            guard.type,
-            "✅ Passed" if result else "❌ Failed",
-        )
+        # ⚡ Gated so the arguments are not built when DEBUG is off (one
+        #    call instead of `debug()` + its own `isEnabledFor`).
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "🛡️  Evaluating guard '%s': %s",
+                guard.type,
+                "✅ Passed" if result else "❌ Failed",
+            )
 
         # 🔔 Notify any registered plugins about the evaluation.
         for plugin in self._plugins:
