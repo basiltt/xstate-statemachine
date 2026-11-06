@@ -1842,7 +1842,8 @@ class BaseInterpreter(Generic[TContext]):
         #    sees a refused event; the caller still gets `InvalidEventError`.
         # ⚡ `str` is the overwhelmingly common shape and cannot be invalid
         #    (a non-empty str IS an event type; an empty one is caught by
-        #    `_prepare_event`); skip the try/except frame for it.
+        #    `_prepare_event`); skip the try/except frame for it. This
+        #    branch is inlined in `SyncInterpreter.send()`: keep them in step.
         if type(raw) is str and raw:
             return Event(type=raw, payload=payload)
         try:
@@ -7484,7 +7485,7 @@ class BaseInterpreter(Generic[TContext]):
             if params is None:
                 # ⚡ What `_resolve_params(None)` and
                 #    `_call_with_optional_params(..., None)` reduce to.
-                result = not not guard_callable(self.context, event)
+                result = bool(guard_callable(self.context, event))
             else:
                 params = self._resolve_params(params, event)
                 result = bool(

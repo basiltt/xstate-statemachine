@@ -71,11 +71,6 @@ from .exceptions import (
     RunawayChainError,
 )
 from .clock import Clock, RealClock, SimulatedClock
-
-# ⚡ Clocks whose `pump()` is exactly "return 0 on an empty `_heap`".
-_HEAP_CLOCKS = (RealClock, SimulatedClock)
-# ⚡ Bound on `SyncInterpreter._sync_ok_actions` (see `_run_user_action`).
-_SYNC_OK_CACHE_MAX = 256
 from .actor_logic import RunningLogic
 from .events import (
     AfterEvent,
@@ -163,6 +158,9 @@ class _Done(Generic[_T]):
 # ⚡ `_Done` is never mutated after construction (`value` is written only
 #    in `__init__`), so the leaves that finish with ``None`` share one.
 _DONE_NONE: "_Done[None]" = _Done(None)
+# ⚡ Clocks whose `pump()` is exactly "return 0 on an empty heap"; `send()`
+#    reads the heap itself for these (exact classes only, see the pump).
+_HEAP_CLOCKS = (RealClock, SimulatedClock)
 
 
 #: Statuses with no owner left to drain the #305 mailbox.
@@ -233,7 +231,6 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         "_stop_after_drain",
         "_finished_children",
         "_shares_parent_clock",  # ENG-06
-        "_sync_ok_actions",  # ⚡ callables already vetted as sync
     )
 
     def __init__(
@@ -300,7 +297,6 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         #: ⚡ Action callables already proven sync by `_is_async_callable`.
         #: Keyed by the callable OBJECT, so replacing `logic.actions[name]`
         #: re-checks the new one; only a sync verdict is ever cached.
-        self._sync_ok_actions: Dict[Any, bool] = {}
         _info = logger.isEnabledFor(logging.INFO)  # ⚡ per construction
         if _info:
             logger.info("⛓️ Initializing Synchronous Interpreter... 🚀")
@@ -891,7 +887,7 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         if (
             self._shares_parent_clock
             or type(clock) not in _HEAP_CLOCKS
-            or clock._heap._heap  # type: ignore[attr-defined]
+            or not clock._heap.is_empty()  # type: ignore[attr-defined]
         ):
             self._pump_timers()
         self._event_queue.append(event_obj)
@@ -1780,23 +1776,13 @@ class SyncInterpreter(BaseInterpreter[TContext]):
         event: Any,
     ) -> "_Done[None]":
         """Leaf: call one action inline; refuse every async shape (LC-58)."""
-        vetted = self._sync_ok_actions
-        try:
-            known_sync = impl in vetted
-        except TypeError:  # unhashable callable: vet on every call
-            known_sync = False
-        if not known_sync:
-            if self._is_async_callable(impl):
-                raise NotSupportedError(
-                    f"Async action '{action_def.type}' not supported by "
-                    f"SyncInterpreter."
-                )
-            try:
-                if len(vetted) >= _SYNC_OK_CACHE_MAX:
-                    vetted.clear()  # 📝 bounded: per-call DSL adapters
-                vetted[impl] = True
-            except TypeError:
-                pass
+        # 📝 `_is_async_callable` is memoised per callable (weak keys), so
+        #    the shape check costs one lookup here, never the probes again.
+        if self._is_async_callable(impl):
+            raise NotSupportedError(
+                f"Async action '{action_def.type}' not supported by "
+                f"SyncInterpreter."
+            )
         result = impl(self, self.context, event, action_def)
         # ⚡ An action returns None; only a non-None result can be the
         #    coroutine of an async action in disguise (ENG-08).
