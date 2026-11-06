@@ -200,8 +200,13 @@ def test_stalled_sse_client_is_bounded_and_dropped() -> None:
         i = SyncInterpreter(m).use(plug).start()
         i.send("PAY", orderId="o-last", total=1)
         i.stop()
-        frames = _read_frames(reader, 1, deadline=10)
-        assert frames, "reader starved"
+        # 📝 `history=50` is replayed before the live stream; read past it
+        #    so this covers LIVE delivery too, not just the backlog.
+        frames = _read_frames(reader, 55, deadline=10)
+        assert len(frames) > 50, "reader got only the backlog"
+        assert any(
+            "o-last" in json.dumps(f) for f in frames
+        ), "the live o-last frame never reached the reconnected reader"
         stalled._xsm_conn.close()  # type: ignore[attr-defined]
         reader._xsm_conn.close()  # type: ignore[attr-defined]
     finally:
