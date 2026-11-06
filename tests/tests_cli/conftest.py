@@ -11,10 +11,20 @@ it explicitly with ``mock.patch.dict``.
 from __future__ import annotations
 
 import os
+import sys
 
 import pytest
 
 _FORCE = ("FORCE_COLOR", "XSM_FORCE_COLOR", "CLICOLOR_FORCE")
+
+#: 📝 Parts of the suite import the package as `src.xstate_statemachine`
+#:    and parts as `xstate_statemachine` -- two module objects, each with
+#:    its own cached console -- so every loaded copy is reset (the root
+#:    conftest does the same for the deprecation record).
+_CONSOLE_MODULES = (
+    "xstate_statemachine.cli.commands",
+    "src.xstate_statemachine.cli.commands",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -23,19 +33,24 @@ def _no_forced_color(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv(key, raising=False)
 
 
+def _reset_every_console() -> None:
+    for name in _CONSOLE_MODULES:
+        module = sys.modules.get(name)
+        if module is not None:
+            module.reset_console()
+
+
 @pytest.fixture(autouse=True)
 def _fresh_console() -> None:
     """Forget the process-wide CLI console before and after every test.
 
-    `get_console()` caches a `Console` bound to whatever `sys.stdout` was
-    when it was first called. Under pytest that is a per-test capture
-    stream, so a console built by an earlier test (a contrib suite running
-    a CLI command, for instance) points at a stream pytest has since
-    closed, and the next CLI test fails with "I/O operation on closed
-    file". Resetting here gives every test a console on ITS capture.
+    `get_console()` caches a `Console` whose capabilities were probed from
+    the first stream it saw and whose `last_error` belongs to whichever
+    command set it; neither should leak from one test into the next. (The
+    console resolves ``sys.stdout`` at write time, so a stale cache can no
+    longer write into a capture stream pytest has closed -- the reset
+    keeps the tests independent all the same.)
     """
-    from src.xstate_statemachine.cli.commands import reset_console
-
-    reset_console()
+    _reset_every_console()
     yield
-    reset_console()
+    _reset_every_console()

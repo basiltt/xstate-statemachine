@@ -66,7 +66,15 @@ class Console:
         caps: Optional[Capabilities] = None,
         stream: Optional[TextIO] = None,
     ) -> None:
-        self.out: TextIO = stream if stream is not None else sys.stdout
+        #: 🧭 The stream handed in, or ``None`` for "whatever ``sys.stdout``
+        #:    is at write time" (see `out`). Resolved per write rather than
+        #:    bound here: the process-wide console `commands.get_console()`
+        #:    caches outlives any one ``sys.stdout`` -- a test runner's
+        #:    per-test capture, a host that redirects output after the CLI
+        #:    package was first used -- and a console pinned to the first
+        #:    stream it saw wrote into a closed file.
+        self._stream: Optional[TextIO] = stream
+        #: 📝 Capabilities are probed ONCE, from the stream in force now.
         self.caps: Capabilities = (
             caps if caps is not None else detect(self.out)
         )
@@ -75,6 +83,22 @@ class Console:
         #: management commands raise `CommandError`) can say WHY instead
         #: of only "exit status 1" (#282 battle follow-up).
         self.last_error: Optional[str] = None
+
+    @property
+    def out(self) -> TextIO:
+        """The stream this console writes to.
+
+        The stream given to the constructor when there was one; otherwise
+        the *current* ``sys.stdout``, looked up on every access, so that a
+        redirect after construction is honoured and a stream that has
+        since been closed is never written to. Assign a stream to pin the
+        console to it, or ``None`` to follow ``sys.stdout`` again.
+        """
+        return self._stream if self._stream is not None else sys.stdout
+
+    @out.setter
+    def out(self, stream: Optional[TextIO]) -> None:
+        self._stream = stream
 
     # ---------------------------------------------------------------- basics
     def _encodable(self, msg: str) -> str:
@@ -102,6 +126,8 @@ class Console:
         🧭 Routes through the builtin ``print`` (with ``file=self.out``) so
         code that captures output by patching ``builtins.print`` -- the
         established pattern in this project's CLI tests -- keeps seeing it.
+        ``self.out`` is resolved on this call (see `out`): a console built
+        without a stream always writes to the ``sys.stdout`` of the moment.
         """
         for line in lines or ("",):
             print(self._encodable(line), file=self.out)
