@@ -24,31 +24,31 @@ Both methods return a string that you can print, save to a file, or embed in doc
 
 ## Viewing diagrams in these docs
 
-The documentation includes both exported Mermaid illustrations and live Stately
-embeds. You can enlarge either without leaving the guide:
+The guides show two kinds of chart, both drawn in your browser by
+[Mermaid](https://mermaid.js.org/):
 
-- **Stately diagrams:** choose **Fullscreen** below the chart to open a
-  page-sized viewer in the current tab. The same public diagram gets the full
-  available canvas, including on phones and tablets. Use Stately's pan, zoom,
-  and **Center in view** controls to explore larger machines. **Close** returns
-  to your place in the guide; **Open in Stately** remains a separate link to the
-  editor in a new tab.
-- **Mermaid illustrations:** choose **Full screen** on the figure, then use
-  **+**, **−**, or **Fit**. A fitted overview can make a large chart's labels
-  small; zoom in for detailed reading.
+- **Machine diagrams** (captioned *statechart · name*) are generated from the
+  same JSON the example or guide runs, in the notation of the Stately editor:
+  a state box lists its `entry /` and `exit /` actions and the service it
+  invokes; a transition pill shows the event, its `IF` guard (an unguarded
+  alternative after guarded ones reads `ELSE`, and alternatives of one event
+  are numbered) and its actions; delays read `after 5000 ms`; an invoked
+  service's results read `done:` and `error:`; a final state carries a square
+  mark; a history state an `H` badge; the regions of a parallel state have
+  dashed borders. Small linear machines are laid out left to right, the rest
+  top to bottom, as the Stately editor does. A transition that stays inside its own state
+  (no target, a self-target, or a target up or down its own branch) is listed
+  as an `on EVENT` row inside the box instead of an arrow. **Open in Stately**
+  under a chart opens the same machine in the Stately editor, which asks you
+  to sign in.
+- **Mermaid illustrations** are the exporter's own output (`to_mermaid()`),
+  shown as is so you can see what a README or wiki renders.
 
-The Stately viewer follows the site theme and opens a separate embedded view,
-so reopening it resets that view's pan and zoom without moving the inline
-chart. Its toolbar stays outside the embed and keeps **Close** accessible.
-**Escape** closes the viewer when its toolbar has keyboard focus; Stately can
-handle the key itself when focus is inside the embedded editor. After tabbing
-through its controls, activate **Back to viewer controls** to return to Close;
-this shortcut appears when focused. **Shift+Tab** also moves back toward the
-toolbar, and you can select **Close** directly at any time.
-
-Live Stately diagrams need a network connection to Stately. If an embed does
-not load, the guide and its code remain available, and **Open in Stately** gives
-you a direct editor link. Enlarging a diagram does not edit the machine.
+Choose **Full screen** on any figure to open a page-sized viewer in the
+current tab, then use **+**, **−** or **Fit**; **Ctrl** (or **⌘**) with the
+mouse wheel zooms as well. **Escape** or **Close** returns to your place in
+the guide. The diagrams follow the site theme and need no connection to
+Stately; the Mermaid library itself is loaded from the jsDelivr CDN.
 
 ## 🌿 PlantUML Export
 

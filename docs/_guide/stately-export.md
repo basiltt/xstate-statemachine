@@ -5,11 +5,12 @@ description: "Export a machine from the Stately visual editor and run it with xs
 
 Design the chart visually in the [Stately editor](https://stately.ai/editor), export it as JSON, and run it with this library: it reads XState v5 JSON and follows XState v5 semantics, while engine event names keep the v4 spelling (`done.invoke.<id>`, `error.platform.<id>`). Your Python code supplies only the actions, guards and services the chart names.
 
-For the diagrams embedded throughout this documentation, select **Fullscreen**
-below a chart to inspect it in a page-sized viewer without leaving the guide.
-**Close** returns to the same page position; **Open in Stately** opens the editor
-separately when you want to work there. See [viewing diagrams](../diagrams/#viewing-diagrams-in-these-docs)
-for zoom and keyboard controls.
+The diagrams embedded throughout this documentation are drawn from each
+machine's JSON in the Stately notation; **Open in Stately** under a chart opens
+the same machine in the editor when you want to work there, and **Full screen**
+inspects it in a page-sized viewer without leaving the guide. See
+[viewing diagrams](../diagrams/#viewing-diagrams-in-these-docs) for the
+notation and the zoom controls.
 
 ## Export
 
