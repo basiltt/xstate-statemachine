@@ -55,6 +55,9 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
   up on every write (`error(to_stderr=True)` already read `sys.stderr`
   at call time), `Console.out` is a settable property, and a stream passed
   explicitly (`Console(stream=...)`) stays bound exactly as before.
+  A probed console also re-probes its colour, glyph and animation
+  capabilities when the stream it follows changes, so a swap to a
+  file or pipe stops emitting ANSI and box glyphs.
 
 ## [0.12.0] - 2026-11-05
 

@@ -497,6 +497,42 @@ class TestDetectAndConsole(unittest.TestCase):
             c.print("back")
         self.assertEqual(live.getvalue(), "back\n")
 
+    def test_followed_stdout_redetects_capabilities(self) -> None:
+        """A probed console re-probes when it follows a swapped stream.
+
+        The write destination already followed ``sys.stdout``; the caps
+        (colour, glyphs, animation) stayed frozen from construction, so a
+        swap to a file or pipe kept receiving ANSI and box glyphs.
+        """
+        first, second = io.StringIO(), io.StringIO()
+        with (
+            mock.patch(
+                "src.xstate_statemachine.cli.ui.console.detect",
+                side_effect=[RICH, PLAIN],
+            ) as probe,
+            mock.patch.object(sys, "stdout", first),
+        ):
+            c = Console()
+            self.assertIs(c.caps, RICH)
+            with mock.patch.object(sys, "stdout", second):
+                c.ok("done")
+                # 📝 Asserted while the swap is in force: after it, the
+                #    console correctly re-probes the real stdout again.
+                self.assertIs(c.caps, PLAIN)
+                self.assertEqual(probe.call_count, 2)
+                self.assertNotIn("", second.getvalue())
+
+    def test_explicit_caps_are_never_reprobed(self) -> None:
+        with mock.patch(
+            "src.xstate_statemachine.cli.ui.console.detect"
+        ) as probe:
+            c = Console(PLAIN)
+            probe.assert_not_called()
+            with mock.patch.object(sys, "stdout", io.StringIO()):
+                c.print("x")
+            probe.assert_not_called()
+        self.assertIs(c.caps, PLAIN)
+
     def test_cached_console_survives_a_stdout_swap(self) -> None:
         """`get_console()` builds the process-wide console once; every
         later command must still reach the live ``sys.stdout``."""

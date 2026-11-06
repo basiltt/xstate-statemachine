@@ -74,15 +74,26 @@ class Console:
         #:    package was first used -- and a console pinned to the first
         #:    stream it saw wrote into a closed file.
         self._stream: Optional[TextIO] = stream
-        #: 📝 Capabilities are probed ONCE, from the stream in force now.
-        self.caps: Capabilities = (
-            caps if caps is not None else detect(self.out)
-        )
+        #: 🧭 Whether `caps` was handed in (kept verbatim) or probed. A
+        #:    probed console follows the stream `out` resolves to: when a
+        #:    host swaps `sys.stdout`, the styling follows too (a file or
+        #:    pipe gets plain ASCII), not just the write destination.
+        self._caps_fixed: bool = caps is not None
+        self._caps_source: Optional[TextIO] = None
+        if caps is None:
+            self._caps_source = self._followed()
+            self.caps = detect(self._caps_source)
+        else:
+            self.caps = caps
         #: The most recent `error()` message, so a host that turns the
         #: CLI's ``SystemExit(1)`` into its own error (the Django
         #: management commands raise `CommandError`) can say WHY instead
         #: of only "exit status 1" (#282 battle follow-up).
         self.last_error: Optional[str] = None
+
+    def _followed(self) -> TextIO:
+        """The stream `out` resolves to right now (never raises)."""
+        return self._stream if self._stream is not None else sys.stdout
 
     @property
     def out(self) -> TextIO:
@@ -94,11 +105,31 @@ class Console:
         since been closed is never written to. Assign a stream to pin the
         console to it, or ``None`` to follow ``sys.stdout`` again.
         """
-        return self._stream if self._stream is not None else sys.stdout
+        return self._followed()
 
     @out.setter
     def out(self, stream: Optional[TextIO]) -> None:
         self._stream = stream
+
+    @property
+    def caps(self) -> Capabilities:
+        """What the followed stream can render.
+
+        A probed console (no caps handed in) re-probes when the stream it
+        follows changes, so a swap to a file or pipe turns styling off
+        before the next line is styled -- `ok()` styles from `caps`
+        before it reaches `out`, so the check has to live here.
+        """
+        if not self._caps_fixed:
+            stream = self._followed()
+            if stream is not self._caps_source:
+                self._caps = detect(stream)
+                self._caps_source = stream
+        return self._caps
+
+    @caps.setter
+    def caps(self, value: Capabilities) -> None:
+        self._caps = value
 
     # ---------------------------------------------------------------- basics
     def _encodable(self, msg: str) -> str:
