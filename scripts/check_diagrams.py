@@ -511,12 +511,12 @@ def run(
                 for key in group:
                     geometry = page.evaluate(MEASURE_JS, key)
                     errors, warnings = analyse(geometry)
-                    if width and width <= 720:
-                        # 📱 On a phone the chart must keep its natural size
-                        #    (the figure scrolls) instead of shrinking labels
-                        #    to a few pixels.
+                    if width:
+                        # 📐 A chart must never be drawn below 75% of its
+                        #    natural size (diagrams.js keeps it natural and
+                        #    lets the figure scroll instead).
                         scale = geometry.get("scale", 1)
-                        if scale < 0.85:
+                        if scale < 0.7:
                             errors.append(
                                 f"chart shrunk to {round(scale * 100)}% at "
                                 f"{width}px (labels unreadable)"

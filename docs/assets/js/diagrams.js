@@ -26,6 +26,10 @@ let mermaid = null; // loaded in start(); null when the CDN is unreachable
 const DATA_URL = new URL('../data/diagrams.json', import.meta.url);
 const FETCH_TIMEOUT_MS = 20000;
 const EDITOR_URL = 'https://stately.ai/registry/editor/';
+//: Below this rendered scale labels stop being readable; the chart keeps its
+//: natural size and the figure scrolls instead (a 2,752px flowchart squeezed
+//: into the 760px column drew every label ~5px tall).
+const MIN_CHART_SCALE = 0.75;
 const EXPAND_ICON = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M2 6V2h4M14 6V2h-4M2 10v4h4M14 10v4h-4"/></svg>';
 
 function editorUrl(project, id) {
@@ -141,16 +145,22 @@ function configureMermaid() {
  * fences would keep the old palette (pale text on a light figure).
  */
 /**
- * 📱 Below 720px a chart keeps its natural size and the figure scrolls
- * sideways, the way a wide code block does: Mermaid emits width="100%", so
- * shrinking to the column drew a 2,300px chart at 16% and its labels at
- * about 2px. Above that the chart scales to the column as before.
+ * Never draw a chart below MIN_CHART_SCALE: Mermaid emits width="100%", so a
+ * chart wider than the column is squeezed (2,300px at 16% made its labels
+ * ~2px). Below the floor the chart keeps its natural size and the canvas
+ * scrolls sideways, the way a wide code block does; at or above it the chart
+ * scales to the column as before.
  */
 function fitViewport(svg) {
   if (!svg) return;
-  if (innerWidth <= 720) {
-    const vb = svg.viewBox && svg.viewBox.baseVal;
-    if (vb && vb.width) {
+  const vb = svg.viewBox && svg.viewBox.baseVal;
+  const canvas = svg.closest && svg.closest('.statechart-canvas');
+  if (vb && vb.width && canvas) {
+    const style = getComputedStyle(canvas);
+    const padding = parseFloat(style.paddingLeft) + parseFloat(style.paddingRight);
+    const inner = Math.max(0, canvas.clientWidth - padding);
+    const fits = inner > 0 ? inner / vb.width : 1;
+    if (fits < MIN_CHART_SCALE) {
       svg.style.width = vb.width + 'px';
       svg.style.height = vb.height + 'px';
       svg.style.maxWidth = 'none';

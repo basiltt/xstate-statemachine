@@ -16,8 +16,7 @@
     body { margin: 0; padding: 24px; }
     .content { max-width: none !important; width: max-content; min-width: 720px; }
     .statechart { width: max-content; min-width: 720px; max-width: none; }
-    /* natural size: the overlap check measures unscaled geometry */
-    .statechart-canvas svg { max-width: none !important; }
+    /* natural size for measurement; a ?width= run keeps the site's rules */
   </style>
   <script>
     (function () {
@@ -25,6 +24,11 @@
       document.documentElement.setAttribute('data-theme', query.get('theme') === 'light' ? 'light' : 'dark');
       window.__harnessKeys = (query.get('keys') || '').split(',').filter(Boolean);
       var width = parseInt(query.get('width'), 10);
+      if (!(width > 0)) {
+        var natural = document.createElement('style');
+        natural.textContent = '.statechart-canvas svg{max-width:none !important}';
+        document.head.appendChild(natural);
+      }
       if (width > 0) {
         // Narrow viewport: the docs scale charts to the column instead of
         // giving them their natural width.

@@ -123,11 +123,14 @@ class TestRendererContracts(unittest.TestCase):
         self.assertIn(".statechart-canvas svg", watch)  # only drawn figures
         self.assertIn("refreshViewer(true)", watch)
 
-    def test_phones_keep_the_natural_chart_size(self) -> None:
-        """A 2,300px chart at 375px drew its labels ~2px tall."""
+    def test_no_chart_is_drawn_below_the_readable_scale(self) -> None:
+        """Wide charts keep natural size and scroll instead of shrinking."""
+        self.assertIn("const MIN_CHART_SCALE = 0.75", self.script)
         fit = _function(self.script, "fitViewport")
-        self.assertIn("innerWidth <= 720", fit)
-        self.assertIn("viewBox", fit)
+        self.assertIn("viewport", self.script)  # not phone-gated any more
+        self.assertNotIn("innerWidth <= 720", fit)
+        self.assertIn("clientWidth", fit)  # the column, not the window
+        self.assertIn("MIN_CHART_SCALE", fit)
         self.assertIn("width = vb.width + 'px'", fit)
         render = _function(self.script, "render")
         self.assertIn("fitViewport(surface.querySelector('svg'))", render)

@@ -81,9 +81,11 @@ class TestBrowserRules(unittest.TestCase):
             with self.subTest(contract=contract):
                 self.assertIn(contract, js)
 
-    def test_phones_must_keep_the_natural_size(self) -> None:
+    def test_a_chart_must_never_be_drawn_below_the_readable_scale(
+        self,
+    ) -> None:
         js = self.fc.MEASURE_JS
-        self.assertIn("innerWidth <= 720", js)
+        self.assertIn("scale < 0.7", js)
         self.assertIn("chart shrunk to", js)
         self.assertIn("does not scroll", js)
 

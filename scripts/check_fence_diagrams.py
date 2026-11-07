@@ -131,8 +131,9 @@ MEASURE_JS = r"""
     const natural = vb && vb.width ? vb.width : svgRect.width;
     const scale = natural ? svgRect.width / natural : 1;
     entry.scale = +scale.toFixed(3);
-    // Only phones promise natural size; a desktop column may fit a wide chart.
-    if (innerWidth <= 720 && scale < 0.85) {
+    // diagrams.js keeps anything below 75% at natural size with a scroll;
+    // below 70% measured here means that floor was lost.
+    if (scale < 0.7) {
       entry.errors.push('chart shrunk to ' + Math.round(scale * 100) + '% (labels unreadable)');
     }
     if (svgRect.width > inner + 2) {
