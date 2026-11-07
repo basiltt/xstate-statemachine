@@ -17,6 +17,12 @@ from rest_framework.test import APIClient
 from approvals.models import FINANCE, LEGAL, Expense
 from approvals.ws import websocket_urlpatterns
 
+# 📝 #591: a round trip can take longer than the testing helper's 1 s
+#    default on a loaded CI runner -- a connect and a pushed transition
+#    each re-authorise and reload the row in a thread-sensitive executor.
+#    Wait for the FRAME; the number is only a safety net.
+WS_WAIT = 120.0
+
 
 def _user(name, group=None, staff=True):
     U = get_user_model()
@@ -114,15 +120,17 @@ def test_channels_status_stream(people):
             URLRouter(websocket_urlpatterns), f"/ws/expenses/{e.pk}/"
         )
         comm.scope["user"] = people["legal"]
-        ok, _ = await comm.connect()
+        ok, _ = await comm.connect(timeout=WS_WAIT)
         assert ok
-        assert (await comm.receive_json_from())["kind"] == "snapshot"
+        snap = await comm.receive_json_from(timeout=WS_WAIT)
+        assert snap["kind"] == "snapshot"
         await comm.send_json_to({"type": "LEGAL_APPROVE"})
-        assert (await comm.receive_json_from())["changed"] is True
-        pushed = await comm.receive_json_from()
+        receipt = await comm.receive_json_from(timeout=WS_WAIT)
+        assert receipt["changed"] is True
+        pushed = await comm.receive_json_from(timeout=WS_WAIT)
         assert pushed["kind"] == "transition"
         assert pushed["state"]["review"]["legal"] == "approved"
-        await comm.disconnect()
+        await comm.disconnect(timeout=WS_WAIT)
 
     asyncio.run(go())
 

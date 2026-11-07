@@ -58,6 +58,89 @@ from xstate_statemachine.contrib.channels import live_consumers
 EXAMPLE = Path(__file__).resolve().parents[1]
 N = 200
 
+# 📝 #591: a DEADLINE for waiting on a frame -- a safety net, not a
+#    performance budget. Every pushed transition re-authorises and reloads
+#    the row on ONE thread-sensitive thread (`database_sync_to_async`), so
+#    100 subscribers are ~100 SERIALISED database round trips: a few
+#    milliseconds each locally, seconds on a loaded CI runner. Waits must
+#    end when the CONDITION holds ("every subscriber received its frame"),
+#    never on the testing helpers' 1 s default (the receipt alone measured
+#    0.10-0.33 s against a LOCAL Postgres) or a per-frame 10 s stopwatch.
+DEADLINE = 120.0
+#: 📡 the consumer's keep-alive frame (`StatechartConsumer.heartbeat_s`,
+#: 15 s). It is NOT a state change; a scenario slower than the interval has
+#: pings interleaved and must skip them, not assert on them.
+PING = "ping"
+
+
+async def _next_frame(c: Any, kind: str) -> Dict[str, Any]:
+    """The next frame of *kind* on *c*, skipping heartbeat ``ping`` frames.
+
+    ⏱️ DEADLINE bounds the WHOLE wait, not each read: a ping every 15 s
+    would otherwise restart the timeout for ever, and a subscriber that
+    never receives its frame would hang the test until the job timeout
+    instead of failing it (review finding on #591).
+    """
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + DEADLINE
+    while True:
+        left = deadline - loop.time()
+        if left <= 0:
+            raise TimeoutError(f"no {kind!r} frame within {DEADLINE:.0f}s")
+        msg = await c.receive_json_from(timeout=left)
+        if msg.get("kind") == PING:
+            continue
+        assert msg["kind"] == kind, msg
+        return msg
+
+
+async def _no_more_events(c: Any, window: float = 0.5) -> None:
+    """Assert *c* sends no state-change frame for *window* seconds.
+
+    Pings are allowed through: a keep-alive is not a second transition, and
+    a slow runner must not fail "exactly once" on one.
+
+    🔥 The check PEEKS (`receive_nothing`) and only reads a frame that is
+    ALREADY queued. `WebsocketCommunicator.receive_output()` CANCELS the
+    application when a timed read finds nothing ("it should have sent
+    something"), and a cancelled consumer never runs `disconnect()` --
+    replacing this peek with a timed read leaves every consumer it checked
+    in `live_consumers()`.
+    """
+    loop = asyncio.get_running_loop()
+    end = loop.time() + window
+    while True:
+        left = end - loop.time()
+        if left <= 0:
+            return
+        if await c.receive_nothing(timeout=left):
+            return
+        # a frame IS queued: this read cannot time out, so it cannot
+        # cancel the application
+        msg = await c.receive_json_from(timeout=DEADLINE)
+        assert msg.get("kind") == PING, msg
+
+
+async def _receive_all(comms: List[Any], kind: str) -> List[Dict[str, Any]]:
+    """Wait until EVERY communicator has received one frame of *kind*.
+
+    The waits run CONCURRENTLY: one deadline covers the whole fan-out, so
+    a subscriber late in the queue never eats the next subscriber's budget
+    (the old code awaited them one by one with a 10 s timeout each).
+    """
+
+    async def one(c: Any) -> Dict[str, Any]:
+        return await _next_frame(c, kind)
+
+    tasks = [asyncio.ensure_future(one(c)) for c in comms]
+    try:
+        return list(await asyncio.gather(*tasks))
+    finally:
+        # a failure in one wait must not leave the others running under
+        # the teardown that follows
+        for t in tasks:
+            t.cancel()
+
 
 def _user(name: str, group: str) -> Any:
     U = get_user_model()
@@ -277,53 +360,64 @@ def test_openapi_schema_has_every_event_and_is_valid(people: Any) -> None:
 def test_hundred_subscribers_receive_each_transition_once(people: Any):
     [pk] = _submit(1)
     app = URLRouter(websocket_urlpatterns)
+    before = live_consumers()
 
     async def go() -> Dict[str, Any]:
-        comms = []
-        for _ in range(100):
-            c = WebsocketCommunicator(app, f"/ws/expenses/{pk}/")
-            c.scope["user"] = people["legal"]
-            ok, _ = await c.connect()
-            assert ok
-            snap = await c.receive_json_from()
-            assert snap["kind"] == "snapshot"
-            comms.append(c)
-        assert live_consumers() == 100
-        # one subscriber disconnects mid-way (a closed laptop)
-        await comms[50].disconnect()
-        del comms[50]
-        # a transition sent through ONE socket
-        await comms[0].send_json_to({"type": "LEGAL_APPROVE"})
-        receipt = await comms[0].receive_json_from()
-        assert receipt["changed"] is True
-        got_ws = 0
-        for c in comms:
-            msg = await c.receive_json_from(timeout=10)
-            assert msg["kind"] == "transition", msg
-            assert msg["state"]["review"]["legal"] == "approved"
-            got_ws += 1
-        # 🔥 a transition made through the REST API must reach them too
-        await asyncio.to_thread(
-            lambda: _api(people["finance"]).post(
-                f"/api/expenses/{pk}/finance-approve/", {}, format="json"
+        comms: List[Any] = []
+        try:
+            for _ in range(100):
+                c = WebsocketCommunicator(app, f"/ws/expenses/{pk}/")
+                c.scope["user"] = people["legal"]
+                ok, _ = await c.connect(timeout=DEADLINE)
+                # 🧹 Register it BEFORE the snapshot read: a consumer whose
+                #    connect succeeded is already in `_LIVE`, so if the read
+                #    below fails the teardown must still disconnect it --
+                #    otherwise the next test's baseline cannot see the leak.
+                comms.append(c)
+                assert ok
+                snap = await c.receive_json_from(timeout=DEADLINE)
+                assert snap["kind"] == "snapshot"
+            assert live_consumers() == before + 100
+            # one subscriber disconnects mid-way (a closed laptop)
+            await comms[50].disconnect(timeout=DEADLINE)
+            del comms[50]
+            # a transition sent through ONE socket
+            await comms[0].send_json_to({"type": "LEGAL_APPROVE"})
+            receipt = await _next_frame(comms[0], "receipt")
+            assert receipt["changed"] is True
+            got_ws = await _receive_all(comms, "transition")
+            for msg in got_ws:
+                assert msg["state"]["review"]["legal"] == "approved", msg
+            # 🔥 a transition made through the REST API must reach them too
+            await asyncio.to_thread(
+                lambda: _api(people["finance"]).post(
+                    f"/api/expenses/{pk}/finance-approve/", {}, format="json"
+                )
             )
-        )
-        got_api = 0
-        for c in comms:
-            msg = await c.receive_json_from(timeout=10)
-            assert msg["kind"] == "transition", msg
-            assert msg["state"] == "approved", msg
-            got_api += 1
-        # nothing else is queued: exactly once each
-        for c in comms[:5]:
-            assert await c.receive_nothing(timeout=0.5)
-        for c in comms:
-            await c.disconnect()
-        return {"ws": got_ws, "api": got_api}
+            got_api = await _receive_all(comms, "transition")
+            for msg in got_api:
+                assert msg["state"] == "approved", msg
+            # nothing else is queued: exactly once each
+            for c in comms[:5]:
+                await _no_more_events(c)
+            return {"ws": len(got_ws), "api": len(got_api)}
+        finally:
+            # 🧹 #591: teardown is DETERMINISTIC even when an assertion
+            #    above failed. Otherwise every subscriber stays in the
+            #    process-global `_LIVE` registry, and the NEXT test's
+            #    `live_consumers()` assertion reports THIS test's leak as
+            #    its own (main #591: 99 consumers, "assert 99 == 0" in
+            #    the anonymous-socket test). `disconnect()` awaits each
+            #    consumer's own teardown, so the registry is clean when it
+            #    returns.
+            await asyncio.gather(
+                *(c.disconnect(timeout=DEADLINE) for c in comms),
+                return_exceptions=True,
+            )
 
     counts = asyncio.run(go())
     assert counts == {"ws": 99, "api": 99}, counts
-    assert live_consumers() == 0
+    assert live_consumers() == before
 
 
 # -----------------------------------------------------------------------------
@@ -337,42 +431,61 @@ def test_anonymous_unauthorised_and_cross_origin_sockets_are_refused(
 
     [pk] = _submit(1)
     app = URLRouter(websocket_urlpatterns)
+    before = live_consumers()
 
     async def go() -> None:
-        c = WebsocketCommunicator(app, f"/ws/expenses/{pk}/")
-        c.scope["user"] = AnonymousUser()
-        ok, code = await c.connect()
-        assert not ok and code == 1008, (ok, code)
-        # a user with no view permission on expenses
-        U = get_user_model()
-        nobody = await asyncio.to_thread(
-            lambda: U.objects.create_user("nobody", password="p")
-        )
-        c = WebsocketCommunicator(app, f"/ws/expenses/{pk}/")
-        c.scope["user"] = nobody
-        ok, code = await c.connect()
-        assert not ok and code == 1008, (ok, code)
-        # a missing expense
-        c = WebsocketCommunicator(app, "/ws/expenses/999999/")
-        c.scope["user"] = people["legal"]
-        ok, code = await c.connect()
-        assert not ok and code == 1008
-        # the real ASGI stack refuses a cross-origin handshake
-        from config.asgi import application
+        # 📝 #591: keep every communicator so the teardown below runs even
+        #    when an assertion fails -- a refused socket must leave nothing
+        #    registered, and neither may a failing test.
+        comms: List[Any] = []
+        try:
+            c = WebsocketCommunicator(app, f"/ws/expenses/{pk}/")
+            comms.append(c)
+            c.scope["user"] = AnonymousUser()
+            ok, code = await c.connect(timeout=DEADLINE)
+            assert not ok and code == 1008, (ok, code)
+            # a user with no view permission on expenses
+            U = get_user_model()
+            nobody = await asyncio.to_thread(
+                lambda: U.objects.create_user("nobody", password="p")
+            )
+            c = WebsocketCommunicator(app, f"/ws/expenses/{pk}/")
+            comms.append(c)
+            c.scope["user"] = nobody
+            ok, code = await c.connect(timeout=DEADLINE)
+            assert not ok and code == 1008, (ok, code)
+            # a missing expense
+            c = WebsocketCommunicator(app, "/ws/expenses/999999/")
+            comms.append(c)
+            c.scope["user"] = people["legal"]
+            ok, code = await c.connect(timeout=DEADLINE)
+            assert not ok and code == 1008
+            # the real ASGI stack refuses a cross-origin handshake
+            from config.asgi import application
 
-        c = WebsocketCommunicator(
-            application,
-            f"/ws/expenses/{pk}/",
-            headers=[
-                (b"origin", b"https://evil.example"),
-                (b"host", b"testserver"),
-            ],
-        )
-        ok, code = await c.connect()
-        assert not ok, (ok, code)
+            c = WebsocketCommunicator(
+                application,
+                f"/ws/expenses/{pk}/",
+                headers=[
+                    (b"origin", b"https://evil.example"),
+                    (b"host", b"testserver"),
+                ],
+            )
+            comms.append(c)
+            ok, code = await c.connect(timeout=DEADLINE)
+            assert not ok, (ok, code)
+        finally:
+            for c in comms:
+                try:
+                    await c.disconnect(timeout=DEADLINE)
+                except Exception:  # noqa: BLE001 - already failing
+                    pass
 
     asyncio.run(go())
-    assert live_consumers() == 0
+    # 📝 #591: compare against THIS test's baseline, not an absolute 0 --
+    #    a leak another test left behind (main #591: 99 consumers, because
+    #    a timed-out neighbour never disconnected) is not this test's.
+    assert live_consumers() == before, "a refused socket was left registered"
 
 
 # -----------------------------------------------------------------------------
@@ -562,17 +675,19 @@ def test_lazy_scope_user_survives_a_push(people: Any) -> None:
     async def go() -> Any:
         c = WebsocketCommunicator(app, f"/ws/expenses/{pk}/")
         c.scope["user"] = lazy
-        ok, _ = await c.connect()
-        assert ok
-        assert (await c.receive_json_from())["kind"] == "snapshot"
-        await asyncio.to_thread(
-            lambda: Expense.objects.get(pk=pk).send(
-                "LEGAL_APPROVE", actor=people["legal"]
+        try:
+            ok, _ = await c.connect(timeout=DEADLINE)
+            assert ok
+            snap = await c.receive_json_from(timeout=DEADLINE)
+            assert snap["kind"] == "snapshot"
+            await asyncio.to_thread(
+                lambda: Expense.objects.get(pk=pk).send(
+                    "LEGAL_APPROVE", actor=people["legal"]
+                )
             )
-        )
-        msg = await c.receive_json_from(timeout=10)
-        await c.disconnect()
-        return msg
+            return await _next_frame(c, "transition")
+        finally:
+            await c.disconnect(timeout=DEADLINE)
 
     msg = asyncio.run(go())
     assert msg["kind"] == "transition", msg
