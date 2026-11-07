@@ -92,6 +92,46 @@ class TestRendererContracts(unittest.TestCase):
         self.assertIn("htmlLabels: true", config)
         self.assertIn("useMaxWidth: true", config)
         self.assertIn("layout: 'elk'", config)  # orthogonal routing
+        # 🎨 Sequence/flowchart fences are coloured only by Mermaid's own
+        #    theme, which must be the palette of the CURRENT theme.
+        self.assertIn("themeVariables: themeVariables()", config)
+        palette = _function(self.script, "palette")
+        for variable in (
+            "--sc-canvas",
+            "--sc-node",
+            "--sc-node-border",
+            "--sc-edge",
+            "--sc-chip",
+        ):
+            self.assertIn(variable, palette)
+        variables = _function(self.script, "themeVariables")
+        for role in (
+            "primaryColor",
+            "actorBkg",
+            "actorTextColor",
+            "signalTextColor",
+            "noteBkgColor",
+        ):
+            self.assertIn(role, variables)
+
+    def test_theme_switch_redraws_drawn_figures(self) -> None:
+        """Mermaid bakes its palette into the SVG: a theme switch redraws."""
+        watch = _function(self.script, "watchTheme")
+        self.assertIn("MutationObserver", watch)
+        self.assertIn("attributeFilter: ['data-theme']", watch)
+        self.assertIn("configureMermaid()", watch)
+        self.assertIn(".statechart-canvas svg", watch)  # only drawn figures
+        self.assertIn("refreshViewer(true)", watch)
+
+    def test_phones_keep_the_natural_chart_size(self) -> None:
+        """A 2,300px chart at 375px drew its labels ~2px tall."""
+        fit = _function(self.script, "fitViewport")
+        self.assertIn("innerWidth <= 720", fit)
+        self.assertIn("viewBox", fit)
+        self.assertIn("width = vb.width + 'px'", fit)
+        render = _function(self.script, "render")
+        self.assertIn("fitViewport(surface.querySelector('svg'))", render)
+        self.assertIn("requestAnimationFrame", self.script)
 
     def test_every_chart_gets_a_viewer_button_and_an_editor_link(
         self,
@@ -312,6 +352,35 @@ class TestOverlapAnalysis(unittest.TestCase):
 
     def test_clean_geometry_has_no_findings(self) -> None:
         self.assertEqual(self.analyse(self._geometry()), ([], []))
+
+    def test_low_contrast_text_is_an_error(self) -> None:
+        # 🎨 The light-mode fence bug: pale text on a pale figure.
+        geometry = self._geometry(
+            contrast=[
+                {
+                    "text": "SUBMIT",
+                    "fg": "#eef0fa",
+                    "bg": "#f6f7fb",
+                    "ratio": 1.35,
+                }
+            ]
+        )
+        errors, warnings = self.analyse(geometry)
+        self.assertEqual(
+            errors,
+            ["low contrast text 'SUBMIT': #eef0fa on #f6f7fb (1.35:1)"],
+        )
+        self.assertEqual(warnings, [])
+
+    def test_borderline_contrast_is_a_warning(self) -> None:
+        geometry = self._geometry(
+            contrast=[
+                {"text": "x", "fg": "#767680", "bg": "#ffffff", "ratio": 3.9}
+            ]
+        )
+        errors, warnings = self.analyse(geometry)
+        self.assertEqual(errors, [])
+        self.assertEqual(warnings, ["borderline contrast 'x': 3.9:1"])
 
     def test_label_outside_the_machine_box_is_an_error(self) -> None:
         errors, _ = self.analyse(

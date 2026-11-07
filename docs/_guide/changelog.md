@@ -68,6 +68,23 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ### Fixed
 
+- **Diagram colours follow the theme in every diagram type.** The generated
+  statecharts were always recoloured by the stylesheet, but the hand-written
+  `mermaid` fences in the guides (sequence diagrams, flowcharts) were drawn
+  with a dark Mermaid palette in both themes: in light mode their message
+  text was pale on pale (measured 1.35:1). Mermaid's theme is now built from
+  the same `--sc-*` palette the statecharts use, and drawn figures are
+  redrawn when the theme toggle changes.
+- **Charts keep their natural size on phones.** Below 720px a wide chart was
+  squeezed into the column -- a 2,300px chart at 16%, its labels about 2px
+  tall; it now keeps its natural size and the figure scrolls sideways, the
+  way a wide code block does.
+- **`scripts/check_fence_diagrams.py`** renders all 57 hand-written fences
+  in both themes at a page and a phone width and fails on low-contrast text
+  (below 3:1 is an error, 3-4.5:1 a warning), clipped labels and unreadable
+  downscaling; `scripts/check_diagrams.py` gained the same contrast rule
+  and a `--width` phone check.
+
 - **Benchmark table corrected and re-measured.** The 0.12.0 notes claimed the
   guard + action row for XState-StateMachine (1.14x `transitions`); on the
   unchanged 0.12.0 code three quiet sessions put `transitions` ahead by about

@@ -5,7 +5,9 @@
   <title>Statechart render harness</title>
   <!-- Served from the repository root by scripts/check_diagrams.py; loads the
        real site stylesheet, fonts and renderer so what is measured here is
-       what the docs ship. ?keys=a,b,c&theme=dark|light -->
+       what the docs ship. ?keys=a,b,c&theme=dark|light&width=375
+       Fence sources arrive as `window.__fenceSources` (a Playwright init
+       script) so the same harness checks ```mermaid fences too. -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -22,6 +24,16 @@
       var query = new URLSearchParams(location.search);
       document.documentElement.setAttribute('data-theme', query.get('theme') === 'light' ? 'light' : 'dark');
       window.__harnessKeys = (query.get('keys') || '').split(',').filter(Boolean);
+      var width = parseInt(query.get('width'), 10);
+      if (width > 0) {
+        // Narrow viewport: the docs scale charts to the column instead of
+        // giving them their natural width.
+        var narrow = document.createElement('style');
+        narrow.textContent =
+          'body{padding:8px}.content{max-width:' + width + 'px !important;width:100%;min-width:0 !important}' +
+          '.statechart{width:auto !important;min-width:0 !important;max-width:100% !important}';
+        document.head.appendChild(narrow);
+      }
     })();
   </script>
 </head>
@@ -32,6 +44,14 @@
       // Classic script: the markers must exist before the module renderer runs.
       (function () {
         var main = document.currentScript.parentNode;
+        (window.__fenceSources || []).forEach(function (source) {
+          var pre = document.createElement('pre');
+          var code = document.createElement('code');
+          code.className = 'language-mermaid';
+          code.textContent = source;
+          pre.appendChild(code);
+          main.appendChild(pre);
+        });
         window.__harnessKeys.forEach(function (key) {
           var div = document.createElement('div');
           div.className = 'stately';
