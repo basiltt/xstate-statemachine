@@ -50,7 +50,7 @@ event the current state does not accept is ignored. Inside the block you can als
 
 ```python
 light.can("CYCLE"), sorted(light.allowed_events)  # True ['CYCLE']
-light.configuration, light.context, light.status  # frozenset({'red'}) {} running
+light.configuration, light.context, light.status  # frozenset({'red'}) {} running (inside the with block)
 light.send("CYCLE", amount=2)  # the same as light.cycle(amount=2)
 ```
 
@@ -90,7 +90,7 @@ light.send("BANANA")  # not legal here: ignored
 
 <div align="center">
 <a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=6938bbd2-1666-42dc-838f-542837486866"><img src="https://raw.githubusercontent.com/basiltt/xstate-statemachine/main/docs/assets/images/machines/toggle.png" alt="toggle: inactive ⇄ active on TOGGLE" width="440"></a>
-<br><sub>🔗 <a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=6938bbd2-1666-42dc-838f-542837486866">Open this machine in the Stately editor</a> — public, no account needed.</sub>
+<br><sub>🔗 <a href="https://stately.ai/registry/editor/4dbe1227-e533-4104-9772-dd7c7b3a86df?mode=design&machineId=6938bbd2-1666-42dc-838f-542837486866">Open this machine in the Stately editor</a> — a Stately account is needed there.</sub>
 </div>
 
 Prefer a loud failure? `strict=True` raises at the call site:
@@ -369,7 +369,7 @@ from xstate_statemachine.persistence import MemoryStore, persisted
 
 machine = create_machine({"id": "order", "initial": "cart", "states": {
     "cart": {"on": {"PAY": "paid"}}, "paid": {"type": "final"}}})
-store = MemoryStore()  # or SQLiteStore("orders.db"), RedisStore(...)
+store = MemoryStore()  # or SQLiteStore("orders.db"); RedisStore is contrib.redis ([redis] extra)
 with persisted(store, "order:42", machine) as order:  # loaded or created
     order.send("PAY")  # saved on exit; a racing writer gets ConflictError
 print(store.load("order:42").version)  # 1
