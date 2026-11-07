@@ -13,6 +13,20 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ## [Unreleased]
 
+### Changed
+
+- **The django-fsm and LangGraph comparison pages are re-checked against
+  their current releases** (django-fsm-2 4.3.0, langgraph 1.2.20). Every
+  row was re-verified against the installed package: django-fsm-2 4.3.0
+  is still a flat, sync-only state field with no timers, nesting, actors,
+  REST helpers or XState import (the release is typing work, an
+  `exceptions` module and an optional django-unfold admin integration),
+  and LangGraph 1.2.20 still has subgraphs as nodes, `Send` fan-out,
+  per-node `timeout=` / `TimeoutPolicy` / `RetryPolicy` and `interrupt()`,
+  with no compound/parallel state type and no durable timers.
+  `docs/_data/comparisons.json`, every source note and the "checked" line
+  name the new releases; no library code changed.
+
 ### Fixed
 
 - **The two regressions the nightly integration perf gate had been
@@ -40,6 +54,7 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
     The accepted keyword names are a fixed library API and are resolved
     once at import. Same-machine measurement: a `MemoryStore` round trip
     ~340 us to ~210 us.
+
 
 ## [0.12.1] - 2026-11-07
 
