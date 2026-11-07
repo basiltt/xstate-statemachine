@@ -60,7 +60,6 @@ from dataclasses import dataclass
 from typing import (
     Any,
     Callable,
-    Deque,
     Dict,
     Iterator,
     List,
@@ -68,7 +67,6 @@ from typing import (
     Set,
     Tuple,
 )
-from collections import deque
 
 from typing import Protocol, runtime_checkable
 
@@ -103,6 +101,8 @@ MAX_KEY_LEN = 255
 #: How many processed keys each instance remembers inside its snapshot.
 PROCESSED_RING_SIZE = 64
 IN_FLIGHT = "__in_flight__"
+#: Context key of the processed-id ring (`["<scope>|<key>", ...]`, bounded).
+PROCESSED_IDS_KEY = "__xsm_processed_ids__"
 #: Context key holding ``{ring id: [wall time processed, fingerprint]}``
 #: for the ids in the ring (battle #261) -- see `_ring_evidence`.
 PROCESSED_AT_KEY = "__xsm_processed_at__"
@@ -713,20 +713,42 @@ class IdempotencyPlugin(PluginBase[Any]):
 
     # -- ring inside the snapshot (mechanism 2) -----------------------------------
     @staticmethod
-    def _ring(interpreter: Any) -> Deque[str]:
+    def _ring(interpreter: Any, *, create: bool = False) -> List[str]:
+        """The processed-id ring, as the LIVE list stored in the context.
+
+        ⚡ #307 perf gate: this used to return a new ``deque`` and
+        `_store_ring` a new list, so every event rebuilt the whole
+        64-entry ring; `_store_evidence` rebuilt its dict too. The hot
+        path now appends in place (see `_remember`) and the list stays
+        JSON-serialisable for the snapshot. An oversized ring (an older
+        snapshot) is trimmed in place.
+        """
         ctx = interpreter.context
         if not isinstance(ctx, dict):
-            return deque(maxlen=PROCESSED_RING_SIZE)
-        ring = ctx.get("__xsm_processed_ids__")
+            return []
+        ring = ctx.get(PROCESSED_IDS_KEY)
         if not isinstance(ring, list):
-            return deque(maxlen=PROCESSED_RING_SIZE)
-        return deque(ring, maxlen=PROCESSED_RING_SIZE)
+            if not create:
+                return []
+            ring = []
+            ctx[PROCESSED_IDS_KEY] = ring
+        if len(ring) > PROCESSED_RING_SIZE:
+            del ring[: len(ring) - PROCESSED_RING_SIZE]
+        return ring
 
     @staticmethod
-    def _store_ring(interpreter: Any, ring: Deque[str]) -> None:
+    def _store_ring(interpreter: Any, ring: List[str]) -> None:
+        """Attach *ring* as the context's ring, trimmed to the bound.
+
+        Kept for the #261 ring-bound test that drives the helpers
+        directly; the event path uses `_remember`, which appends in place.
+        """
         ctx = interpreter.context
-        if isinstance(ctx, dict):
-            ctx["__xsm_processed_ids__"] = list(ring)
+        if not isinstance(ctx, dict):
+            return
+        if len(ring) > PROCESSED_RING_SIZE:
+            del ring[: len(ring) - PROCESSED_RING_SIZE]
+        ctx[PROCESSED_IDS_KEY] = ring
 
     @staticmethod
     def _wall(interpreter: Any) -> float:
@@ -743,19 +765,38 @@ class IdempotencyPlugin(PluginBase[Any]):
             return float(clock.wall_now())
         return time.time()
 
-    def _store_evidence(
-        self, interpreter: Any, ring: Deque[str], rid: str, fp: str
-    ) -> None:
-        """Record when *rid* was processed and with which fingerprint,
-        for the ids still in the ring only (bounded like the ring)."""
+    def _remember(self, interpreter: Any, rid: str, fp: str) -> None:
+        """Append *rid* to the ring and record its evidence, evicting the
+        one id that falls out -- O(1) per event, bounded like the ring.
+
+        📝 The evidence of an evicted id is dropped here -- but only when
+        no other occurrence of it remains in the ring. A key re-processed
+        after its TTL legitimately appears twice (keys are reusable, see
+        `ttl_s`); popping its evidence with the OLDER copy would delete
+        the FRESH entry while the id is still ringed, and `_ring_evidence`
+        would then admit a redelivery whose crash window the snapshot
+        still covers (review finding on #307). Stale ids an older
+        snapshot may carry are never read (`_ring_evidence` requires
+        membership in the ring).
+        """
         ctx = interpreter.context
         if not isinstance(ctx, dict):
             return
-        old = ctx.get(PROCESSED_AT_KEY)
-        old = old if isinstance(old, dict) else {}
-        at = {r: old[r] for r in ring if r in old}
+        ring = self._ring(interpreter, create=True)
+        at = ctx.get(PROCESSED_AT_KEY)
+        if not isinstance(at, dict):
+            at = {}
+            ctx[PROCESSED_AT_KEY] = at
+        if len(ring) >= PROCESSED_RING_SIZE:
+            evicted = ring.pop(0)
+            # 🛡️ Only drop the evidence once the ring no longer names it:
+            #    a duplicate occurrence keeps the map entry alive (and the
+            #    entry is always the newest write, which is the one that
+            #    matters for `_ring_evidence`).
+            if evicted not in ring:
+                at.pop(evicted, None)
+        ring.append(rid)
         at[rid] = [self._wall(interpreter), fp]
-        ctx[PROCESSED_AT_KEY] = at
 
     def _ring_evidence(self, interpreter: Any, rid: str) -> Optional[str]:
         """The fingerprint *rid* was processed with, if the snapshot says
@@ -1023,11 +1064,8 @@ class IdempotencyPlugin(PluginBase[Any]):
             # is marked below, like any settled receipt.)
             self.inbox.release(scope, key)
             return
-        ring = self._ring(interpreter)
         rid = f"{scope}|{key}"
-        ring.append(rid)
-        self._store_ring(interpreter, ring)
-        self._store_evidence(interpreter, ring, rid, fp)
+        self._remember(interpreter, rid, fp)
         payload = json.dumps(receipt_to_json(receipt))
         token = _session_token()
         with self._lock:

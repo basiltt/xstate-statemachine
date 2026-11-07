@@ -39,10 +39,19 @@ class KeyNotFoundError(StoreError, KeyError):
         super().__init__(f"No snapshot stored under '{key}'.")
 
 
+#: 📝 The keyword names `from_snapshot` accepts. `inspect.signature` costs
+#:    ~40 us and this check runs on EVERY `persisted()` / `apersisted()`
+#:    round trip; recomputing it measured the persisted_*_sync rows at
+#:    1.26-1.44x their perf reference (#307). `from_snapshot` is a fixed
+#:    library API, so resolve it once at import.
+_RESTORE_KWARGS = frozenset(
+    inspect.signature(Interpreter.from_snapshot).parameters
+)
+
+
 def _check_restore_kwargs(kwargs: Dict[str, Any]) -> None:
     """Raise `TypeError` for a name `from_snapshot` does not accept."""
-    accepted = set(inspect.signature(Interpreter.from_snapshot).parameters)
-    unknown = sorted(set(kwargs) - accepted)
+    unknown = sorted(set(kwargs) - _RESTORE_KWARGS)
     if unknown:
         raise TypeError(f"unexpected restore option(s): {', '.join(unknown)}")
 
