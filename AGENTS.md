@@ -122,6 +122,11 @@ these modules first:
   a dead run loop (battle #305). The sync mailbox drain reports every
   event it cannot run (`on_event_dropped`, `"not_running"` / `"stopped"`);
   a producer's event is never silently lost.
+  **`__xsm_*` context keys are reserved for library bookkeeping** (the
+  idempotency ring/evidence) and are excluded from both helpers: they are
+  not machine state, so they never mark a receipt `changed`, and they are
+  never deep-copied per event (#307: two 64-entry copies per event
+  measured `plugins_sync` at 2x its reference).
 - **Cross-thread access to a `SyncInterpreter` is `send_threadsafe()` only.**
   `send()` is not thread-safe and never was; do not add locks to it.
 - **Global plugins are read in `BaseInterpreter.__init__`**, so every

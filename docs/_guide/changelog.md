@@ -13,7 +13,33 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+
+- **The two regressions the nightly integration perf gate had been
+  reporting are fixed, so its plugin and persisted rows are back to their
+  reference.** Both are pinned by shape (not by a timing assertion) in
+  `tests/test_perf_regressions_307.py`; the opt-in budgets test keeps
+  measuring the microseconds.
+  - `plugins_sync` (1.7-2.1x) and `plugins_async` (1.3-1.6x) measured
+    above their hardware-adjusted reference on every runner model since
+    the #261/#262 battles (2026-10-02). `IdempotencyPlugin` keeps its
+    processed-key ring (64 ids) and evidence map in `context` so they
+    travel inside the snapshot, and every `wait=True` receipt and every
+    `on_event_processed` deep-copied the whole context -- the ring and its
+    evidence twice per event (~630 `deepcopy` calls per event under
+    cProfile). `__xsm_*` context keys are reserved for the library and are
+    now excluded from `_context_before_image()` and from the receipt's
+    "changed" compare (an action that writes only them is not a context
+    change); the ring and evidence are updated in place instead of being
+    rebuilt per event. Same-machine A/B (2 plugins, 3,000 keyed sends):
+    plugin row ~750 us to ~220 us per event.
+  - `persisted_memory_sync` / `persisted_sqlite_sync` measured 1.26-1.44x
+    their reference on some runners since 0.12.0. The restore-option guard
+    called `inspect.signature()` on EVERY `persisted()` / `apersisted()`
+    round trip (~40 us on a laptop; a quarter of the profiled round trip).
+    The accepted keyword names are a fixed library API and are resolved
+    once at import. Same-machine measurement: a `MemoryStore` round trip
+    ~340 us to ~210 us.
 
 ## [0.12.1] - 2026-11-07
 

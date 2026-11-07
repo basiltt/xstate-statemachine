@@ -279,6 +279,15 @@ class _LogicTarget:
 #: Sentinel before-image: the context could not be deep-copied (#305).
 _UNCOPYABLE = object()
 
+#: 🧹 Context keys the library itself maintains (currently the idempotency
+#:    plugin's processed-id ring + evidence). They are BOOKKEEPING, not
+#:    machine state: `_context_before_image` and `_context_changed` skip
+#:    them. 🐛 #307 perf gate: those two keys hold up to 64 entries each,
+#:    and deep-copying them twice per event measured `plugins_sync` at 2x
+#:    its reference on every CPU. A reservation, like `__xsm_*` markers
+#:    elsewhere: user context must not use the prefix.
+_INTERNAL_CONTEXT_PREFIX = "__xsm_"
+
 
 class _SafePlugin:
     """Wraps a plugin so a failing hook cannot break the interpreter.
@@ -5353,6 +5362,25 @@ class BaseInterpreter(Generic[TContext]):
                 before = self._context_before_image()
         return failed
 
+    def _user_context(self) -> Any:
+        """`context` without the library's own bookkeeping keys.
+
+        A non-mapping context is returned as-is. Used by the per-event
+        before-image: a plugin's internal ring is not machine state, and
+        copying it twice per event is what made the plugin rows expensive.
+        """
+        context = self.context
+        if not isinstance(context, dict):
+            return context
+        return {
+            key: value
+            for key, value in context.items()
+            if not (
+                isinstance(key, str)
+                and key.startswith(_INTERNAL_CONTEXT_PREFIX)
+            )
+        }
+
     def _context_before_image(self) -> Any:
         """#305 battle: a deep copy of `context` for a "did it change?"
         compare, or `_UNCOPYABLE` when the context cannot be deep-copied.
@@ -5364,9 +5392,14 @@ class BaseInterpreter(Generic[TContext]):
         and killed the async run loop SILENTLY (status flipped to
         "stopped", the awaited receipt never resolved). Uncopyable means
         "assume changed" -- see `_context_changed`.
+
+        🧹 Keys the library maintains itself (`__xsm_*`) are excluded: a
+        plugin's 64-entry idempotency ring is bookkeeping, not state, and
+        deep-copying it twice per event is O(ring) on a path that must be
+        O(context).
         """
         try:
-            return copy.deepcopy(self.context)
+            return copy.deepcopy(self._user_context())
         except Exception:  # noqa: BLE001 -- arbitrary user objects
             return _UNCOPYABLE
 
@@ -5375,7 +5408,7 @@ class BaseInterpreter(Generic[TContext]):
         taken). An uncopyable before-image conservatively reports True."""
         if before is None:
             return False
-        return before is _UNCOPYABLE or bool(self.context != before)
+        return before is _UNCOPYABLE or self._user_context() != before
 
     def _validate_context(
         self,

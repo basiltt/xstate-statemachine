@@ -55,6 +55,8 @@ The **primary** proof of every concurrency claim is a deterministic fault-inject
 
 The plugin's interception hook is **fail-closed**: a payload that cannot be fingerprinted, an inbox that raises, or a lock it cannot take refuses the event with `receipt.error` set (HTTP 500 / the error's own status) instead of admitting it unprotected; a cached receipt that no longer decodes is answered as a conservative duplicate. (Every other plugin hook stays fail-open.)
 
+Both ring keys start with `__xsm_`, the library's reserved context prefix. They are bookkeeping, not machine state: a receipt's `changed` ignores them (an event whose only context write is the ring did not change context), and the per-event before-image does not copy them — deep-copying 64 entries twice per event measured the `plugins_sync` perf row at 2x its reference (#307). Do not store your own state under a `__xsm_` key.
+
 ## Timers
 
 A persisted `Deadline` is an **absolute wall-clock instant** (`due_at_wall`, from `interpreter.wall_now()`) tagged with the **state-entry generation** (`entry_seq`). The scanner takes the lock strategy first, re-reads the record, and wakes the machine only if a matured deadline with that generation is still there — a machine another worker already advanced is skipped, never double-fired (`test_durable_timers.py::TestScanner::test_stale_under_lock_is_skipped`). A deadline whose state no longer exists after a migration fails loudly rather than being dropped (`TestRestartModes::test_orphan_deadline_after_migration_fails_loudly`).
