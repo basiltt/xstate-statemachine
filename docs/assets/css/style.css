@@ -699,6 +699,15 @@ pre > code { display: block; width: max-content; min-width: 100%; }
   .reveal { opacity: 1; transform: none; }
   .bg-orb { animation: none; }
 }
+/* 📝 A 2,300px chart squeezed into a 375px column drew every label ~2px
+   tall (a report of invisible items on phones). On narrow screens the chart
+   keeps its natural size instead and the figure scrolls sideways, the way a
+   wide code block does. */
+@media (max-width: 720px) {
+  /* diagrams.js gives the SVG its natural width here (see fitViewport) */
+  .statechart-canvas { justify-content: flex-start; }
+}
+
 @media print {
   .top-nav, .docs-toolbar, .sidebar, .toc-sidebar, .search-modal, .back-to-top, .scroll-progress, .page-nav, .sidebar-toggle, .mobile-toc-toggle, .mobile-toc-drawer, .mobile-toc-overlay, .sidebar-overlay, .nav-overlay, .bg { display: none !important; }
   .page-wrapper { display: block; }

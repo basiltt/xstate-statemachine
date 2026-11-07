@@ -49,6 +49,8 @@ import diagram_mermaid as dm  # noqa: E402
 Box = Tuple[float, float, float, float]  # x, y, w, h (CSS px, SVG origin)
 CLEAR = 2.5  # px a transition label keeps from anything it is not attached to
 ARROW = 14.0  # the last stretch of a transition, where its arrowhead is drawn
+CONTRAST_ERROR = 3.0  # text below this is unreadable (WCAG 1.4.6 wants 4.5)
+CONTRAST_WARN = 4.5
 
 MEASURE_JS = r"""
 (key) => {
@@ -61,6 +63,8 @@ MEASURE_JS = r"""
   }
   // Natural size: the page scales a wide chart down, the check does not.
   const vb = svg.viewBox && svg.viewBox.baseVal;
+  const renderedWidth = svg.getBoundingClientRect().width;
+  const natural = vb && vb.width ? vb.width : renderedWidth;
   if (vb && vb.width) { svg.style.width = vb.width + 'px'; svg.style.height = vb.height + 'px'; svg.style.maxWidth = 'none'; }
   const base = svg.getBoundingClientRect();
   const box = el => { const r = el.getBoundingClientRect(); return [r.left - base.left, r.top - base.top, r.width, r.height]; };
@@ -102,7 +106,81 @@ MEASURE_JS = r"""
     const w = parseFloat(fo.getAttribute('width')), h = parseFloat(fo.getAttribute('height'));
     if (d.scrollWidth > w + 1.5 || d.scrollHeight > h + 1.5) clipped.push({ text: text(d), fo: [w, h], content: [d.scrollWidth, d.scrollHeight] });
   });
-  return { width: base.width, height: base.height, leaves, markers, clusters, labels, edges, clipped };
+  // Contrast of every painted text run against its effective backdrop.
+  // Mermaid paints sequence labels on `tspan` children; measuring the parent
+  // `text` reports the actor box instead of the label.
+  const parseColor = value => {
+    if (!value) return null;
+    const m = value.match(/rgba?\(([^)]+)\)/);
+    if (m) {
+      const q = m[1].split(',').map(Number);
+      return { r: q[0], g: q[1], b: q[2], a: q.length > 3 ? q[3] : 1 };
+    }
+    if (value.startsWith('#')) {
+      let h = value.slice(1);
+      if (h.length === 3) h = h.split('').map(c => c + c).join('');
+      const n = parseInt(h.slice(0, 6), 16);
+      return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255, a: 1 };
+    }
+    return null;
+  };
+  const over = (top, bottom) => {
+    const a = top.a + bottom.a * (1 - top.a);
+    if (!a) return { r: 0, g: 0, b: 0, a: 0 };
+    return {
+      r: Math.round((top.r * top.a + bottom.r * bottom.a * (1 - top.a)) / a),
+      g: Math.round((top.g * top.a + bottom.g * bottom.a * (1 - top.a)) / a),
+      b: Math.round((top.b * top.a + bottom.b * bottom.a * (1 - top.a)) / a), a
+    };
+  };
+  const backdrop = el => {
+    const layers = [];
+    for (let cur = el; cur; cur = cur.parentElement) {
+      const c = parseColor(getComputedStyle(cur).backgroundColor);
+      if (c && c.a > 0.02) layers.push(c);
+      if (cur === document.body) break;
+    }
+    let base = { r: 255, g: 255, b: 255, a: 1 };
+    for (let i = layers.length - 1; i >= 0; i--) base = over(layers[i], base);
+    return base;
+  };
+  const lum = c => {
+    const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    return 0.2126 * f(c.r) + 0.7152 * f(c.g) + 0.0722 * f(c.b);
+  };
+  const ratio = (a, b) => {
+    const l1 = lum(a), l2 = lum(b);
+    return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+  };
+  const hex = c => '#' + [c.r, c.g, c.b].map(v => v.toString(16).padStart(2, '0')).join('');
+  const runs = [];
+  svg.querySelectorAll('text').forEach(t => {
+    const spans = [...t.querySelectorAll('tspan')].filter(sp => (sp.textContent || '').trim());
+    (spans.length ? spans : ((t.textContent || '').trim() ? [t] : [])).forEach(n => runs.push({ el: n, paint: getComputedStyle(n).fill }));
+  });
+  svg.querySelectorAll('foreignObject div, foreignObject span, foreignObject p').forEach(n => {
+    if (n.querySelector('*') && [...n.querySelectorAll('*')].some(c => (c.textContent || '').trim())) return;
+    runs.push({ el: n, paint: getComputedStyle(n).color });
+  });
+  const contrast = [], seen = new Set();
+  runs.forEach(run => {
+    const node = run.el, t = (node.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 60);
+    if (!t || seen.has(node)) return;
+    const r = node.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2) return;
+    const fg = parseColor(run.paint);
+    if (!fg || fg.a < 0.05) return;
+    const bg = backdrop(node);
+    const value = ratio(over(fg, bg), bg);
+    if (value < 4.5) contrast.push({ text: t, fg: hex(over(fg, bg)), bg: hex(bg), ratio: +value.toFixed(2) });
+    seen.add(node);
+  });
+  return {
+    width: base.width, height: base.height, leaves, markers, clusters, labels, edges, clipped,
+    contrast,
+    scale: natural ? +(renderedWidth / natural).toFixed(3) : 1,
+    pageOverflow: document.documentElement.scrollWidth > innerWidth + 1
+  };
 }
 """
 
@@ -144,6 +222,14 @@ def analyse(geometry: Dict[str, Any]) -> Tuple[List[str], List[str]]:
         f"{item['content']}"
         for item in geometry["clipped"]
     ]
+    # Unreadable is a defect even when the geometry is perfect: the fence
+    # diagrams measured 1.35:1 with the light palette on a light canvas.
+    errors += [
+        f"low contrast text {item['text']!r}: {item['fg']} on {item['bg']} "
+        f"({item['ratio']}:1)"
+        for item in geometry.get("contrast", [])
+        if item["ratio"] < CONTRAST_ERROR
+    ]
     errors += _box_collisions(
         geometry["leaves"], geometry["labels"], geometry["markers"]
     )
@@ -152,13 +238,18 @@ def analyse(geometry: Dict[str, Any]) -> Tuple[List[str], List[str]]:
     )
     errors += _bounds_errors(geometry["clusters"], geometry["labels"])
     errors += _canvas_errors(geometry)
-    edge_errors, warnings = _edge_collisions(
+    warnings = [
+        f"borderline contrast {item['text']!r}: {item['ratio']}:1"
+        for item in geometry.get("contrast", [])
+        if CONTRAST_ERROR <= item["ratio"] < CONTRAST_WARN
+    ]
+    edge_errors, edge_warnings = _edge_collisions(
         geometry["edges"],
         geometry["leaves"],
         geometry["labels"],
         geometry["clusters"],
     )
-    return errors + edge_errors, warnings
+    return errors + edge_errors, warnings + edge_warnings
 
 
 def _box_collisions(leaves, labels, markers) -> List[str]:
@@ -369,6 +460,7 @@ def run(
     batch: int,
     tune: bool,
     verbose: bool,
+    width: int = 0,
 ) -> int:
     from playwright.sync_api import sync_playwright
 
@@ -389,7 +481,14 @@ def run(
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page(
-                viewport={"width": 2600, "height": 1800}, device_scale_factor=1
+                # The harness's phone mode must be a real narrow VIEWPORT:
+                # diagrams.js keys off innerWidth to keep natural chart size.
+                viewport=(
+                    {"width": width, "height": 1200}
+                    if width
+                    else {"width": 2600, "height": 1800}
+                ),
+                device_scale_factor=1,
             )
             console: List[str] = []
             page.on(
@@ -399,7 +498,11 @@ def run(
                 ),
             )
             for group in _chunks(list(keys), batch):
-                url = f"http://127.0.0.1:{port}/scripts/diagram_harness.html?keys={','.join(group)}&theme={theme}"
+                url = (
+                    f"http://127.0.0.1:{port}/scripts/diagram_harness.html"
+                    f"?keys={','.join(group)}&theme={theme}"
+                    + (f"&width={width}" if width else "")
+                )
                 page.goto(url, wait_until="load")
                 page.wait_for_function(
                     "window.xsmDiagrams && window.xsmDiagrams.ready"
@@ -408,6 +511,20 @@ def run(
                 for key in group:
                     geometry = page.evaluate(MEASURE_JS, key)
                     errors, warnings = analyse(geometry)
+                    if width:
+                        # 📐 A chart must never be drawn below 75% of its
+                        #    natural size (diagrams.js keeps it natural and
+                        #    lets the figure scroll instead).
+                        scale = geometry.get("scale", 1)
+                        if scale < 0.7:
+                            errors.append(
+                                f"chart shrunk to {round(scale * 100)}% at "
+                                f"{width}px (labels unreadable)"
+                            )
+                        if geometry.get("pageOverflow"):
+                            errors.append(
+                                f"page scrolls sideways at {width}px"
+                            )
                     if errors and tune:
                         errors, warnings, geometry, changed = _tune(
                             page,
@@ -553,11 +670,23 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "-v", "--verbose", action="store_true", help="also list warnings"
     )
+    parser.add_argument(
+        "--width",
+        type=int,
+        default=0,
+        help="simulate a viewport this wide (phone check: natural size, no page scroll)",
+    )
     args = parser.parse_args(argv)
     asset = json.loads(dm.DATA_FILE.read_text(encoding="utf-8"))
     keys = args.keys.split(",") if args.keys else sorted(asset["machines"])
     return run(
-        keys, args.theme, args.shots, args.batch, args.tune, args.verbose
+        keys,
+        args.theme,
+        args.shots,
+        args.batch,
+        args.tune,
+        args.verbose,
+        args.width,
     )
 
 
