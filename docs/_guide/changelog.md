@@ -29,7 +29,8 @@ Nothing yet.
   probe runs only under a non-`"continue"` `actionErrorPolicy`. Semantics are
   unchanged and pinned by `tests/test_sync_send_fast_paths.py`. On the
   cross-library benchmark the guard + action row goes from behind
-  `transitions` to 1.34x ahead; see `benchmarks/competitors/README.md`.
+  `transitions` (the 2026-11-07 refresh below); see
+  `benchmarks/competitors/README.md`.
 - **The documentation draws its diagrams itself.** Stately now asks every
   visitor to sign in before it shows a hosted machine, so the embedded editor
   frames on the docs site were blank. The 245 charts in the guides and the
@@ -95,11 +96,8 @@ Nothing yet.
   unchanged 0.12.0 code three quiet sessions put `transitions` ahead by about
   1.26x (its 2026-11-05 figure of 83,360 ev/s was a low sample against
   127,000-131,000 since). The benchmark README keeps that corrected 0.12.0 table
-  as the previous one; `results.json`, the README's current table and the home
-  page now show the measurement with the `send()` fast paths above, where every
-  other row keeps its winner: statechart scenarios 4.7-4.9x the next
-  library, construction 1.35x and 1,000 instances 1.29x ahead of
-  `transitions`, delayed transitions 1.7x `sismic`.
+  as the previous one. The release table itself is the 2026-11-07 refresh
+  below.
 - The pure-vs-sync timing test counts the pure API's real per-step allocation
   (inbound and outbound context copies, the rebuilt snapshot sets) in its
   floor, so a cheaper `send()` no longer pushes it towards its limit.
