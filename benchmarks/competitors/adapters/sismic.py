@@ -25,7 +25,12 @@ from sismic.interpreter import Interpreter
 from sismic.io import import_from_yaml
 
 LIB_NAME = "sismic"
-LIB_VERSION = sismic.__version__
+try:  # 📝 sismic 1.6.14 still reports __version__ == "1.6.11"
+    from importlib.metadata import version as _dist_version
+
+    LIB_VERSION = _dist_version("sismic")
+except Exception:  # pragma: no cover - metadata always exists when installed
+    LIB_VERSION = getattr(sismic, "__version__", "unknown")
 
 CAPABILITY_NOTES = {
     "S4": "supported natively via 'parallel states' in the statechart YAML",

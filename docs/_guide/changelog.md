@@ -13,6 +13,10 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.12.1] - 2026-11-07
+
 ### Changed
 
 - **`SyncInterpreter.send()` does about half the Python calls per event on a
@@ -115,6 +119,13 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
   A probed console also re-probes its colour, glyph and animation
   capabilities when the stream it follows changes, so a swap to a
   file or pipe stops emitting ANSI and box glyphs.
+- **Benchmark refreshed against the latest competitor releases.**
+  python-statemachine 3.2.2 (from 3.2.1) and sismic 1.6.14 (from 1.6.11)
+  were re-measured with transitions 0.9.3 on a quiet machine; every row keeps
+  its winner (guard + action 1.63x and the statechart rows
+  4.8-5.2x the next library, construction 1.31x and
+  1,000 instances 1.33x over `transitions`). `results.json`, the
+  benchmark README and the home page carry the new table.
 
 ## [0.12.0] - 2026-11-05
 

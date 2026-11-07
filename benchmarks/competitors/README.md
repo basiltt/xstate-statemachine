@@ -112,7 +112,50 @@ authoritative numbers reported elsewhere (README, docs). This directory's
 end-to-end; its numbers should not be treated as representative performance
 figures.
 
-## Results (2026-11-06, 0.12.0 + the sync send fast paths)
+## Results (2026-11-07, 0.12.1, latest competitor releases)
+
+Python 3.14.6, Windows 11, Intel Core i7-11850H (laptop, on mains, otherwise
+idle), `xstate-statemachine` 0.12.1 (editable install of this checkout) in
+a clean venv next to the other libraries at their **latest releases**
+(transitions 0.9.3, python-statemachine 3.2.2, sismic 1.6.14). Median of 7
+repetitions, GC disabled, setup excluded. All six columns come from the
+**same session**; compare across a row, not against an older table. Higher is
+better. **Bold** = fastest in the row (two bold cells = within 3 % of each
+other, a tie within the run-to-run noise). Reproduce with `python run.py`;
+raw numbers in `results.json`. This table is the session closest to the
+three-run medians.
+
+| Scenario | xsm (sync) | xsm (pure) | xsm (async) | transitions 0.9.3 | python-statemachine 3.2.2 | sismic 1.6.14 |
+|:--|--:|--:|--:|--:|--:|--:|
+| Flat toggle (ev/s) | 95,618 | 46,775 | — | **142,079** | 9,466 | 13,084 |
+| Guard + action (ev/s) | **164,764** | 51,672 | — | 101,101 | 8,184 | 12,595 |
+| 3-level nested (ev/s) | **41,375** | 22,078 | — | 8,472 | 3,842 | 5,133 |
+| Parallel regions (ev/s) | **30,972** | — | — | 6,033 | 3,888 | 4,750 |
+| Construction (machines/s) | **12,273** | — | — | 9,335 | 1,461 | 285 |
+| 1,000 instances (inst/s) | **51,135** | — | — | 38,311 | 3,475 | 7,956 |
+| Delayed transition (timers/s) | **9,337** | — | — | 70 | 612 | 6,119 |
+| Native asyncio (ev/s) | — | — | 26,614 | **39,117** | 6,870 | — |
+
+xstate-statemachine is fastest in **6 of the 8 rows**: guard + action (1.63x
+`transitions`), every statechart scenario (nested 4.8x and parallel
+5.1x the next library), construction (1.31x `transitions`), 1,000 instances
+(1.33x `transitions`) and delayed transitions (1.5x `sismic`,
+127x `transitions`). `transitions` keeps the flat toggle
+(1.35x) and native asyncio (1.43x) -- see "Reading the table
+honestly" below.
+
+What changed since the 2026-11-06 table is not the engine (the code is the same
+revision; only the version string moved) but the competitors: python-statemachine
+went 3.2.1 -> 3.2.2 and sismic 1.6.11 -> 1.6.14, and both were re-measured on the
+same quiet machine in three sessions. Every row keeps its winner. The ratios held
+within the run-to-run noise: guard + action 1.31-1.63x over `transitions`,
+nested 4.8-5.1x and parallel 5.1-5.2x the next library,
+construction 1.31-1.38x and 1,000 instances 1.33-1.37x over
+`transitions`, delayed transitions 1.5-2.0x `sismic`, and `transitions`
+1.35-1.49x on the flat toggle and 1.43-1.52x on native
+asyncio.
+
+### Previous table (2026-11-06, 0.12.0 + the sync send fast paths)
 
 Python 3.14.6, Windows 11, Intel Core i7-11850H (laptop, on mains, otherwise idle),
 `xstate-statemachine` 0.12.0 plus the `SyncInterpreter.send()` fast paths of the next
