@@ -313,7 +313,7 @@ if TYPE_CHECKING:  # pragma: no cover
 # -----------------------------------------------------------------------------
 
 # 📦 The official version number for the library.
-__version__ = "0.12.0"
+__version__ = "0.12.1"
 
 # -----------------------------------------------------------------------------
 # 🌐 Public API Definition

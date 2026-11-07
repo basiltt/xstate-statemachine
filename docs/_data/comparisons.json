@@ -250,7 +250,7 @@
   "transitions": {
     "name": "transitions",
     "url": "https://github.com/pytransitions/transitions",
-    "checked": "transitions 0.9.3, 2026-10-08",
+    "checked": "transitions 0.9.3, 2026-11-07",
     "rows": [
       {
         "feature": "Hierarchy (nested states)",
@@ -347,97 +347,97 @@
   "python_statemachine": {
     "name": "python-statemachine",
     "url": "https://github.com/fgmacedo/python-statemachine",
-    "checked": "python-statemachine 3.2.1, 2026-10-08",
+    "checked": "python-statemachine 3.2.2, 2026-11-07",
     "rows": [
       {
         "feature": "Hierarchy (nested states)",
         "ours": "Yes: compound states at any depth, XState v5 semantics",
         "theirs": "Yes: `State.Compound` in `StateChart`",
-        "source": "python-statemachine 3.2.1: `statemachine.State.Compound`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+        "source": "python-statemachine 3.2.2: `statemachine.State.Compound`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
       {
         "feature": "Parallel regions",
         "ours": "Yes: `type: parallel` regions with a `done.state` join",
         "theirs": "Yes: `State.Parallel`",
-        "source": "python-statemachine 3.2.1: `statemachine.State.Parallel`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+        "source": "python-statemachine 3.2.2: `statemachine.State.Parallel`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
       {
         "feature": "Timers (`after`)",
         "ours": "`after` in the chart; persisted as deadlines and fired by `DueTimerScanner` after a restart",
         "theirs": "`send(..., delay=)` and `contrib.timeout` (in memory only)",
-        "source": "python-statemachine 3.2.1: `StateMachine.send(delay=)`, `statemachine.contrib.timeout`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+        "source": "python-statemachine 3.2.2: `StateMachine.send(delay=)`, `statemachine.contrib.timeout`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
       {
         "feature": "Invoked services",
         "ours": "`invoke` services with `onDone` / `onError`, retried by `RetryPolicy`",
         "theirs": "Yes: `invoke=` on a state, cancelled on exit",
-        "source": "python-statemachine 3.2.1: `statemachine.invoke`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+        "source": "python-statemachine 3.2.2: `statemachine.invoke`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
       {
         "feature": "Actors / child machines",
         "ours": "Spawned child machines (`spawn`, `sendTo`, `sendParent`)",
         "theirs": "Child machines can be invoked; no spawn / actor system",
-        "source": "python-statemachine 3.2.1: `statemachine.invoke` accepts a `StateChart` class; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+        "source": "python-statemachine 3.2.2: `statemachine.invoke` accepts a `StateChart` class; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
       {
         "feature": "Async",
         "ours": "Two engines: asyncio `Interpreter` and threaded `SyncInterpreter`",
         "theirs": "Yes: async callbacks run on an async engine",
-        "source": "python-statemachine 3.2.1: `statemachine.engines`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+        "source": "python-statemachine 3.2.2: `statemachine.engines`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
       {
         "feature": "Locking / concurrent writers",
         "ours": "`OptimisticLock` / `PessimisticLock` on every store; Django `send()` in `transaction.atomic()` + `select_for_update()` (or a version fence + `send_with_retry`); SQLAlchemy `version_id_col`",
         "theirs": "DIY",
-        "source": "python-statemachine 3.2.1: no store, so no cross-process locking; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+        "source": "python-statemachine 3.2.2: no store, so no cross-process locking; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
       {
         "feature": "Versioning / migration",
         "ours": "`machine_version` in every snapshot; `SnapshotMigrator` upgrades old snapshots on load",
         "theirs": "DIY",
-        "source": "python-statemachine 3.2.1: no snapshot format to version; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+        "source": "python-statemachine 3.2.2: no snapshot format to version; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
       {
         "feature": "Admin / UI",
         "ours": "`StatechartAdminMixin`: permission-computed CSRF-protected transition buttons, confirm + reason, history inline, state filter, bulk actions; `manage.py xsm_inspect` / `xsm_diagram`",
         "theirs": "No",
-        "source": "python-statemachine 3.2.1: a Django `MachineMixin`, but no admin integration; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+        "source": "python-statemachine 3.2.2: a Django `MachineMixin`, but no admin integration; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
       {
         "feature": "REST / DRF",
         "ours": "`StatechartViewSetMixin` generates one DRF `@action` per event (plus drf-spectacular schema); FastAPI router, Litestar controller, Flask/Quart blueprints, Starlette registry helpers",
         "theirs": "No",
-        "source": "python-statemachine 3.2.1: no web integration; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+        "source": "python-statemachine 3.2.2: no web integration; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
       {
         "feature": "Audit trail",
         "ours": "Django `TransitionLog` rows written in the SAME transaction as the state change (plus `pre_transition` / `post_transition` signals); transition log for SQLite, JSON lines, SQLAlchemy",
         "theirs": "DIY with listeners",
-        "source": "python-statemachine 3.2.1: observer / listener callbacks; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+        "source": "python-statemachine 3.2.2: observer / listener callbacks; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
       {
         "feature": "Visual editor",
         "ours": "Stately editor: the chart is plain XState JSON",
         "theirs": "Diagrams (Graphviz or Mermaid) and a Sphinx extension; no editor",
-        "source": "python-statemachine 3.2.1: `statemachine.contrib.diagram` (Graphviz via pydot, `renderers/mermaid.py`); ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+        "source": "python-statemachine 3.2.2: `statemachine.contrib.diagram` (Graphviz via pydot, `renderers/mermaid.py`); ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
       {
         "feature": "Typed context",
         "ours": "`[pydantic]` `context_model` and one model per event, validated on send",
         "theirs": "The machine or model's attributes; strong IDE typing of states and events",
-        "source": "python-statemachine 3.2.1: declarative class API; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+        "source": "python-statemachine 3.2.2: declarative class API; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
       {
         "feature": "Persistence",
         "ours": "`StatechartField` on your Django model row (queryable `__state` / `in_state()`), or snapshots in SQLite, Redis, SQLAlchemy, Django ORM (`DjangoStore`), files",
         "theirs": "`MachineMixin` stores the state on a model field",
-        "source": "python-statemachine 3.2.1: `statemachine.mixins.MachineMixin`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+        "source": "python-statemachine 3.2.2: `statemachine.mixins.MachineMixin`; ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       },
       {
         "feature": "XState JSON portability",
         "ours": "Reads XState v5 JSON (Stately export) and follows XState v5 statechart semantics; engine event names keep the v4 spelling",
         "theirs": "Reads its own JSON / YAML / SCXML documents, not XState JSON",
-        "source": "python-statemachine 3.2.1: `statemachine.io` (json, yaml, scxml); ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
+        "source": "python-statemachine 3.2.2: `statemachine.io` (json, yaml, scxml); ours: xstate-statemachine docs: Persistence, Guarantees and the integration pages"
       }
     ]
   },

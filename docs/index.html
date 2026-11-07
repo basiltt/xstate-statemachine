@@ -189,7 +189,7 @@ interp  = <span class="k">await</span> Interpreter(machine).start()</code></pre>
       <div class="card-glow" style="--gx:100%;--gy:100%"></div>
       <div class="card-icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6M10 3v6l-5.5 9A2 2 0 0 0 6.2 21h11.6a2 2 0 0 0 1.7-3L14 9V3"/><path d="M8 15h8"/></svg></div>
       <h3>Docs that run</h3>
-      <p>Every Python block in this site is executed in CI. Every link is resolved. 34 runnable examples.</p>
+      <p>Every Python block in the guide and the README is executed in CI. Every link is resolved. 78 runnable examples.</p>
     </article>
 
     <article class="card reveal">
@@ -350,7 +350,7 @@ interp.stop()
 <section class="comparison-section" id="how-it-compares">
   <div class="section-head reveal">
     <h2>How it compares</h2>
-    <p class="section-subtitle">Against the three other Python state-machine libraries in common use &mdash; <code>transitions</code> 0.9.3, <code>python-statemachine</code> 3.2.1, <code>sismic</code> 1.6.11, checked against the installed packages on 2026-09-19. A dash means the capability exists in a limited form (a thread-based timeout extension, an optional-dependency diagram, listener callbacks rather than a plugin API).</p>
+    <p class="section-subtitle">Against the three other Python state-machine libraries in common use &mdash; <code>transitions</code> 0.9.3, <code>python-statemachine</code> 3.2.2, <code>sismic</code> 1.6.14, checked against the installed packages on 2026-11-07. A dash means the capability exists in a limited form (a thread-based timeout extension, an optional-dependency diagram, listener callbacks rather than a plugin API).</p>
     <p class="section-subtitle">Full pages, with a side-by-side order lifecycle and when to choose each: <a href="{{ '/guide/vs-transitions/' | relative_url }}">vs transitions</a> &middot; <a href="{{ '/guide/vs-python-statemachine/' | relative_url }}">vs python-statemachine</a> &middot; <a href="{{ '/guide/vs-django-fsm/' | relative_url }}">vs django-fsm</a>.</p>
   </div>
   <div class="reveal">
@@ -402,28 +402,28 @@ interp.stop()
         </tr>
       </thead>
       <tbody>
-        <tr><td>Flat toggle <span class="perf-unit">events/s</span></td><td>96,353</td><td class="perf-best">141,355</td><td>9,487</td><td>12,674</td></tr>
-        <tr><td>Guard + action <span class="perf-unit">events/s</span></td><td class="perf-best">163,160</td><td>122,035</td><td>7,918</td><td>11,649</td></tr>
-        <tr><td>3-level nested <span class="perf-unit">events/s</span></td><td class="perf-best">41,746</td><td>8,963</td><td>3,764</td><td>4,778</td></tr>
-        <tr><td>Parallel regions <span class="perf-unit">events/s</span></td><td class="perf-best">31,379</td><td>6,416</td><td>3,663</td><td>4,935</td></tr>
-        <tr><td>Delayed transitions <span class="perf-unit">timers/s</span></td><td class="perf-best">9,988</td><td>72</td><td>3,993</td><td>5,896</td></tr>
-        <tr><td>1,000 instances <span class="perf-unit">instances/s</span></td><td class="perf-best">47,878</td><td>36,986</td><td>3,549</td><td>8,150</td></tr>
-        <tr><td>Construction <span class="perf-unit">machines/s</span></td><td class="perf-best">11,803</td><td>8,771</td><td>1,244</td><td>277</td></tr>
-        <tr><td>Native asyncio <span class="perf-unit">events/s</span></td><td>26,929</td><td class="perf-best">39,360</td><td>6,657</td><td>&mdash;</td></tr>
+        <tr><td>Flat toggle <span class="perf-unit">events/s</span></td><td>95,618</td><td class="perf-best">142,079</td><td>9,466</td><td>13,084</td></tr>
+        <tr><td>Guard + action <span class="perf-unit">events/s</span></td><td class="perf-best">164,764</td><td>101,101</td><td>8,184</td><td>12,595</td></tr>
+        <tr><td>3-level nested <span class="perf-unit">events/s</span></td><td class="perf-best">41,375</td><td>8,472</td><td>3,842</td><td>5,133</td></tr>
+        <tr><td>Parallel regions <span class="perf-unit">events/s</span></td><td class="perf-best">30,972</td><td>6,033</td><td>3,888</td><td>4,750</td></tr>
+        <tr><td>Delayed transitions <span class="perf-unit">timers/s</span></td><td class="perf-best">9,337</td><td>70</td><td>612</td><td>6,119</td></tr>
+        <tr><td>1,000 instances <span class="perf-unit">instances/s</span></td><td class="perf-best">51,135</td><td>38,311</td><td>3,475</td><td>7,956</td></tr>
+        <tr><td>Construction <span class="perf-unit">machines/s</span></td><td class="perf-best">12,273</td><td>9,335</td><td>1,461</td><td>285</td></tr>
+        <tr><td>Native asyncio <span class="perf-unit">events/s</span></td><td>26,614</td><td class="perf-best">39,117</td><td>6,870</td><td>&mdash;</td></tr>
       </tbody>
     </table>
   </div>
   <p class="perf-note">
-    <code>transitions</code> is faster on the flattest machine (a two-state toggle, 1.47&times; ours) and on native asyncio
-    (1.46&times;) because it is a transition table, not a statechart engine &mdash; no configuration set, no entry/exit
-    ordering, no internal queue. Add a guard and an action and the row is ours (1.34&times;, since the sync <code>send()</code>
+    <code>transitions</code> is faster on the flattest machine (a two-state toggle, 1.35&times; ours) and on native asyncio
+    (1.43&times;) because it is a transition table, not a statechart engine &mdash; no configuration set, no entry/exit
+    ordering, no internal queue. Add a guard and an action and the row is ours (1.63&times;, since the sync <code>send()</code>
     fast paths); the moment states nest or run in parallel, that algorithm is what the others have to emulate, and
-    XState-StateMachine is 4.7&ndash;4.9&times; faster than the next library. <em>Construction</em> is
-    <strong>35&nbsp;% ahead</strong> of <code>transitions</code> and fanning out to 1,000 instances is
-    <strong>29&nbsp;% ahead</strong> of <code>transitions</code> &mdash; while still running the full build-time validator on
+    XState-StateMachine is 4.8&ndash;5.2&times; faster than the next library. <em>Construction</em> is
+    <strong>31&nbsp;% ahead</strong> of <code>transitions</code> and fanning out to 1,000 instances is
+    <strong>33&nbsp;% ahead</strong> of <code>transitions</code> &mdash; while still running the full build-time validator on
     every <code>create_machine()</code>, and 6&ndash;43&times; ahead of the other two on both rows.
-    Measured 2026-11-06 on 0.12.0 plus the sync <code>send()</code> fast paths of the next release (three quiet sessions,
-    the one closest to their medians shown), all libraries in one session:
+    Measured 2026-11-07 on 0.12.1 against the latest releases (transitions 0.9.3, python-statemachine 3.2.2, sismic 1.6.14;
+    three quiet sessions, the one closest to their medians shown), all libraries in one session:
     Python 3.14, median of 7 runs, GC disabled, setup excluded. Reproduce with <code>benchmarks/competitors/run.py</code>;
     full table and caveats in the
     <a href="https://github.com/basiltt/xstate-statemachine/blob/main/benchmarks/competitors/README.md">benchmark README</a>,

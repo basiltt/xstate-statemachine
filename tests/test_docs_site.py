@@ -535,3 +535,18 @@ class TestHardeningPages(unittest.TestCase):
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
+
+
+class TestRunnableExampleCount(unittest.TestCase):
+    """The landing page claims a number of runnable examples; the tree and
+    tests/test_examples.py define that set as every *_runner.py under
+    examples/. Pin the two together so the claim cannot drift again (#431
+    review found "34" against 78 runners)."""
+
+    def test_landing_page_counts_the_runners(self) -> None:
+        page = (ROOT / "docs" / "index.html").read_text(encoding="utf-8")
+        match = re.search(r"(\d+) runnable examples", page)
+        self.assertIsNotNone(match, "landing page lost the example count")
+        runners = sorted((ROOT / "examples").rglob("*_runner.py"))
+        self.assertEqual(int(match.group(1)), len(runners))
+        self.assertGreater(len(runners), 0)

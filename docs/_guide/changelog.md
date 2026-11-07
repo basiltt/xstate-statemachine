@@ -13,6 +13,10 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.12.1] - 2026-11-07
+
 ### Changed
 
 - **`SyncInterpreter.send()` does about half the Python calls per event on a
@@ -25,7 +29,8 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
   probe runs only under a non-`"continue"` `actionErrorPolicy`. Semantics are
   unchanged and pinned by `tests/test_sync_send_fast_paths.py`. On the
   cross-library benchmark the guard + action row goes from behind
-  `transitions` to 1.34x ahead; see `benchmarks/competitors/README.md`.
+  `transitions` (the 2026-11-07 refresh below); see
+  `benchmarks/competitors/README.md`.
 - **The documentation draws its diagrams itself.** Stately now asks every
   visitor to sign in before it shows a hosted machine, so the embedded editor
   frames on the docs site were blank. The 245 charts in the guides and the
@@ -91,11 +96,8 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
   unchanged 0.12.0 code three quiet sessions put `transitions` ahead by about
   1.26x (its 2026-11-05 figure of 83,360 ev/s was a low sample against
   127,000-131,000 since). The benchmark README keeps that corrected 0.12.0 table
-  as the previous one; `results.json`, the README's current table and the home
-  page now show the measurement with the `send()` fast paths above, where every
-  other row keeps its winner: statechart scenarios 4.7-4.9x the next
-  library, construction 1.35x and 1,000 instances 1.29x ahead of
-  `transitions`, delayed transitions 1.7x `sismic`.
+  as the previous one. The release table itself is the 2026-11-07 refresh
+  below.
 - The pure-vs-sync timing test counts the pure API's real per-step allocation
   (inbound and outbound context copies, the rebuilt snapshot sets) in its
   floor, so a cheaper `send()` no longer pushes it towards its limit.
@@ -115,6 +117,13 @@ This project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html) 
   A probed console also re-probes its colour, glyph and animation
   capabilities when the stream it follows changes, so a swap to a
   file or pipe stops emitting ANSI and box glyphs.
+- **Benchmark refreshed against the latest competitor releases.**
+  python-statemachine 3.2.2 (from 3.2.1) and sismic 1.6.14 (from 1.6.11)
+  were re-measured with transitions 0.9.3 on a quiet machine; every row keeps
+  its winner (guard + action 1.63x and the statechart rows
+  4.8-5.2x the next library, construction 1.31x and
+  1,000 instances 1.33x over `transitions`). `results.json`, the
+  benchmark README and the home page carry the new table.
 
 ## [0.12.0] - 2026-11-05
 
