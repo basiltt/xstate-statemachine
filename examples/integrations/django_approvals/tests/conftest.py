@@ -48,6 +48,15 @@ else:
         example folder keeps ``approvals.sqlite3.test`` -- hidden by
         ``.gitignore``, but a newcomer's ``ls`` shows it. By session end
         those threads are gone; collect their connections and retry.
+
+        🐛 #591: they are NOT gone when this hook runs. Channels'
+        ``database_sync_to_async`` runs the consumer's DB work in
+        asgiref's single-thread executor, and that connection survives
+        until interpreter shutdown -- after this hook, so the retry could
+        never win (measured: the thread is still alive after 150 tries).
+        Django's connection handler is per-thread, so a ``close_all()``
+        from HERE cannot reach it; submitting the call to that executor
+        puts it in the thread that owns the handle.
         """
         import gc
         import time
@@ -58,6 +67,7 @@ else:
             or "sqlite" not in _settings.DATABASES["default"]["ENGINE"]
         ):
             return
+        _close_worker_connections()
         for suffix in ("", "-wal", "-shm", "-journal"):
             path = Path(f"{test_db}{suffix}")
             for _ in range(50):
@@ -68,3 +78,23 @@ else:
                     path.unlink()
                 except PermissionError:
                     time.sleep(0.1)
+
+
+def _close_worker_connections() -> None:
+    """Close Django connections in the threads that own them.
+
+    Runs ``connections.close_all()`` in the main thread and inside
+    asgiref's single-thread executor (see `pytest_sessionfinish`).
+    Best-effort: a run must never fail because the cleanup could not
+    reach a thread.
+    """
+    try:
+        from asgiref.sync import SyncToAsync
+        from django.db import connections
+
+        connections.close_all()
+        SyncToAsync.single_thread_executor.submit(
+            connections.close_all
+        ).result(timeout=10)
+    except Exception:  # noqa: BLE001 - cleanup is best-effort
+        pass
